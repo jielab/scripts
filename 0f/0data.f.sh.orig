@@ -1,0 +1,636 @@
+#!/bin/bash
+
+gwas_clean_log(){ echo "[$(date '+%F %T')] [$GWAS] $*"; }
+gwas_clean_gzip_ok(){ [[ -s "$1" ]] && gzip -t "$1" >/dev/null 2>&1; }
+gwas_clean_need_file(){ [[ -s "$1" ]] || { echo "ERROR: missing or empty file: $1" >&2; exit 1; }; }
+gwas_clean_has_data_rows(){ [[ -s "$1" ]] && awk 'NR>1{found=1; exit} END{exit !found}' "$1"; }
+gwas_clean_zcat(){
+  local f="$1"
+  case "$f" in
+    *.gz|*.bgz)
+      if command -v pigz >/dev/null 2>&1; then
+        pigz -dc -p "${GWAS_CLEAN_DECOMP_THREADS:-1}" "$f"
+      else
+        gzip -dc "$f"
+      fi
+      ;;
+    *.zst)
+      if command -v zstdcat >/dev/null 2>&1; then
+        zstdcat -- "$f"
+      elif command -v zstd >/dev/null 2>&1; then
+        zstd -q -dc -- "$f"
+      else
+        echo "ERROR: zstd or zstdcat is required to read: $f" >&2
+        return 127
+      fi
+      ;;
+    *)
+      cat "$f"
+      ;;
+  esac
+}
+
+gwas_clean_compress(){
+  if command -v pigz >/dev/null 2>&1; then
+    pigz -c -p "${GWAS_CLEAN_COMP_THREADS:-1}"
+  else
+    gzip -c
+  fi
+}
+
+gwas_clean_detect_fs(){
+  local f="$1" line
+  line=$(set +o pipefail; gwas_clean_zcat "$f" | head -n 1 | tr -d '\r' || true)
+  case "$line" in
+    *$'\t'*) printf '\t';;
+    *) printf '[ \t]+';;
+  esac
+}
+
+gwas_clean_header_line(){
+  local f="$1"
+  (set +o pipefail; gwas_clean_zcat "$f" | head -n 1 | tr -d '\r' || true)
+}
+
+gwas_clean_col(){
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && printf '%s\n' "$1" || printf '0\n'
+}
+
+gwas_clean_load_phef(){
+  gwas_clean_need_file "$PHEF"
+  if ! command -v dos2unix >/dev/null 2>&1; then
+    dos2unix(){ sed 's/\r$//'; }
+  fi
+  source "$PHEF"
+}
+
+gwas_clean_header_names(){
+  local src="$1" out="$2" pipefail_on=FALSE errexit_on=FALSE rc=0
+  gwas_clean_load_phef
+  if set -o | awk '$1=="errexit" && $2=="on"{found=1} END{exit !found}'; then
+    errexit_on=TRUE
+  fi
+  if set -o | awk '$1=="pipefail" && $2=="on"{found=1} END{exit !found}'; then
+    pipefail_on=TRUE
+  fi
+  set +e
+  set +o pipefail
+  if phe_header_names "$src" > "$out"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  [[ "$pipefail_on" == "TRUE" ]] && set -o pipefail
+  [[ "$errexit_on" == "TRUE" ]] && set -e
+  return "$rc"
+}
+
+std_small(){
+  local src="$1" out="$2" header_out="$3" tmp bad_snp cand_raw cand_uniq input_fs t0 n_raw n_uniq
+  gwas_clean_need_file "$src"
+  gwas_clean_need_file "$HM3"
+  t0=$(date +%s)
+  gwas_clean_log "Small GWAS: $src -> $out"
+
+  gwas_clean_header_names "$src" "$header_out"
+  SNP_col=$(gwas_clean_col "${SNP_col:-}")
+  CHR_col=$(gwas_clean_col "${CHR_col:-}")
+  POS_col=$(gwas_clean_col "${POS_col:-}")
+  EA_col=$(gwas_clean_col "${EA_col:-}")
+  NEA_col=$(gwas_clean_col "${NEA_col:-}")
+  EAF_col=$(gwas_clean_col "${EAF_col:-}")
+  N_col=$(gwas_clean_col "${N_col:-}")
+  BETA_col=$(gwas_clean_col "${BETA_col:-}")
+  SE_col=$(gwas_clean_col "${SE_col:-}")
+  P_col=$(gwas_clean_col "${P_col:-}")
+  LOG10P_col=$(gwas_clean_col "${LOG10P_col:-}")
+
+  [[ "$CHR_col" -gt 0 && "$POS_col" -gt 0 ]] || { echo "ERROR: CHR/POS not detected: $src" >&2; exit 1; }
+  [[ "$P_col" -gt 0 || "$LOG10P_col" -gt 0 ]] || { echo "ERROR: no P or LOG10P detected: $src" >&2; exit 1; }
+
+  tmp="${out}.tmp.$$"
+  bad_snp="${out}.bad.snp.$$"
+  cand_raw="${out}.candidate.raw.$$"
+  cand_uniq="${out}.candidate.uniq.$$"
+  : > "$bad_snp"
+  if [[ -n "${REFGEN_CLUMP:-}" ]]; then
+    while read -r _ _ _ bad; do
+      [[ -s "$bad" ]] && cat "$bad" >> "$bad_snp"
+    done < <(ref_clump_pfiles "$REFGEN_CLUMP")
+  fi
+
+  input_fs=$(gwas_clean_detect_fs "$src")
+  gwas_clean_header_line "$src" > "$cand_raw"
+
+  gwas_clean_log "prefilter HM3/P/cis candidates with one-pass awk: $src"
+  gwas_clean_zcat "$src" | awk -v FS="$input_fs" \
+    -v hm3_file="$HM3" -v pthr="$P_SMALL" \
+    -v cis_bed="${CIS_BED:-}" -v cis_name="$GWAS" -v flank="${CIS_FLANK:-0}" \
+    -v snp_col="$SNP_col" -v chr_col="$CHR_col" -v pos_col="$POS_col" \
+    -v p_col="$P_col" -v logp_col="$LOG10P_col" '
+    function get(c, x){x=(c>0 ? $c : "");gsub(/\r/,"",x);return x}
+    function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
+    function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
+    function keep_p(  p,lp){
+      if(pthr=="" || pthr+0<=0) return 0
+      if(p_col>0 && isnum(get(p_col))) return get(p_col)+0 <= pthr+0
+      if(logp_col>0 && isnum(get(logp_col))) return get(logp_col)+0 >= logpthr
+      return 0
+    }
+    function in_cis(chr,pos,  i){for(i=1;i<=n_cis;i++){if(chr==rchr[i] && pos>=rstart[i] && pos<=rend[i]) return 1} return 0}
+    BEGIN{
+      logpthr=(pthr+0>0 ? -log(pthr+0)/log(10) : 0)
+      while((getline line < hm3_file)>0){
+        gsub(/\r/,"",line)
+        split(line,a,/[ \t]+/)
+        if(a[1]!="" && a[1]!="SNP") hm3[a[1]]=1
+      }
+      close(hm3_file)
+      if(cis_bed!=""){
+        while((getline line < cis_bed)>0){
+          gsub(/\r/,"",line); if(line=="" || line ~ /^#/) continue
+          split(line,a,/[ \t]+/)
+          if(a[4]==cis_name){n_cis++; rchr[n_cis]=normchr(a[1]); rstart[n_cis]=a[2]-flank; if(rstart[n_cis]<0) rstart[n_cis]=0; rend[n_cis]=a[3]+flank}
+        }
+        close(cis_bed)
+      }
+    }
+    NR==1{next}
+    {
+      snp=get(snp_col)
+      if((snp!="" && (snp in hm3)) || keep_p()){
+        print
+        next
+      }
+      if(n_cis>0){
+        chr=normchr(get(chr_col)); pos=get(pos_col)+0
+        if(chr!="" && pos>0 && in_cis(chr,pos)) print
+      }
+    }' >> "$cand_raw"
+
+  awk 'NR==1{print; next} !seen[$0]++' "$cand_raw" > "$cand_uniq"
+  n_raw=$(awk 'END{print (NR>0 ? NR-1 : 0)}' "$cand_raw")
+  n_uniq=$(awk 'END{print (NR>0 ? NR-1 : 0)}' "$cand_uniq")
+  gwas_clean_log "prefilter candidates: raw=$n_raw unique=$n_uniq"
+
+  awk -v FS="$input_fs" -v OFS='\t' \
+    -v hm3_file="$HM3" -v pthr="$P_SMALL" \
+    -v bad_snp_file="$bad_snp" \
+    -v cis_bed="${CIS_BED:-}" -v cis_name="$GWAS" -v flank="${CIS_FLANK:-0}" \
+    -v snp_col="$SNP_col" -v chr_col="$CHR_col" -v pos_col="$POS_col" \
+    -v ea_col="$EA_col" -v nea_col="$NEA_col" -v eaf_col="$EAF_col" -v n_col="$N_col" \
+    -v beta_col="$BETA_col" -v se_col="$SE_col" -v p_col="$P_col" -v logp_col="$LOG10P_col" '
+    function get(c, x){x=(c>0 ? $c : "");gsub(/\r/,"",x);return x}
+    function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
+    function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
+    function snpid(chr,pos,  s,ea,nea){s=get(snp_col); if(s==""||s=="NA"||s=="."){ea=get(ea_col); nea=get(nea_col); s=chr":"pos; if(ea!="") s=s":"ea; if(nea!="") s=s":"nea} return s}
+    function pvalue(){if(p_col>0 && isnum(get(p_col))) return get(p_col)+0; if(logp_col>0 && isnum(get(logp_col))) return 10^(-(get(logp_col)+0)); return ""}
+    function logpvalue(p){if(logp_col>0 && isnum(get(logp_col))) return get(logp_col); if(p!="" && p>0) return -log(p)/log(10); return ""}
+    function in_cis(chr,pos,  i){for(i=1;i<=n_cis;i++){if(chr==rchr[i] && pos>=rstart[i] && pos<=rend[i]) return 1} return 0}
+    BEGIN{
+      while((getline line < hm3_file)>0){gsub(/\r/,"",line); split(line,a,/[ \t]+/); if(a[1]!="" && a[1]!="SNP") hm3[a[1]]=1}
+      close(hm3_file)
+      while((getline line < bad_snp_file)>0){gsub(/\r/,"",line); split(line,a,/[ \t]+/); if(a[1]!="") bad_snp[a[1]]=1}
+      close(bad_snp_file)
+      if(cis_bed!=""){
+        while((getline line < cis_bed)>0){
+          gsub(/\r/,"",line); if(line=="" || line ~ /^#/) continue
+          split(line,a,/[ \t]+/)
+          if(a[4]==cis_name){n_cis++; rchr[n_cis]=normchr(a[1]); rstart[n_cis]=a[2]-flank; if(rstart[n_cis]<0) rstart[n_cis]=0; rend[n_cis]=a[3]+flank}
+        }
+        close(cis_bed)
+      }
+    }
+    NR==1{print "SNP","CHR","POS","EA","NEA","EAF","N","BETA","SE","P","LOG10P"; next}
+    {
+      chr=normchr(get(chr_col)); pos=get(pos_col)+0
+      if(chr=="" || pos<=0) next
+      snp=snpid(chr,pos)
+      if(snp in bad_snp) next
+      p=pvalue(); lp=logpvalue(p)
+      if((snp in hm3) || (p!="" && p<=pthr) || (n_cis>0 && in_cis(chr,pos))){
+        print snp,chr,pos,get(ea_col),get(nea_col),get(eaf_col),get(n_col),get(beta_col),get(se_col),p,lp
+      }
+    }' "$cand_uniq" | gwas_clean_compress > "$tmp"
+
+  gzip -t "$tmp"
+  rm -f "$bad_snp" "$cand_raw" "$cand_uniq"
+  mv -f "$tmp" "$out"
+  gwas_clean_zcat "$out" | awk -v g="$GWAS" 'NR==1{next} END{print g"\t"NR-1}' > "${QC_PREFIX}.small.nrow.tsv"
+  gwas_clean_log "Small GWAS done in $(($(date +%s)-t0)) sec"
+}
+
+gwas_clean_copy_small_to_final(){
+  if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$FINAL"; then
+    gwas_clean_log "Final clean GWAS exists: $FINAL"
+    return 0
+  fi
+  gwas_clean_need_file "$SMALL"
+  gwas_clean_log "No liftOver: $SMALL -> $FINAL"
+  tmp="${FINAL}.tmp.$$"
+  cp -f "$SMALL" "$tmp"
+  gzip -t "$tmp"
+  mv -f "$tmp" "$FINAL"
+}
+
+gwas_clean_liftover_small_to_final(){
+  local work n_small n_lift n_unmap
+  if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$FINAL"; then
+    gwas_clean_log "Lifted final clean GWAS exists: $FINAL"
+    return 0
+  fi
+  gwas_clean_need_file "$SMALL"
+  gwas_clean_need_file "$CHAIN"
+  command -v "$LIFTOVER_BIN" >/dev/null 2>&1 || { echo "ERROR: liftOver not found: $LIFTOVER_BIN" >&2; exit 1; }
+  gwas_clean_log "liftOver Small GWAS: $SMALL -> $FINAL"
+
+  work="$(dirname "$FINAL")/.${GWAS}.liftover.$$"
+  rm -rf "$work"
+  mkdir -p "$work"
+  trap 'rm -rf "$work"' EXIT
+
+  gwas_clean_zcat "$SMALL" | awk -v FS='\t' -v OFS='\t' -v bed="$work/to_lift.bed" '
+    NR==1{for(i=1;i<=NF;i++) c[$i]=i; print "row_id","SNP","CHR_OLD","POS_OLD","EA","NEA","EAF","N","BETA","SE","P","LOG10P"; next}
+    NR>1 && ("CHR" in c) && ("POS" in c){
+      row=NR-1; chr=$(c["CHR"]); pos=$(c["POS"])+0
+      if(chr=="" || pos<=0) next
+      print "chr"chr,pos-1,pos,row > bed
+      print row,$(c["SNP"]),chr,pos,$(c["EA"]),$(c["NEA"]),$(c["EAF"]),$(c["N"]),$(c["BETA"]),$(c["SE"]),$(c["P"]),$(c["LOG10P"])
+    }' > "$work/std.old.tsv"
+
+  "$LIFTOVER_BIN" "$work/to_lift.bed" "$CHAIN" "$work/lifted.bed" "$work/unmapped.bed" > "${QC_PREFIX}.liftover.log" 2>&1
+
+  awk -v OFS='\t' '{chr=$1; sub(/^chr/,"",chr); if(chr=="X") chr="23"; if(chr=="Y") chr="24"; if(chr=="MT"||chr=="M") chr="25"; print $4,chr,$3}' "$work/lifted.bed" | sort -k1,1n > "$work/lifted.pos.tsv"
+  tail -n +2 "$work/std.old.tsv" | sort -k1,1n > "$work/std.old.sorted.tsv"
+
+  printf 'SNP\tCHR\tPOS\tEA\tNEA\tEAF\tN\tBETA\tSE\tP\tLOG10P\n' > "$work/final.tsv"
+  join -t $'\t' -1 1 -2 1 "$work/lifted.pos.tsv" "$work/std.old.sorted.tsv" | \
+    awk 'BEGIN{FS=OFS="\t"}{print $4,$2,$3,$7,$8,$9,$10,$11,$12,$13,$14}' >> "$work/final.tsv"
+
+  gzip -c "$work/final.tsv" > "${FINAL}.tmp.$$"
+  gzip -t "${FINAL}.tmp.$$"
+  mv -f "${FINAL}.tmp.$$" "$FINAL"
+
+  {
+    echo -e "GWAS\tN_SMALL\tN_LIFTED\tN_UNMAPPED"
+    n_small=$(awk 'END{print (NR>0 ? NR-1 : 0)}' "$work/std.old.tsv")
+    n_lift=$(awk 'END{print NR+0}' "$work/lifted.bed")
+    n_unmap=$(grep -vc '^#' "$work/unmapped.bed" 2>/dev/null || echo 0)
+    echo -e "$GWAS\t$n_small\t$n_lift\t$n_unmap"
+  } > "${QC_PREFIX}.liftover.n.tsv"
+}
+
+gwas_clean_make_cis(){
+  if [[ -z "${CIS_BED:-}" ]]; then
+    echo "ERROR: --cis-bed is required for cis output" >&2
+    exit 2
+  fi
+  if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$CIS_OUT"; then
+    gwas_clean_log "cis file exists: $CIS_OUT"
+    return 0
+  fi
+  gwas_clean_need_file "$FINAL"
+  gwas_clean_need_file "$CIS_BED"
+  gwas_clean_log "cis subset: $FINAL -> $CIS_OUT"
+
+  tmp="${CIS_OUT}.tmp.$$"
+  gwas_clean_zcat "$FINAL" | awk -v FS='\t' -v OFS='\t' \
+    -v cis_bed="$CIS_BED" -v cis_name="$GWAS" -v flank="$CIS_FLANK" '
+    function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
+    BEGIN{
+      while((getline line < cis_bed)>0){
+        gsub(/\r/,"",line); if(line=="" || line ~ /^#/) continue
+        split(line,a,/[ \t]+/)
+        if(a[4]==cis_name){n++; rchr[n]=normchr(a[1]); rstart[n]=a[2]-flank; if(rstart[n]<0) rstart[n]=0; rend[n]=a[3]+flank}
+      }
+      close(cis_bed)
+    }
+    NR==1{for(i=1;i<=NF;i++) c[$i]=i; print; next}
+    n>0 && NR>1{
+      chr=normchr($(c["CHR"])); pos=$(c["POS"])+0; if(chr=="" || pos<=0) next
+      ok=0; for(i=1;i<=n;i++){if(chr==rchr[i] && pos>=rstart[i] && pos<=rend[i]){ok=1; break}}
+      if(ok) print
+    }' | gzip -c > "$tmp"
+
+  gzip -t "$tmp"
+  mv -f "$tmp" "$CIS_OUT"
+  gwas_clean_zcat "$CIS_OUT" | awk -v g="$GWAS" 'NR==1{next} END{print g"\t"NR-1}' > "${QC_PREFIX}.cis.nrow.tsv"
+}
+
+run_lead(){
+  [[ "$DO_STEP" == "all" || "$DO_STEP" == "lead" ]]
+}
+
+awk_lead(){
+  cat <<'AWK'
+function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
+NR==1{
+  for(i=1;i<=NF;i++) c[$i]=i
+  header=$0
+  print header
+  next
+}
+NR>1 && ("SNP" in c) && ("CHR" in c) && ("POS" in c) && ("P" in c) {
+  p=$(c["P"])
+  if(!isnum(p) || p+0 > pthr) next
+  chr=$(c["CHR"])
+  pos=$(c["POS"])+0
+  if(chr=="" || pos<=0) next
+  bin=int((pos-1)/win)
+  key=chr SUBSEP bin
+  if(!(key in best_p) || p+0 < best_p[key]){
+    best_p[key]=p+0
+    best_line[key]=$0
+    seen[key]=1
+  }
+}
+END{
+  for(key in seen) print best_line[key]
+}
+AWK
+}
+
+prep_inputs_chr(){
+  local chr="$1" assoc="$2" ma="$3" assoc_tmp ma_tmp
+  gwas_clean_need_file "$FINAL"
+
+  assoc_tmp="${assoc}.tmp.$$"
+  ma_tmp="${ma}.tmp.$$"
+  gwas_clean_zcat "$FINAL" | awk -v FS='\t' -v OFS='\t' -v chr="$chr" -v assoc="$assoc_tmp" -v ma="$ma_tmp" '
+    function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
+    function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
+    NR==1{
+      for(i=1;i<=NF;i++) c[$i]=i
+      print "SNP","P" > assoc
+      print "SNP","A1","A2","freq","b","se","p","N" > ma
+      next
+    }
+    NR>1 && ("SNP" in c) && ("CHR" in c) && ("P" in c) && normchr($(c["CHR"]))==chr && isnum($(c["P"])) {
+      print $(c["SNP"]),$(c["P"]) > assoc
+    }
+    NR>1 && ("SNP" in c) && ("CHR" in c) && ("EA" in c) && ("NEA" in c) && ("BETA" in c) && ("SE" in c) && ("P" in c) && ("N" in c) && normchr($(c["CHR"]))==chr {
+      if(!isnum($(c["BETA"])) || !isnum($(c["SE"])) || !isnum($(c["P"])) || !isnum($(c["N"]))) next
+      freq=(("EAF" in c) ? $(c["EAF"]) : "")
+      if(freq=="" || !isnum(freq)) next
+      print $(c["SNP"]),$(c["EA"]),$(c["NEA"]),freq,$(c["BETA"]),$(c["SE"]),$(c["P"]),$(c["N"]) > ma
+    }
+  '
+  mv -f "$assoc_tmp" "$assoc"
+  mv -f "$ma_tmp" "$ma"
+}
+
+prep_inputs_all_chr(){
+  local refs="$1" suffix assoc ma
+  gwas_clean_need_file "$FINAL"
+  if [[ ! -s "$refs" ]]; then
+    gwas_clean_log "no selected reference chromosomes; skip lead input preparation"
+    return 0
+  fi
+
+  suffix=".tmp.$$"
+  while IFS=$'\t' read -r _ _ _ assoc ma _; do
+    [[ -n "$assoc" && -n "$ma" ]] || continue
+    rm -f "${assoc}${suffix}" "${ma}${suffix}"
+  done < "$refs"
+
+  gwas_clean_zcat "$FINAL" | awk -v FS='\t' -v OFS='\t' -v refs="$refs" -v suffix="$suffix" '
+    function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
+    function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
+    BEGIN{
+      while((getline line < refs)>0){
+        split(line,a,"\t")
+        chr=a[3]
+        if(chr=="") continue
+        assoc[chr]=a[4] suffix
+        ma[chr]=a[5] suffix
+        want[chr]=1
+        print "SNP","P" > assoc[chr]
+        print "SNP","A1","A2","freq","b","se","p","N" > ma[chr]
+      }
+      close(refs)
+    }
+    NR==1{
+      for(i=1;i<=NF;i++) c[$i]=i
+      next
+    }
+    NR>1 && ("SNP" in c) && ("CHR" in c) {
+      chr=normchr($(c["CHR"]))
+      if(!(chr in want)) next
+      if(("P" in c) && isnum($(c["P"]))){
+        print $(c["SNP"]),$(c["P"]) > assoc[chr]
+      }
+      if(("EA" in c) && ("NEA" in c) && ("BETA" in c) && ("SE" in c) && ("P" in c) && ("N" in c)){
+        if(!isnum($(c["BETA"])) || !isnum($(c["SE"])) || !isnum($(c["P"])) || !isnum($(c["N"]))) next
+        freq=(("EAF" in c) ? $(c["EAF"]) : "")
+        if(freq=="" || !isnum(freq)) next
+        print $(c["SNP"]),$(c["EA"]),$(c["NEA"]),freq,$(c["BETA"]),$(c["SE"]),$(c["P"]),$(c["N"]) > ma[chr]
+      }
+    }
+  '
+
+  while IFS=$'\t' read -r _ _ _ assoc ma _; do
+    [[ -n "$assoc" && -n "$ma" ]] || continue
+    mv -f "${assoc}${suffix}" "$assoc"
+    mv -f "${ma}${suffix}" "$ma"
+  done < "$refs"
+}
+
+ref_chr(){
+  local x="$1" chr
+  x=$(basename "$x")
+  if [[ "$x" =~ [Cc][Hh][Rr]([0-9]+|X|Y|MT|M)([^0-9A-Za-z]|$) ]]; then
+    chr="${BASH_REMATCH[1]}"
+    case "$chr" in
+      X) echo 23;;
+      Y) echo 24;;
+      MT|M) echo 25;;
+      *) echo "$chr";;
+    esac
+    return 0
+  fi
+  return 1
+}
+
+chr_label(){
+  local chr="$1"
+  case "$chr" in
+    23) echo chrX;;
+    24) echo chrY;;
+    25) echo chrMT;;
+    *) echo "chr$chr";;
+  esac
+}
+
+want_chr(){
+  local chr="$1" spec=",${2:-autosome},"
+  spec=${spec,,}
+  [[ "$chr" =~ ^([1-9]|1[0-9]|2[0-2])$ && "$spec" == *",autosome,"* ]] && return 0
+  [[ "$chr" == 23 && "$spec" == *",x,"* ]] && return 0
+  [[ "$chr" == 24 && "$spec" == *",y,"* ]] && return 0
+  return 1
+}
+
+ref_clump_pfiles(){
+  local ref="$1" f prefix label chr found=FALSE
+  if [[ -f "${ref}.pgen" && -f "${ref}.psam" ]] &&
+     [[ -f "${ref}.pvar" || -f "${ref}.pvar.zst" ]]; then
+    label=$(basename "$ref")
+    chr=$(ref_chr "$label") || { echo "ERROR: cannot infer chromosome from refGen_clump prefix: $ref" >&2; return 1; }
+    echo "$ref $label $chr ${ref}.bad.snp"
+    return 0
+  fi
+  if [[ -d "$ref" ]]; then
+    while read -r f; do
+      prefix=${f%.pgen}
+      [[ -f "${prefix}.psam" && ( -f "${prefix}.pvar" || -f "${prefix}.pvar.zst" ) ]] || continue
+      label=$(basename "$prefix")
+      chr=$(ref_chr "$label") || { echo "ERROR: cannot infer chromosome from refGen_clump prefix: $prefix" >&2; return 1; }
+      echo "$prefix $label $chr ${prefix}.bad.snp"
+      found=TRUE
+    done < <(find "$ref" -maxdepth 1 -type f -name 'chr*.pgen' | sort -V)
+    [[ "$found" == "TRUE" ]] && return 0
+  fi
+  while read -r f; do
+    prefix=${f%.pgen}
+    [[ -f "${prefix}.psam" && ( -f "${prefix}.pvar" || -f "${prefix}.pvar.zst" ) ]] || continue
+    label=$(basename "$prefix")
+    chr=$(ref_chr "$label") || { echo "ERROR: cannot infer chromosome from refGen_clump prefix: $prefix" >&2; return 1; }
+    echo "$prefix $label $chr ${prefix}.bad.snp"
+    found=TRUE
+  done < <(compgen -G "${ref}chr*.pgen" | sort -V)
+  [[ "$found" == "TRUE" ]] && return 0
+  echo "ERROR: no pfile reference found from --refGen_clump: $ref" >&2
+  return 1
+}
+
+cojo_bfile(){
+  local ref="$1" chr="$2" tag
+  tag=$(chr_label "$chr")
+  if [[ -d "$ref" ]]; then
+    echo "${ref%/}/$tag"
+  else
+    echo "${ref}${tag}"
+  fi
+}
+
+run_tool(){
+  local prefix="$1" tmp log rc
+  shift
+  tmp="${prefix}.tmp.out.$$"
+  log="${prefix}.log"
+  rm -f "${prefix}.err"
+  gwas_clean_log "CMD: $*"
+  if "$@" > "$tmp" 2>&1; then
+    if [[ -s "$log" ]]; then
+      rm -f "$tmp"
+    else
+      mv -f "$tmp" "$log"
+    fi
+    return 0
+  else
+    rc=$?
+  fi
+  if [[ -s "$log" ]]; then
+    rm -f "$tmp"
+  else
+    mv -f "$tmp" "$log"
+  fi
+  {
+    echo "ERROR: command failed with exit=$rc"
+    echo "ERROR: log=$log"
+    grep -Ei 'error|failed|invalid' "$log" || true
+  } > "${prefix}.err"
+  return "$rc"
+}
+
+cat_tables(){
+  local out="$1" first=TRUE file
+  shift
+  [[ "$#" -gt 0 ]] || return 1
+  : > "$out"
+  for file in "$@"; do
+    [[ -s "$file" ]] || continue
+    if [[ "$first" == "TRUE" ]]; then
+      cat "$file" >> "$out"
+      first=FALSE
+    else
+      tail -n +2 "$file" >> "$out"
+    fi
+  done
+  [[ "$first" == "FALSE" ]]
+}
+
+concat_chr_outputs(){
+  local chr_dir="$1" out_prefix="$2" labels="$3" suffix label file out files=()
+  shift 3
+  [[ -s "$labels" ]] || return 0
+
+  for suffix in "$@"; do
+    files=()
+    while read -r label; do
+      [[ -n "$label" ]] || continue
+      if [[ -d "$chr_dir" ]]; then
+        file="${chr_dir}/${label}.${suffix}"
+      else
+        file="${chr_dir}.${label}.${suffix}"
+      fi
+      [[ -s "$file" ]] && files+=("$file")
+    done < "$labels"
+
+    [[ "${#files[@]}" -gt 0 ]] || continue
+    out="${out_prefix}.${suffix}"
+    cat_tables "$out" "${files[@]}" || true
+  done
+}
+
+gwas_clean_run_core(){
+  local run_small=FALSE run_liftover=FALSE run_cis=FALSE
+  mkdir -p "$(dirname "$SMALL")" "$(dirname "$FINAL")" "$(dirname "$QC_PREFIX")"
+
+  case "$DO_STEP" in
+    small) run_small=TRUE;;
+    liftover) run_liftover=TRUE;;
+    cis) run_cis=TRUE;;
+    lead) ;;
+    all) run_small=TRUE; [[ "$DO_LIFTOVER" == "TRUE" ]] && run_liftover=TRUE; [[ -n "${CIS_BED:-}" ]] && run_cis=TRUE;;
+  esac
+
+  if [[ "$run_small" == "TRUE" ]]; then
+    gwas_clean_need_file "$RAW"
+    if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$SMALL"; then
+      gwas_clean_log "Small GWAS exists: $SMALL"
+    else
+      std_small "$RAW" "$SMALL" "${QC_PREFIX}.header.small.txt"
+    fi
+
+    if [[ "$DO_STEP" == "small" || "$DO_STEP" == "all" ]]; then
+      if [[ "$DO_LIFTOVER" == "TRUE" ]]; then
+        gwas_clean_log "Final clean GWAS will be generated by liftOver."
+      fi
+    fi
+
+    if [[ "$DELETE_RAW" == "TRUE" && -n "$RAW" && -f "$RAW" ]]; then
+      gzip -t "$SMALL"
+      gwas_clean_log "delete raw: $RAW"
+      rm -f "$RAW"
+    fi
+  fi
+
+  if [[ "$run_liftover" == "TRUE" ]]; then
+    gwas_clean_liftover_small_to_final
+  fi
+
+  if [[ ! -s "$FINAL" && -s "$SMALL" && "$DO_LIFTOVER" != "TRUE" ]]; then
+    gwas_clean_copy_small_to_final
+  fi
+
+  if [[ "$run_cis" == "TRUE" && "${DEFER_CIS:-FALSE}" != "TRUE" ]]; then
+    gwas_clean_make_cis
+  fi
+
+  gwas_clean_log "DONE"
+}
+
+gwas_clean_run(){
+  gwas_clean_run_core
+}

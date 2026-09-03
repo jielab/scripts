@@ -1,0 +1,14 @@
+column,required,description
+journal_key,yes,Stable lowercase journal identifier; use ISSN/eISSN when possible or normalized title fallback
+journal_title,no,Journal title
+issn,no,Print ISSN
+eissn,no,Electronic ISSN
+jcr_year,yes,JCR year used for the score
+jcr_category,yes,JCR subject category
+journal_domain,yes,Broad domain such as basic_biomedical, clinical_science, public_health, health_services, methods_data_software
+impact_factor,no,Journal Impact Factor
+journal_citation_indicator,no,Journal Citation Indicator if available
+jif_rank,no,JIF rank within category
+jif_quartile,yes,Q1/Q2/Q3/Q4
+jif_percentile,yes,JIF percentile within category; higher is better, 0-100 scale
+total_cites,no,Total cites in JCR year
