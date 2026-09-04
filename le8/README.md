@@ -1,138 +1,80 @@
-# LE8 5C analysis pipeline
+# LE8 5C 多组学分析流水线
 
-This directory contains the LE8 supervised 5C omics pipeline.
+LE8 是一个在 WSL/Linux 环境中运行的 Bash、R 和 Python 流水线，用于对 UK Biobank 蛋白组（`prot`）和代谢组（`met`）数据执行 C1–C5 主分析，以及 S1–S2 补充分析。统一入口为 `le8.sh`。
 
-## Run
+## 快速开始
+
+代码位于 Windows 的 `D:\scripts\le8`；在 WSL 中对应 `/mnt/d/scripts/le8`。
 
 ```bash
 cd /mnt/d/scripts/le8
-./le8.sh -Y cvd_cad --biom prot,met
+
+# 检查脚本、数据路径和软件依赖
+./le8.sh -Y cvd_cad,masld --biom prot,met --preflight
+
+# 只打印执行计划，不启动分析
+./le8.sh -Y cvd_cad,masld --biom prot,met --dry-run
+
+# 正式运行
+./le8.sh -Y cvd_cad,masld --biom prot,met
 ```
 
-The LE8 wrapper passes bounded matching defaults to every sourced
-`match_GRCH`/`match_SNP` call:
+默认会复用有效缓存。只有需要忽略模块缓存并重新计算时才加入 `--replace TRUE`。
+
+## 分析模块
+
+模块按下列顺序执行：
+
+| 模块 | 功能 |
+|---|---|
+| `c1_correlate` | 观察性 ProtWAS/MWAS、诊断前时间模式及协变量敏感性分析 |
+| `c2_cause` | cis/local 与 trans/distal MR、反向 MR、MR-link-2、DANDELION 和个体遗传分解 |
+| `c3_coloc` | 位点共定位、精细定位及可信集诊断 |
+| `c4_connect` | LE8 监督的代理特征发现、聚类、网络和中介分析 |
+| `c5_consolidate` | 多来源证据整合、预测面板和可选的嵌套交叉验证 |
+| `s1_interact` | 性别分层及 LE8 两两交互 |
+| `s2_nonlin` | 非线性关联和交叉验证惩罚模型 |
+
+依赖会自动补齐：运行 C2、C3、C4 或 S1 时会加入 C1；运行 C5 时会加入 C1–C4。
+
+## 安装环境
+
+建议使用仓库内的 Conda 环境文件：
 
 ```bash
-./le8.sh -Y cvd_cad --biom prot \
-  --match-memory-mb 4096 --match-sort-memory-mb 512 \
-  --match-tmp-dir /mnt/d/tmp
+cd /mnt/d/scripts/le8
+
+# 首次创建
+conda env create -f environment.yml
+
+# 已有 le8 环境时更新
+conda env update -n le8 -f environment.yml --prune
 ```
 
-The same controls can be used directly. The 4 GiB `ulimit` is installed only
-inside a function subshell, while the query/reference keys are external-sorted
-on disk with a 512 MiB buffer:
+`environment.yml` 包含主要运行依赖，包括 R、Python、PLINK/PLINK2、MR-link-2 所需包和 GPU-coloc。`le8.sh` 会在非交互式 WSL 会话中尝试定位用户目录下的 Conda，并通过 `conda run -n le8` 调用相应程序。
 
-```bash
-source /mnt/d/scripts/0f/0phe.f.sh
-match_GRCH --memory-mb 4096 --sort-memory-mb 512 --tmp-dir /mnt/d/tmp \
-  --reference reference.tsv --output matched.tsv --audit matched.audit.tsv query.tsv
-```
+## 默认数据路径
 
-Create `/mnt/d/tmp` on a disk with enough free space. `--max-query-rows`
-(default 5,000,000) catches a likely QUERY/REFERENCE reversal; use
-`--allow-large-query` only after checking the argument order. For a strict
-aggregate cap across AWK, sort, R and child processes, use a cgroup rather than
-a shell-only per-process limit:
+`le8.sh` 当前使用以下默认路径，均可用命令行参数覆盖：
 
-```bash
-systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=4G \
-  bash /mnt/d/scripts/le8/le8.sh -Y cvd_cad --biom prot
-```
+| 内容 | 默认路径 |
+|---|---|
+| 分析输出根目录 | `/mnt/d/analysis/le8` |
+| 结局 GWAS 项目根目录 | `/mnt/d/data.BIG/gwas/main` |
+| pQTL 项目根目录 | `/mnt/d/data.BIG/gwas/prot` |
+| mQTL 项目根目录 | `/mnt/d/data.BIG/gwas/met` |
+| 1000 Genomes 参考目录 | `/mnt/d/data.BIG/refGen/1kg` |
+| UKB phenotype 目录 | `/mnt/d/data/ukb/phe` |
+| 共享 phenotype Shell 库 | `/mnt/d/scripts/0f/0phe.f.sh` |
+| 匹配过程临时目录 | `/mnt/d/tmp` |
+| 蛋白遗传力文件 | `/mnt/d/files/ppp.h2.csv` |
+| 蛋白遗传力来源说明 | `/mnt/d/files/ppp.h2.txt` |
 
-Use `--replace TRUE` after upgrading this code or when every selected stage
-must be recomputed. The large C1/C2/C5 caches now carry a code-version tag,
-but not every auxiliary cache has a complete content hash of all upstream
-individual and summary-statistic inputs.
+UKB phenotype 目录通常包含 `Rdata/all.rds`、`Rdata/prot.rds`、`Rdata/met.rds`、`Rdata/prot.pgs.rds` 和 `Rdata/met.pgs.rds`。蛋白注释 BED 会优先从 pQTL 项目目录自动定位 `ppp_3k.b38.bed`，并可回退到 `/mnt/d/files/ppp_3k.38.bed`。
 
-## Incident/prevalent time contract
+### GWAS 目录约定
 
-`0f/0phe.f.R::t2e()` defines incident events with `<Y>.Yt2e` and forward
-follow-up in `<Y>.t2e`. Diagnoses before baseline are represented by
-`<Y>.r2e`; `<Y>.b2e` is signed time around baseline (negative for prevalent
-diagnosis-to-baseline time, positive for baseline-to-incident-diagnosis time).
-`<Y>.bi2e` is attained age at diagnosis or censoring (birth to event/censor).
-The valid birth-origin sensitivity model is
-`Surv(age_at_baseline, <Y>.bi2e, <Y>.Yt2e)`: participants enter the risk set at
-their baseline blood draw. It does not turn UK Biobank into a birth cohort and
-does not project an adult protein/metabolite measurement back to birth. Merely
-adjusting for age, sex and baseline diagnosis cannot identify that
-counterfactual early-life omic level.
-
-C1 uses incident cases for ProtWAS/MWAS and models baseline-prevalent cases in
-separate logistic and case-only years-since-diagnosis analyses. The former
-reverse-time Cox is retained as an explicitly exploratory figure and table: it compared
-time-since-diagnosis in prevalent cases with age-since-birth in controls and
-therefore does not define a coherent survival risk set and is excluded from
-directionality/evidence grading. C1 instead performs
-0.5-, 1-, 2-, 5- and 10-year incident landmark scans, plus formal
-0/0.5/1/2/5/10/16-year diagnosis-window logistic models. Incident controls
-must remain observed and disease-free through the upper edge of a window;
-later cases can therefore be controls for an earlier window. C5
-fits prediction models only in the incident-risk cohort, but applies the fitted
-scores to prevalent participants for Yin–Yang score displays and temporal
-diagnostics.
-
-Protein groups are read from columns 4–5 of `ppp_3k.b38.bed`; metabolite
-groups are read from the named `group` column of `met.lst`, or its penultimate
-column when no header is available. `c1.input_feature_annotation_audit.csv`
-records every assayed column and whether it matched that source. This must be
-checked when the wide metabolite RDS reports 300 features but the intended
-analysis panel is described as 249 metabolites.
-
-The Yin–Yang figures are diagnosis-anchored, cross-sectional pseudo-trajectories
-from one baseline omics measurement per participant. They are not longitudinal
-within-person biomarker trajectories. In manuscripts, use
-"incident/prevalent diagnosis-anchored triangulation" as the primary term and
-define Yin–Yang only as a visual shorthand.
-
-The third row of `c1.Fig1` and `c1.Fig2` is the attained-age delayed-entry
-sensitivity analysis. `c1.Fig10.landmark_birthline_sensitivity.png` displays
-0.5/1/2/5/10-year landmark persistence and baseline-time versus attained-age
-effect concordance. `c1.Fig11.diagnosis_window_riskset.png` displays adjusted
-window-specific betas and confidence intervals across -16 to +16 years.
-`c1.Fig13.reverse_time_exploratory.png` preserves the legacy reverse-time
-result with its incompatible-time-origin warning. If GO
-annotation and g:Profiler are both unavailable, C1 Fig8 falls back to a clearly
-labelled protein assay-group enrichment rather than producing an empty canvas.
-
-## C2 figure contract
-
-- `c2.Fig1.prots.top.png`: cis/local is always the left circle,
-  trans/distal is always the top circle, and observational evidence is always
-  the right circle. The panel-specific reference set is pale yellow.
-- `c2.Fig2.pQTL_R2.png`: shows the distribution of per-instrument partial R²
-  separately for cis/local and trans/distal instruments. The point is the
-  median, the colored interval is the interquartile range, and the grey tail
-  ends at the 90th percentile. It never sums R² and never applies a many-IV
-  product approximation.
-- `c2.Fig6.dandelion.png` contains the target and pair-level summaries. The
-  dense path network is `c2.Fig9.dandelion_network.png`.
-- `c2.Fig8.dandelion_mr_integration.png` displays at most 32 targets, ranked
-  first by independent MR/observational support; its second panel summarizes
-  support tiers across every DANDELION target.
-- `c2.Fig12.genetic_decomposition.png` and
-  `c2.Fig13.genetic_component_leadtime.png` separate the observed omic,
-  its calibrated COJO-PGS component and the remaining non-genetic residual.
-  `c2.Fig14.evidence_grades.png` assigns cis/local MR grades after explicitly
-  auditing many-IV architecture, Cochran-Q heterogeneity, weighted-median
-  concordance, Egger and Steiger directionality.
-
-
-## Useful controls
-
-```bash
-./le8.sh --preflight
-./le8.sh -Y cvd_cad --biom prot --steps c1_correlate,c2_cause
-./le8.sh -Y cvd_cad --biom met --from c1_correlate --to c2_cause
-./le8.sh -Y cvd_cad --biom prot,met --replace TRUE
-```
-
-The default locations and their CLI overrides are listed by
-`./le8.sh --help`.
-
-## GWAS directory contract
-
-`le8.sh` consumes the trait-first layout written by `gwas_post.sh`:
+按 trait 组织的基本结构为：
 
 ```text
 <project>/common/<trait>/gwas/<trait>.gz
@@ -142,191 +84,178 @@ The default locations and their CLI overrides are listed by
 <main-project>/common/<trait>/magma/<trait>.genes.out
 ```
 
-`LE8_GWAS_DIR`, `LE8_PQTL_IV_DIR`, and `LE8_MQTL_IV_DIR` are project roots,
-not `common` or `clean` directories. `LE8_PROT_BED` defaults relative to the
-pQTL project root. For a single-trait diagnostic run only, `--outcome-gwas` can select
-an outcome file directly; the wrapper passes that exact resolved path to every
-R job so preflight and runtime cannot diverge.
+`--grch auto` 会按 trait 自动识别 GRCh37/GRCh38。单 trait 诊断运行也可以用 `--outcome-gwas FILE` 直接指定结局 GWAS。
 
-LE8 normalizes every GCTA `.jma.cojo` SNP column against the corresponding
-full GWAS with `match_GRCH` from `0f/0phe.f.sh`. This permits a PLINK reference
-to use `chr:pos:ref:alt` while the full outcome/QTL files use rsIDs; ambiguous
-multi-allelic matches are excluded rather than joined by position alone. An
-unchanged rsID can also bridge GRCh37/38 positions when its alleles agree; LE8
-then uses the full GWAS coordinates for downstream cis/local classification.
+## 已内置的本地配置
 
-Outcome GWAS genome builds are detected independently for each trait. The
-default `--grch auto` accepts both GRCh37 and GRCh38 inputs in the same run
-and passes the detected build to that trait's jobs. Use `--grch 37` or
-`--grch 38` only when every selected trait must match a required build.
-
-MR-link-2 is an expensive sensitivity analysis and uses the exact
-case-sensitive control `RUN_MRlink2=Top|All|None` (CLI:
-`--run-mrlink2 Top|All|None`). The default `Top` runs the prespecified
-PCSK9/LPA/GDF15/NTPROBNP/MMP12 anchors when available, then the strongest
-cis/local MR and C1 candidates, capped by `C2_TOP_MAX` (default 50). `All`
-runs every eligible region and `None` skips the method. When selected, it
-uses the same detected build to select
-`<LE8_REFGEN_ROOT>/<37|38>/pfile` (default root:
-`/mnt/d/data.BIG/refGen/1kg`). Both `.pvar` and compressed `.pvar.zst`
-pfiles are accepted. The default population is EUR. If
-`<1kg>/<build>/bfile/EUR/chr*` or `<pfile>/EUR.chr*` already exists it is used
-directly; otherwise the runner loads `<pfile>/chr*` with PLINK2's `vzs`
-modifier when needed and applies
-`--keep` from the sibling `id/EUR.id.2col`. If that persistent ID file is
-absent, the runner falls back to rows whose final `super_pop` column is `EUR`
-in `samples.txt`. The filtered BED cache is written under each analysis
-output, with multiallelic sites removed via `--max-alleles 2`, so separate
-`EUR.chr*` pfiles do not need to be generated.
-
-Regional inputs are mapped to the selected PLINK IDs by `match_GRCH`.
-`MRLINK2_REF_PFILE_DIR`, `MRLINK2_REF_BED`, `MRLINK2_REF_POP`,
-`MRLINK2_REF_ID_DIR`, or `MRLINK2_REF_SAMPLES` may override the defaults;
-preflight rejects a build mismatch or an invalid population keep source.
-
-## C2 MR and DANDELION input contract
-
-MR takes the independent SNP set from each exposure's `.jma.cojo`, then reads
-alleles, effects and coordinates from the matching full `.gz`.  `.cis.gz` is a
-regional extract, not a replacement for a genome-wide independent instrument
-set; `.ldr.cojo` is GCTA LD output and is retained as provenance rather than
-treated as summary statistics.
-
-For the protein-layer DANDELION analysis, disease exposures come from the
-outcome `.jma.cojo`, each candidate protein's complete `.gz` supplies the
-trans-pQTL P values at those SNPs, and a gene-level disease P-value file supplies
-the second component.  A WES burden/gene-level file is preferred:
+以下配置已经写入 `le8.sh`，当前运行无需额外 `export`：
 
 ```bash
-./le8.sh -Y cvd_cad --biom prot --steps c1_correlate,c2_cause \
-  --dandelion-gene-p /mnt/d/data.BIG/gwas/main/common/cvd_cad/wes/cvd_cad.gene_p.tsv \
-  --dandelion-gene-annotation /mnt/d/data.BIG/refGen/genes/GRCh37.genes.tsv
+C1_LE4_COVARS="diet.pts,pa.pts,smoke.pts,sleep.pts"
+C1_FULL_LE8_SENSITIVITY="TRUE"
+C1_TREATMENT_VARS="drug.lipid"
+
+C2_PROT_HERITABILITY_FILE="/mnt/d/files/ppp.h2.csv"
+C2_MET_HERITABILITY_FILE=""
+C2_HERITABILITY_FILE=""
 ```
 
-Without `--dandelion-gene-p`, C2 uses
-`main/common/<trait>/magma/<trait>.genes.out` and labels the result explicitly as
-an adapted GWAS gene-level sensitivity analysis, not WES burden evidence. It
-is retained for backward compatibility but is excluded from primary C5
-evidence grading. Disable this fallback with
-`--dandelion-allow-magma FALSE`. C2 also flags a run when selected DPGs exceed
-25% of tested targets (change with `--dandelion-max-target-fraction`); a broad
-selection is not counted as primary evidence. Outputs now
-include input/QTL coverage audits, all tested pairs, selected paths, DPG hubs,
-MR/observational integration, a complete evidence landscape, a locus-to-DPG
-heatmap, and the official `DANDELION::gen_fig` network PDF.
+`drug.lipid` 是由 UKB 6153 和 6177 字段各次访视中的降脂药类别生成的分析用二元变量。C1 会把它作为治疗协变量，并把基础协变量加 LE4 作为主调整集；完整 LE8 调整保留为敏感性输出。
 
-DANDELION uses the exact `RUN_Dandelion=Top|All|None` contract (CLI:
-`--run-dandelion`). `Top` restricts candidate disease-proximal proteins to the
-same audited C2 top set; `All` tests every eligible assayed protein; `None`
-skips it. It is not run for metabolites: the method prioritizes gene/protein
-nodes through trans-regulatory and gene-level disease evidence, and there is
-no coherent metabolite analogue merely because mQTLs exist. Metabolite C2
-Figures 6–9 are therefore retained as explicitly unavailable panels.
+蛋白和代谢物遗传力输入分别配置，避免把蛋白遗传力误用于代谢物。遗传力文件支持 CSV 或 RDS，至少应包含：
 
-### Bidirectional MR and individual genetic decomposition
+| 字段 | 必需 | 含义 |
+|---|---:|---|
+| `feature` | 是 | 与组学特征匹配的标识 |
+| `snp_h2` | 是 | SNP 遗传力估计 |
+| `snp_h2_se` | 否 | SNP 遗传力标准误 |
 
-C2 also runs disease-liability-to-omic MR using independent outcome-GWAS lead
-SNPs against each full pQTL/mQTL summary. This reverse direction estimates
-genetic liability, not the effects of established disease, treatment or
-survival. `c2.Fig11.bidirectional_mr.png`, `c2.reverse_MR_all.csv` and the
-corresponding workbook sheets keep the two directions separate.
+这些值仍可在启动命令前通过同名环境变量覆盖。
 
-`c2.genetic_score_weights.tsv` is a PLINK-style manifest of cis/local weights.
-If individual genetically predicted omic scores have been generated from UKB
-genotypes, C2 auto-discovers `Rdata/prot.pgs.rds` or `Rdata/met.pgs.rds`.
-Expected columns are `eid` plus `FEATURE.pgs`; `_pgs`, `.PGS`, `_PGS`,
-`_GRS`, `GRS_FEATURE`, and an exact feature-name fallback are also recognized.
-`C2_GENETIC_SCORE_FILE` may override the path. C2 calibrates each score among
-participants known to be event-free at year ten (including later cases) and writes an
-observed/genetic/residual comparison. The residual is explicitly a
-non-genetic residual—it still contains lifestyle, environment, assay error,
-treatment and latent disease and must not be called a pure preclinical-disease
-component. External or cross-fitted QTL weights are preferred because weights
-estimated in the same UKB proteomics sample can overfit and suffer winner's curse.
+## 命令行
 
-## C5 censoring contract
+查看程序内置、最权威的参数说明：
 
-The glmnet panels fit penalized Cox models rather than any-event logistic
-models. LightGBM remains a fixed-horizon classifier because upstream LightGBM
-does not expose a native Cox objective; its training set excludes participants
-censored before `C5_HORIZON`. The headline AUC is an IPCW cumulative/dynamic
-AUC at that horizon, while Harrell's C-index uses the full follow-up.
+```bash
+./le8.sh --help
+```
 
-`c5.Fig4.leadtime_prediction.png` reports score and individual-biomarker AUCs
-at increasing minimum lead times, MASLD-style within-5/within-10/over-10/
-over-12-year windows, and the eligible case/control counts. A red marker is
-placed only at the farthest *consecutively* supported horizon: every tested
-lead time through H must have lower 95% AUC CI > 0.50 and at least 100 cases
-(change with `--c5-lead-min-cases`). Maximum follow-up alone never earns an
-"up to N years" claim. These curves use a minimum-lead-time case/control AUC;
-they are intentionally distinguished from the headline 10-year IPCW
-cumulative/dynamic AUC.
+常用参数：
 
-`c5.Fig5.score_vs_topN_mechanism.png` compares a training-locked top-1
-biomarker, an unweighted top-N mean, and a training marginal-Cox-weighted top-N score on
-the same held-out participants. It shows AUC, validation Cox beta and CI,
-case-control mean separation, pooled within-group SD, Cohen's d, bootstrap
-stability, risk-set-matched diagnosis-anchored score separation, average biomarker correlation
-and effective N. The grey band is the distribution of the N individual
-biomarkers; the best validation biomarker is displayed only as an optimistic
-reference and is never used for model selection. Raw SD is not itself the
-mechanism: aggregation helps when mean separation grows relative to
-within-group noise.
+| 参数 | 说明 |
+|---|---|
+| `-Y, --trait TRAITS` | 一个或多个 trait，多个值用逗号分隔 |
+| `-b, --biom LAYERS` | `prot`、`met` 或 `prot,met` |
+| `-s, --steps JOBS` | 指定模块，多个值用逗号分隔 |
+| `--from JOB` / `--to JOB` | 按固定模块顺序选择起止范围 |
+| `--replace TRUE\|FALSE` | 是否忽略模块缓存；默认 `FALSE` |
+| `--preflight` | 检查环境、路径和必需文件后退出 |
+| `--dry-run` | 打印执行计划后退出 |
+| `--analysis-root DIR` | 覆盖输出根目录 |
+| `--cores N` | R worker 数；默认 4 |
+| `--seed N` | 随机种子；默认 2026 |
+| `--grch auto\|37\|38` | 基因组版本；默认自动识别 |
 
-`c5.Fig12.attained_age_sensitivity.png` compares baseline-time and
-attained-age delayed-entry Cox effects for each score. The large-metabolite
-branch writes Figs 1–3 before optional matching/bootstrap diagnostics and caps
-diagnostic resampling sizes, so an interrupted diagnostic cannot leave C5
-without its primary figures.
+数据路径参数：
 
-## C3 credible-set diagnostics
+- `--gwas-dir DIR`、`--pqtl-dir DIR`、`--mqtl-dir DIR`
+- `--prot-bed FILE`、`--refgen-root DIR`、`--ukb-phe DIR`
+- `--outcome-gwas FILE`、`--shared-shell FILE`、`--r-bin FILE`
 
-`c3.Fig4.credible_sets.png` uses a log posterior axis so a one-SNP posterior
-near 1 does not make all alternative variants visually disappear. It also
-shows credible-set size against robust PP(H4), the full credible-set ECDF and
-an explicit count of one-SNP posterior concentrations. Such concentration is
-not automatically accepted as precise fine-mapping; verify the LD reference,
-allele harmonization and single-causal-variant assumption using
-`c3.credible_set_audit.csv` and `c3.credible_set_by_locus.csv`.
+可选计算参数：
 
-## Directionality and supervised modules
+- `--run-mrlink2 Top|All|None`：MR-link-2，默认 `Top`。
+- `--run-dandelion Top|All|None`：蛋白 DANDELION，默认 `Top`。
+- `--dandelion-gene-p FILE`：基因层面的结局 P 值。
+- `--dandelion-allow-magma TRUE|FALSE`：未指定基因 P 值时是否允许使用 MAGMA 输入。
+- `--dandelion-gene-annotation FILE`、`--dandelion-snp-file FILE`、`--dandelion-snp-gene-map FILE`、`--dandelion-fdr FLOAT`。
+- `--run-gpu-coloc TRUE|FALSE`：是否运行 GPU-coloc，默认 `TRUE`。
+- `--nested-cv TRUE|FALSE`：是否运行 C5 嵌套交叉验证，默认 `FALSE`。
+- `--inc_prot FILE`、`--inc_met FILE`：限制 C5 使用的候选特征。
+- `--direction-anchors CSV`：覆盖 C1/C2/C5 的方向锚点。
+- `--c4-module-boot N`、`--c4-module-stability X`：C4 模块稳定性参数。
+- `--c5-topn-max N`、`--c5-topn-boot N`、`--c5-lead-min-cases N`、`--c5-mechanism-n N`：C5 面板参数。
 
-C1 contrasts incident, five-year landmark, baseline-prevalent logistic and
-case-only years-since-diagnosis evidence. The resulting
-`c1.Fig9.directionality_triage.png` and C2 integration are anchored by PCSK9,
-LPA, GDF15, NTPROBNP and MMP12 by default; override them with
-`--direction-anchors GDF15,PCSK9,...`.
-C1 labels a signal as reactive-compatible rather than as a proven consequence:
-prevalent associations can also reflect treatment, survival selection,
-prevalence-incidence bias and preclinical disease. A valid forward MR plus
-robust colocalization is therefore allowed to coexist with reactive evidence.
-C4 retains its detailed figures and adds a consolidated supervised module atlas,
-network globe, bootstrap module membership, and stable `YS_core` selection.
-The atlas, network globe and selection/mediation composites are numbered
-sequentially as `c4.Fig7`–`c4.Fig9`; `c4.Fig1`–`c4.Fig6` are the preceding
-ordered figures.
-Control module resampling with `--c4-module-boot` and
-`--c4-module-stability`.
+MR-link-2 参考数据可通过 `--mrlink2-ref-bed`、`--mrlink2-ref-pfile-dir`、`--mrlink2-ref-pop`、`--mrlink2-ref-id-dir` 和 `--mrlink2-ref-samples` 配置。
 
-C5 reports both the original five-stage support count and a safeguard-aware
-grade. Grade A requires observational association, forward MR and robust
-colocalization. Grade B requires causal/locus evidence plus observational or
-distal landmark support. Reactive evidence changes the assigned biomarker role
-(for example, "causal + reactive mixed") but does not veto otherwise coherent
-genetic evidence. C5 stability is shown as unavailable, rather than zero, when
-nested cross-validation was not requested.
+## 常用运行方式
 
-C5 has one upstream hard prerequisite: a readable C1 result for the same omic
-layer. C2, C3 and C4 are optional. Missing, unreadable or explicitly
-unavailable optional modules are recorded in `c5.upstream_availability.csv`;
-their fixed figure columns/panels remain in place and are labelled unavailable
-instead of terminating C5 or silently counting missing evidence as zero.
+仅运行 C1 和 C2：
 
-C5 additionally compares three prespecified score roles: a five-year distal
-antecedent panel, a genetic-causal panel (the same feature must have cis/local
-MR at FDR < 0.05 and robust colocalization), and their hybrid. Trans/distal-only
-MR remains available as a separate sensitivity score. Cox linear predictors are retained as linear predictors and standardized
-on the training set; they are not passed through `plogis()` or presented as
-calibrated probabilities. The ROC panels use the same IPCW cumulative/dynamic
-definition as the tabular headline AUC, and baseline prevalence is presented as
-a cross-sectional proportion rather than a pseudo-survival curve.
+```bash
+./le8.sh -Y cvd_cad --biom prot --steps c1_correlate,c2_cause
+```
+
+从 C4 运行到最后：
+
+```bash
+./le8.sh -Y cvd_cad --biom met --from c4_connect
+```
+
+运行多个 trait 和两层组学：
+
+```bash
+./le8.sh -Y cvd_cad,masld --biom prot,met
+```
+
+临时关闭可选的 MR-link-2、DANDELION 和 GPU-coloc：
+
+```bash
+./le8.sh -Y cvd_cad --biom prot \
+  --run-mrlink2 None \
+  --run-dandelion None \
+  --run-gpu-coloc FALSE
+```
+
+强制重算所选模块：
+
+```bash
+./le8.sh -Y cvd_cad --biom prot,met --replace TRUE
+```
+
+## 缓存与续跑
+
+默认 `--replace FALSE`。每个模块会检查已有产物和缓存签名，并尽量从有效结果继续运行。C1/C2 的最终缓存包含代码和关键配置签名；部分耗时阶段还使用可独立复用的阶段缓存。
+
+已有的 `/mnt/d/analysis/le8` 可以保留用于续跑。修改输入、关键配置或代码后，如果签名不再匹配，相关结果会重新生成；需要完全忽略模块缓存时使用 `--replace TRUE`。
+
+## 输出
+
+默认输出根目录：
+
+```text
+/mnt/d/analysis/le8/
+└── <trait>/
+    ├── prot/
+    │   └── <module outputs>
+    ├── met/
+    │   └── <module outputs>
+    └── logs/
+```
+
+各模块按适用情况写出 CSV、RDS、XLSX 和图形文件，并生成输入状态、匹配率、方法范围、缓存状态或恢复任务等审计文件。运行日志按 trait 和时间记录在 `logs` 下。
+
+## 资源控制
+
+SNP/基因组版本匹配默认采用磁盘外排，减少大文件在内存中的复制：
+
+| 参数或变量 | 默认值 |
+|---|---:|
+| `--match-memory-mb` / `LE8_MATCH_MEMORY_MB` | 4096 MB |
+| `--match-sort-memory-mb` / `LE8_MATCH_SORT_MEMORY_MB` | 512 MB |
+| `--match-tmp-dir` / `LE8_MATCH_TMP_DIR` | `/mnt/d/tmp` |
+| `--cores` / `N_CORES` | 4 |
+
+包装器默认把常见 BLAS/OpenMP 线程数设为 1，以避免 fork worker 与底层线程叠加造成内存和 CPU 过量占用。运行前应确保临时目录和输出目录有足够磁盘空间。
+
+## 故障排查
+
+1. 先运行与正式命令相同参数的 `--preflight`。
+2. 再运行 `--dry-run`，确认 trait、组学层、模块顺序和解析后的路径。
+3. 数据未找到时，用相应的路径参数覆盖默认值。
+4. 依赖缺失时，用 `environment.yml` 更新 `le8` Conda 环境。
+5. 可选工具暂不可用时，可把 MR-link-2、DANDELION 或 GPU-coloc 设为 `None`/`FALSE`。
+6. 大型匹配任务失败时，检查 `/mnt/d/tmp` 空间，并按需要调整匹配内存或临时目录。
+7. 从旧输出续跑异常时，查看对应 trait 的日志和缓存审计；确认需要全量重算后再使用 `--replace TRUE`。
+
+## 项目结构
+
+```text
+le8/
+├── le8.sh                 # 统一命令行入口
+├── environment.yml        # Conda 环境
+├── README.md              # 本说明
+└── f/
+    ├── c1_correlate.R
+    ├── c2_cause.R
+    ├── c2_genetic_decompose.R
+    ├── c2_mr_link2.py
+    ├── c3_coloc.R
+    ├── c3_coloc_GPU.py
+    ├── c4_connect.R
+    ├── c5_consolidate.R
+    ├── s1_interact.R
+    ├── s2_nonlin.R
+    └── comm.f.R
+```
+

@@ -31,6 +31,39 @@ map_c2_score_columns <- function(features,nms){
   x<-setNames(vapply(features,one,character(1)),features);x[!is.na(x)]
 }
 
+find_c2_heritability_file <- function(layer){
+  layer_explicit<-Sys.getenv(if(layer=="protein")"C2_PROT_HERITABILITY_FILE" else
+    "C2_MET_HERITABILITY_FILE",unset="")
+  explicit<-Sys.getenv("C2_HERITABILITY_FILE",unset="")
+  stem<-if(layer=="protein")"prot"else"met"
+  automatic<-c(file.path(indir,"Rdata",paste0(stem,".heritability.csv")),
+    file.path(indir,"Rdata",paste0(stem,".heritability.rds")))
+  z<-unique(c(layer_explicit,explicit,automatic));z<-z[nzchar(z)&file.exists(z)&file.size(z)>0]
+  if(length(z))normalizePath(z[[1]],winslash="/",mustWork=FALSE)else NA_character_
+}
+
+read_c2_heritability <- function(layer){
+  f<-find_c2_heritability_file(layer)
+  empty<-list(data=tibble(feature=character(),snp_h2=numeric(),snp_h2_se=numeric()),
+    status=tibble(status="unavailable",file=NA_character_,detail="Optional SNP-heritability file was not found"))
+  if(is.na(f))return(empty)
+  x<-tryCatch(if(grepl("\\.rds$",f,ignore.case=TRUE))as_tibble(readRDS(f))else
+    as_tibble(data.table::fread(f,showProgress=FALSE,check.names=FALSE)),error=function(e)e)
+  if(inherits(x,"condition"))return(modifyList(empty,list(status=tibble(status="invalid",file=f,detail=conditionMessage(x)))))
+  pick<-function(pattern){i<-grep(pattern,names(x),ignore.case=TRUE)[1];if(is.na(i))NA_character_ else names(x)[[i]]}
+  fcol<-pick("^(feature|term|trait|exposure|protein|metabolite)$")
+  hcol<-pick("^(snp_?h2|h2_?snp|h2|heritability)$")
+  scol<-pick("^(snp_?h2_?se|h2_?se|heritability_?se|se)$")
+  if(is.na(fcol)||is.na(hcol))return(modifyList(empty,list(status=tibble(status="invalid",file=f,
+    detail="Need feature/term/trait and snp_h2/h2/heritability columns"))))
+  d<-tibble(feature=as.character(x[[fcol]]),snp_h2=suppressWarnings(as.numeric(x[[hcol]])),
+    snp_h2_se=if(is.na(scol))NA_real_ else suppressWarnings(as.numeric(x[[scol]])))|>
+    filter(!is.na(feature),nzchar(feature),is.finite(snp_h2))|>
+    mutate(snp_h2=pmax(0,pmin(1,snp_h2)))|>distinct(feature,.keep_all=TRUE)
+  list(data=d,status=tibble(status=if(nrow(d))"ok"else"invalid",file=f,
+    detail=paste(nrow(d),"features with SNP-heritability estimates")))
+}
+
 component_association <- function(dd,x,covars,tvar,evar,prevalent=FALSE){
   covars<-intersect(covars,names(dd))
   if(prevalent){
@@ -85,7 +118,7 @@ joint_component_association <- function(dd,covars,tvar,evar,prevalent=FALSE){
 risk_set_component_scan <- function(dd,feature,covars,tvar,evar,
   cuts=c(0,.5,1,2,5,10,16)){
   covars<-intersect(covars,names(dd))
-  components<-c(Observed=".omic_z",PGS=".genetic_z",Residual=".residual_z")
+  components<-c(Observed=".omic_z",`PGS-predicted`=".genetic_z",Residual=".residual_z")
   map_dfr(seq_len(length(cuts)-1L),function(i){
     lo<-cuts[[i]];hi<-cuts[[i+1L]]
     # Later cases are valid controls for an earlier window. Participants
@@ -119,30 +152,66 @@ plot_individual_genetic_decomposition <- function(summary){
      !all(c("status","genetic_partial_R2")%in%names(summary)))
     return(blank_plot("PGS calibration and disease association",
       "PGS input unavailable; individual genetic decomposition was skipped"))
-  d<-as_tibble(summary)|>filter(status=="ok",is.finite(genetic_partial_R2))|>
-    arrange(desc(genetic_partial_R2))|>slice_head(n=30)|>
-    mutate(feature=factor(feature,levels=rev(feature)),r2=100*genetic_partial_R2)
+  d<-as_tibble(summary)|>filter(status=="ok",is.finite(genetic_partial_R2))
+  if(!"pgs_partial_R2"%in%names(d))d$pgs_partial_R2<-d$genetic_partial_R2
+  if(!"incident_genetic_signal_fraction_abs"%in%names(d)){
+    den<-abs(d$incident_joint_beta_genetic)+abs(d$incident_joint_beta_residual)
+    d$incident_genetic_signal_fraction_abs<-ifelse(is.finite(den)&den>0,
+      abs(d$incident_joint_beta_genetic)/den,NA_real_)
+  }
+  if(!"incident_genetic_direction_concordant"%in%names(d))
+    d$incident_genetic_direction_concordant<-sign(d$incident_joint_beta_genetic)==sign(d$incident_beta_observed)
+  d<-d|>mutate(pgs_r2=100*coalesce(pgs_partial_R2,genetic_partial_R2))
   if(!nrow(d))return(blank_plot("PGS calibration and disease association",
     "No matched prot.pgs.rds/met.pgs.rds score could be calibrated"))
-  pa<-ggplot(d,aes(r2,feature,fill=genetic_beta>=0))+geom_col(width=.72)+
-    scale_fill_manual(values=c(`TRUE`="#3F78A8",`FALSE`="#D95F02"),guide="none")+
-    labs(title="a. Observed omic variance explained by its COJO PGS",
-      subtitle="Partial R² calibrated among participants event-free and observed for at least 10 years",
-      x="Partial R² (%)",y=NULL)+theme_5c(9)
+  has_h2<-"snp_h2"%in%names(d)&&any(is.finite(d$snp_h2))
+  d_a<-d|>arrange(desc(if(has_h2)coalesce(snp_h2,pgs_r2/100)else pgs_r2/100))|>
+    slice_head(n=30)|>mutate(feature=factor(feature,levels=rev(feature)))
+  if(has_h2){
+    vr<-bind_rows(d_a|>transmute(feature,estimate=100*snp_h2,type="SNP h²"),
+      d_a|>transmute(feature,estimate=pgs_r2,type="Variance captured by PGS"))|>
+      filter(is.finite(estimate))
+    pa<-ggplot(vr,aes(estimate,feature,fill=type))+geom_col(position="identity",width=.70,alpha=.72)+
+      scale_fill_manual(values=c("SNP h²"="#A6CEE3","Variance captured by PGS"="#1F78B4"))+
+      labs(title="a. SNP heritability and variance captured by the omic PGS",
+        subtitle="h² comes only from the configured layer-specific file; PGS R² is calibrated in distal controls",
+        x="Variance (%)",y=NULL,fill=NULL)+theme_5c(9)+theme(legend.position="top")
+  }else{
+    pa<-ggplot(d_a,aes(pgs_r2,feature,fill=genetic_beta>=0))+geom_col(width=.72)+
+      scale_fill_manual(values=c(`TRUE`="#3F78A8",`FALSE`="#D95F02"),guide="none")+
+      labs(title="a. Observed omic variance captured by its COJO PGS",
+        subtitle="Partial R² in distal controls; this is not SNP heritability (h²)",
+        x="PGS partial R² (%)",y=NULL)+theme_5c(9)
+  }
+  share<-d|>filter(is.finite(incident_genetic_signal_fraction_abs))|>
+    arrange(incident_p_observed)|>slice_head(n=30)|>
+    mutate(feature=factor(feature,levels=rev(feature)),
+      share=100*incident_genetic_signal_fraction_abs,
+      direction=ifelse(incident_genetic_direction_concordant,"Concordant","Opposite"))
+  pb<-if(!nrow(share))blank_plot("b. Genetic-associated component of disease signal",
+    "No joint PGS-predicted/residual model was estimable")else
+    ggplot(share,aes(share,feature,fill=direction))+geom_col(width=.72)+
+      scale_fill_manual(values=c(Concordant="#1B9E77",Opposite="#D7301F"))+
+      labs(title="b. Genetic-associated share of component signal",
+        subtitle="Absolute joint log-risk contributions; descriptive, not a mediated or causal proportion",
+        x="PGS-predicted share of |component log-risk signal| (%)",y=NULL,fill=NULL)+
+      theme_5c(9)+theme(legend.position="top")
   eff<-bind_rows(
     d|>transmute(feature,component="Observed",beta=incident_beta_observed,se=incident_se_observed),
-    d|>transmute(feature,component="PGS",beta=incident_beta_genetic,se=incident_se_genetic),
+    d|>transmute(feature,component="PGS-predicted",beta=incident_beta_genetic,se=incident_se_genetic),
     d|>transmute(feature,component="Residual",beta=incident_beta_residual,se=incident_se_residual))|>
     filter(is.finite(beta),is.finite(se))|>mutate(lo=beta-1.96*se,hi=beta+1.96*se)
-  keep<-as.character(tail(levels(d$feature),12));eff<-eff|>filter(as.character(feature)%in%keep)
-  pb<-if(!nrow(eff))blank_plot("b. Component-specific incident associations","No estimable Cox model")else
+  keep<-d|>filter(is.finite(incident_p_observed))|>arrange(incident_p_observed)|>
+    slice_head(n=12)|>pull(feature)
+  eff<-eff|>filter(feature%in%keep)|>mutate(feature=factor(feature,levels=rev(keep)))
+  pc<-if(!nrow(eff))blank_plot("c. Component-specific incident associations","No estimable Cox model")else
     ggplot(eff,aes(beta,feature,color=component))+geom_vline(xintercept=0,color="grey75")+
       geom_errorbarh(aes(xmin=lo,xmax=hi),height=.12,position=position_dodge(width=.55))+
       geom_point(position=position_dodge(width=.55),size=2)+
-      labs(title="b. Separate incident Cox models",
+      labs(title="c. Separate incident Cox models",
         subtitle="Residual includes environment, treatment and assay noise; it is not pure preclinical disease",
         x="Log HR per 1-SD component",y=NULL,color=NULL)+theme_5c(9)+theme(legend.position="top")
-  pa|pb
+  (pa|pb)/pc+plot_layout(heights=c(1,1.05))
 }
 
 plot_component_leadtime <- function(x){
@@ -161,7 +230,7 @@ plot_component_leadtime <- function(x){
     geom_line(linewidth=.75)+geom_point(aes(size=N_case),alpha=.88)+
     facet_wrap(~feature,scales="free_y",ncol=3)+
     scale_x_continuous(breaks=c(.5,1,2,5,10,16),limits=c(0,16))+
-    labs(title="Risk-set lead-time associations of observed, PGS and residual components",
+    labs(title="Risk-set lead-time associations of observed, PGS-predicted and residual components",
       subtitle="Cases are diagnosed in each window; controls remain observed and disease-free through its upper boundary",
       x="Years from baseline to diagnosis window",y="Log odds ratio per 1-SD",
       color=NULL,fill=NULL,size="Cases")+theme_5c(8)+theme(legend.position="bottom")
@@ -177,13 +246,22 @@ run_individual_genetic_decomposition <- function(layer,outdir,candidates=tibble(
   scores<-read_c2_scores(score_file)
   biom<-if(layer=="protein")read_prot()else read_met();features<-setdiff(names(biom),"eid")
   score_cols<-map_c2_score_columns(features,names(scores))
+  split_names<-function(x){z<-trimws(strsplit(x,",",fixed=TRUE)[[1]]);unique(z[nzchar(z)])}
   if(!length(score_cols))return(modifyList(empty,list(status=tibble(status="not run",
     detail="No FEATURE.pgs column matched an assayed feature"))))
-  preferred<-unique(c(as.character(candidates$feature%||%character()),names(score_cols)))
+  decomp_anchors<-split_names(Sys.getenv("C2_DECOMP_ANCHORS",
+    unset="LPA,PCSK9,GDF15,NTPROBNP,MMP12,L_VLDL_TG.pct,L_VLDL_TG,Total_TG,ApoB"))
+  preferred<-unique(c(as.character(candidates$feature%||%character()),
+    decomp_anchors,names(score_cols)))
   preferred<-preferred[preferred%in%names(score_cols)]
   if(!is.finite(max_features)||max_features<1L)max_features<-length(preferred)
   score_cols<-score_cols[head(preferred,max_features)]
-  ph<-read_all(unique(c("eid","ethnic.c",vars.adj2,"birth_date","date_attend",
+  treatment_vars<-split_names(Sys.getenv("C2_TREATMENT_VARS",
+    unset=Sys.getenv("C1_TREATMENT_VARS",unset="")))
+  le4_vars<-split_names(Sys.getenv("C2_LE4_COVARS",
+    unset="diet.pts,pa.pts,smoke.pts,sleep.pts"))
+  model_covars<-unique(c(vars.basic,le4_vars,treatment_vars))
+  ph<-read_all(unique(c("eid","ethnic.c",model_covars,"birth_date","date_attend",
     "date_lost","date_death",paste0("fod_icd10_",Y))))|>
     filter_analysis_cohort()|>make_outcome(Y)
   tvar<-paste0(Y,".t2e");evar<-paste0(Y,".Yt2e");ydate<-paste0("fod_icd10_",Y)
@@ -193,7 +271,7 @@ run_individual_genetic_decomposition <- function(layer,outdir,candidates=tibble(
   ph$eid<-as.character(ph$eid);biom$eid<-as.character(biom$eid);scores$eid<-as.character(scores$eid)
   d<-ph|>inner_join(biom[,c("eid",names(score_cols)),drop=FALSE],by="eid")|>
     inner_join(scores[,unique(c("eid",unname(score_cols))),drop=FALSE],by="eid")
-  covars<-intersect(vars.adj2,names(d))
+  covars<-intersect(model_covars,names(d))
   # Calibration uses everyone known to be event-free at year 10, including
   # participants diagnosed later. Restricting to lifelong non-cases would
   # condition the omic~PGS calibration on the eventual outcome.
@@ -252,13 +330,35 @@ run_individual_genetic_decomposition <- function(layer,outdir,candidates=tibble(
   summary<-bind_rows(lapply(rows,`[[`,"summary"))
   trajectory<-bind_rows(lapply(rows,`[[`,"trajectory"))
   if(nrow(summary)){
+    summary<-summary|>mutate(
+      # Retain genetic_partial_R2 for backward compatibility, but name the
+      # estimand correctly: this is variance captured by this PGS, not h².
+      pgs_partial_R2=genetic_partial_R2,
+      incident_component_signal_abs=abs(incident_joint_beta_genetic)+
+        abs(incident_joint_beta_residual),
+      incident_genetic_signal_fraction_abs=ifelse(
+        is.finite(incident_component_signal_abs)&incident_component_signal_abs>0,
+        abs(incident_joint_beta_genetic)/incident_component_signal_abs,NA_real_),
+      incident_genetic_direction_concordant=is.finite(incident_joint_beta_genetic)&
+        is.finite(incident_beta_observed)&
+        sign(incident_joint_beta_genetic)==sign(incident_beta_observed),
+      causal_fraction_identifiable=FALSE,
+      signal_fraction_interpretation=paste0(
+        "Absolute share of the joint standardized-component log-risk signal; ",
+        "not a mediated or causal fraction"))
+    h2<-read_c2_heritability(layer)
+    summary<-summary|>left_join(h2$data,by="feature")|>
+      mutate(pgs_h2_coverage=ifelse(is.finite(snp_h2)&snp_h2>0,
+        pmin(1,pgs_partial_R2/snp_h2),NA_real_))
     pcols<-grep("^(incident|prevalent)(_joint)?_p_",names(summary),value=TRUE)
     for(nm in pcols)summary[[paste0("FDR_",nm)]]<-p.adjust(summary[[nm]],"BH")
-  }
+  } else h2<-read_c2_heritability(layer)
   rawdir<-le8_job_dir(outdir,"c2_cause")
   write_raw_csv(summary,"c2.individual_genetic_decomposition.csv",rawdir)
   write_raw_csv(trajectory,"c2.genetic_component_leadtime.csv",rawdir)
   list(status=tibble(status="ok",detail=paste(length(score_cols),"matched scores"),
-    score_file=score_file,score_construction="COJO-weighted PGS; exploratory, not cross-fitted"),
-    summary=summary,trajectory=trajectory)
+    score_file=score_file,score_construction="COJO-weighted PGS; exploratory, not cross-fitted",
+    adjustment="basic covariates + behavioral LE4",
+    covariates=paste(covars,collapse=";")),
+    heritability_status=h2$status,summary=summary,trajectory=trajectory)
 }

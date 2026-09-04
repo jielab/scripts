@@ -114,8 +114,10 @@ std_format() {
   [[ -z "$FILL_N" ]] || GWAS_POST_N_FILLED_DURING_FORMAT=TRUE
 }
 
-# Skip auxiliary combined panels such as chrXY while enumerating chromosome
-# pfiles; lead/MAGMA use the ordinary chr1..chr22/chrX/chrY panels.
+# Skip auxiliary panels such as chrXY, chrX.female, and chrX.male while
+# enumerating a reference directory.  lead/MAGMA use only the canonical
+# chr1..chr22/chrX/chrY panels; otherwise several prefixes can collapse to the
+# same normalized chromosome and overwrite the same per-chromosome files.
 ref_clump_pfiles() {
   local ref="$1" f prefix label chr found=FALSE
   if [[ -f "${ref}.pgen" && -f "${ref}.psam" && ( -f "${ref}.pvar" || -f "${ref}.pvar.zst" ) ]]; then
@@ -127,6 +129,7 @@ ref_clump_pfiles() {
       prefix=${f%.pgen}
       [[ -f "${prefix}.psam" && ( -f "${prefix}.pvar" || -f "${prefix}.pvar.zst" ) ]] || continue
       label=$(basename "$prefix"); chr=$(ref_chr "$label") || continue
+      [[ "$label" == "$(chr_label "$chr")" ]] || continue
       printf '%s %s %s\n' "$prefix" "$label" "$chr"; found=TRUE
     done < <(find "$ref" -maxdepth 1 -type f -name 'chr*.pgen' | sort -V)
   else
@@ -134,6 +137,7 @@ ref_clump_pfiles() {
       prefix=${f%.pgen}
       [[ -f "${prefix}.psam" && ( -f "${prefix}.pvar" || -f "${prefix}.pvar.zst" ) ]] || continue
       label=$(basename "$prefix"); chr=$(ref_chr "$label") || continue
+      [[ "$label" == "$(chr_label "$chr")" ]] || continue
       printf '%s %s %s\n' "$prefix" "$label" "$chr"; found=TRUE
     done < <(compgen -G "${ref}chr*.pgen" | sort -V)
   fi
@@ -432,19 +436,23 @@ gwas_post_mplot_current() {
   [[ -s "$MH_PNG" && -s "$MH_META" && -s "$MH_FLAG" && "$MH_PNG" -nt "$FINAL" ]] || return 1
   awk -F '\t' -v method="$PLOT_METHOD" -v panel="$ADD_PANEL" -v grch="$GRCH" \
     -v signal="$signal_input" -v match_col="$SIGNAL_MATCH_COL" -v match_value="$SIGNAL_MATCH_VALUE" \
-    -v locus_pos="$SIGNAL_LOCUS_POS" -v display_col="$SIGNAL_DISPLAY_COL" -v write_sig="$WRITE_SIG" '
+    -v locus_pos="$SIGNAL_LOCUS_POS" -v display_col="$SIGNAL_DISPLAY_COL" -v write_sig="$WRITE_SIG" \
+    -v plot_width="$PLOT_WIDTH" -v plot_height="$PLOT_HEIGHT" -v plot_res="$PLOT_RES" '
     $1=="plot_method"&&$2==method{m=1}
     $1=="add_panel"&&$2==panel{p=1}
     $1=="grch"&&$2==grch{g=1}
     $1=="magma_threshold"&&$2+0==2.5e-6{t=1}
-    $1=="mplot_style"&&$2==7{s=1}
+    $1=="mplot_style"&&$2==8{s=1}
+    $1=="plot_width"&&$2+0==plot_width+0{x=1}
+    $1=="plot_height"&&$2==plot_height{y=1}
+    $1=="plot_res"&&$2+0==plot_res+0{r=1}
     $1=="write_sig"&&$2==write_sig{w=1}
     $1=="signal_input"&&$2==signal{a=1}
     $1=="signal_match_col"&&$2==match_col{b=1}
     $1=="signal_match_value"&&$2==match_value{c=1}
     $1=="signal_locus_pos"&&$2==locus_pos{d=1}
     $1=="signal_display_col"&&$2==display_col{e=1}
-    END{exit !(m&&p&&g&&t&&s&&w&&a&&b&&c&&d&&e)}' "$MH_META" || return 1
+    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e)}' "$MH_META" || return 1
   if [[ "$ADD_PANEL" == magma ]]; then
     [[ -s "$genes" && "$MH_PNG" -nt "$genes" ]] || return 1
   fi
@@ -524,7 +532,7 @@ gwas_post_mplot() {
   Rscript "$MPLOT_R" "$GWAS_POST_MPLOT_INPUT" "$MH_PNG" "$GWAS" "$PLOT_METHOD" "$ADD_PANEL" \
     "$genes" "$PLOT_F" "$CIS_BED" "$MH_PLOT_BED" "$GRCH" "$MH_FLAG" \
     "$ADD_SIGNAL" "$SIGNAL_MATCH_COL" "$SIGNAL_MATCH_VALUE" "$SIGNAL_LOCUS_POS" "$SIGNAL_DISPLAY_COL" \
-    "$WRITE_SIG" "$MH_SIG" "$COJO_FILE"
+    "$WRITE_SIG" "$MH_SIG" "$COJO_FILE" "$PLOT_WIDTH" "$PLOT_HEIGHT" "$PLOT_RES"
   [[ -s "$MH_PNG" && -s "$MH_FLAG" ]] || { echo "ERROR: Manhattan plot or flag fragment was not created: $MH_PNG $MH_FLAG" >&2; return 1; }
   [[ "$WRITE_SIG" != TRUE || -s "$MH_SIG" ]] || { echo "ERROR: significant-hit summary was not created: $MH_SIG" >&2; return 1; }
   gwas_post_append_mplot_flag
@@ -539,8 +547,8 @@ gwas_post_mplot() {
     sig_input="$MH_SIG"
     [[ ! -s "$COJO_FILE" ]] || cojo_input="$COJO_FILE"
   fi
-  printf 'key\tvalue\nplot_method\t%s\nadd_panel\t%s\ngrch\t%s\nmagma_threshold\t2.5e-6\nmplot_style\t7\nwrite_sig\t%s\nsig_output\t%s\ncojo_input\t%s\nsignal_input\t%s\nsignal_match_col\t%s\nsignal_match_value\t%s\nsignal_locus_pos\t%s\nsignal_display_col\t%s\ngwas\t%s\ngwas_input\t%s\nmagma_input\t%s\nflag_fragment\t%s\ncreated\t%s\n' \
-    "$PLOT_METHOD" "$ADD_PANEL" "$GRCH" "$WRITE_SIG" "$sig_input" "$cojo_input" \
+  printf 'key\tvalue\nplot_method\t%s\nadd_panel\t%s\ngrch\t%s\nmagma_threshold\t2.5e-6\nmplot_style\t8\nplot_width\t%s\nplot_height\t%s\nplot_res\t%s\nwrite_sig\t%s\nsig_output\t%s\ncojo_input\t%s\nsignal_input\t%s\nsignal_match_col\t%s\nsignal_match_value\t%s\nsignal_locus_pos\t%s\nsignal_display_col\t%s\ngwas\t%s\ngwas_input\t%s\nmagma_input\t%s\nflag_fragment\t%s\ncreated\t%s\n' \
+    "$PLOT_METHOD" "$ADD_PANEL" "$GRCH" "$PLOT_WIDTH" "$PLOT_HEIGHT" "$PLOT_RES" "$WRITE_SIG" "$sig_input" "$cojo_input" \
     "$signal_input" "$SIGNAL_MATCH_COL" "$SIGNAL_MATCH_VALUE" "$SIGNAL_LOCUS_POS" \
     "$SIGNAL_DISPLAY_COL" "$GWAS" "$FINAL" "$panel_input" "$MH_FLAG" "$(date '+%F %T')" > "$meta_tmp"
   mv -f -- "$meta_tmp" "$MH_META"

@@ -6,7 +6,7 @@ suppressPackageStartupMessages({
   source(file.path(.c2_fdir,"c2_genetic_decompose.R"))
 })
 LE8_JOB <- "c2_cause"
-C2_CODE_VERSION <- "2026-09-02.audit1"
+C2_CODE_VERSION <- "2026-09-03.genetic_components_le4_3"
 C2_STAGE_VERSION <- "2026-08-31.final1" # MR/DANDELION estimators are unchanged
 MAX_FEATURES <- as.integer(Sys.getenv("C2_MAX_FEATURES", unset="500"))
 TOP_FOREST <- as.integer(Sys.getenv("C2_TOP_FOREST", unset="32"))
@@ -1179,7 +1179,14 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir)
   rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE);cache<-file.path(rawdir,"c2.res.rds")
   method_scope<-c2_method_scope_audit(layer);write_raw_csv(method_scope,"c2.method_scope_audit.csv",rawdir)
-  mode_signature<-paste0("MRlink2=",RUN_MRlink2,";Dandelion=",RUN_Dandelion)
+  h2_file0<-find_c2_heritability_file(layer)
+  h2_signature<-if(is.na(h2_file0))"h2=missing"else paste0("h2=",h2_file0,
+    ";size=",file.size(h2_file0),";mtime=",format(file.info(h2_file0)$mtime,tz="UTC",usetz=TRUE))
+  component_covariate_signature<-paste0("LE4=",Sys.getenv("C2_LE4_COVARS",
+    unset="diet.pts,pa.pts,smoke.pts,sleep.pts"),";treatment=",
+    Sys.getenv("C2_TREATMENT_VARS",unset=Sys.getenv("C1_TREATMENT_VARS",unset="")))
+  mode_signature<-paste0("MRlink2=",RUN_MRlink2,";Dandelion=",RUN_Dandelion,
+    ";",h2_signature,";",component_covariate_signature)
   pgs_file0<-find_c2_score_file(layer)
   pgs_check<-length(pgs_file0)==1L&&!is.na(pgs_file0)&&nzchar(pgs_file0)&&
     file.exists(pgs_file0)&&file.size(pgs_file0)>0
@@ -1246,8 +1253,9 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
     list(status=tibble(status="not run",detail=paste0("PGS check failed; score file not found: ",pgs_expected)),
       summary=tibble(),trajectory=tibble())
   write_raw_csv(individual_decomposition$status%||%tibble(),"c2.individual_genetic_decomposition_status.csv",rawdir)
+  write_raw_csv(individual_decomposition$heritability_status%||%tibble(),"c2.heritability_status.csv",rawdir)
   save_plot(plot_individual_genetic_decomposition(individual_decomposition$summary%||%tibble()),
-    "c2.Fig12.genetic_decomposition.png",16,8.5,outdir=outdir)
+    "c2.Fig12.genetic_decomposition.png",17,13,outdir=outdir)
   save_plot(plot_component_leadtime(individual_decomposition$trajectory%||%tibble()),
     "c2.Fig13.genetic_component_leadtime.png",17,11,outdir=outdir)
   save_plot(plot_bidirectional_mr(mr,reverse_mr,layer),"c2.Fig11.bidirectional_mr.png",16,8.5,outdir=outdir)
@@ -1334,7 +1342,8 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
     "c2.Fig14.evidence_grades.png",17,9,outdir=outdir)
 
   out<-list(meta=module_meta(layer,extra=list(code_version=C2_CODE_VERSION,mode_signature=mode_signature,
-            pgs_signature=pgs_signature,RUN_MRlink2=RUN_MRlink2,RUN_Dandelion=RUN_Dandelion)),MR=mr,MR_reverse=reverse_mr,MR_reverse_audit=reverse_audit,genetic_score_manifest=genetic_score_manifest,individual_decomposition=individual_decomposition,MR_best=best,observational=assoc,instrument_availability=availability,
+            pgs_signature=pgs_signature,h2_signature=h2_signature,
+            RUN_MRlink2=RUN_MRlink2,RUN_Dandelion=RUN_Dandelion)),MR=mr,MR_reverse=reverse_mr,MR_reverse_audit=reverse_audit,genetic_score_manifest=genetic_score_manifest,individual_decomposition=individual_decomposition,MR_best=best,observational=assoc,instrument_availability=availability,
             Fig1_summary=fig1$bars,Fig1_forest=fig1$forest,Fig3=fig3$wide,R2_QTL=top_r2,
             architecture=arch,top_candidates=top_candidates,evidence_grades=evidence_grades,
             DANDELION=dandelion,directionality_integration=directionality_integration,
@@ -1344,6 +1353,7 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
                    method_scope=method_scope,evidence_grades=evidence_grades,top_candidates=top_candidates,
                    genetic_score_manifest=genetic_score_manifest,
                    genetic_decomp_status=individual_decomposition$status%||%tibble(),
+                   heritability_status=individual_decomposition$heritability_status%||%tibble(),
                    genetic_decomp_summary=individual_decomposition$summary%||%tibble(),
                    genetic_leadtime=individual_decomposition$trajectory%||%tibble(),
                    MR_best=best,instrument_availability=availability,evidence_overlap=fig1$bars,effect_forest=fig1$forest,cis_local_vs_trans_distal=fig3$wide,QTL_R2=top_r2,instrument_architecture=arch,

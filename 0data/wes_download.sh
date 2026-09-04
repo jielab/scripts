@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 export LC_ALL=C
 
-WES_DIR_DEFAULT=/mnt/d/data.BIG/gwas/wes
+WES_DIR_DEFAULT=/mnt/h/wes
 SOURCE_MT_DEFAULT=gs://ukbb-exome-public/500k/results/results.mt
 SINGLE_SOURCE_MT_DEFAULT=gs://ukbb-exome-public/500k/results/variant_results.mt
 HAIL_VENV_DEFAULT="$HOME/venvs/hail"
@@ -19,7 +19,7 @@ Usage: ./wes_download.sh [options]
 Export the complete GeneBass gene-based results (SKAT-O, Burden and SKAT),
 one bgzipped TSV per phenotype.
 
-  --dir-wes PATH        WES root [/mnt/d/data.BIG/gwas/wes]
+  --dir-wes PATH        WES root [/mnt/h/wes]
   --dir-out PATH        Downloads root [<dir-wes>/Downloads]
   --tmpdir PATH         Hail temp [<dir-out>/tmp/hail]
   --hail-venv PATH      Hail virtual environment [~/venvs/hail]

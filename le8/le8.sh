@@ -139,6 +139,16 @@ C2_DANDELION_MAX_TARGET_FRACTION=0.25
 RUN_GPU_COLOC=TRUE
 C5_NESTED_CV=FALSE
 C1_DIRECTION_ANCHORS="${C1_DIRECTION_ANCHORS:-PCSK9,LPA,GDF15,NTPROBNP,MMP12}"
+C1_LE4_COVARS="${C1_LE4_COVARS:-diet.pts,pa.pts,smoke.pts,sleep.pts}"
+C1_FULL_LE8_SENSITIVITY="${C1_FULL_LE8_SENSITIVITY:-TRUE}"
+# drug.lipid is the baseline binary indicator derived in ukb/f/phe.R from
+# category 1 in UKB fields 6153 and 6177 across all available assessment
+# instances.  It is preferable here to the raw pipe-delimited drug.big3*
+# fields because the model expects an analysis-ready treatment covariate.
+C1_TREATMENT_VARS="${C1_TREATMENT_VARS:-drug.lipid}"
+C2_HERITABILITY_FILE="${C2_HERITABILITY_FILE:-}"
+C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-/mnt/d/files/ppp.h2.csv}"
+C2_MET_HERITABILITY_FILE="${C2_MET_HERITABILITY_FILE:-}"
 C4_MODULE_BOOT="${C4_MODULE_BOOT:-100}"
 C4_MODULE_STABILITY="${C4_MODULE_STABILITY:-0.70}"
 C5_TOPN_MAX="${C5_TOPN_MAX:-30}"
@@ -247,6 +257,8 @@ RUN_MRlink2=$(run_mode "$RUN_MRlink2") || { echo "ERROR: RUN_MRlink2 requires To
 RUN_Dandelion=$(run_mode "$RUN_Dandelion") || { echo "ERROR: RUN_Dandelion requires Top, All, or None" >&2; exit 2; }
 export RUN_MRlink2 RUN_Dandelion RUN_GPU_COLOC C5_NESTED_CV C5_INC_PROT C5_INC_MET
 export C1_DIRECTION_ANCHORS C4_MODULE_BOOT C4_MODULE_STABILITY C5_TOPN_MAX C5_TOPN_BOOT C5_LEAD_MIN_CASES C5_MECHANISM_N
+export C1_LE4_COVARS C1_FULL_LE8_SENSITIVITY C1_TREATMENT_VARS
+export C2_HERITABILITY_FILE C2_PROT_HERITABILITY_FILE C2_MET_HERITABILITY_FILE
 export MATCH_SNP_MEMORY_MB MATCH_SNP_SORT_MEMORY_MB MATCH_SNP_TMP_DIR
 export C2_DANDELION_GENE_P_FILE C2_DANDELION_GENE_ANNOTATION C2_DANDELION_SNP_FILE C2_DANDELION_SNP_GENE_MAP C2_DANDELION_FDR
 export C2_DANDELION_ALLOW_MAGMA C2_DANDELION_MAX_TARGET_FRACTION
@@ -421,6 +433,12 @@ preflight() {
   echo "  MR-link-2: $RUN_MRlink2; DANDELION: $RUN_Dandelion; GPU-coloc: $RUN_GPU_COLOC"
   echo "  C5 nested CV: $C5_NESTED_CV"
   echo "  directionality anchors: $C1_DIRECTION_ANCHORS"
+  echo "  C1 behavioral LE4 covariates: $C1_LE4_COVARS"
+  echo "  C1 full-LE8 sensitivity: $C1_FULL_LE8_SENSITIVITY"
+  echo "  C1/C2 treatment covariates: $C1_TREATMENT_VARS"
+  [[ -z "$C2_PROT_HERITABILITY_FILE" ]] || echo "  C2 protein SNP-heritability file: $C2_PROT_HERITABILITY_FILE"
+  [[ -z "$C2_MET_HERITABILITY_FILE" ]] || echo "  C2 metabolite SNP-heritability file: $C2_MET_HERITABILITY_FILE"
+  [[ -z "$C2_HERITABILITY_FILE" ]] || echo "  C2 all-layer SNP-heritability override: $C2_HERITABILITY_FILE"
   echo "  C4 module bootstrap/stability: $C4_MODULE_BOOT / $C4_MODULE_STABILITY"
   echo "  C5 top-N max/bootstrap: $C5_TOPN_MAX / $C5_TOPN_BOOT"
   echo "  SNP matching resources: memory=${MATCH_SNP_MEMORY_MB} MiB; sort=${MATCH_SNP_SORT_MEMORY_MB} MiB; tmp=$MATCH_SNP_TMP_DIR"
@@ -430,6 +448,8 @@ preflight() {
   [[ -z "$C5_INC_MET" ]] || echo "  C5 metabolite include list: $C5_INC_MET"
   [[ -z "$C5_INC_PROT" || -s "$C5_INC_PROT" ]] || { echo "  MISSING: --inc_prot file ($C5_INC_PROT)"; bad=1; }
   [[ -z "$C5_INC_MET" || -s "$C5_INC_MET" ]] || { echo "  MISSING: --inc_met file ($C5_INC_MET)"; bad=1; }
+  [[ "$PROT_DO" != TRUE || -z "$C2_PROT_HERITABILITY_FILE" || -s "$C2_PROT_HERITABILITY_FILE" ]] || { echo "  MISSING: C2 protein SNP-heritability file ($C2_PROT_HERITABILITY_FILE)"; bad=1; }
+  [[ "$MET_DO" != TRUE || -z "$C2_MET_HERITABILITY_FILE" || -s "$C2_MET_HERITABILITY_FILE" ]] || { echo "  MISSING: C2 metabolite SNP-heritability file ($C2_MET_HERITABILITY_FILE)"; bad=1; }
   for f in "$C2_DANDELION_GENE_P_FILE" "$C2_DANDELION_GENE_ANNOTATION" "$C2_DANDELION_SNP_FILE" "$C2_DANDELION_SNP_GENE_MAP"; do
     [[ -z "$f" || -s "$f" ]] || { echo "  MISSING: DANDELION input $f"; bad=1; }
   done

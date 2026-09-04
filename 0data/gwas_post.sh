@@ -108,6 +108,10 @@ Format options:
 
 Manhattan plot options:
   --add-panel PANEL       add MAGMA below the SNP plot: magma or none [none]
+  --plot-width FLOAT      PNG width in inches [13.333333]
+  --plot-height FLOAT     PNG height in inches; omitted/auto preserves the current
+                          4000:2600 MAGMA or 4000:1900 single-panel ratio [auto]
+  --plot-res INT          PNG resolution in pixels per inch [180]
   --write-sig TRUE/FALSE  write <project>/mplot/<GWAS>.sig.txt with the plotted
                           significant common and MAGMA hits [FALSE]
   --plot-f FILE           source file containing reusable mh_plot() [/mnt/d/scripts/0f/mplot.f.R]
@@ -214,6 +218,9 @@ plot_f=""
 mplot_r=""
 mh_plot_bed=""
 add_panel=none
+plot_width=13.333333
+plot_height=auto
+plot_res=180
 write_sig=FALSE
 add_signal=""
 signal_match_col=Protein
@@ -286,6 +293,9 @@ while [[ $# -gt 0 ]]; do
     --p-small) need_arg_value "$1" "${2-}"; p_small="$2"; shift 2;;
     --small) need_arg_value "$1" "${2-}"; small_mode="$2"; shift 2;;
     --add-panel) need_arg_value "$1" "${2-}"; add_panel="$2"; shift 2;;
+    --plot-width) need_arg_value "$1" "${2-}"; plot_width="$2"; shift 2;;
+    --plot-height) need_arg_value "$1" "${2-}"; plot_height="$2"; shift 2;;
+    --plot-res) need_arg_value "$1" "${2-}"; plot_res="$2"; shift 2;;
     --write-sig) need_arg_value "$1" "${2-}"; write_sig="$2"; shift 2;;
     --plot-f) need_arg_value "$1" "${2-}"; plot_f="$2"; shift 2;;
     --mh-plot-bed) need_arg_value "$1" "${2-}"; mh_plot_bed="$2"; shift 2;;
@@ -344,6 +354,7 @@ write_sig=$(upper "$write_sig")
 step=$(echo "$step" | tr '[:upper:]' '[:lower:]')
 category=$(echo "$category" | tr '[:upper:]' '[:lower:]')
 add_panel=$(echo "$add_panel" | tr '[:upper:]' '[:lower:]')
+plot_height=$(echo "$plot_height" | tr '[:upper:]' '[:lower:]')
 [[ "$add_panel" == none || "$add_panel" == magma ]] || { echo "ERROR: --add-panel must be none or magma: $add_panel" >&2; exit 2; }
 
 [[ "$small_mode" == "TRUE" || "$small_mode" == "FALSE" ]] || { echo "ERROR: --small must be TRUE or FALSE" >&2; exit 2; }
@@ -382,6 +393,20 @@ if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$pgs_threads" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: --pgs-threads must be a positive integer: $pgs_threads" >&2
+  exit 2
+fi
+awk -v x="$plot_width" 'BEGIN{exit !(x ~ /^[0-9]*[.]?[0-9]+$/ && x+0>0)}' || {
+  echo "ERROR: --plot-width must be a positive number of inches: $plot_width" >&2
+  exit 2
+}
+if [[ "$plot_height" != auto ]]; then
+  awk -v x="$plot_height" 'BEGIN{exit !(x ~ /^[0-9]*[.]?[0-9]+$/ && x+0>0)}' || {
+    echo "ERROR: --plot-height must be auto or a positive number of inches: $plot_height" >&2
+    exit 2
+  }
+fi
+if ! [[ "$plot_res" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --plot-res must be a positive integer: $plot_res" >&2
   exit 2
 fi
 awk -v p="$p_lead" 'BEGIN{exit !(p ~ /^[0-9]*[.]?[0-9]+([eE][-+]?[0-9]+)?$/ && p+0>0 && p+0<=1)}' || {
@@ -837,18 +862,22 @@ mplot_output_complete() {
   [[ -s "$png" && -s "$meta" && -s "$flag" && -s "$aggregate" && "$png" -nt "$final" ]] || return 1
   awk -F '\t' -v panel="$add_panel" -v grch="$expected_grch" -v signal="$signal_input" \
     -v match_col="$signal_match_col" -v match_value="$signal_match_value" \
-    -v locus_pos="$signal_locus_pos" -v display_col="$signal_display_col" -v write_sig="$write_sig" '
+    -v locus_pos="$signal_locus_pos" -v display_col="$signal_display_col" -v write_sig="$write_sig" \
+    -v plot_width="$plot_width" -v plot_height="$plot_height" -v plot_res="$plot_res" '
     $1=="add_panel"&&$2==panel{p=1}
     $1=="grch"&&$2==grch{g=1}
     $1=="magma_threshold"&&$2+0==2.5e-6{t=1}
-    $1=="mplot_style"&&$2==7{s=1}
+    $1=="mplot_style"&&$2==8{s=1}
+    $1=="plot_width"&&$2+0==plot_width+0{x=1}
+    $1=="plot_height"&&$2==plot_height{y=1}
+    $1=="plot_res"&&$2+0==plot_res+0{r=1}
     $1=="write_sig"&&$2==write_sig{w=1}
     $1=="signal_input"&&$2==signal{a=1}
     $1=="signal_match_col"&&$2==match_col{b=1}
     $1=="signal_match_value"&&$2==match_value{c=1}
     $1=="signal_locus_pos"&&$2==locus_pos{d=1}
     $1=="signal_display_col"&&$2==display_col{e=1}
-    END{exit !(p&&g&&t&&s&&w&&a&&b&&c&&d&&e)}' "$meta" || return 1
+    END{exit !(p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e)}' "$meta" || return 1
   if [[ "$add_panel" == magma ]]; then
     [[ -s "$genes" && "$png" -nt "$genes" ]] || return 1
   fi
@@ -1303,6 +1332,9 @@ PLOT_F=$(q "$plot_f")
 MPLOT_R=$(q "$mplot_r")
 PLOT_METHOD=self
 ADD_PANEL=$(q "$add_panel")
+PLOT_WIDTH=$(q "$plot_width")
+PLOT_HEIGHT=$(q "$plot_height")
+PLOT_RES=$(q "$plot_res")
 WRITE_SIG=$(q "$write_sig")
 ADD_SIGNAL=$(q "$add_signal")
 SIGNAL_MATCH_COL=$(q "$signal_match_col")
@@ -1987,6 +2019,30 @@ gwas_post_subset_match_reference(){
   ' "\$query" <(gwas_clean_zcat "\$ref_file") > "\$out"
 }
 
+# GCTA treats only numeric chromosomes up to --autosome-num as usable.  PLINK
+# references commonly encode chrX/chrY as X/Y, which makes GCTA silently load
+# just one unusable record from an otherwise complete sex-chromosome BIM.  For
+# sex chromosomes, make a small per-trait BED containing only the already
+# matched COJO candidates and emit numeric chromosome codes (X=23, Y=24).
+gwas_post_prepare_gcta_bfile(){
+  local source="\$1" chr="\$2" ma="\$3" out="\$4"
+  GCTA_BFILE="\$source"
+  GCTA_CHR_ARGS=()
+  (( chr > 22 )) || return 0
+  command -v plink2 >/dev/null 2>&1 || { echo "ERROR: plink2 is required to prepare chr\$chr for GCTA" >&2; return 1; }
+  gwas_post_need_file "\${source}.bed"
+  gwas_post_need_file "\${source}.bim"
+  gwas_post_need_file "\${source}.fam"
+  gwas_post_need_file "\$ma"
+  rm -f -- "\${out}.bed" "\${out}.bim" "\${out}.fam" "\${out}.log" "\${out}.err"
+  run_tool "\$out" plink2 --bfile "\$source" --extract "\$ma" --make-bed --output-chr 26 --out "\$out"
+  gwas_post_need_file "\${out}.bed"
+  gwas_post_need_file "\${out}.bim"
+  gwas_post_need_file "\${out}.fam"
+  GCTA_BFILE="\$out"
+  GCTA_CHR_ARGS=(--autosome-num "\$chr")
+}
+
 gwas_post_match_lead_inputs(){
   local ref="\$1" cref="\$2" tag="\$3" assoc="\$4" ma="\$5"
   local matched ref_subset n_assoc_before n_assoc_after n_ma_before n_ma_after
@@ -2128,7 +2184,9 @@ if run_lead; then
       cojo_skipped=TRUE
       gwas_post_log "SKIP gcta chr\$chr: significant variant has missing/invalid EAF; see \${QC_PREFIX}.\${tag}.cojo_skip.log"
     elif gwas_post_has_data_rows "\$ma"; then
-      run_tool "\$jp" gcta --bfile "\$cref" --cojo-file "\$ma" --cojo-slct --cojo-p "\$P_LEAD" --out "\$jp"
+      gwas_post_prepare_gcta_bfile "\$cref" "\$chr" "\$ma" "\${jp}.gcta_ref"
+      run_tool "\$jp" gcta --bfile "\$GCTA_BFILE" "\${GCTA_CHR_ARGS[@]}" \
+        --cojo-file "\$ma" --cojo-slct --cojo-p "\$P_LEAD" --out "\$jp"
     else
       gwas_post_log "skip gcta chr\$chr: no SNPs in \$ma"
     fi
@@ -2236,7 +2294,7 @@ if has_step lead && [[ "$grch" != auto ]]; then
   need_refgen_cojo "$refGen_cojo"
 fi
 
-log "label=$label step=$step small=$small_mode liftOver=$liftOver add-panel=$add_panel write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
+log "label=$label step=$step small=$small_mode liftOver=$liftOver add-panel=$add_panel plot=${plot_width}x${plot_height}in@${plot_res}dpi write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
 log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:/mnt/h/ukbGen/GRCh/imp>}"
 if has_step pgs; then
   write_pgs_step2_cmd

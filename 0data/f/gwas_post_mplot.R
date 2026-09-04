@@ -5,10 +5,11 @@
 
 main <- function() {
 args <- commandArgs(trailingOnly = TRUE)
-if (!length(args) %in% c(11L, 16L, 19L)) {
+if (!length(args) %in% c(11L, 16L, 19L, 22L)) {
   stop(paste("Usage: gwas_post_mplot.R GWAS OUTPUT TRAIT SELF PANEL MAGMA_GENES",
              "PLOT_F CIS_BED MH_PLOT_BED GRCH FLAG_OUTPUT [ADD_SIGNAL MATCH_COL",
-             "MATCH_VALUE LOCUS_POS DISPLAY_COL [WRITE_SIG SIG_OUTPUT COJO_FILE]]"))
+             "MATCH_VALUE LOCUS_POS DISPLAY_COL [WRITE_SIG SIG_OUTPUT COJO_FILE",
+             "[PLOT_WIDTH PLOT_HEIGHT PLOT_RES]]]]"))
 }
 
 input <- args[[1L]]
@@ -30,12 +31,34 @@ display_col <- if (length(args) >= 16L && nzchar(args[[16L]])) args[[16L]] else 
 write_sig <- if (length(args) >= 17L) toupper(args[[17L]]) else "FALSE"
 sig_output <- if (length(args) >= 18L && nzchar(args[[18L]])) args[[18L]] else sub("\\.png$", ".sig.txt", output, ignore.case = TRUE)
 cojo_file <- if (length(args) >= 19L && nzchar(args[[19L]])) args[[19L]] else ""
+plot_width <- if (length(args) >= 20L) suppressWarnings(as.numeric(args[[20L]])) else 13.333333
+plot_height_arg <- if (length(args) >= 21L) tolower(args[[21L]]) else "auto"
+plot_res <- if (length(args) >= 22L) suppressWarnings(as.integer(args[[22L]])) else 180L
 
 if (!file.exists(input) || file.info(input)$size <= 0) stop("GWAS plotting input is missing: ", input)
 if (!identical(method, "self")) stop("The only supported plot method is self")
 if (!panel %in% c("none", "magma")) stop("Unsupported additional panel: ", panel)
 if (!write_sig %in% c("TRUE", "FALSE")) stop("WRITE_SIG must be TRUE or FALSE")
 write_sig <- identical(write_sig, "TRUE")
+if (!is.finite(plot_width) || plot_width <= 0) stop("PLOT_WIDTH must be positive")
+plot_height_auto <- identical(plot_height_arg, "auto")
+if (!plot_height_auto) {
+  plot_height <- suppressWarnings(as.numeric(plot_height_arg))
+  if (!is.finite(plot_height) || plot_height <= 0) stop("PLOT_HEIGHT must be auto or positive")
+} else {
+  plot_height <- plot_width * if (panel == "magma") 2600 / 4000 else 1900 / 4000
+}
+if (!is.finite(plot_res) || plot_res <= 0) stop("PLOT_RES must be a positive integer")
+if (plot_height_auto) {
+  ratio_width <- if (panel == "magma") 20L else 40L
+  ratio_height <- if (panel == "magma") 13L else 19L
+  pixel_width <- max(ratio_width, round(plot_width * plot_res / ratio_width) * ratio_width)
+  pixel_height <- pixel_width / ratio_width * ratio_height
+  plot_height <- pixel_height / plot_res
+} else {
+  pixel_width <- max(1L, round(plot_width * plot_res))
+  pixel_height <- max(1L, round(plot_height * plot_res))
+}
 if (write_sig && !nzchar(sig_output)) stop("SIG_OUTPUT is required when WRITE_SIG=TRUE")
 if (panel == "magma" && (!file.exists(magma_file) || file.info(magma_file)$size <= 0)) {
   stop("MAGMA panel requested but genes.out is missing: ", magma_file)
@@ -52,8 +75,9 @@ on.exit({
   if (!is.null(display_input)) unlink(display_input, force = TRUE)
 }, add = TRUE)
 
-open_png <- function(path, width, height) {
-  a <- list(filename = path, width = width, height = height, units = "px", res = 300L, bg = "white")
+open_png <- function(path) {
+  a <- list(filename = path, width = pixel_width, height = pixel_height,
+            units = "px", res = plot_res, bg = "white")
   if (capabilities("cairo")) a$type <- "cairo"
   do.call(grDevices::png, a)
 }
@@ -520,11 +544,55 @@ render_self <- function(path) {
     bottom_span <- top_span * 0.40 / 0.60
     plot_ylim <- c(-bottom_span, top_span)
   }
-  open_png(path, 4000L, if (is.null(mirror)) 1900L else 2600L)
+  open_png(path)
   on.exit(grDevices::dev.off(), add = TRUE)
-  signal_panel <- NULL
-  if (!is.null(signal_rows)) {
-    signal_panel <- function(x, y, getgenpos, ...) {
+  extra_panel <- NULL
+  if (!is.null(mirror) || !is.null(signal_rows)) {
+    extra_panel <- function(x, y, getgenpos, ...) {
+      if (!is.null(mirror)) {
+        significant <- is.finite(mirror$P) & mirror$P <= 2.5e-6
+        label_n <- min(10L, sum(significant))
+        if (label_n > 0L) {
+          ii <- which(significant)
+          ii <- head(ii[order(mirror$P[ii])], label_n)
+          midpoint_bp <- (mirror$START[ii] + mirror$STOP[ii]) / 2
+          ord <- order(mirror$CHR[ii], midpoint_bp, mirror$P[ii])
+          ii <- ii[ord]
+          midpoint_bp <- midpoint_bp[ord]
+          new_locus <- c(TRUE, mirror$CHR[ii][-1L] != mirror$CHR[ii][-length(ii)] |
+                               diff(midpoint_bp) > 1e6)
+          locus <- cumsum(new_locus)
+          label_groups <- split(seq_along(ii), locus)
+          label_i <- vapply(label_groups, function(k) k[[which.min(mirror$P[ii[k]])]], integer(1L))
+          label_text <- vapply(label_groups, function(k) {
+            paste(unique(as.character(mirror$GENE[ii[k]])), collapse = ",")
+          }, character(1L))
+          label_class <- vapply(label_groups, function(k) {
+            cls <- if ("CLASS" %in% names(mirror)) tolower(as.character(mirror$CLASS[ii[k]])) else "trans"
+            if (any(cls == "cis")) "cis" else "trans"
+          }, character(1L))
+          ii <- ii[label_i]
+          label_x <- as.numeric(getgenpos(mirror$CHR[ii], midpoint_bp[label_i] / 1e6))
+          valid_label <- is.finite(label_x)
+          if (any(valid_label)) {
+            ii <- ii[valid_label]
+            label_x <- label_x[valid_label]
+            label_text <- label_text[valid_label]
+            label_class <- label_class[valid_label]
+            limits <- lattice::current.panel.limits()
+            x_fraction <- (label_x - limits$xlim[[1L]]) / diff(limits$xlim)
+            label_adj <- ifelse(x_fraction < 0.04, 0, ifelse(x_fraction > 0.96, 1, 0.5))
+            label_col <- ifelse(label_class == "cis", "#D62728", "#159947")
+            for (j in seq_along(label_x)) {
+              lattice::panel.text(label_x[[j]], log10(mirror$P[ii[[j]]]) - 0.65,
+                                  labels = label_text[[j]], srt = 0,
+                                  adj = c(label_adj[[j]], 1),
+                                  col = label_col[[j]], cex = 0.58, font = 2L)
+            }
+          }
+        }
+      }
+      if (is.null(signal_rows)) return(invisible(NULL))
       midpoint_mb <- (signal_rows$START + signal_rows$END) / 2e6
       signal_x <- as.numeric(getgenpos(signal_rows$CHR, midpoint_mb))
       valid_x <- is.finite(signal_x)
@@ -549,9 +617,9 @@ render_self <- function(path) {
                 cis_color = "#D62728", other_top_color = "#159947",
                 other_top_max_per_chr = 1, locus_size = 1e6, main = trait,
                 mirror = mirror, mirror.sig.level = 2.5e-6,
-                mirror.label.n = 10L, ylim = plot_ylim,
+                mirror.label.n = 0L, ylim = plot_ylim,
                 threshold.col = "#E67E22", mirror.threshold.col = "#E67E22",
-                chr.label.col = "#E67E22", panel.extra = signal_panel,
+                chr.label.col = "#E67E22", panel.extra = extra_panel,
                 xlab = if (is.null(mirror)) "Chromosome" else NULL))
 }
 
@@ -634,8 +702,9 @@ if (write_sig) {
 }
 
 unlink(top_png, force = TRUE)
-message("mplot: ", output, " [panel=", panel, ", res=300",
-        ", pixels=4000x", if (panel == "magma") 2600L else 1900L, "]")
+message("mplot: ", output, " [panel=", panel, ", res=", plot_res,
+        ", inches=", format(plot_width, trim = TRUE), "x", format(plot_height, trim = TRUE),
+        ", pixels=", pixel_width, "x", pixel_height, "]")
 }
 
 main()

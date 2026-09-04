@@ -6,8 +6,8 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c1_pgs.R"))
 })
 LE8_JOB <- "c1_correlate"
-C1_CODE_VERSION     <- "2026-09-02.pgs_parallel1"
-C1_SCAN_VERSION     <- "2026-08-31.riskset1" # observed-level models are unchanged
+C1_CODE_VERSION     <- "2026-09-03.le4_vldl_deepdive3"
+C1_SCAN_VERSION     <- "2026-09-03.le4_primary1"
 
 TOP_N              <- as.integer(Sys.getenv("C1_TOP_N", unset = "30"))
 YY_TOP              <- as.integer(Sys.getenv("C1_YY_TOP", unset = "6"))
@@ -25,7 +25,11 @@ CLUSTER_STABILITY_B <- as.integer(Sys.getenv("C1_CLUSTER_STABILITY_B", unset = "
 C1_MIN_EVENT        <- 20L
 C1_YY_SPAR          <- as.numeric(Sys.getenv("C1_YY_SPAR", unset = "0.62"))
 C1_DIRECTION_ANCHORS<- unique(trimws(strsplit(Sys.getenv("C1_DIRECTION_ANCHORS",
-  unset="PCSK9,LPA,GDF15,NTPROBNP,MMP12"),",",fixed=TRUE)[[1]]))
+  unset="PCSK9,LPA,GDF15,NTPROBNP,MMP12,L_VLDL_TG.pct,L_VLDL_TG,Total_TG,ApoB"),",",fixed=TRUE)[[1]]))
+C1_VLDL_DEEP_FEATURES<-c(paste0(c("XS","S","M","L","XL","XXL"),"_VLDL_TG.pct"),
+  paste0(c("XS","S","M","L","XL","XXL"),"_VLDL_TG"),
+  "L_VLDL_L","L_VLDL_CE.pct","L_VLDL_FC.pct","L_VLDL_PL.pct",
+  "Total_TG","ApoB","VLDL_size")
 C1_LANDMARK_YEARS   <- sort(unique(as.numeric(strsplit(Sys.getenv("C1_LANDMARK_YEARS",unset="0.5,1,2,5,10"),",",fixed=TRUE)[[1]])))
 C1_LANDMARK_YEARS   <- C1_LANDMARK_YEARS[is.finite(C1_LANDMARK_YEARS)&C1_LANDMARK_YEARS>0]
 C1_LANDMARK_TOP     <- as.integer(Sys.getenv("C1_LANDMARK_TOP",unset="500"))
@@ -34,6 +38,22 @@ C1_RISK_CUTS        <- sort(unique(as.numeric(strsplit(Sys.getenv("C1_RISK_CUTS"
   unset="0,0.5,1,2,5,10,16"),",",fixed=TRUE)[[1]])))
 C1_RISK_CUTS        <- C1_RISK_CUTS[is.finite(C1_RISK_CUTS)&C1_RISK_CUTS>=0]
 if(length(C1_RISK_CUTS)<2L)C1_RISK_CUTS<-c(0,.5,1,2,5,10,16)
+split_env_names <- function(name, unset = "") {
+  z <- trimws(strsplit(Sys.getenv(name, unset = unset), ",", fixed = TRUE)[[1]])
+  unique(z[nzchar(z)])
+}
+# The primary omics model adjusts for the four behavioral LE8 components only.
+# BMI, non-HDL-C, HbA1c and blood pressure can be biological intermediates or
+# overlap the assayed biomarker; conditioning on them can overadjust the omic
+# effect. The former full-LE8 model is retained as a sensitivity analysis.
+C1_LE4_COVARS <- split_env_names("C1_LE4_COVARS",
+  "diet.pts,pa.pts,smoke.pts,sleep.pts")
+C1_FULL_LE8_SENSITIVITY <- truthy(Sys.getenv("C1_FULL_LE8_SENSITIVITY",
+  unset = Sys.getenv("C1_MET_FULL_LE8_SENSITIVITY", unset = "TRUE")))
+# Optional known baseline treatment variables, supplied by the local phenotype
+# dictionary (for example a lipid-lowering-medication indicator).  No variable
+# name is guessed silently.
+C1_TREATMENT_VARS <- split_env_names("C1_TREATMENT_VARS")
 
 # Publication typography. This overrides the shared theme only inside C1.
 theme_5c <- function(base_size = 12) {
@@ -476,7 +496,7 @@ make_gradient_panel <- function(dat, features, bvar, side=c("incident","prevalen
     scale_size_continuous(range=c(.6,4),name="Bin N") +
     scale_alpha_manual(values=c(`TRUE`=.92,`FALSE`=.35),guide="none")+
     scale_x_continuous(limits=c(-max_year,max_year),breaks=seq(-max_year,max_year,by=4),expand=expansion(mult=c(.01,.01))) +
-    labs(title=title,subtitle=paste0(domain_note,"; adj2-residualized; faint circles have N < ",min_bin_n),
+    labs(title=title,subtitle=paste0(domain_note,"; behavioral-LE4-residualized; faint circles have N < ",min_bin_n),
          x="Years of recorded diagnosis relative to baseline blood draw",y=NULL) + theme_5c(10) +
     theme(legend.position="right",axis.text.y=element_text(size=8.5,face="bold"))
 }
@@ -822,7 +842,7 @@ plot_sameN_attenuation <- function(att, assoc_adj2, top_n=30L) {
     scale_color_gradient2(low="#2C7FB8",mid="grey78",high="#D7301F",midpoint=0,
       breaks=c(-2,-1,0,1,2),labels=c("0.25x","0.5x","1x","2x","4x"),name="Adj2/basic\n|beta| ratio")+
     scale_shape_manual(values=c(`FALSE`=16,`TRUE`=4),na.value=1,name="Direction flip")+
-    labs(title="a. Same-participant basic versus adj2 effects",
+    labs(title="a. Same-participant basic versus behavioral-LE4 effects",
       subtitle="Colour is omitted when |basic beta| < 0.02, where percentage attenuation is unstable",
       x="Basic Cox beta",y="Adj2 Cox beta")+theme_5c(9)
   d<-all_d|>arrange(p_adj2)|>slice_head(n=min(top_n,24L))|>mutate(term=factor(term,levels=rev(term)),
@@ -834,12 +854,12 @@ plot_sameN_attenuation <- function(att, assoc_adj2, top_n=30L) {
     geom_vline(xintercept=0,color="grey82")+
     geom_segment(aes(x=beta_basic_sameN,xend=beta_adj2_sameN,yend=term),color="grey72",linewidth=.8)+
     geom_point(aes(x=beta_basic_sameN,color="Basic"),size=2.5)+
-    geom_point(aes(x=beta_adj2_sameN,color="Adj2"),size=2.8)+
+    geom_point(aes(x=beta_adj2_sameN,color="Behavioral LE4"),size=2.8)+
     geom_text(aes(x=ann_x,label=attenuation_label),hjust=0,size=3,fontface="bold",color="grey35")+
-    scale_color_manual(values=c(Basic="grey55",Adj2="#3F78A8"),name=NULL)+
+    scale_color_manual(values=c(Basic="grey55",`Behavioral LE4`="#3F78A8"),name=NULL)+
     scale_x_continuous(limits=c(xr[1]-.04*span,xr[2]+.25*span))+
-    labs(title="b. Strongest adj2 associations",
-      subtitle="Basic and adj2 Cox models use the same complete-case sample; labels show the stable |adj2 beta| / |basic beta| ratio",
+    labs(title="b. Strongest behavioral-LE4 associations",
+      subtitle="Basic and LE4 Cox models use the same complete-case sample; labels show |LE4 beta| / |basic beta|",
       x="Log hazard ratio per 1-SD biomarker",y=NULL)+theme_5c(9)+theme(legend.position="top")
   pA|pB
 }
@@ -856,12 +876,17 @@ plot_c1_fig12 <- function(layer, features_all, pgs_incident, pgs_prevalent,
                           pgs_attained_age, assoc_adj2, prevalent_adj2,
                           birthline_adj2, outdir) {
   omic_name <- if (layer == "protein") "protein" else "metabolite"
+  measured_model <- "behavioral-LE4 adjusted"
   pgs_title <- function(panel, analysis, x, include_outcome = FALSE) {
     paste0(panel, ". ", analysis, if (include_outcome) paste0(" ", Y) else "",
       " — inherited ", omic_name, " PGS, N = ", c1_panel_n(x))
   }
   circle_pgs_title <- function(panel, analysis, x) {
     str_replace(pgs_title(panel,analysis,x,TRUE),", N = ",",\nN = ")
+  }
+  observed_title <- function(panel, analysis, x, method = "") {
+    paste0(panel, ". ", analysis, if (nzchar(method)) paste0(" ", method) else "",
+      ", N = ", c1_panel_n(x))
   }
 
   # The inherited-score panels use everyone with a matched PGS and phenotype
@@ -870,18 +895,18 @@ plot_c1_fig12 <- function(layer, features_all, pgs_incident, pgs_prevalent,
   if (layer == "protein") {
     p1a<-plot_pwas_manhattan(pgs_incident,features_all,pgs_title("a","Incident",pgs_incident,TRUE))
     p1b<-plot_pwas_manhattan(pgs_prevalent,features_all,pgs_title("b","Baseline-prevalent",pgs_prevalent,TRUE))
-    p1c<-plot_pwas_manhattan(assoc_adj2,features_all,paste0("c. Incident ",Y," — adj2 Cox"))
-    p1d<-plot_pwas_manhattan(prevalent_adj2,features_all,paste0("d. Baseline-prevalent ",Y," — adj2 logistic"))
+    p1c<-plot_pwas_manhattan(assoc_adj2,features_all,observed_title("c",paste0("Incident ",Y),assoc_adj2,paste0("— ",measured_model," Cox")))
+    p1d<-plot_pwas_manhattan(prevalent_adj2,features_all,observed_title("d",paste0("Baseline-prevalent ",Y),prevalent_adj2,paste0("— ",measured_model," logistic")))
     p1e<-plot_pwas_manhattan(pgs_attained_age,features_all,pgs_title("e","Attained-age",pgs_attained_age,TRUE))
-    p1f<-plot_pwas_manhattan(birthline_adj2,features_all,paste0("f. Attained-age ",Y," — measured adult level, adj2"))
+    p1f<-plot_pwas_manhattan(birthline_adj2,features_all,observed_title("f",paste0("Attained-age ",Y),birthline_adj2,paste0("— measured adult level, ",measured_model)))
     save_plot((p1a|p1c)/plot_spacer()/(p1b|p1d)/plot_spacer()/(p1e|p1f)+
       plot_layout(heights=c(1,.06,1,.06,1)),"c1.Fig1.mh.png",24,19,outdir=outdir)
     p2a<-plot_volcano(pgs_incident,"beta","term",pgs_title("a","Incident",pgs_incident),.05/max(1,nrow(pgs_incident)),TOP_N)
     p2b<-plot_volcano(pgs_prevalent,"beta","term",pgs_title("b","Prevalent",pgs_prevalent),.05/max(1,nrow(pgs_prevalent)),TOP_N)
-    p2c<-plot_volcano(assoc_adj2,"beta","term","c. Incident ProtWAS — adj2",.05/max(1,nrow(assoc_adj2)),TOP_N)
-    p2d<-plot_volcano(prevalent_adj2,"beta","term","d. Prevalent ProtWAS — adj2 logistic",.05/max(1,nrow(prevalent_adj2)),TOP_N)
+    p2c<-plot_volcano(assoc_adj2,"beta","term",observed_title("c","Incident ProtWAS",assoc_adj2,paste0("— ",measured_model)),.05/max(1,nrow(assoc_adj2)),TOP_N)
+    p2d<-plot_volcano(prevalent_adj2,"beta","term",observed_title("d","Prevalent ProtWAS",prevalent_adj2,paste0("— ",measured_model," logistic")),.05/max(1,nrow(prevalent_adj2)),TOP_N)
     p2e<-plot_volcano(pgs_attained_age,"beta","term",pgs_title("e","Attained-age",pgs_attained_age),.05/max(1,nrow(pgs_attained_age)),TOP_N)
-    p2f<-plot_volcano(birthline_adj2,"beta","term","f. Attained-age ProtWAS — measured adult level, adj2",.05/max(1,nrow(birthline_adj2)),TOP_N)
+    p2f<-plot_volcano(birthline_adj2,"beta","term",observed_title("f","Attained-age ProtWAS",birthline_adj2,paste0("— measured adult level, ",measured_model)),.05/max(1,nrow(birthline_adj2)),TOP_N)
     save_plot((p2a|p2c)/plot_spacer()/(p2b|p2d)/plot_spacer()/(p2e|p2f)+
       plot_layout(heights=c(1,.06,1,.06,1)),"c1.Fig2.vc.png",19,19,outdir=outdir)
   } else {
@@ -891,10 +916,10 @@ plot_c1_fig12 <- function(layer, features_all, pgs_incident, pgs_prevalent,
     if(!is.finite(shared_beta_lim)||shared_beta_lim<=0)shared_beta_lim<-max(abs(unlist(map(circ_data,~.x$beta))),na.rm=TRUE)
     p1a<-plot_met_circle(circ_data[[1]],circle_pgs_title("a","Incident",pgs_incident),label_n=14,beta_limit=shared_beta_lim)
     p1b<-plot_met_circle(circ_data[[2]],circle_pgs_title("b","Prevalent",pgs_prevalent),label_n=14,beta_limit=shared_beta_lim)
-    p1c<-plot_met_circle(circ_data[[3]],paste0("c. Incident ",Y," MWAS — adj2"),label_n=14,beta_limit=shared_beta_lim)
-    p1d<-plot_met_circle(circ_data[[4]],paste0("d. Prevalent ",Y," MWAS — adj2 logistic"),label_n=14,beta_limit=shared_beta_lim)
+    p1c<-plot_met_circle(circ_data[[3]],observed_title("c",paste0("Incident ",Y," MWAS"),assoc_adj2,paste0("— ",measured_model)),label_n=14,beta_limit=shared_beta_lim)
+    p1d<-plot_met_circle(circ_data[[4]],observed_title("d",paste0("Prevalent ",Y," MWAS"),prevalent_adj2,paste0("— ",measured_model," logistic")),label_n=14,beta_limit=shared_beta_lim)
     p1e<-plot_met_circle(circ_data[[5]],circle_pgs_title("e","Attained-age",pgs_attained_age),label_n=14,beta_limit=shared_beta_lim)
-    p1f<-plot_met_circle(circ_data[[6]],paste0("f. Attained-age ",Y," — measured adult level, adj2"),label_n=14,beta_limit=shared_beta_lim)
+    p1f<-plot_met_circle(circ_data[[6]],observed_title("f",paste0("Attained-age ",Y),birthline_adj2,paste0("— measured adult level, ",measured_model)),label_n=14,beta_limit=shared_beta_lim)
     # Paper_t2dm Fig2 style: large radial panels and a dedicated shared-key row.
     # A guide_area prevents four independent legends from shrinking the circles.
     p_circle<-(p1a|p1c)/plot_spacer()/(p1b|p1d)/plot_spacer()/(p1e|p1f)/guide_area()+
@@ -903,13 +928,214 @@ plot_c1_fig12 <- function(layer, features_all, pgs_incident, pgs_prevalent,
     save_plot(p_circle,"c1.Fig1.circular.png",24,20,outdir=outdir)
     p2a<-plot_volcano(pgs_incident,"beta","term",pgs_title("a","Incident",pgs_incident),.05/max(1,nrow(pgs_incident)),12,x_quantile=.985)
     p2b<-plot_volcano(pgs_prevalent,"beta","term",pgs_title("b","Prevalent",pgs_prevalent),.05/max(1,nrow(pgs_prevalent)),12,x_quantile=.985)
-    p2c<-plot_volcano(assoc_adj2,"beta","term","c. Incident MWAS — adj2",.05/max(1,nrow(assoc_adj2)),12,x_quantile=.985)
-    p2d<-plot_volcano(prevalent_adj2,"beta","term","d. Prevalent MWAS — adj2 logistic",.05/max(1,nrow(prevalent_adj2)),12,x_quantile=.985)
+    p2c<-plot_volcano(assoc_adj2,"beta","term",observed_title("c","Incident MWAS",assoc_adj2,paste0("— ",measured_model)),.05/max(1,nrow(assoc_adj2)),12,x_quantile=.985)
+    p2d<-plot_volcano(prevalent_adj2,"beta","term",observed_title("d","Prevalent MWAS",prevalent_adj2,paste0("— ",measured_model," logistic")),.05/max(1,nrow(prevalent_adj2)),12,x_quantile=.985)
     p2e<-plot_volcano(pgs_attained_age,"beta","term",pgs_title("e","Attained-age",pgs_attained_age),.05/max(1,nrow(pgs_attained_age)),12,x_quantile=.985)
-    p2f<-plot_volcano(birthline_adj2,"beta","term","f. Attained-age MWAS — measured adult level, adj2",.05/max(1,nrow(birthline_adj2)),12,x_quantile=.985)
+    p2f<-plot_volcano(birthline_adj2,"beta","term",observed_title("f","Attained-age MWAS",birthline_adj2,paste0("— measured adult level, ",measured_model)),.05/max(1,nrow(birthline_adj2)),12,x_quantile=.985)
     save_plot((p2a|p2c)/plot_spacer()/(p2b|p2d)/plot_spacer()/(p2e|p2f)+
       plot_layout(heights=c(1,.06,1,.06,1)),"c1.Fig2.vc.png",19,19,outdir=outdir)
   }
+}
+
+run_vldl_tg_measured_models<-function(dat,covars,tvar,evar){
+  target<-"L_VLDL_TG.pct"
+  comparators<-intersect(c("L_VLDL_TG","L_VLDL_L","Total_TG","ApoB","VLDL_size"),names(dat))
+  if(!target%in%names(dat))return(tibble())
+  zname<-function(x)paste0(".z_",make.names(x))
+  needed<-unique(c(tvar,evar,covars,target,comparators))
+  d<-dat[,needed,drop=FALSE]
+  for(v in c(target,comparators))d[[v]]<-suppressWarnings(as.numeric(d[[v]]))
+  d<-d[complete.cases(d),,drop=FALSE]
+  d<-d[is.finite(d[[tvar]])&d[[tvar]]>0&d[[evar]]%in%c(0,1),,drop=FALSE]
+  for(v in c(target,comparators))d[[zname(v)]]<-as.numeric(scale(d[[v]]))
+  fit_one<-function(dd,exposure,adjusters=character(),model_group="Target conditional",model=""){
+    xs<-c(exposure,adjusters);empty<-tibble(model_group,model,exposure,adjusters=
+      paste(adjusters,collapse=";"),beta=NA_real_,std.error=NA_real_,conf.low=NA_real_,
+      conf.high=NA_real_,p.value=NA_real_,N_total=nrow(dd),N_event=sum(dd[[evar]]==1),
+      max_abs_exposure_correlation=NA_real_,exposure_condition_number=NA_real_)
+    if(nrow(dd)<500||sum(dd[[evar]]==1)<20)return(empty)
+    ff<-as.formula(paste0("Surv(",bt(tvar),",",bt(evar),") ~ ",
+      paste(bt(c(xs,covars)),collapse=" + ")))
+    fit<-tryCatch(coxph(ff,dd,ties="efron"),error=function(e)NULL)
+    if(is.null(fit))return(empty);sm<-coef(summary(fit));if(!exposure%in%rownames(sm))return(empty)
+    b<-sm[exposure,"coef"];se<-sm[exposure,"se(coef)"]
+    cm<-if(length(xs)>1L)cor(dd[,xs,drop=FALSE])else matrix(1,1,1)
+    max_cor<-if(length(xs)>1L)max(abs(cm[1,-1]),na.rm=TRUE)else 0
+    cond<-if(length(xs)>1L)tryCatch(kappa(cm),error=function(e)NA_real_)else 1
+    tibble(model_group,model,exposure,adjusters=paste(adjusters,collapse=";"),
+      beta=b,std.error=se,conf.low=b-1.96*se,conf.high=b+1.96*se,
+      p.value=sm[exposure,"Pr(>|z|)"],N_total=nrow(dd),N_event=sum(dd[[evar]]==1),
+      max_abs_exposure_correlation=max_cor,exposure_condition_number=cond)
+  }
+  target_z<-zname(target)
+  conditional<-bind_rows(
+    fit_one(d,target_z,model="Target only"),
+    map_dfr(comparators,function(v)fit_one(d,target_z,zname(v),model=paste0("+ ",v))),
+    if(length(comparators)>1L)fit_one(d,target_z,zname(comparators),
+      model="+ all burden/size traits")else tibble())
+
+  component_vars<-c("L_VLDL_TG.pct","L_VLDL_CE.pct","L_VLDL_FC.pct","L_VLDL_PL.pct")
+  balances<-tibble()
+  if(all(component_vars%in%names(dat))){
+    bd<-dat[,unique(c(tvar,evar,covars,component_vars)),drop=FALSE]
+    for(v in component_vars)bd[[v]]<-suppressWarnings(as.numeric(bd[[v]]))
+    bd<-bd[complete.cases(bd)&apply(bd[,component_vars,drop=FALSE]>0,1,all),,drop=FALSE]
+    bd<-bd[is.finite(bd[[tvar]])&bd[[tvar]]>0&bd[[evar]]%in%c(0,1),,drop=FALSE]
+    bd$.TG_vs_nonTG_balance<-log(bd$L_VLDL_TG.pct)-
+      rowMeans(log(as.matrix(bd[,setdiff(component_vars,"L_VLDL_TG.pct"),drop=FALSE])))
+    for(v in setdiff(component_vars,"L_VLDL_TG.pct"))
+      bd[[paste0(".TG_vs_",make.names(v))]]<-log(bd$L_VLDL_TG.pct)-log(bd[[v]])
+    balance_vars<-c(".TG_vs_nonTG_balance",paste0(".TG_vs_",make.names(
+      setdiff(component_vars,"L_VLDL_TG.pct"))))
+    for(v in balance_vars)bd[[v]]<-as.numeric(scale(bd[[v]]))
+    balances<-map_dfr(balance_vars,function(v)fit_one(bd,v,model_group="Compositional log-ratio",
+      model=str_remove(v,"^\\.")))
+  }
+  bind_rows(conditional,balances)|>mutate(FDR=p.adjust(p.value,"BH"),
+    interpretation=ifelse(model_group=="Target conditional",
+      "Same-N measured target association conditional on correlated lipid burden/size traits",
+      "Log-ratio balance within large VLDL; exploratory compositional analysis"))
+}
+
+build_vldl_tg_deep_dive <- function(pgs_full,pgs_same,measured_le4,
+  measured_basic,measured_full_le8,risk_window_le4=tibble(),
+  pgs_conditional=tibble(),measured_conditional=tibble()){
+  size_levels<-c("XS","S","M","L","XL","XXL")
+  pct_features<-paste0(size_levels,"_VLDL_TG.pct")
+  absolute_features<-paste0(size_levels,"_VLDL_TG")
+  key_features<-c("L_VLDL_TG.pct","L_VLDL_TG","Total_TG","ApoB","VLDL_size")
+  wanted<-unique(c(pct_features,absolute_features,key_features))
+  collect_set<-function(x,predictor,model){
+    labels<-c(incident="Incident",prevalent="Baseline prevalent",
+      attained_age="Attained age")
+    map_dfr(names(labels),function(nm){
+      z<-as_tibble(x[[nm]]%||%tibble())
+      if(!nrow(z)||!"term"%in%names(z))return(tibble())
+      z|>filter(term%in%wanted)|>transmute(feature=term,analysis=labels[[nm]],
+        predictor,model,beta=as.numeric(beta),se=as.numeric(std.error),
+        p_value=as.numeric(p.value),FDR=as.numeric(FDR),
+        N=as.numeric(N_total),events=as.numeric(N_event))
+    })
+  }
+  d<-bind_rows(
+    collect_set(pgs_full,"Inherited","PGS: full genetic cohort"),
+    collect_set(pgs_same,"Inherited","PGS: same-omic subset"),
+    collect_set(measured_basic,"Measured","Measured: basic"),
+    collect_set(measured_le4,"Measured","Measured: behavioral LE4"),
+    collect_set(measured_full_le8,"Measured","Measured: full LE8 sensitivity"))|>
+    mutate(conf.low=beta-1.96*se,conf.high=beta+1.96*se,
+      vldl_size=str_extract(feature,"^(XS|S|M|L|XL|XXL)"),
+      metric=case_when(feature%in%pct_features~"TG / total lipids (%)",
+        feature%in%absolute_features~"Absolute TG",TRUE~"Comparator"),
+      target=feature=="L_VLDL_TG.pct")
+  cols<-c("PGS: full genetic cohort"="#7B3294","PGS: same-omic subset"="#C2A5CF",
+    "Measured: basic"="#7F7F7F","Measured: behavioral LE4"="#008837",
+    "Measured: full LE8 sensitivity"="#D95F02")
+  keep_models<-c("PGS: full genetic cohort","Measured: behavioral LE4")
+
+  a<-d|>filter(analysis=="Incident",feature%in%key_features,model%in%keep_models)|>
+    mutate(feature=factor(feature,levels=rev(key_features)),model=factor(model,levels=keep_models))
+  pa<-if(!nrow(a))blank_plot("a. Target and burden comparators","No estimable effects")else
+    ggplot(a,aes(beta,feature,color=model))+geom_vline(xintercept=0,color="grey78")+
+      geom_errorbarh(aes(xmin=conf.low,xmax=conf.high),height=.11,
+        position=position_dodge(width=.52))+geom_point(size=2.2,position=position_dodge(width=.52))+
+      scale_color_manual(values=cols,drop=FALSE)+
+      labs(title="a. Incident CAD: composition versus burden",
+        subtitle="L_VLDL_TG.pct is a composition ratio; absolute TG and ApoB are separate traits",
+        x="Log HR per 1 SD",y=NULL,color=NULL)+theme_5c(8)+theme(legend.position="bottom")
+
+  size_panel<-function(metric_name,panel,title){
+    z<-d|>filter(analysis=="Incident",metric==metric_name,model%in%keep_models)|>
+      mutate(vldl_size=factor(vldl_size,levels=size_levels),model=factor(model,levels=keep_models))
+    if(!nrow(z))return(blank_plot(paste0(panel,". ",title),"No estimable effects"))
+    ggplot(z,aes(vldl_size,beta,color=model,group=model))+
+      geom_hline(yintercept=0,color="grey78")+geom_ribbon(aes(ymin=conf.low,ymax=conf.high,
+        fill=model),alpha=.10,color=NA)+geom_line(linewidth=.7)+geom_point(aes(shape=target),size=2.2)+
+      scale_color_manual(values=cols,drop=FALSE)+scale_fill_manual(values=cols,drop=FALSE)+
+      scale_shape_manual(values=c(`TRUE`=18,`FALSE`=16),guide="none")+
+      labs(title=paste0(panel,". ",title),x="VLDL subclass size",y="Incident log HR per 1 SD",
+        color=NULL,fill=NULL)+theme_5c(8)+theme(legend.position="bottom")
+  }
+  pb<-size_panel("TG / total lipids (%)","b","TG percentage across VLDL sizes")
+  pc<-size_panel("Absolute TG","c","Absolute TG across VLDL sizes")
+
+  dd<-d|>filter(feature=="L_VLDL_TG.pct",model%in%keep_models)|>
+    mutate(analysis=factor(analysis,levels=c("Incident","Attained age","Baseline prevalent")),
+      model=factor(model,levels=keep_models))
+  pd<-if(!nrow(dd))blank_plot("d. Target across disease-time analyses","No estimable effects")else
+    ggplot(dd,aes(beta,analysis,color=model))+geom_vline(xintercept=0,color="grey78")+
+      geom_errorbarh(aes(xmin=conf.low,xmax=conf.high),height=.10,
+        position=position_dodge(width=.48))+geom_point(size=2.3,position=position_dodge(width=.48))+
+      scale_color_manual(values=cols,drop=FALSE)+
+      labs(title="d. L_VLDL_TG.pct across disease-time analyses",
+        subtitle="Incident/attained-age are prospective; prevalent is treatment- and survivor-sensitive",
+        x="Log HR or log OR per 1 SD",y=NULL,color=NULL)+theme_5c(8)+theme(legend.position="bottom")
+
+  sensitivity_models<-c("Measured: basic","Measured: behavioral LE4",
+    "Measured: full LE8 sensitivity")
+  ee<-d|>filter(analysis=="Incident",feature%in%c("L_VLDL_TG.pct","L_VLDL_TG","Total_TG","ApoB"),
+      model%in%sensitivity_models)|>
+    mutate(feature=factor(feature,levels=rev(c("L_VLDL_TG.pct","L_VLDL_TG","Total_TG","ApoB"))),
+      model=factor(model,levels=sensitivity_models))
+  pe<-if(!nrow(ee))blank_plot("e. Adjustment sensitivity","No estimable effects")else
+    ggplot(ee,aes(beta,feature,color=model))+geom_vline(xintercept=0,color="grey78")+
+      geom_errorbarh(aes(xmin=conf.low,xmax=conf.high),height=.08,
+        position=position_dodge(width=.55))+geom_point(size=2,position=position_dodge(width=.55))+
+      scale_color_manual(values=cols,drop=FALSE)+
+      labs(title="e. Measured-trait adjustment sensitivity",
+        subtitle="Behavioral LE4 is primary; full LE8 can condition on biomarker intermediates",
+        x="Incident log HR per 1 SD",y=NULL,color=NULL)+theme_5c(8)+theme(legend.position="bottom")
+
+  ff<-as_tibble(pgs_conditional)
+  if(nrow(ff)&&all(c("model","beta","conf.low","conf.high")%in%names(ff)))
+    ff<-ff|>mutate(model=factor(model,levels=rev(model)))else ff<-tibble()
+  pf<-if(!nrow(ff))blank_plot("f. Conditional PGS models","Conditional PGS output unavailable")else
+    ggplot(ff,aes(beta,model))+geom_vline(xintercept=0,color="grey78")+
+      geom_errorbarh(aes(xmin=conf.low,xmax=conf.high),height=.12,color="#7B3294")+
+      geom_point(color="#7B3294",size=2.3)+
+      labs(title="f. Does the target PGS survive burden/size PGS adjustment?",
+        subtitle="Exploratory multivariable score association; this is not multivariable MR",
+        x="L_VLDL_TG.pct PGS incident log HR",y=NULL)+theme_5c(8)
+
+  gg<-as_tibble(risk_window_le4)
+  if(nrow(gg)&&all(c("term","time","beta","conf.low","conf.high","side")%in%names(gg)))
+    gg<-gg|>filter(term%in%c("L_VLDL_TG.pct","L_VLDL_TG","Total_TG","ApoB"))|>
+      mutate(term=factor(term,levels=c("L_VLDL_TG.pct","L_VLDL_TG","Total_TG","ApoB"))) else
+    gg<-tibble()
+  pg<-if(!nrow(gg))blank_plot("g. Diagnosis-anchored risk-set trajectory",
+    "Trajectory is generated on the behavioral-LE4 rerun")else
+    ggplot(gg,aes(time,beta,color=side,fill=side,group=side))+
+      geom_hline(yintercept=0,color="grey78")+geom_vline(xintercept=0,linetype=2,color="grey55")+
+      geom_ribbon(aes(ymin=conf.low,ymax=conf.high),alpha=.12,color=NA)+
+      geom_line(linewidth=.75)+geom_point(aes(size=N_case),alpha=.85)+
+      facet_wrap(~term,nrow=1,scales="free_y")+
+      scale_color_manual(values=c("Pre-baseline prevalent"="#D95F02",
+        "Post-baseline incident"="#3F78A8"))+
+      scale_fill_manual(values=c("Pre-baseline prevalent"="#D95F02",
+        "Post-baseline incident"="#3F78A8"))+
+      labs(title="g. Diagnosis-anchored measured-trait risk-set trajectory",
+        subtitle="One baseline measurement per person; this is not a within-person longitudinal trajectory",
+        x="Years from baseline diagnosis boundary",y="Behavioral-LE4 log OR per 1 SD",
+        color=NULL,fill=NULL,size="Cases")+theme_5c(8)+theme(legend.position="bottom")
+
+  hh<-as_tibble(measured_conditional)
+  if(nrow(hh)&&all(c("model_group","model","beta","conf.low","conf.high")%in%names(hh)))
+    hh<-hh|>mutate(model=factor(model,levels=rev(unique(model))))else hh<-tibble()
+  ph<-if(!nrow(hh))blank_plot("h. Conditional and compositional measured models",
+    "Measured deep-model output unavailable")else
+    ggplot(hh,aes(beta,model))+geom_vline(xintercept=0,color="grey78")+
+      geom_errorbarh(aes(xmin=conf.low,xmax=conf.high),height=.10,color="#008837")+
+      geom_point(color="#008837",size=2.2)+facet_wrap(~model_group,scales="free_y",nrow=1)+
+      labs(title="h. Same-N conditional and within-particle log-ratio analyses",
+        subtitle="Condition numbers and score correlations are written to the audit tables",
+        x="Incident log HR per 1 SD",y=NULL)+theme_5c(8)
+
+  list(data=d,trajectory=gg,pgs_conditional=ff,measured_conditional=hh,
+    figure=(pa|pb)/(pc|pd)/(pe|pf)/pg/ph+
+      plot_layout(heights=c(1,1,1.05,1.08,1.05))+
+    plot_annotation(title="L_VLDL_TG.pct deep dive: inherited composition signal versus measured burden",
+      caption=paste0("Percentage traits are compositional. Negative PGS association is not evidence that ",
+        "higher absolute VLDL triglyceride burden is protective; prioritize conditional MR/colocalization.")))
 }
 
 
@@ -922,6 +1148,8 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     if (!file.exists(selected_cache) || file.size(selected_cache) <= 0)
       stop("C1_FIG12_ONLY requires an existing C1 result: ", selected_cache, call. = FALSE)
     old<-readRDS(selected_cache)
+    if(!identical(old$meta$code_version%||%NA_character_,C1_CODE_VERSION))
+      stop("C1_FIG12_ONLY cannot relabel a pre-update result; rerun C1 with the current code first.",call.=FALSE)
     needed<-c("pgs_incident","pgs_prevalent","pgs_attained_age","association_adj2","prevalent_adj2","birthline_adj2")
     missing<-setdiff(needed,names(old));if(length(missing))
       stop("Existing C1 result lacks fields required for Fig1/2: ",paste(missing,collapse=", "),call.=FALSE)
@@ -947,41 +1175,66 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
 
   biom0<-if(layer=="protein")read_prot() else read_met();features_all<-setdiff(names(biom0),"eid")
   scan<-if(cache_valid(scan_cache))tryCatch(readRDS(scan_cache),error=function(e)NULL) else NULL
-  reuse<-!is.null(scan)
+  scan_contract<-list(layer=layer,le4_covars=sort(C1_LE4_COVARS),
+    full_le8_sensitivity=C1_FULL_LE8_SENSITIVITY,
+    treatment_vars=sort(C1_TREATMENT_VARS))
+  reuse<-!is.null(scan)&&identical(scan$scan_contract%||%NULL,scan_contract)
+  if(!is.null(scan)&&!reuse)
+    message("C1/",layer,": scan covariate contract changed; recomputing association scans")
 
   # If the expensive scans exist, load only the features needed for figures + same-N table.
   if(reuse){
     a0<-scan$association_adj2 %||% scan$association_basic; p0<-scan$prevalent_adj2 %||% scan$prevalent_basic
     fig_features<-unique(c(
-      C1_DIRECTION_ANCHORS,
+      C1_DIRECTION_ANCHORS,C1_VLDL_DEEP_FEATURES,
       a0|>filter(is.finite(p.value))|>slice_min(p.value,n=max(CLUSTER_TOP,ATTENUATION_TOP,TOP_N),with_ties=FALSE)|>pull(term),
       p0|>filter(is.finite(p.value))|>slice_min(p.value,n=max(GRADIENT_TOP,TOP_N),with_ties=FALSE)|>pull(term)))
     biom<-biom0[,intersect(c("eid",fig_features),names(biom0)),drop=FALSE]
   } else biom<-biom0
 
-  need<-unique(c("eid","ethnic.c",vars.basic,vars.le8,"birth_date","date_attend","date_lost","date_death",paste0("fod_icd10_",Y)))
+  need<-unique(c("eid","ethnic.c",vars.basic,vars.le8,C1_TREATMENT_VARS,
+    "birth_date","date_attend","date_lost","date_death",paste0("fod_icd10_",Y)))
   # Restrict C1 to participants with the omics assay.
   dat<-read_all(need)|>inner_join(biom,by="eid")|>filter_analysis_cohort()|>make_outcome(Y)|>add_attained_age_time(Y)
   rm(biom,biom0);invisible(gc())
-  features<-intersect(features_all,names(dat));covs_basic<-intersect(vars.basic,names(dat));covs_adj2<-intersect(vars.adj2,names(dat))
+  features<-intersect(features_all,names(dat));covs_basic<-intersect(vars.basic,names(dat))
+  covs_adj2_full<-intersect(unique(c(vars.adj2,C1_TREATMENT_VARS)),names(dat))
+  covs_adj2<-intersect(unique(c(vars.basic,C1_LE4_COVARS,C1_TREATMENT_VARS)),names(dat))
+  le8_covariates_removed<-setdiff(covs_adj2_full,covs_adj2)
+  c1_covs_use_name<-if(covs_use_name=="basic")"basic" else
+    "adj_le4"
   tvar<-paste0(Y,".t2e");evar<-paste0(Y,".Yt2e");bvar<-paste0(Y,".b2e");bivar<-paste0(Y,".bi2e")
   rvar<-paste0(Y,".r2e");revar<-paste0(Y,".Yr2e")
   # Attained age is already the analysis time, so an additional linear age
   # covariate would double-adjust age.  Sex and the remaining covariates stay.
   age_covs<-unique(c("age",grep("^age($|[._])",unique(c(covs_basic,covs_adj2)),value=TRUE,ignore.case=TRUE)))
   birth_covs_basic<-setdiff(covs_basic,age_covs);birth_covs_adj2<-setdiff(covs_adj2,age_covs)
+  birth_covs_adj2_full<-setdiff(covs_adj2_full,age_covs)
   dat$prevalent_status<-make_prevalent_status(dat,Y)
+  vldl_measured_models<-if(layer=="metabolite")
+    run_vldl_tg_measured_models(dat,covs_adj2,tvar,evar)else tibble()
 
   if(!reuse){
-    message("C1/",layer,": incident Cox scans: basic + adj2")
+    message("C1/",layer,": incident Cox scans: basic + behavioral LE4")
     assoc_basic<-cox_scan(dat,features,covs_basic,Y,time_var=tvar,event_var=evar)
     assoc_adj2<-cox_scan(dat,features,covs_adj2,Y,time_var=tvar,event_var=evar)
     message("C1/",layer,": attained-age Cox scans with delayed entry at baseline")
     birthline_basic<-cox_scan_delayed_entry(dat,features,birth_covs_basic,Y)
     birthline_adj2<-cox_scan_delayed_entry(dat,features,birth_covs_adj2,Y)
-    message("C1/",layer,": baseline-prevalent logistic scans: basic + adj2")
+    message("C1/",layer,": baseline-prevalent logistic scans: basic + behavioral LE4")
     prevalent_basic<-logistic_scan(dat,features,covs_basic,"prevalent_status")
     prevalent_adj2<-logistic_scan(dat,features,covs_adj2,"prevalent_status")
+    run_full_le8_sensitivity<-length(le8_covariates_removed)>0&&
+      C1_FULL_LE8_SENSITIVITY
+    if(run_full_le8_sensitivity){
+      message("C1/",layer,": full-LE8 sensitivity (non-primary)")
+      assoc_adj2_full_le8<-cox_scan(dat,features,covs_adj2_full,Y,time_var=tvar,event_var=evar)
+      birthline_adj2_full_le8<-cox_scan_delayed_entry(dat,features,birth_covs_adj2_full,Y)
+      prevalent_adj2_full_le8<-logistic_scan(dat,features,covs_adj2_full,"prevalent_status")
+    } else {
+      assoc_adj2_full_le8<-tibble();birthline_adj2_full_le8<-tibble()
+      prevalent_adj2_full_le8<-tibble()
+    }
     message("C1/",layer,": case-only diagnosis-duration and landmark incident scans")
     # Retained at the user's request as an exploratory legacy analysis.  Its
     # cases and controls have incompatible time origins, so it is never used in
@@ -1003,11 +1256,15 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     att_features<-assoc_basic|>filter(is.finite(p.value))|>arrange(p.value)|>pull(term)
     if(ATTENUATION_TOP>0)att_features<-head(att_features,ATTENUATION_TOP)
     attenuation_sameN<-same_sample_attenuation(dat,att_features,tvar,evar,covs_basic,covs_adj2)
-    scan<-list(association_basic=assoc_basic,association_adj2=assoc_adj2,
+    scan<-list(scan_contract=scan_contract,
+               association_basic=assoc_basic,association_adj2=assoc_adj2,
                birthline_basic=birthline_basic,birthline_adj2=birthline_adj2,
                prevalent_basic=prevalent_basic,prevalent_adj2=prevalent_adj2,reverse_adj2=reverse_adj2,
                duration_adj2=duration_adj2,landmark_adj2=landmark_adj2,risk_window_adj2=risk_window_adj2,
-               attenuation_sameN=attenuation_sameN)
+               attenuation_sameN=attenuation_sameN,
+               association_adj2_full_le8=assoc_adj2_full_le8,
+               birthline_adj2_full_le8=birthline_adj2_full_le8,
+               prevalent_adj2_full_le8=prevalent_adj2_full_le8)
     saveRDS(scan,scan_cache,compress="xz")
   } else {
     assoc_basic<-scan$association_basic;assoc_adj2<-scan$association_adj2
@@ -1022,18 +1279,34 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
       prevalent_adj2|>filter(is.finite(p.value))|>slice_min(p.value,n=C1_RISK_TOP,with_ties=FALSE)|>pull(term)))
     risk_window_adj2<-scan$risk_window_adj2%||%risk_window_scan(dat,risk_features,tvar,evar,bvar,covs_adj2,C1_RISK_CUTS)
     attenuation_sameN<-scan$attenuation_sameN %||% tibble()
+    assoc_adj2_full_le8<-scan$association_adj2_full_le8%||%tibble()
+    birthline_adj2_full_le8<-scan$birthline_adj2_full_le8%||%tibble()
+    prevalent_adj2_full_le8<-scan$prevalent_adj2_full_le8%||%tibble()
     message("C1/",layer,": reuse association scans and regenerate figures")
   }
 
-  assoc<-if(covs_use_name=="adj2")assoc_adj2 else assoc_basic
-  assoc_prevalent<-if(covs_use_name=="adj2")prevalent_adj2 else prevalent_basic
+  assoc<-if(c1_covs_use_name=="basic")assoc_basic else assoc_adj2
+  assoc_prevalent<-if(c1_covs_use_name=="basic")prevalent_basic else prevalent_adj2
   pgs<-run_c1_pgs_scan(layer,features_all,covs_basic,Y,rawdir,overlap_eids=dat$eid)
   pgs_incident<-pgs$incident;pgs_prevalent<-pgs$prevalent;pgs_attained_age<-pgs$attained_age
   pgs_incident_same<-pgs$incident_same_omic;pgs_prevalent_same<-pgs$prevalent_same_omic
   pgs_attained_age_same<-pgs$attained_age_same_omic
   pgs_concordance<-build_pgs_actual_concordance(
-    list(incident=pgs_incident_same,prevalent=pgs_prevalent_same,attained_age=pgs_attained_age_same),
-    list(incident=assoc_adj2,prevalent=prevalent_adj2,attained_age=birthline_adj2))
+    list(incident=pgs_incident,prevalent=pgs_prevalent,attained_age=pgs_attained_age),
+    list(incident=assoc_adj2,prevalent=prevalent_adj2,attained_age=birthline_adj2),
+    list(incident=pgs_incident_same,prevalent=pgs_prevalent_same,attained_age=pgs_attained_age_same))
+  vldl_deep<-if(layer=="metabolite")build_vldl_tg_deep_dive(
+    pgs_full=list(incident=pgs_incident,prevalent=pgs_prevalent,attained_age=pgs_attained_age),
+    pgs_same=list(incident=pgs_incident_same,prevalent=pgs_prevalent_same,
+      attained_age=pgs_attained_age_same),
+    measured_le4=list(incident=assoc_adj2,prevalent=prevalent_adj2,attained_age=birthline_adj2),
+    measured_basic=list(incident=assoc_basic,prevalent=prevalent_basic,attained_age=birthline_basic),
+    measured_full_le8=list(incident=assoc_adj2_full_le8,prevalent=prevalent_adj2_full_le8,
+      attained_age=birthline_adj2_full_le8),risk_window_le4=risk_window_adj2,
+    pgs_conditional=pgs$vldl_conditional%||%tibble(),
+    measured_conditional=vldl_measured_models)else
+      list(data=tibble(),trajectory=tibble(),pgs_conditional=tibble(),
+        measured_conditional=tibble(),figure=NULL)
   prefix<-ifelse(layer=="protein","pwas","mwas")
   input_feature_audit<-layer_annotation_audit(layer,features_all)
   write_raw_csv(input_feature_audit,"c1.input_feature_annotation_audit.csv",rawdir)
@@ -1054,6 +1327,17 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   write_raw_csv(pgs_prevalent_same,paste0(prefix,"_pgs_prevalent_same_omic.csv"),rawdir)
   write_raw_csv(pgs_attained_age_same,paste0(prefix,"_pgs_attained_age_same_omic.csv"),rawdir)
   write_raw_csv(pgs_concordance,"c1.pgs_actual_concordance.csv",rawdir)
+  if(layer=="metabolite")
+    write_raw_csv(vldl_deep$data,"c1.L_VLDL_TG_pct_deep_dive.csv",rawdir)
+  if(layer=="metabolite")
+    write_raw_csv(vldl_deep$trajectory,"c1.L_VLDL_TG_pct_riskset_trajectory.csv",rawdir)
+  if(layer=="metabolite")
+    write_raw_csv(vldl_deep$pgs_conditional,"c1.L_VLDL_TG_pct_pgs_conditional.csv",rawdir)
+  if(layer=="metabolite")
+    write_raw_csv(vldl_deep$measured_conditional,"c1.L_VLDL_TG_pct_measured_conditional.csv",rawdir)
+  write_raw_csv(assoc_adj2_full_le8,paste0(prefix,"_incident_adj2_full_le8_sensitivity.csv"),rawdir)
+  write_raw_csv(prevalent_adj2_full_le8,paste0(prefix,"_prevalent_adj2_full_le8_sensitivity.csv"),rawdir)
+  write_raw_csv(birthline_adj2_full_le8,paste0(prefix,"_birthline_adj2_full_le8_sensitivity.csv"),rawdir)
 
   cohort<-tibble(layer,N_omics=nrow(dat),incident_events=sum(dat[[evar]]==1,na.rm=TRUE),
                  prevalent_cases=sum(dat$prevalent_status==1,na.rm=TRUE),features=length(features_all),
@@ -1062,7 +1346,11 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
                  attained_age_N=sum(is.finite(dat$.attained_entry)&is.finite(dat$.attained_exit)),
                  bi2e_available=sum(is.finite(dat[[bivar]])),
                  PGS_matched=length(pgs$score_map),PGS_file_signature=pgs_signature,
-                 LE8_components=length(intersect(vars.le8,names(dat))),covs_use=covs_use_name)
+                 LE8_components=length(intersect(vars.le8,names(dat))),covs_use=c1_covs_use_name,
+                 LE4_components=length(intersect(C1_LE4_COVARS,names(dat))),
+                 le8_covariates_removed=paste(le8_covariates_removed,collapse=";"),
+                 overlap_covariates_removed=paste(le8_covariates_removed,collapse=";"),
+                 treatment_covariates=paste(intersect(C1_TREATMENT_VARS,names(dat)),collapse=";"))
   write_raw_csv(cohort,"c1.cohort.csv",rawdir)
 
   top<-assoc|>filter(is.finite(p.value))|>slice_min(p.value,n=TOP_N,with_ties=FALSE)|>pull(term)
@@ -1073,30 +1361,31 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   # Fig1 + Fig2: the third row is an attained-age sensitivity analysis with
   # delayed entry at baseline. The left column is a fixed-at-conception omic
   # PGS in the full genetic cohort; the right column is the measured adult omic
-  # level with adj2 adjustment. Basic observed-level analyses remain in the
+  # level with behavioral-LE4 adjustment. Basic observed-level analyses remain in the
   # workbook and raw files but are no longer displayed here.
   plot_c1_fig12(layer,features_all,pgs_incident,pgs_prevalent,pgs_attained_age,
     assoc_adj2,prevalent_adj2,birthline_adj2,outdir)
 
-  # Fig3: same participants in basic and adj2 residualized YY panels.
+  # Fig3: same participants in basic and behavioral-LE4 residualized YY panels.
   yy_need<-unique(c(bvar,top6,covs_adj2));yy_dat<-dat[complete.cases(dat[,intersect(yy_need,names(dat)),drop=FALSE]) & is.finite(dat[[bvar]]),,drop=FALSE]
   omic_name<-ifelse(layer=="protein","protein","metabolite")
   p3a<-make_yy_panel(yy_dat,top6,bvar,covs_basic,paste0("a. Yin–Yang ",omic_name," patterns — basic adjustment"),
                      ifelse(layer=="protein","Mean protein z-score","Mean metabolite z-score"),smooth_lines=FALSE)
-  p3b<-make_yy_panel(yy_dat,top6,bvar,covs_adj2,"b. Yin–Yang trajectories — basic + LE8 adjustment",
+  adj2_label<-"basic + behavioral LE4 adjustment"
+  p3b<-make_yy_panel(yy_dat,top6,bvar,covs_adj2,paste0("b. Yin–Yang trajectories — ",adj2_label),
                      ifelse(layer=="protein","Mean protein z-score","Mean metabolite z-score"),smooth_lines=TRUE)
   save_plot(p3a/p3b+plot_layout(heights=c(1,1)),"c1.Fig3.yy_top.png",16,13.5,outdir=outdir)
 
   # Fig4 shows adjusted diagnosis-timed cross-sectional omics gradients.
   p4i<-make_gradient_panel(dat,top_inc,bvar,"incident",GRADIENT_STEP,MIN_BIN_N,
-    paste0("a. Incident (Yin): top ",length(top_inc)," adj2 biomarkers"),covars=covs_adj2)
+    paste0("a. Incident (Yin): top ",length(top_inc)," behavioral-LE4 biomarkers"),covars=covs_adj2)
   p4p<-make_gradient_panel(dat,top_prev,bvar,"prevalent",GRADIENT_STEP,MIN_BIN_N,
-    paste0("b. Baseline-prevalent (Yang): top ",length(top_prev)," adj2 biomarkers"),covars=covs_adj2)
+    paste0("b. Baseline-prevalent (Yang): top ",length(top_prev)," behavioral-LE4 biomarkers"),covars=covs_adj2)
   save_plot((p4i/p4p+plot_layout(guides="collect"))&theme(legend.position="right"),
             "c1.Fig4.gradient.png",17,9.6,outdir=outdir)
   gradient_rank<-bind_rows(
-    assoc_adj2|>filter(term%in%top_inc)|>transmute(analysis="incident_adj2",feature=term,p_value=p.value)|>arrange(p_value)|>mutate(rank=row_number()),
-    prevalent_adj2|>filter(term%in%top_prev)|>transmute(analysis="prevalent_adj2",feature=term,p_value=p.value)|>arrange(p_value)|>mutate(rank=row_number()))
+    assoc_adj2|>filter(term%in%top_inc)|>transmute(analysis="incident_behavioral_LE4",feature=term,p_value=p.value)|>arrange(p_value)|>mutate(rank=row_number()),
+    prevalent_adj2|>filter(term%in%top_prev)|>transmute(analysis="prevalent_behavioral_LE4",feature=term,p_value=p.value)|>arrange(p_value)|>mutate(rank=row_number()))
   write_raw_csv(gradient_rank,"c1.gradient_top10_provenance.csv",rawdir)
 
   # Fig5: separately selected and clustered incident and prevalent adj2 sets.
@@ -1111,8 +1400,8 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     plot_layout(heights=c(1,.10,1,.05,.38))
   save_plot(cluster_figure,
             "c1.Fig5.gradient_cluster.png",18,10.5,outdir=outdir)
-  cl_members<-bind_rows(cli$cluster|>mutate(analysis="incident_adj2"),clp$cluster|>mutate(analysis="prevalent_adj2"))
-  cl_metrics<-bind_rows(cli$metrics|>mutate(analysis="incident_adj2"),clp$metrics|>mutate(analysis="prevalent_adj2"))
+  cl_members<-bind_rows(cli$cluster|>mutate(analysis="incident_behavioral_LE4"),clp$cluster|>mutate(analysis="prevalent_behavioral_LE4"))
+  cl_metrics<-bind_rows(cli$metrics|>mutate(analysis="incident_behavioral_LE4"),clp$metrics|>mutate(analysis="prevalent_behavioral_LE4"))
   write_raw_csv(cl_members,"c1.cluster_membership.csv",rawdir);write_raw_csv(cl_metrics,"c1.cluster_selection.csv",rawdir)
 
   # Fig6: adjusted Q5-vs-Q1 HRs on the same adj2 complete-case sample; no subtitle.
@@ -1129,8 +1418,8 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   n_sig<-sum(is.finite(assoc_adj2$p.value)&assoc_adj2$p.value*nrow(assoc_adj2)<.05)
   n_sig_prev<-sum(is.finite(prevalent_adj2$p.value)&prevalent_adj2$p.value*nrow(prevalent_adj2)<.05)
   write_raw_csv(enrich,"c1.enrichment_incident_sig.csv",rawdir);write_raw_csv(enrich_prev,"c1.enrichment_prevalent_sig.csv",rawdir)
-  pe_i<-plot_functional_enrichment(enrich,n_sig,assoc_adj2,layer,"a. Incident (Yin), adj2")
-  pe_p<-plot_functional_enrichment(enrich_prev,n_sig_prev,prevalent_adj2,layer,"b. Baseline-prevalent (Yang), adj2")
+  pe_i<-plot_functional_enrichment(enrich,n_sig,assoc_adj2,layer,"a. Incident (Yin), behavioral LE4")
+  pe_p<-plot_functional_enrichment(enrich_prev,n_sig_prev,prevalent_adj2,layer,"b. Baseline-prevalent (Yang), behavioral LE4")
   save_plot((pe_i/pe_p+plot_layout(guides="collect"))&theme(legend.position="right"),
             "c1.Fig8.enrich_sig.png",18,10.5,outdir=outdir)
 
@@ -1151,14 +1440,25 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
             "c1.Fig13.reverse_time_exploratory.png",15.5,8,outdir=outdir)
   save_plot(plot_pgs_actual_concordance(pgs_concordance,C1_DIRECTION_ANCHORS),
             "c1.Fig14.pgs_actual_concordance.png",18,10.5,outdir=outdir)
+  if(layer=="metabolite")save_plot(vldl_deep$figure,
+            "c1.Fig15.L_VLDL_TG_pct_deep_dive.png",19,26,outdir=outdir)
 
   out<-list(meta=module_meta(layer,extra=list(N=nrow(dat),events=sum(dat[[evar]]==1,na.rm=TRUE),
-              covs_use=covs_use_name,code_version=C1_CODE_VERSION,pgs_signature=pgs_signature,
+              covs_use=c1_covs_use_name,covariates=covs_adj2,
+              le4_covariates=intersect(C1_LE4_COVARS,names(dat)),
+              le8_covariates_removed=le8_covariates_removed,
+              overlap_covariates_removed=le8_covariates_removed,
+              treatment_covariates=intersect(C1_TREATMENT_VARS,names(dat)),
+              code_version=C1_CODE_VERSION,pgs_signature=pgs_signature,
               pgs_scan_signature=pgs$signature,
               pgs_matched=length(pgs$score_map),pgs_interpretation="fixed-at-conception score; not a biomarker measured at birth")),
-            association=assoc,association_basic=assoc_basic,association_adj2=assoc_adj2,association_LE8=assoc_adj2,
+            association=assoc,association_basic=assoc_basic,association_adj2=assoc_adj2,
+            association_LE4=assoc_adj2,association_LE8=assoc_adj2_full_le8,
+            association_adj2_full_le8_sensitivity=assoc_adj2_full_le8,
             birthline_basic=birthline_basic,birthline_adj2=birthline_adj2,
+            birthline_adj2_full_le8_sensitivity=birthline_adj2_full_le8,
             prevalent=assoc_prevalent,prevalent_basic=prevalent_basic,prevalent_adj2=prevalent_adj2,
+            prevalent_adj2_full_le8_sensitivity=prevalent_adj2_full_le8,
             reverse_prevalent=reverse_adj2,prevalent_duration=duration_adj2,landmark_incident=landmark_adj2,
             diagnosis_window_riskset=risk_window_adj2,directionality=directionality,
             attenuation=attenuation_sameN,enrichment=enrich,enrichment_prevalent=enrich_prev,
@@ -1166,18 +1466,30 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
             pgs_attained_age=pgs_attained_age,pgs_incident_same_omic=pgs_incident_same,
             pgs_prevalent_same_omic=pgs_prevalent_same,pgs_attained_age_same_omic=pgs_attained_age_same,
             pgs_actual_concordance=pgs_concordance,
+            L_VLDL_TG_pct_deep_dive=vldl_deep$data,
+            L_VLDL_TG_pct_riskset_trajectory=vldl_deep$trajectory,
+            L_VLDL_TG_pct_pgs_conditional=vldl_deep$pgs_conditional,
+            L_VLDL_TG_pct_measured_conditional=vldl_deep$measured_conditional,
             input_feature_annotation_audit=input_feature_audit,top_features=top,gradient_top10_provenance=gradient_rank,clusters=cl_members,cluster_selection=cl_metrics)
   if(layer=="protein"){out$pwas_incident<-assoc;out$pwas_prevalent<-assoc_prevalent;out$top_proteins<-top}
   else {out$MWAS<-assoc;out$MWAS_prevalent<-assoc_prevalent}
   write_xlsx2(list(cohort=cohort,input_feature_audit=input_feature_audit,association=assoc,prevalent=assoc_prevalent,incident_basic=assoc_basic,incident_adj2=assoc_adj2,
                    birthline_basic=birthline_basic,birthline_adj2=birthline_adj2,
-                   prevalent_basic=prevalent_basic,prevalent_adj2=prevalent_adj2,attenuation_sameN=attenuation_sameN,
+                   prevalent_basic=prevalent_basic,prevalent_adj2=prevalent_adj2,
+                   association_adj2_full_le8_sensitivity=assoc_adj2_full_le8,
+                   prevalent_adj2_full_le8_sensitivity=prevalent_adj2_full_le8,
+                   birthline_adj2_full_le8_sensitivity=birthline_adj2_full_le8,
+                   attenuation_sameN=attenuation_sameN,
                    reverse_prevalent=reverse_adj2,prevalent_duration=duration_adj2,incident_landmark=landmark_adj2,
                    diagnosis_window_riskset=risk_window_adj2,directionality=directionality,
                    pgs_status=pgs$status,pgs_incident=pgs_incident,pgs_prevalent=pgs_prevalent,
                    pgs_attained_age=pgs_attained_age,pgs_incident_same_omic=pgs_incident_same,
                    pgs_prevalent_same_omic=pgs_prevalent_same,pgs_attained_same_omic=pgs_attained_age_same,
                    pgs_actual_concordance=pgs_concordance,
+                   L_VLDL_TG_pct_deep_dive=vldl_deep$data,
+                   L_VLDL_TG_pct_riskset_trajectory=vldl_deep$trajectory,
+                   L_VLDL_TG_pct_pgs_conditional=vldl_deep$pgs_conditional,
+                   L_VLDL_TG_pct_measured_conditional=vldl_deep$measured_conditional,
                    gradient_top10_provenance=gradient_rank,
                    cluster_membership=cl_members,cluster_selection=cl_metrics,
                    enrichment_incident=enrich,enrichment_prevalent=enrich_prev),"c1.out.xlsx")

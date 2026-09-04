@@ -437,7 +437,11 @@ layer_annotation_audit <- function(layer, features) {
     return(tibble(feature=features) |> left_join(ref,by="feature") |>
       mutate(annotation_matched=!is.na(annotation_key),annotation_source=prot_bed_file))
   }
-  ref <- read_met_annotation() |> transmute(annotation_key=trait,.key=str_remove(trait,"^met_"),
+  # Pass the assayed feature names so read_met_annotation() can identify the
+  # variable column even when met.lst is headerless or its variable-name
+  # column is not first.  Calling it without this overlap information caused
+  # a false 0/300 annotation-match audit in the current CAD output.
+  ref <- read_met_annotation(features) |> transmute(annotation_key=trait,.key=str_remove(trait,"^met_"),
     annotation_label=label,annotation_group=group,annotation_subgroup=subgroup,annotation_super_group=super_group) |>
     distinct(.key,.keep_all=TRUE)
   tibble(feature=features,.key=str_remove(feature,"^met_")) |> left_join(ref,by=".key") |>
