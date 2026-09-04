@@ -39,9 +39,12 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 
 重新提交 IBDmix 请求时，若某个染色体目录同时存在 `.complete` 和对应阈值的非空 `final/all_archaic_refs.*.segments.tsv.gz`，且未指定 `--replace-ibdmix TRUE`，外层调度器会直接报告 `[GU CMD] SKIP`。该判断发生在 target 预检和临时 PFILE→VCF 转换之前；`.cmd.list` 仍保留全部请求单元，便于审计和独立重跑。
 
-- 默认 `--run-cmd TRUE`：生成后直接在本地执行；`--jobs N` 最多并行 N 个 `.cmd`（默认 N=4）。AS3 是例外：当前每个独立 chromosome 命令使用同一组 GPU assignment，本地调度会把 effective jobs 固定为 1，避免多个染色体同时争用 GPU 0；`--jobs` 仍影响其他方法。每个任务的 stdout/stderr 写入同目录 `<unit>.log`，失败时另写 `<unit>.err`。
+- 默认 `--run-cmd TRUE --foreground FALSE`：请求调度器通过 `setsid`/`nohup` 在后台运行，入口立即报告 launcher 的日志、PID 和状态文件。`--jobs N` 最多并行 N 个 `.cmd`（默认 N=4）。AS3 是例外：当前每个独立 chromosome 命令使用同一组 GPU assignment，本地调度会把 effective jobs 固定为 1，避免多个染色体同时争用 GPU 0；`--jobs` 仍影响其他方法。每个任务的 stdout/stderr 写入同目录 `<unit>.log`，失败时另写 `<unit>.err`。
+- 指定 `--foreground TRUE` 可让整个请求保持连接终端并等待完成，适合交互调试或由外部作业调度器管理。永久的单元 `.cmd` 是 leaf worker，直接执行时始终以前台方式运行，不会再次把自己送到后台。
 - 显式指定 `--run-cmd FALSE` 时只生成 `.cmd`，不启动分析。
 - 以后在 HPC 上可将 `.cmd.list` 中的命令逐个交给 `bsub`；当前版本不猜测集群参数，也不内置 `bsub`。
+
+不同模块的后台请求彼此独立，可以同时提交，例如同时运行 `phyml --foreground FALSE` 与 `ibdmix --foreground FALSE`。launcher 日志/PID/状态文件按 method、scope、时间和启动进程编号唯一命名；每个请求的 target 转换也使用独立的 `run.*` 临时目录。`--jobs` 是单个请求内部的并行度，因此同时提交多个模块时应按总 CPU、内存和 GPU 容量分配各自的值。默认 `--auto-normalize FALSE` 可避免多个模块完成时同时刷新同一个 SQLite；需要自动刷新时建议只给其中一个请求设置 `--auto-normalize TRUE`。
 
 调度单元遵循各方法的原生分析边界：PhyML/IBDmix 的 `--loci` 每行一个命令；TRACE/AS3 把同一染色体的 loci 聚合成一个命令，以保留整染色体模型上下文；所有 `--chr` 请求和 ARG 都是每条染色体一个命令。因此 `--chr 22,X` 会生成两个完全独立的任务；全基因组 IBDmix/TRACE/ARG 生成 23 个命令，AS3 生成 22 个。`--jobs` 只控制任务间并行；PhyML 的 `--phyml-jobs` 仍控制单条染色体任务内的窗口并行，两者不要同时设得过高。外层只改变任务组织方式，不改变五个模块内部的科学计算。
 

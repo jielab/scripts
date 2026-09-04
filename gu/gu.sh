@@ -65,6 +65,9 @@ Command orchestration (phyml, ibdmix, trace, as3, arg):
   --run-cmd TRUE|FALSE
           Always write one permanent command per analysis unit. TRUE executes
           generated commands locally; FALSE only writes them [TRUE].
+  --foreground TRUE|FALSE
+          Keep the request scheduler attached to the terminal [FALSE]. By
+          default it is launched with setsid/nohup and reports log/PID paths.
   --jobs INT
           Concurrent local command files when --run-cmd TRUE [4].
 
@@ -143,6 +146,8 @@ PHYML_REGION_MODE_INPUT=${PHYML_REGION_MODE:-core}
 PHYML_REGION_MODE_SET=0
 RUN_CMD_INPUT=TRUE
 RUN_CMD_SET=0
+FOREGROUND_INPUT=FALSE
+FOREGROUND_SET=0
 UNIT_JOBS_INPUT=4
 UNIT_JOBS_SET=0
 ARG_DIR_INPUT=""
@@ -188,6 +193,7 @@ while (( $# )); do
     --phyml-ld-r2) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --phyml-ld-r2 requires a value from 0 to 1" >&2; exit 2; }; PHYML_LD_R2_INPUT=$2; PHYML_LD_R2_SET=1; shift 2;;
     --phyml-region-mode) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --phyml-region-mode requires core or ld" >&2; exit 2; }; PHYML_REGION_MODE_INPUT=$2; PHYML_REGION_MODE_SET=1; shift 2;;
     --run-cmd) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --run-cmd requires TRUE or FALSE" >&2; exit 2; }; RUN_CMD_INPUT=$2; RUN_CMD_SET=1; shift 2;;
+    --foreground) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --foreground requires TRUE or FALSE" >&2; exit 2; }; FOREGROUND_INPUT=$2; FOREGROUND_SET=1; shift 2;;
     --jobs) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --jobs requires a positive integer" >&2; exit 2; }; UNIT_JOBS_INPUT=$2; UNIT_JOBS_SET=1; shift 2;;
     --arg-dir) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --arg-dir requires DIR" >&2; exit 2; }; ARG_DIR_INPUT=$2; ARG_DIR_SET=1; shift 2;;
     --target-vcf-dir) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --target-vcf-dir requires DIR" >&2; exit 2; }; TARGET_VCF_DIR_INPUT=$2; TARGET_VCF_DIR_SET=1; shift 2;;
@@ -228,11 +234,11 @@ if (( TARGET_VCF_DIR_SET )) && [[ $METHOD != arg ]]; then echo "ERROR: --target-
 if (( UKB_OPTION_SET )) && [[ $METHOD != ukb ]]; then echo "ERROR: --ukb-* options are only valid with ukb" >&2; exit 2; fi
 if (( TRACE_LOCI_MODE_SET )) && [[ $METHOD != trace ]]; then echo "ERROR: --trace-loci-mode is only valid with trace" >&2; exit 2; fi
 if (( PHYML_WINDOW_BP_SET || PHYML_JOBS_SET || PHYML_LD_R2_SET || PHYML_REGION_MODE_SET )) && [[ $METHOD != phyml ]]; then echo "ERROR: --phyml-window-bp/--phyml-jobs/--phyml-ld-r2/--phyml-region-mode are only valid with phyml" >&2; exit 2; fi
-if (( RUN_CMD_SET || UNIT_JOBS_SET )); then
+if (( RUN_CMD_SET || FOREGROUND_SET || UNIT_JOBS_SET )); then
   command_action=${ACTION:-run}; [[ $METHOD != arg ]] || command_action=${ACTION:-build}
   case "$METHOD:$command_action" in
     phyml:run|ibdmix:run|trace:run|trace:extract|trace:infer|trace:segments|as3:run|arg:build) ;;
-    *) echo "ERROR: --run-cmd/--jobs are valid only with phyml, ibdmix, trace analysis actions, as3, or arg build" >&2; exit 2 ;;
+    *) echo "ERROR: --run-cmd/--foreground/--jobs are valid only with phyml, ibdmix, trace analysis actions, as3, or arg build" >&2; exit 2 ;;
   esac
 fi
 if (( TARGET_INPUT_SET != TARGET_DIR_INPUT_SET )); then
@@ -263,6 +269,7 @@ REPLACE_AS3_INPUT=$(gu_bool "$REPLACE_AS3_INPUT") || { echo "ERROR: --replace-as
 REPLACE_ARG_INPUT=$(gu_bool "$REPLACE_ARG_INPUT") || { echo "ERROR: --replace-arg must be TRUE or FALSE" >&2; exit 2; }
 AUTO_NORMALIZE_INPUT=$(gu_bool "$AUTO_NORMALIZE_INPUT") || { echo "ERROR: --auto-normalize must be TRUE or FALSE" >&2; exit 2; }
 RUN_CMD_INPUT=$(gu_bool "$RUN_CMD_INPUT") || { echo "ERROR: --run-cmd must be TRUE or FALSE" >&2; exit 2; }
+FOREGROUND_INPUT=$(gu_bool "$FOREGROUND_INPUT") || { echo "ERROR: --foreground must be TRUE or FALSE" >&2; exit 2; }
 [[ $TRACE_LOCI_MODE_INPUT == posthoc || $TRACE_LOCI_MODE_INPUT == extract ]] || { echo "ERROR: --trace-loci-mode must be posthoc or extract" >&2; exit 2; }
 [[ $PHYML_REGION_MODE_INPUT == core || $PHYML_REGION_MODE_INPUT == ld ]] || { echo "ERROR: --phyml-region-mode must be core or ld" >&2; exit 2; }
 [[ $PHYML_WINDOW_BP_INPUT =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --phyml-window-bp must be a positive integer" >&2; exit 2; }
@@ -287,9 +294,10 @@ PHYML_JOBS=$PHYML_JOBS_INPUT
 PHYML_LD_R2=$PHYML_LD_R2_INPUT
 PHYML_REGION_MODE=$PHYML_REGION_MODE_INPUT
 GU_RUN_CMD=$RUN_CMD_INPUT
+GU_FOREGROUND=$FOREGROUND_INPUT
 GU_UNIT_JOBS=$UNIT_JOBS_INPUT
 export GU_AUTO_NORMALIZE GU_ARG_REPLACE IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
-export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_UNIT_JOBS
+export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_FOREGROUND GU_UNIT_JOBS
 if [[ $METHOD == phyml ]]; then
   PHYML_PLOT_PHY=$PLOT_PHY_INPUT
   PHYML_REPLACE=$REPLACE_PHYML_INPUT
@@ -557,6 +565,9 @@ gu_write_analysis_unit_cmd(){
     as3) cmd_args+=(--replace-as3 "$REPLACE_AS3_INPUT" --as3-target-chunk-size "$AS3_TARGET_CHUNK_SIZE_INPUT"); output_var=AS3_OUT ;;
     arg) cmd_args+=(--replace-arg "$REPLACE_ARG_INPUT" --arg-dir "$GU_ARG_DIR") ;;
   esac
+  # A unit command is already the leaf worker. Keep it attached to the local
+  # scheduler (or an HPC scheduler) instead of recursively launching itself.
+  cmd_args+=(--foreground TRUE)
   [[ $METHOD == arg ]] || cmd_args+=(--auto-normalize FALSE)
   [[ -z ${GU_SAMPLE_PANEL:-} ]] || cmd_args+=(--sample-panel "$GU_SAMPLE_PANEL")
 
@@ -683,6 +694,56 @@ gu_orchestrate_analysis_cmds(){
   gu_run_analysis_cmds_local "$list" "$effective_jobs"
   if (( GU_AUTO_NORMALIZE )) && [[ $METHOD != arg ]]; then bash "$ROOT/gu.sh" normalize; fi
 }
+
+gu_launch_analysis_request_background(){
+  local log_root stamp base log pid_file status_file pid
+  local runner
+  if [[ $METHOD == arg ]]; then
+    log_root=$GU_ARG_DIR/log
+  else
+    log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
+  fi
+  mkdir -p "$log_root"
+  stamp=$(date '+%Y%m%d-%H%M%S')
+  # METHOD-specific roots allow different modules to run concurrently.  The
+  # launcher PID suffix also prevents collisions between two identical requests
+  # submitted during the same second.
+  base=$log_root/${METHOD}.${scope_label}.${stamp}.$$.background
+  log=$base.log
+  pid_file=$base.pid
+  status_file=$base.status
+  runner='status_file=$1; shift
+tmp_status=${status_file}.tmp.$$
+printf "state\trunning\npid\t%s\nstarted_at\t%s\n" "$$" "$(date -Is)" > "$tmp_status"
+mv -f -- "$tmp_status" "$status_file"
+"$@"
+rc=$?
+tmp_status=${status_file}.tmp.$$
+printf "state\tfinished\nexit_code\t%s\nfinished_at\t%s\n" "$rc" "$(date -Is)" > "$tmp_status"
+mv -f -- "$tmp_status" "$status_file"
+exit "$rc"'
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash -c "$runner" gu-background "$status_file" \
+      bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}" --foreground TRUE \
+      </dev/null >"$log" 2>&1 &
+  else
+    nohup bash -c "$runner" gu-background "$status_file" \
+      bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}" --foreground TRUE \
+      </dev/null >"$log" 2>&1 &
+  fi
+  pid=$!
+  printf '%s\n' "$pid" > "$pid_file"
+  disown "$pid" 2>/dev/null || true
+  echo "[GU BG] STARTED method=$METHOD scope=$scope_label pid=$pid"
+  echo "[GU BG] log=$log"
+  echo "[GU BG] pid_file=$pid_file"
+  echo "[GU BG] status_file=$status_file"
+}
+
+if gu_command_orchestration_enabled && [[ ${GU_CMD_WORKER:-0} != 1 && $GU_RUN_CMD == TRUE && $GU_FOREGROUND == FALSE ]]; then
+  gu_launch_analysis_request_background
+  exit $?
+fi
 
 if gu_command_orchestration_enabled && [[ ${GU_CMD_WORKER:-0} != 1 ]]; then
   gu_orchestrate_analysis_cmds

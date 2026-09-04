@@ -318,7 +318,7 @@ for label in "${label_list[@]}"; do
     printf 'fix_X: run staged chrX MAGMA for %s\n' "$label" >&2
     "$gwas_post" magma --dir-out "$magma_project" --label "$label" --category common \
       --grch 38 --magma-ref "$magma_ref" --magma-annot-cache "$work_root/reference/magma_annotation" \
-      --replace TRUE --run-cmd TRUE --foreground TRUE --jobs "$jobs" "${filter_args[@]}"
+      --replace FALSE --run-cmd TRUE --foreground TRUE --jobs "$jobs" "${filter_args[@]}"
   else
     echo "ERROR: no staged chrX MAGMA inputs for $label" >&2
     exit 1
@@ -333,7 +333,7 @@ for label in "${label_list[@]}"; do
   if has_final_gwas "$stage_project"; then
     printf 'fix_X: run staged chrX clump/COJO for %s\n' "$label" >&2
     "$gwas_post" lead --dir-out "$stage_project" --label "$label" --category common \
-      --grch 38 --chr X --replace TRUE --run-cmd TRUE --foreground TRUE --jobs "$jobs" "${filter_args[@]}"
+      --grch 38 --chr X --replace FALSE --run-cmd TRUE --foreground TRUE --jobs "$jobs" "${filter_args[@]}"
   else
     printf 'fix_X: no genome-wide significant chrX traits for %s\n' "$label" >&2
   fi
