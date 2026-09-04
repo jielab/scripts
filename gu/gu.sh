@@ -696,12 +696,14 @@ gu_orchestrate_analysis_cmds(){
 }
 
 gu_launch_analysis_request_background(){
-  local log_root stamp base log pid_file status_file pid
+  local log_root stamp base log pid_file status_file pid cmd_list job_pattern
   local runner
   if [[ $METHOD == arg ]]; then
     log_root=$GU_ARG_DIR/log
+    cmd_list=$GU_ARG_DIR/${scope_label}.cmd.list
   else
     log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
+    cmd_list=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
   fi
   mkdir -p "$log_root"
   stamp=$(date '+%Y%m%d-%H%M%S')
@@ -712,32 +714,61 @@ gu_launch_analysis_request_background(){
   log=$base.log
   pid_file=$base.pid
   status_file=$base.status
-  runner='status_file=$1; shift
+  runner='status_file=$1; group_kill=$2; shift 2
+write_status(){
+  tmp_status=${status_file}.tmp.$$
+  printf "%s" "$1" > "$tmp_status"
+  mv -f -- "$tmp_status" "$status_file"
+}
+cancel_run(){
+  signal=$1; code=$2
+  write_status "state\tcancelled\nsignal\t${signal}\nexit_code\t${code}\nfinished_at\t$(date -Is)\n"
+  trap - HUP INT TERM
+  if [[ $group_kill == 1 ]]; then
+    kill -"$signal" -- "-$$" 2>/dev/null || true
+  elif [[ -n ${child_pid:-} ]]; then
+    kill -"$signal" "$child_pid" 2>/dev/null || true
+  fi
+  exit "$code"
+}
+trap "cancel_run HUP 129" HUP
+trap "cancel_run INT 130" INT
+trap "cancel_run TERM 143" TERM
 tmp_status=${status_file}.tmp.$$
 printf "state\trunning\npid\t%s\nstarted_at\t%s\n" "$$" "$(date -Is)" > "$tmp_status"
 mv -f -- "$tmp_status" "$status_file"
-"$@"
-rc=$?
+"$@" &
+child_pid=$!
+wait "$child_pid"; rc=$?
 tmp_status=${status_file}.tmp.$$
 printf "state\tfinished\nexit_code\t%s\nfinished_at\t%s\n" "$rc" "$(date -Is)" > "$tmp_status"
 mv -f -- "$tmp_status" "$status_file"
 exit "$rc"'
   if command -v setsid >/dev/null 2>&1; then
-    nohup setsid bash -c "$runner" gu-background "$status_file" \
+    nohup setsid bash -c "$runner" gu-background "$status_file" 1 \
       bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}" --foreground TRUE \
       </dev/null >"$log" 2>&1 &
   else
-    nohup bash -c "$runner" gu-background "$status_file" \
+    nohup bash -c "$runner" gu-background "$status_file" 0 \
       bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}" --foreground TRUE \
       </dev/null >"$log" 2>&1 &
   fi
   pid=$!
   printf '%s\n' "$pid" > "$pid_file"
   disown "$pid" 2>/dev/null || true
-  echo "[GU BG] STARTED method=$METHOD scope=$scope_label pid=$pid"
-  echo "[GU BG] log=$log"
-  echo "[GU BG] pid_file=$pid_file"
-  echo "[GU BG] status_file=$status_file"
+  job_pattern="gu.sh $METHOD"
+  echo "Starting background GU $METHOD ($scope_label). Log: $log"
+  echo "PID: $pid"
+  printf 'Progress: tail -f %q\n' "$log"
+  printf 'Command list: %q\n' "$cmd_list"
+  printf "Job: pgrep -af '%s'\n" "$job_pattern"
+  if command -v setsid >/dev/null 2>&1; then
+    printf 'Kill PID %s and all workers: kill -- -%s\n' "$pid" "$pid"
+  else
+    printf 'Kill PID %s: kill %s\n' "$pid" "$pid"
+  fi
+  printf 'PID file: %q\n' "$pid_file"
+  printf 'Status: %q\n' "$status_file"
 }
 
 if gu_command_orchestration_enabled && [[ ${GU_CMD_WORKER:-0} != 1 && $GU_RUN_CMD == TRUE && $GU_FOREGROUND == FALSE ]]; then

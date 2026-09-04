@@ -40,6 +40,7 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 重新提交 IBDmix 请求时，若某个染色体目录同时存在 `.complete` 和对应阈值的非空 `final/all_archaic_refs.*.segments.tsv.gz`，且未指定 `--replace-ibdmix TRUE`，外层调度器会直接报告 `[GU CMD] SKIP`。该判断发生在 target 预检和临时 PFILE→VCF 转换之前；`.cmd.list` 仍保留全部请求单元，便于审计和独立重跑。
 
 - 默认 `--run-cmd TRUE --foreground FALSE`：请求调度器通过 `setsid`/`nohup` 在后台运行，入口立即报告 launcher 的日志、PID 和状态文件。`--jobs N` 最多并行 N 个 `.cmd`（默认 N=4）。AS3 是例外：当前每个独立 chromosome 命令使用同一组 GPU assignment，本地调度会把 effective jobs 固定为 1，避免多个染色体同时争用 GPU 0；`--jobs` 仍影响其他方法。每个任务的 stdout/stderr 写入同目录 `<unit>.log`，失败时另写 `<unit>.err`。
+- 后台提交成功后会按 `gwas_post.sh` 风格打印可直接复制的 `Progress: tail -f ...`、永久 `Command list`、`Job: pgrep -af 'gu.sh METHOD'` 和 `Kill PID ...: kill -- -PID`，并显示 PID/status 文件。负 PID 表示按进程组停止整个请求及其 worker；只执行 `kill PID` 不保证已经启动的后代进程一并退出。
 - 指定 `--foreground TRUE` 可让整个请求保持连接终端并等待完成，适合交互调试或由外部作业调度器管理。永久的单元 `.cmd` 是 leaf worker，直接执行时始终以前台方式运行，不会再次把自己送到后台。
 - 显式指定 `--run-cmd FALSE` 时只生成 `.cmd`，不启动分析。
 - 以后在 HPC 上可将 `.cmd.list` 中的命令逐个交给 `bsub`；当前版本不猜测集群参数，也不内置 `bsub`。
