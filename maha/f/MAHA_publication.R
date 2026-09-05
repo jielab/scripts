@@ -103,8 +103,10 @@ supplement_renumbering <- tibble::tribble(
   "FigS10_tmp.nhanes.construct_concordance", "FigS10.nhanes.construct_concordance", "FigS8.nhanes.construct_concordance"
 )
 
-finalize_supplement_renumbering <- function() {
-  jobs <- tidyr::crossing(supplement_renumbering, suffix = c(".png", ".out.xlsx")) %>%
+finalize_supplement_renumbering <- function(cohort = "all") {
+  selected <- if (cohort == "all") supplement_renumbering else
+    supplement_renumbering %>% filter(grepl(paste0(".",cohort,"."),tmp_stem,fixed=TRUE))
+  jobs <- tidyr::crossing(selected, suffix = c(".png", ".out.xlsx")) %>%
     mutate(from = pub_path(paste0(tmp_stem, suffix)), to = pub_path(paste0(final_stem, suffix)))
   info <- file.info(jobs$from)
   missing <- jobs$from[is.na(info$size) | info$size < 1000]
@@ -125,7 +127,7 @@ finalize_supplement_renumbering <- function() {
     stop("Supplement renumbering checksum verification failed; temporary files were retained.", call. = FALSE)
   }
 
-  obsolete <- unlist(lapply(supplement_renumbering$obsolete_stem, function(stem) {
+  obsolete <- unlist(lapply(selected$obsolete_stem, function(stem) {
     pub_path(paste0(stem, c(".png", ".out.xlsx")))
   }), use.names = FALSE)
   obsolete <- setdiff(obsolete, jobs$to)
@@ -137,7 +139,7 @@ finalize_supplement_renumbering <- function() {
     supplement_renumbering %>% select(old_number, new_number, content, final_stem),
     pub_path("FigS_renumbering_manifest.tsv")
   )
-  message("[publication] finalized verified FigS6-FigS10 renumbering from temporary outputs")
+  message("[publication] finalized verified supplement filenames for scope=",cohort)
 }
 
 align_publication_grid <- function(rows, rel_widths = NULL, rel_heights = NULL,
@@ -530,11 +532,12 @@ make_ukb <- function() {
   p1 <- forest_multi(main, "a. Main associations", "Hazard ratio per 1 SD healthier score",
                      estimate = "HR", low = "LCI", high = "UCI", diets = primary_diets)
   p2 <- forest_multi(h2h %>% transmute(Outcome, Diet = Comp2, HR = HR_ratio_maha_vs_trad, LCI = LCI_ratio, UCI = UCI_ratio),
-                     "b. Direct attenuation versus established scores", "HR ratio: MAHA coefficient / established-score coefficient",
+                     "b. Direct attenuation versus established scores", "HR ratio: MAHA / comparator",
                      estimate = "HR", low = "LCI", high = "UCI", diets = c("DASH", "MIND", "MEDI"))
 
   eq <- maha %>% transmute(Outcome, Diet = "MAHA", HR, LCI = LCI90, UCI = UCI90,
-                           lab = paste0("TOST P=", ap_p_lab(TOST_p), "; BF01=", ap_bf_lab(BF01)))
+                           lab = paste0("TOST P=", ap_p_lab(TOST_p), "; BF₀₁",
+                                        if_else(!is.na(BF01) & BF01 < .001, " < .001", paste0("=", ap_bf_lab(BF01)))))
   p3 <- forest_single(eq, "c. MAHA equivalence and Bayes evidence", "MAHA hazard ratio with 90% CI",
                       estimate = "HR", low = "LCI", high = "UCI", label = "Outcome", color = "Outcome",
                       zone = c(1/1.05, 1.05), right_label = "lab") + guides(color = "none")
@@ -543,8 +546,8 @@ make_ukb <- function() {
   p4 <- forest_single(pow, "d. MAHA detectable effect", "Minimum detectable HR at 80% power",
                       estimate = "MDE", low = "LCI", high = "UCI", label = "Outcome", color = "Outcome",
                       ref = 1.05, right_label = "lab") + guides(color = "none")
-  p5 <- risk_bar(get_sheet(wb2, "Fig2_10y_risk_by_DASH"), "e. 10-year risk by DASH strata", "DASH strata")
-  p6 <- risk_bar(get_sheet(wb2, "Fig2_10y_risk_by_MAHA"), "f. 10-year risk by MAHA strata", "MAHA strata")
+  p5 <- risk_bar(get_sheet(wb2, "Fig2_10y_risk_by_DASH"), "e. 10-year mortality risk by DASH strata", "DASH strata")
+  p6 <- risk_bar(get_sheet(wb2, "Fig2_10y_risk_by_MAHA"), "f. 10-year mortality risk by MAHA strata", "MAHA strata")
   fig2 <- align_publication_grid(list(list(p1, p2), list(p3, p4), list(p5, p6)),
                                  rel_widths = c(1, 1), rel_heights = c(1, 1, .95))
   save_pub(fig2, "Fig2.ukb.precision.png", 16, 16.5)
@@ -636,7 +639,7 @@ make_nhanes <- function() {
   eq <- get_sheet(wb, "Fig4D_equiv") %>% bind_cols(parse_ci(.$HR_90CI) %>% rename(HR = est, LCI = lo, UCI = hi))
   bf <- get_sheet(wb, "Fig4E_BF")
   pw <- get_sheet(wb, "Fig4F_power")
-  eqbf <- eq %>% left_join(bf %>% select(Diet, BF01), by = "Diet") %>% mutate(lab = paste0("TOST P=", ap_p_lab(TOST_p), "; BF01=", ap_bf_lab(BF01)))
+  eqbf <- eq %>% left_join(bf %>% select(Diet, BF01), by = "Diet") %>% mutate(lab = paste0("TOST P=", ap_p_lab(TOST_p), "; BF₀₁=", ap_bf_lab(BF01)))
 
   p1 <- forest_single(a %>% select(Diet, estimate, conf.low, conf.high) %>% mutate(Outcome = "All-cause mortality"),
                       "a. Mortality associations", "HR per 1 SD healthier score", estimate = "estimate", low = "conf.low", high = "conf.high",
@@ -898,8 +901,8 @@ if (scope == "all") make_shared_score_figure()
 if (scope %in% c("ukb", "all")) make_ukb()
 if (scope %in% c("nhanes", "all")) make_nhanes()
 if (scope %in% c("chns", "all")) make_chns()
+finalize_supplement_renumbering(scope)
 if (scope == "all") {
-  finalize_supplement_renumbering()
   assert_contiguous_figure_numbers("Fig", 1:5)
   assert_contiguous_figure_numbers("FigS", 1:10)
 }

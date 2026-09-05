@@ -14,6 +14,7 @@ refgen_stop_jobs(){
 }
 trap 'refgen_stop_jobs; exit 130' INT
 trap 'refgen_stop_jobs; exit 143' TERM
+trap 'refgen_stop_jobs; exit 129' HUP
 run_parallel(){
   local fn=$1 c pid failed=0 limit=${GRID_ARG_JOBS:-${JOBS:-1}}; shift
   refgen_children=()

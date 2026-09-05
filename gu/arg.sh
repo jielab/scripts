@@ -5,22 +5,24 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # Help and every public example live HERE, not in a sourced helper.
 usage(){ cat <<'HELP'
 Run prep_gen, then build. Build includes output validation.
+Both methods default to all supported chromosomes: 1-22 and non-PAR X.
+Full command output and errors are saved under <arg-dir>/log/arg.<command>.*.log.
 
 cd /mnt/d/scripts/gu
 
 # 1KG: all QC-passing SNPs; prepared data in pfile.4arg.
 ./arg.sh prep_gen --dir-gen /mnt/d/data.BIG/refGen/1kg/37 \
-  --method needle --format trace --chr 1-22 --threads 8 --jobs 4
+  --method needle --format trace --threads 8 --jobs 4
 
 ./arg.sh build --dir-gen /mnt/d/data.BIG/refGen/1kg/37 \
-  --method needle --format trace --chr 1-22 --threads 8 --jobs 4
+  --method needle --format trace --threads 8 --jobs 4
 
 # UKB: up to 20,000 individuals; prepared data in hap.4arg.
 ./arg.sh prep_gen --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
-  --method needle --format trace --chr 1-22 --max-individuals 20000 --threads 8 --jobs 4
+  --method needle --format trace --max-individuals 20000 --threads 8 --jobs 4
 
 ./arg.sh build --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
-  --method needle --format trace --chr 1-22 --max-individuals 20000 --threads 8 --jobs 4
+  --method needle --format trace --max-individuals 20000 --threads 8 --jobs 4
 
 All options and alternatives (HapMap3 / tsinfer): ./arg.sh --help-all
 HELP
@@ -58,7 +60,8 @@ Commands:
   --normalize-demography FILE  optional haploid population-size demography
   --seed N                 panel selection and inference seed [20260904]
   --features TRUE|FALSE    GRID four-population features [FALSE for trace, TRUE for native]
-  --chr LIST --grch 37|38 --replace TRUE|FALSE
+  --chr LIST               default: 1-22,X for both methods (autosomes + non-PAR X)
+  --grch 37|38 --replace TRUE|FALSE
   --chr X                  non-PAR X supported by both methods; 1-22,X includes X
   --x-odd-male error|drop-last  Needle only: ASMC requires even haplotype count [drop-last]
                             drop-last excludes the last selected male when needed;
@@ -84,7 +87,7 @@ Output layout under --arg-dir:
 
 ARG workflow examples (WSL bash; cd /mnt/d/scripts/gu first):
   # Each command below is standalone; no Bash arrays or prior variables required.
-  # Run prep_gen, then build (includes validation). Inspect chr22 before starting 1-22.
+  # Run prep_gen, then build (includes validation). Inspect chr22 before starting all supported chromosomes.
   # A and B are the main workflows. C and D are optional alternatives.
   # SNPs = biallelic A/C/G/T SNPs passing MAF/missingness QC, not every raw VCF record.
   # Default Needle MAF >= 0.001, missingness = 0; no SNP-ID list is applied by default.
@@ -105,11 +108,11 @@ ARG workflow examples (WSL bash; cd /mnt/d/scripts/gu first):
   # Continue here only after reviewing chr22 QC, memory use and runtime.
   ./arg.sh prep_gen \
     --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --method needle --format trace \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
   ./arg.sh build \
     --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --method needle --format trace \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
 
 
@@ -129,12 +132,12 @@ ARG workflow examples (WSL bash; cd /mnt/d/scripts/gu first):
   ./arg.sh prep_gen \
     --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
     --method needle --format trace --max-individuals 20000 \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
   ./arg.sh build \
     --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
     --method needle --format trace --max-individuals 20000 \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
 
 
@@ -151,11 +154,11 @@ ARG workflow examples (WSL bash; cd /mnt/d/scripts/gu first):
   # Continue here only after reviewing chr22 QC, memory use and runtime.
   ./arg.sh prep_gen \
     --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --method tsinfer --format trace \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
   ./arg.sh build \
     --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --method tsinfer --format trace \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
 
 
@@ -182,14 +185,14 @@ ARG workflow examples (WSL bash; cd /mnt/d/scripts/gu first):
     --keep-snv /mnt/d/data.BIG/refGen/hm3/hapmap3_r3.snp \
     --gen4arg-dir /mnt/d/data.BIG/refGen/1kg/37/pfile.4arg.hm3 \
     --arg-dir /mnt/d/data.BIG/refGen/1kg/37/arg.hm3 \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
   ./arg.sh build \
     --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --method needle --format trace \
     --keep-snv /mnt/d/data.BIG/refGen/hm3/hapmap3_r3.snp \
     --gen4arg-dir /mnt/d/data.BIG/refGen/1kg/37/pfile.4arg.hm3 \
     --arg-dir /mnt/d/data.BIG/refGen/1kg/37/arg.hm3 \
-    --chr 1-22 --threads 8 --jobs 4
+    --threads 8 --jobs 4
 
 
   # --keep-snv must be identical on preparation and inference commands.
@@ -234,7 +237,7 @@ for option in "$@"; do
 done
 export REFGEN_GEN4ARG_ONLY=0
 case "$command" in
-  prep_gen) exec bash "$ROOT/f/arg.prep_gen.sh" "$@";;
-  build) exec bash "$ROOT/f/arg.cli.sh" "$@";;
-  check) exec bash "$ROOT/f/arg.cli.sh" "$@" --action check;;
+  prep_gen) exec bash "$ROOT/f/arg.run_logged.sh" prep_gen "$ROOT/f/arg.prep_gen.sh" "$@";;
+  build) exec bash "$ROOT/f/arg.run_logged.sh" build "$ROOT/f/arg.cli.sh" "$@";;
+  check) exec bash "$ROOT/f/arg.run_logged.sh" check "$ROOT/f/arg.cli.sh" "$@" --action check;;
 esac

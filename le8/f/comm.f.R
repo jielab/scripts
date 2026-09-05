@@ -201,10 +201,19 @@ cache_message <- function(label, path) {
           ". Delete this existing file (or its step folder) to re-run.")
 }
 parallel_map <- function(x, fun) {
+  # Release unreachable model frames before forking so children inherit a
+  # smaller heap. Collect between tasks after fun's local frame has returned;
+  # otherwise each long-lived worker can retain several fits' worth of garbage.
+  invisible(gc())
+  run_one <- function(item) {
+    value <- fun(item)
+    invisible(gc())
+    value
+  }
   if (.Platform$OS.type != "windows" && N_CORES > 1L && length(x) > 1L) {
     message("Parallel scan: ", min(N_CORES, length(x)), " workers for ", length(x), " tasks")
-    parallel::mclapply(x, fun, mc.cores = min(N_CORES, length(x)), mc.preschedule = TRUE)
-  } else lapply(x, fun)
+    parallel::mclapply(x, run_one, mc.cores = min(N_CORES, length(x)), mc.preschedule = TRUE)
+  } else lapply(x, run_one)
 }
 # Third-party analysis packages often print one routine progress line per
 # feature.  With thousands of omic traits that output overwhelms the useful

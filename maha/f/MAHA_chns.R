@@ -80,6 +80,35 @@ num <- function(x) {
   if (inherits(x, "haven_labelled") || inherits(x, "labelled")) x <- haven::zap_labels(x)
   suppressWarnings(as.numeric(x))
 }
+recode_chns_school_years <- function(x) {
+  z <- num(x)
+  # Estimated years: 6 primary + 3 lower secondary + 3 upper secondary;
+  # technical school follows lower secondary; college 6+ years is capped at 18.
+  dplyr::case_when(
+    z == 0       ~ 0,
+    z %in% 11:16 ~ z - 10,
+    z %in% 21:26 ~ z - 14,
+    z %in% 27:29 ~ z - 17,
+    z %in% 31:36 ~ z - 18,
+    TRUE         ~ NA_real_
+  )
+}
+cache_identical_inputs <- function(fn) {
+  # Run-local only: reuse intervals only when all input data and the definition
+  # are identical. Downstream models still fit independently on these intervals.
+  entries <- list()
+  function(d,mortality_definition) {
+    for(entry in entries) {
+      if(identical(entry$definition,mortality_definition) && identical(entry$data,d))
+        return(entry$result)
+    }
+    message("[TIME UPDATED] Building intervals: ",mortality_definition,"; input rows=",nrow(d))
+    result <- fn(d,mortality_definition)
+    entries[[length(entries)+1L]] <<- list(data=d,definition=mortality_definition,result=result)
+    message("[TIME UPDATED] Cached intervals: ",nrow(result)," rows")
+    result
+  }
+}
 zstd <- function(x) {
   x <- num(x); s <- sd(x, na.rm = TRUE)
   if (!is.finite(s) || s == 0) return(rep(NA_real_, length(x)))
@@ -694,8 +723,12 @@ if(!is.null(educ)) {
   ide <- pick(educ,"IDIND"); we <- pick(educ,"WAVE")
   a11 <- pick(educ,c("A11","EDUYRS"),FALSE); a12 <- pick(educ,c("A12","EDUCATION"),FALSE)
   educ_base <- educ %>% filter(num(.data[[we]])==baseline_wave)
+  schooling <- colnum(educ_base,a11)
+  if (identical(a11,"A11")) {
+    schooling <- recode_chns_school_years(schooling)
+  }
   educb <- educ_base %>%
-    transmute(IDIND=num(.data[[ide]]),education_years=colnum(educ_base,a11),education_level=colnum(educ_base,a12)) %>%
+    transmute(IDIND=num(.data[[ide]]),education_years=schooling,education_level=colnum(educ_base,a12)) %>%
     group_by(IDIND) %>% summarise(across(everything(),~first_num(.x)),.groups="drop")
 }
 
@@ -1581,7 +1614,7 @@ write_xlsx(list(field_coverage=proc_cov,decile_profile=proc_profile,correlations
 step_header("CHNS FigS5: socioeconomic and geographic gradients")
 socio_long <- bind_rows(
   if("log_income"%in%names(dat)) tibble(Factor="Household income",rho=safe_cor(dat[[active_maha]],dat$log_income)) else NULL,
-  if("education_years"%in%names(dat)) tibble(Factor="Education years",rho=safe_cor(dat[[active_maha]],dat$education_years)) else NULL,
+  if("education_years"%in%names(dat)) tibble(Factor="Estimated schooling, y",rho=safe_cor(dat[[active_maha]],dat$education_years)) else NULL,
   tibble(Factor="Urban residence (1/2 code)",rho=safe_cor(dat[[active_maha]],num(dat$urban)))
 )
 prov_score <- dat %>% group_by(province) %>% summarise(N=n(),mean_score=mean(.data[[active_maha]],na.rm=TRUE),
@@ -1869,6 +1902,7 @@ write_xlsx(list(flow=mortality_flow,results=mortality_grid,pattern_diagnostic=mo
            "mortality_model_grid.out.xlsx")
 
 analysis_metadata <- tibble(
+  schooling_definition="Estimated schooling, y: A11 0=0; 11-16=1-6; 21-26=7-12; 27-29=10-12; 31-36=13-18; other codes missing. EDUYRS retained as recorded. A11-derived years are estimated, not individually measured.",
   primary_model=analysis_spec,
   baseline_wave=baseline_wave,
   followup_end=followup_end,
@@ -1946,6 +1980,7 @@ tab1 <- dat %>% mutate(Diet_group=.data[[active_3c]]) %>% group_by(Diet_group) %
   known_followup_pct=mean(followup_known==1,na.rm=TRUE),mortality_pct=mean(death,na.rm=TRUE),.groups="drop"
 )
 meta <- tibble(
+  schooling_definition=analysis_metadata$schooling_definition,
   primary_model=analysis_spec,
   baseline_wave=baseline_wave,followup_end=followup_end,followup_gap=followup_end-baseline_wave,
   min_age=min_age,min_diet_days=min_diet_days,association_method="Cox",active_score=active_label,
@@ -2089,7 +2124,7 @@ if(run_mortality_sweep==1L && !mortality_sweep_child) {
     })
     panel_cum <- panel_cum_by_age[[as.character(panel_age)]]
 
-    build_time_updated <- function(d,mortality_definition) {
+    build_time_updated <- cache_identical_inputs(function(d,mortality_definition) {
       d %>% group_by(IDIND) %>% arrange(exposure_wave,.by_group=TRUE) %>% group_modify(~{
         g <- .x
         dd <- c(num(g$DOD_Y),num(g$DOD_RPT)); dd <- dd[is.finite(dd)&dd>min(g$exposure_wave)&dd<=followup_end]
@@ -2110,7 +2145,7 @@ if(run_mortality_sweep==1L && !mortality_sweep_child) {
         g$surv_event <- as.integer(is.finite(dy)&g$tstart<dy&g$tstop==dy)
         g %>% filter(tstop>tstart)
       }) %>% ungroup()
-    }
+    })
 
     fit_time_updated_score <- function(d,score_var,covs,mortality_definition) {
       dd <- build_time_updated(d,mortality_definition)
@@ -2127,9 +2162,14 @@ if(run_mortality_sweep==1L && !mortality_sweep_child) {
       if(is.null(fit))return(empty())
       tt <- broom::tidy(fit)%>%filter(term=="score_z")
       if(!nrow(tt))return(empty())
+      se_beta <- if ("robust.se" %in% names(tt)) {
+        tt$robust.se[1]
+      } else {
+        tt$std.error[1]
+      }
       tibble(N=n_distinct(dd$IDIND),Rows=nrow(dd),Events=sum(dd$surv_event==1),Person_years=sum(dd$tstop-dd$tstart),
-        beta=tt$estimate[1],se=tt$std.error[1],HR=exp(tt$estimate[1]),
-        CI_low=exp(tt$estimate[1]-1.96*tt$std.error[1]),CI_high=exp(tt$estimate[1]+1.96*tt$std.error[1]),
+        beta=tt$estimate[1],se=se_beta,HR=exp(tt$estimate[1]),
+        CI_low=exp(tt$estimate[1]-1.96*se_beta),CI_high=exp(tt$estimate[1]+1.96*se_beta),
         P=tt$p.value[1],Covariates=paste(covs_use,collapse=" + "))
     }
 
@@ -2311,11 +2351,11 @@ if(run_mortality_sweep==1L && !mortality_sweep_child) {
     )
     sweep_configuration <- tibble(
       Setting=c("Exposure waves","Minimum age","Retained models","Retained named-model count",
-                "High-event model-combination count","Event-count flag","Selection policy"),
+                "High-event model-combination count","Event-count flag","Selection policy","Schooling definition"),
       Value=c(paste(eligible_sweep_waves,collapse=","),as.character(panel_age),
               "Model4_socioeconomic,Model5_bmi",as.character(nrow(model_definitions)),
               as.character(n_distinct(all_sweep_results$Model_id)),as.character(mortality_event_target),
-              "No model is selected from coefficient direction or P value")
+              "No model is selected from coefficient direction or P value",analysis_metadata$schooling_definition)
     )
     final_workbook <- list(
       model_definitions=model_definitions,

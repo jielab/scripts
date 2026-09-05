@@ -74,7 +74,7 @@ Core options:
       --r-bin FILE         Rscript executable.
       --cores N            R worker count. Default: 4.
       --memory-limit-gb N  Hard RAM cap for the complete LE8 process tree.
-                          Default: 32. Use 0 to disable the guard.
+                          Default: 64. Use 0 to disable the guard.
       --memory-swap-gb N   Additional swap cap under cgroup v2. Default: 4.
       --seed N             Random seed. Default: 2026.
       --gpu-coloc-bin FILE GPU-coloc executable. Default: gpu-coloc.
@@ -189,7 +189,7 @@ MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
 PHE_F=/mnt/d/scripts/0f/0phe.f.sh
 R_BIN=Rscript
 N_CORES=4
-LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
+LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-64}"
 LE8_MEMORY_SWAP_GB="${LE8_MEMORY_SWAP_GB:-4}"
 SEED=2026
 GPU_COLOC_BIN=gpu-coloc
@@ -320,7 +320,7 @@ fi
 export LE8_MEMORY_LIMIT_GB LE8_MEMORY_SWAP_GB
 
 # Forked R workers can each materialize large model frames. Four workers keep
-# the 440k-participant metabolomics scans stable when other WSL jobs are active;
+# concurrency bounded for the 440k-participant metabolomics scans;
 # callers can still override this deliberately with N_CORES.
 export N_CORES
 export OMP_NUM_THREADS=1

@@ -869,9 +869,8 @@ make_mortality_bar_panels <- function(dat.in, outcome = "death", t0 = 10) {
 		d %>%
 			mutate(
 				mean = risk * 100,
-				sd = pmax(mean - lower * 100, upper * 100 - mean, na.rm = TRUE),
-				lower_plot = pmax(0, mean - sd),
-				upper_plot = mean + sd,
+				lower_plot = lower * 100,
+				upper_plot = upper * 100,
 				lbl = sprintf("%.1f%%", mean)
 			) %>%
 			group_by(.data[[x_var]]) %>%

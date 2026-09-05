@@ -145,7 +145,7 @@ assert 0 <= float(sys.argv[1]) < .5, 'maf-min must be in [0,.5)'
 assert 0 <= float(sys.argv[2]) < 1, 'missing-max must be in [0,1)'
 assert int(sys.argv[3]) >= 1, 'mac-min must be positive'
 PY
-if [[ -z $chrs ]]; then [[ $method == needle ]] && chrs=1-22 || chrs=1-22,X; fi
+chrs=${chrs:-1-22,X}
 chrs=${chrs//,/ }; chrs=${chrs//;/ }
 chrs=$(python3 - "$chrs" "$method" <<'PY'
 import re,sys
@@ -200,11 +200,11 @@ else
   mkdir -p "$gen4arg_dir"
   # Keep lock files permanently: unlinking a flock file permits two lock inodes.
   exec 8>"$gen4arg_dir/.refgen.lock"
-  flock -n 8 || die "another task uses prepared data: $gen4arg_dir"
+  flock -n 8 || die "another build/prep_gen is still using prepared data: $gen4arg_dir. Wait for that task to finish, then rerun this command; verified inputs and inference checkpoints will be reused."
   if [[ $action != prepare ]]; then
     mkdir -p "$arg_dir"
     exec 9>"$arg_dir/.refgen.lock"
-    flock -n 9 || die "another task uses ARG output: $arg_dir"
+    flock -n 9 || die "another build is still using ARG output: $arg_dir. Wait for that task to finish, then rerun this command."
   fi
 fi
 if [[ $action == prepare ]]; then

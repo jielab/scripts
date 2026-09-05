@@ -135,7 +135,8 @@ logistic_scan <- function(dat, xs, covars, y, scale_x = TRUE, min_n = 500, min_c
 prevalent_duration_scan <- function(dat,xs,bvar,covars,min_n=80L) {
   xs<-intersect(xs,names(dat));covars<-intersect(covars,names(dat))
   bind_rows(parallel_map(xs,function(x){
-    d<-dat|>filter(is.finite(.data[[bvar]]),.data[[bvar]]<0)|>
+    d<-dat[,unique(c(bvar,x,covars)),drop=FALSE]|>
+      filter(is.finite(.data[[bvar]]),.data[[bvar]]<0)|>
       transmute(.protein=suppressWarnings(as.numeric(.data[[x]])),.duration=log1p(-.data[[bvar]]),across(all_of(covars)))
     d<-d[complete.cases(d),,drop=FALSE]
     empty<-tibble(term=x,beta=NA_real_,std.error=NA_real_,statistic=NA_real_,p.value=NA_real_,N_total=nrow(d))
@@ -150,6 +151,7 @@ prevalent_duration_scan <- function(dat,xs,bvar,covars,min_n=80L) {
 
 landmark_incident_scan <- function(dat,xs,tvar,evar,covars,landmarks=C1_LANDMARK_YEARS){
   xs<-intersect(xs,names(dat));covars<-intersect(covars,names(dat))
+  dat<-dat[,unique(c(tvar,evar,xs,covars)),drop=FALSE]
   map_dfr(landmarks,function(h){
     # A true landmark risk set: participants must be event-free and observed at
     # h years. Early cases and people censored before h are not controls.
@@ -175,7 +177,7 @@ risk_window_scan <- function(dat,xs,tvar,evar,bvar,covars,cuts=C1_RISK_CUTS){
     prev_ctrl<-dat$prevalent_status==0
     one_side<-function(side,is_case,is_control,signed_mid){
       keep<-replace_na(is_case,FALSE)|replace_na(is_control,FALSE)
-      base<-dat[keep,,drop=FALSE];base$.window_case<-as.integer(replace_na(is_case[keep],FALSE))
+      base<-dat[keep,unique(c(xs,covars)),drop=FALSE];base$.window_case<-as.integer(replace_na(is_case[keep],FALSE))
       bind_rows(parallel_map(xs,function(x){
         need<-unique(c(".window_case",x,covars));d<-base[,need,drop=FALSE];d<-d[complete.cases(d),,drop=FALSE]
         nc<-sum(d$.window_case==1);nn<-sum(d$.window_case==0)

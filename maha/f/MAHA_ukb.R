@@ -1581,14 +1581,14 @@ p_decomp <- ggplot(geo_plot, aes(y=Diet)) +
 	geom_text(aes(x=TDI, label=sprintf("%.2f",TDI)), nudge_y=.21, size=fs_small/3.2, fontface="bold", color="#E76F51") +
 	geom_text(aes(x=Tiles, label=sprintf("%.2f",Tiles)), nudge_y=-.21, size=fs_small/3.2, fontface="bold", color=blue_axis) +
 	scale_color_manual(values=c(TDI="#E76F51", `Spatial tiles`=blue_axis)) +
-	labs(title=" ", x="Variance explained (R2, %)", y=NULL, color=NULL) + theme_classic(base_size=fs_text) +
+	labs(title=" ", x="Variance explained (R², %)", y=NULL, color=NULL) + theme_classic(base_size=fs_text) +
 	theme(plot.title=element_text(face="bold",hjust=.5,size=fs_title), axis.text=element_text(face="bold",size=fs_text), axis.title=element_text(face="bold"), legend.position="top", legend.text=element_text(face="bold"))
 p_ratio <- ggplot(geo_plot, aes(TDI_after_tiles, Tiles_after_TDI, color=Diet, label=Diet)) +
 	geom_abline(slope=1,intercept=0,linetype=2,color="grey60") + geom_segment(aes(x=0,y=0,xend=TDI_after_tiles,yend=Tiles_after_TDI), linewidth=.55, alpha=.45) +
 	geom_point(size=3.2) + ggrepel::geom_text_repel(fontface="bold",size=fs_small/3.1,show.legend=FALSE,box.padding=.25) +
 	scale_color_manual(values=c(MAHA="#F8766D",DASH="#00BFC4",MIND="#B77CFF",MEDI="#7CAE00"),guide="none") +
 	scale_x_continuous(labels=scales::label_number(accuracy=.01)) + scale_y_continuous(labels=scales::label_number(accuracy=.01)) +
-	labs(title="c. Geographic contribution", x="TDI after spatial tiles (R2, %)", y="Spatial tiles after TDI (R2, %)") + theme_classic(base_size=fs_text) +
+	labs(title="c. Geographic contribution", x="TDI after spatial tiles (R², %)", y="Spatial tiles after TDI (R², %)") + theme_classic(base_size=fs_text) +
 	theme(plot.title=element_text(face="bold",hjust=.5,size=fs_title), axis.text=element_text(face="bold",size=fs_text), axis.title=element_text(face="bold",size=fs_text))
 
 right_col <- p_decomp / plot_spacer() / p_ratio + plot_layout(heights=c(1, .10, 1)) & theme(plot.margin=margin(2,4,2,0))
