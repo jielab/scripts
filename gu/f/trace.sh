@@ -29,7 +29,7 @@ fi
 
 # GU TRACE consumes mutation-bearing, TRACE-formatted trees stored directly in
 # ARG_DIR. Native method artifacts stay in their method directories and are
-# exported explicitly with `refGen.sh make-arg --format trace`.
+# exported explicitly with `arg.sh build --format trace`.
 find_trees(){ local c=$1; find -L "$ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print | awk -v c="$c" 'BEGIN{IGNORECASE=1}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)"))print;else if(b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))print}' | sort; }
 validate_tree_scope(){
   local tree=$1 chr=$2
@@ -57,7 +57,7 @@ PY
 }
 write_manifest(){
   local mf=$OUT/manifest/tree_files.tsv c f idx; printf 'chr\tposterior\ttree_file\n' > "$mf"
-  for c in $CHRS; do mapfile -t fs < <(find_trees "$c"); (( ${#fs[@]} )) || { echo "ERROR: no GU TRACE-format ARG tree for chr$c under $ARG_DIR. Build it with refGen.sh make-arg (add --format trace for needle), then run gu.sh trace." >&2; exit 1; }
+  for c in $CHRS; do mapfile -t fs < <(find_trees "$c"); (( ${#fs[@]} )) || { echo "ERROR: no GU TRACE-format ARG tree for chr$c under $ARG_DIR. Build it with arg.sh build (add --format trace for needle), then run gu.sh trace." >&2; exit 1; }
     if printf '%s\n' "${fs[@]}" | grep -Eqi '(_part[0-9]+|chunk[._-]?[0-9]+)'; then echo "ERROR: coordinate-split ARG detected for chr$c; chunks cannot be posterior replicates" >&2; exit 1; fi
     idx=0; for f in "${fs[@]}"; do validate_tree_scope "$f" "$c"; idx=$((idx+1)); printf '%s\t%s\t%s\n' "$c" "$idx" "$f" >> "$mf"; done
   done

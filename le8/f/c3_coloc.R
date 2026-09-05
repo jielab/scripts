@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c3_pgs.R"))
 })
 LE8_JOB <- "c3_coloc"
-C3_CODE_VERSION <- "2026-09-02.pgs_triangulation1"
+C3_CODE_VERSION <- "2026-09-05.5c-audit-v1"
 suppressPackageStartupMessages(pacman::p_load(coloc))
 MAX_FEATURES <- as.integer(Sys.getenv("C3_MAX_FEATURES", unset = "200"))
 MAX_LOCI_PER_FEATURE <- as.integer(Sys.getenv("C3_MAX_LOCI_PER_FEATURE", unset = "3"))
@@ -258,7 +258,7 @@ plot_coloc_results <- function(res,regional,variants,layer,outdir){
       scale_color_manual(values=c(`TRUE`="#1B9E77",`FALSE`="grey70"))+
       labs(title="a. Variant-level shared-signal posterior (log scale)",
         subtitle="A posterior near 1 with all alternatives near 0 is visible rather than appearing as a blank panel",
-        x="Variant rank within locus",y="SNP posterior under H4",color="95% credible set")+theme_5c(8)+theme(legend.position="bottom")
+        x="Variant rank within locus",y="SNP posterior under H4",color="H4-conditional 95% set")+theme_5c(8)+theme(legend.position="bottom")
   }else p4a<-blank_plot("a. Variant-level shared-signal posterior","No variant posterior was available")
   cs<-ok|>filter(is.finite(credible_set_n),credible_set_n>0,is.finite(PP.H4))|>
     mutate(robust=coalesce(PP.H4_robust_min,PP.H4)>=H4_STRONG,
@@ -270,13 +270,13 @@ plot_coloc_results <- function(res,regional,variants,layer,outdir){
       ggrepel::geom_text_repel(aes(label=label),size=2.2,max.overlaps=15,seed=72)+scale_x_log10()+
       scale_color_manual(values=c(`TRUE`="#D7301F",`FALSE`="#3F78A8"),labels=c(`TRUE`="1-SNP posterior concentration",`FALSE`="Other"))+
       scale_y_continuous(limits=c(0,1),labels=label_percent())+
-      labs(title="b. Resolution across every tested locus",x="95% credible-set size (log scale)",y="Robust minimum PP(H4)",color=NULL,size="Aligned SNPs")+theme_5c(8)+theme(legend.position="bottom")
+      labs(title="b. Resolution across every tested locus",x="H4-conditional 95% set size (log scale)",y="Robust minimum PP(H4)",color=NULL,size="Aligned SNPs")+theme_5c(8)+theme(legend.position="bottom")
   p4c<-if(!nrow(cs))blank_plot("c. Credible-set size distribution")else
     ggplot(cs,aes(credible_set_n,color=robust))+stat_ecdf(linewidth=.9)+scale_x_log10()+
       scale_color_manual(values=c(`TRUE`="#1B9E77",`FALSE`="grey55"),labels=c(`TRUE`="Robust shared signal",`FALSE`="Not robust"))+
       labs(title="c. Shared-signal resolution audit",
         subtitle=paste0(sum(cs$degenerate)," / ",nrow(cs)," loci have a one-SNP set with lead PP > 0.999; verify LD and harmonization"),
-        x="95% credible-set size (log scale)",y="Cumulative fraction of loci",color=NULL)+theme_5c(8)+theme(legend.position="bottom")
+        x="H4-conditional 95% set size (log scale)",y="Cumulative fraction of loci",color=NULL)+theme_5c(8)+theme(legend.position="bottom")
   p4<-p4a/plot_spacer()/(p4b|p4c)+plot_layout(heights=c(1.25,.07,1))
   save_plot(p4,files[[4]],17,10,outdir=outdir)
 
@@ -309,6 +309,12 @@ credible_set_audit <- function(res,variants=tibble()){
 }
 
 run_c3_layer <- function(layer=c("protein","metabolite")) {
+  # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
+  layer <- match.arg(layer)
+  le8_load_revision(layer, "c3_coloc")
+  .le8_review_env <- environment()
+  on.exit(le8_finish_revision(layer, "c3_coloc", .le8_review_env), add=TRUE)
+
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir);rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE);cache<-file.path(rawdir,"c3.res.rds")
   if(cache_valid(cache)){
     old<-tryCatch(readRDS(cache),error=function(e)NULL)
@@ -342,10 +348,10 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
     filter(is.finite(pval))|>arrange(pval)|>pull(exposure)else character()
   assoc_ranked<-if(nrow(assoc)&&all(c("term","p.value")%in%names(assoc)))assoc|>
     filter(is.finite(p.value))|>arrange(p.value)|>pull(term)else character()
-  candidates<-head(unique(c(mr_ranked,assoc_ranked)),MAX_FEATURES)
+  candidates<-head(unique(c(intersect(le8_csv_env("C1_DIRECTION_ANCHORS","PCSK9,LPA,GDF15,NTPROBNP,MMP12"),assoc$term),mr_ranked,assoc_ranked)),MAX_FEATURES)
   base<-base0;ann<-layer_annotation(layer,candidates);ygfile<-ygfile0
   outtype<-infer_outcome_type(Y);sfrac<-if(outtype=="cc")get_case_fraction(Y) else NA_real_
-  if(outtype=="cc"&&(!is.finite(sfrac)||sfrac<=0||sfrac>=1))stop("C3 could not determine the case fraction. Set COLOC_CASE_FRAC.",call.=FALSE)
+  if(outtype=="cc"&&(!is.finite(sfrac)||sfrac<=0||sfrac>=1))message("C3: discovery case fraction not supplied; beta/varbeta cc ABF omits s, rather than substituting cohort prevalence")
   rows<-list();vrows<-list();rrows<-list();manifest<-list();k<-0L
   locus_cache_dir<-file.path(rawdir,"locus_cache");dir.create(locus_cache_dir,recursive=TRUE,showWarnings=FALSE)
   for(feature in candidates){
@@ -401,7 +407,7 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
   gpu<-read_gpu_coloc_results(rawdir);plot_gpu_coloc_validation(gpu,res,outdir)
   tri<-read_c3_pgs_integration(layer,outdir,res);plot_c3_pgs_integration(tri,outdir)
   write_raw_csv(tri,"c3.pgs_observed_coloc_triangulation.csv",rawdir)
-  lists<-list(Causal_Tier1=res|>filter(tier=="Tier 1")|>pull(feature)|>unique(),Causal_Tier2plus=res|>filter(tier%in%c("Tier 1","Tier 2"))|>pull(feature)|>unique(),Causal_any=res|>filter(PP.H4>=.5)|>pull(feature)|>unique())
+  lists<-le8_c3_sets(res,mr,layer)
   saveRDS(lists,file.path(rawdir,paste0("c3.causal_",layer,"_lists.rds")),compress="xz")
   if(layer=="protein")saveRDS(lists,file.path(rawdir,"c3.causal_protein_lists.rds"),compress="xz")
   out<-list(meta=module_meta(layer,extra=list(outcome_type=outtype,case_fraction=sfrac,code_version=C3_CODE_VERSION)),

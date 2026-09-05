@@ -6,8 +6,8 @@ suppressPackageStartupMessages({
   source(file.path(.c2_fdir,"c2_genetic_decompose.R"))
 })
 LE8_JOB <- "c2_cause"
-C2_CODE_VERSION <- "2026-09-03.genetic_components_le4_3"
-C2_STAGE_VERSION <- "2026-08-31.final1" # MR/DANDELION estimators are unchanged
+C2_CODE_VERSION <- "2026-09-05.5c-audit-v1"
+C2_STAGE_VERSION <- "2026-09-05.5c-audit-v1" # MR/DANDELION estimators are unchanged
 MAX_FEATURES <- as.integer(Sys.getenv("C2_MAX_FEATURES", unset="500"))
 TOP_FOREST <- as.integer(Sys.getenv("C2_TOP_FOREST", unset="32"))
 N_DEFAULT <- as.numeric(Sys.getenv("C2_SUMSTAT_N", unset="100000"))
@@ -332,11 +332,11 @@ plot_c2_fig4 <- function(mr,layer){
            x=expression(-log[10](P[Cochran~Q])),y=expression(-log[10](P[Egger~intercept])),color=NULL,size="IV count")+theme_5c(9)
   }
   dz<-d|>filter(is.finite(steiger_support_fraction))
-  pc<-if(!nrow(dz))blank_plot("c. Steiger directionality support","No per-IV directionality comparison was estimable")else
+  pc<-if(!nrow(dz))blank_plot("c. Per-IV variance-direction heuristic","No per-IV directionality comparison was estimable")else
     ggplot(dz,aes(class,steiger_support_fraction,color=class))+geom_hline(yintercept=.5,linetype=2,color="grey55")+
       geom_violin(aes(fill=class),alpha=.12,color=NA,trim=FALSE)+geom_boxplot(width=.18,outlier.shape=NA,alpha=.55)+
       geom_jitter(aes(size=pmin(steiger_n,500)),width=.08,alpha=.48)+scale_y_continuous(limits=c(0,1),labels=label_percent())+
-      labs(title="c. Steiger directionality support",subtitle="Fraction of harmonized IVs with R²(exposure) > R²(outcome); >50% supports exposure → outcome",
+      labs(title="c. Per-IV variance-direction heuristic",subtitle="Fraction of harmonized IVs with R²(exposure) > R²(outcome); >50% is heuristic only; not a liability-scale direction test",
            x=NULL,y="Supporting IV fraction",color=NULL,fill=NULL,size="IV count")+theme_5c(9)+theme(legend.position="none")
   (pa|pb)/pc+plot_layout(heights=c(1,.72))
 }
@@ -1176,6 +1176,12 @@ plot_c2_evidence_grades <- function(z,layer){
 }
 
 run_c2_layer <- function(layer=c("protein","metabolite")){
+  # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
+  layer <- match.arg(layer)
+  le8_load_revision(layer, "c2_cause")
+  .le8_review_env <- environment()
+  on.exit(le8_finish_revision(layer, "c2_cause", .le8_review_env), add=TRUE)
+
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir)
   rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE);cache<-file.path(rawdir,"c2.res.rds")
   method_scope<-c2_method_scope_audit(layer);write_raw_csv(method_scope,"c2.method_scope_audit.csv",rawdir)

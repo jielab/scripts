@@ -5,8 +5,8 @@ source "$ROOT/f/common.sh" "$@"; grid_parse_args "$@"
 trait=${GRID_TRAIT,,}; POPS=($(grid_csv_words "$GRID_POPS")); CHRS=($(grid_expand_chrs "$GRID_CHRS"))
 out="$GRID_OUTPUT_ROOT/$trait"; prep="$out/sumstats"; raw="$out/csx/raw"; weights="$out/csx/weights"; score="$out/scores"
 mkdir -p "$prep" "$raw" "$weights" "$score" "$out/log"
-prscx=$(find "$ROOT/csx" -maxdepth 4 -type f \( -iname 'PRScsx.py' -o -iname 'prscsx.py' \) -print -quit 2>/dev/null || true)
-[[ -s $prscx ]] || _grid_die "Bundled PRS-CSx program not found below $ROOT/csx"
+prscx=$(find "$ROOT/f/csx" -maxdepth 4 -type f \( -iname 'PRScsx.py' -o -iname 'prscsx.py' \) -print -quit 2>/dev/null || true)
+[[ -s $prscx ]] || _grid_die "Bundled PRS-CSx program not found below $ROOT/f/csx"
 [[ -s $GRID_CSX_SNPINFO ]] || _grid_die "Missing PRS-CSx SNP info: $GRID_CSX_SNPINFO"
 [[ -s $GRID_CSX_BIM_PREFIX.bim ]] || _grid_die "Missing target validation BIM: $GRID_CSX_BIM_PREFIX.bim"
 

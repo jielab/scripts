@@ -20,7 +20,7 @@ case "${PHYML_TREE_FAILURE_POLICY:-warn}" in warn|error) ;; *) echo "ERROR: PHYM
 for cmd in python3 bcftools bash awk find; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: missing command: $cmd" >&2; exit 1; }
 done
-for required in phyml.py phyml_tree_summary.py phyml_region_scan.py phyml_evidence.py phyml_anchor.py phyml_layered_plot.py; do
+for required in phyml.py phyml/core.py phyml/tree_summary.py phyml/region_scan.py phyml/evidence.py phyml/anchor.py phyml/layered_plot.py phyml/tree_plot.R; do
   [[ -s $F/$required ]] || { echo "ERROR: PhyML module missing: $F/$required" >&2; exit 1; }
 done
 if (( plot_phy )) && ! command -v phyml >/dev/null 2>&1; then
@@ -225,9 +225,9 @@ if [[ -n ${GU_LOCI_FILE:-} ]]; then
 fi
 
 if [[ $ACTION == check ]]; then
-  python3 "$F/phyml_region_scan.py" prepare --help >/dev/null
-  python3 "$F/phyml_evidence.py" prepare --help >/dev/null
-  exec python3 "$F/phyml.py" "${args[@]}" --check
+  python3 "$F/phyml.py" region prepare --help >/dev/null
+  python3 "$F/phyml.py" evidence prepare --help >/dev/null
+  exec python3 "$F/phyml.py" compare "${args[@]}" --check
 fi
 
 mkdir -p "$OUT/final"
@@ -260,7 +260,7 @@ comparison_record(){
   printf '\n'
   printf 'requested_region_mode\t%s\n' "$requested_region_mode"
   printf 'archaic_refs_source\t%s\n' "$PHYML_REFS_SOURCE"
-  stat -c 'script\t%n:%s:%Y' "$F/phyml.py" "$F/phyml_tree_summary.py" "$F/phyml_tree_plot.R" "$PHE_F"
+  stat -c 'script\t%n:%s:%Y' "$F/phyml.py" "$F/phyml/"*.py "$F/phyml/tree_plot.R" "$PHE_F"
   [[ -z ${GU_LOCI_FILE:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_LOCI_FILE"
   [[ -z ${GU_LOCI_MAP_FILE:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_LOCI_MAP_FILE"
   [[ -z ${GU_SAMPLE_PANEL:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_SAMPLE_PANEL"
@@ -327,7 +327,7 @@ if (( comparison_ready )); then
 else
   echo "[GU PHYML] comparison=RUN reason=missing_or_stale_outputs output=$OUT"
   rm -f -- "$OUT/final/trees.tsv" "$OUT/final/evidence_trees.tsv" "$OUT/final/region_common_trees.tsv"
-  python3 "$F/phyml.py" "${args[@]}"
+  python3 "$F/phyml.py" compare "${args[@]}"
   mkdir -p "$OUT/final"
   mv -f -- "$expected_meta" "$comparison_meta"
   expected_meta=''
@@ -337,17 +337,17 @@ fi
 # Stage 1: complete anchor-independent inventory. This runs before exact-anchor
 # extraction and before YRI/AFR/ancestral filters by design.
 if (( evidence_enabled )); then
-  python3 "$F/phyml_region_scan.py" prepare "${region_scan_args[@]}"
+  python3 "$F/phyml.py" region prepare "${region_scan_args[@]}"
 
   # Stage 2a: optional exact BED-column-4 marker. Missing or incorrect markers
   # are recorded but never remove Stage-1 regional matches.
   if (( ${#anchor_args[@]} )); then
-    python3 "$F/phyml_anchor.py" "${anchor_args[@]}"
+    python3 "$F/phyml.py" anchor "${anchor_args[@]}"
   fi
 
   # Stage 2b: derived-state, outgroup-frequency and recurrence filters; Stage 3
   # candidate-focused trees are prepared from these rows.
-  python3 "$F/phyml_evidence.py" prepare "${evidence_args[@]}"
+  python3 "$F/phyml.py" evidence prepare "${evidence_args[@]}"
 else
   echo "[GU PHYML] layered_evidence=SKIP reason=whole_chromosome_scan; set PHYML_EVIDENCE_WHOLE_CHROMOSOME=TRUE to enable"
 fi
@@ -399,7 +399,7 @@ if (( plot_phy )); then
 fi
 
 if (( plot_phy )); then
-  python3 "$F/phyml_layered_plot.py" --out "$OUT" \
+  python3 "$F/phyml.py" plot --out "$OUT" \
     --dpi "${PHYML_TREE_PLOT_DPI:-220}" \
     --max-labels "${PHYML_TREE_LABEL_LIMIT:-180}" || status=1
 fi
@@ -408,15 +408,15 @@ fi
 if (( evidence_enabled )); then
   tree_default=not_requested
   (( plot_phy )) && tree_default=not_run
-  python3 "$F/phyml_region_scan.py" summarize "${region_scan_args[@]}" --default-tree-status "$tree_default"
+  python3 "$F/phyml.py" region summarize "${region_scan_args[@]}" --default-tree-status "$tree_default"
 
   # Establish one compatibility row per locus even when the huge all-unique tree
-  # is intentionally not run. phyml_evidence.py then replaces its interpretation
+  # is intentionally not run. phyml/evidence.py then replaces its interpretation
   # with the candidate-focused authoritative fields.
-  python3 "$F/phyml_tree_summary.py" --out "$OUT" --skip-render --default-status not_requested
-  python3 "$F/phyml_evidence.py" summarize "${evidence_args[@]}" --default-tree-status "$tree_default"
+  python3 "$F/phyml.py" tree --out "$OUT" --skip-render --default-status not_requested
+  python3 "$F/phyml.py" evidence summarize "${evidence_args[@]}" --default-tree-status "$tree_default"
 else
-  python3 "$F/phyml_tree_summary.py" --out "$OUT" --skip-render --default-status not_requested
+  python3 "$F/phyml.py" tree --out "$OUT" --skip-render --default-status not_requested
 fi
 
 if (( status != 0 )); then

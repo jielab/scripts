@@ -16,7 +16,8 @@ def read_source(path):
       for line in h:
         if not line.strip() or line.lstrip().startswith("#"): continue
         z=re.split(r"\s+",line.strip())
-        if header is None and any(numeric(x) is None for x in z): header=[x.lower() for x in z]; continue
+        if header is None and any(x.lower() in {'position','pos','bp','base_pair_location'} or 'position' in x.lower() for x in z):
+            header=[x.lower() for x in z]; continue
         rows.append(z)
     if not rows: raise SystemExit(f"No map rows in {path}")
     if header:
@@ -63,11 +64,15 @@ def haps_variants(path):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--source",required=True); ap.add_argument("--haps",required=True); ap.add_argument("--out",required=True); ap.add_argument("--chr",required=True); a=ap.parse_args()
     bp,cm=read_source(a.source); Path(a.out).parent.mkdir(parents=True,exist_ok=True)
-    n=0; prev=-1
+    n=0; prev=-1; prev_g=-float('inf'); adjusted=0
     with open(a.out,"w") as o:
       for chrom,sid,pos in haps_variants(a.haps):
-        if pos<prev: raise SystemExit("HAPS positions are not sorted")
-        prev=pos; g=float(np.interp(pos,bp,cm,left=cm[0],right=cm[-1])); o.write(f"{a.chr}\t{sid}\t{g:.9f}\t{pos}\n"); n+=1
+        if pos<=prev: raise SystemExit('HAPS positions must be unique and strictly increasing')
+        prev=pos; g=round(float(np.interp(pos,bp,cm,left=cm[0],right=cm[-1])),9)
+        # Map plateaus are common. A 1e-9 cM numerical tie-break satisfies ASMC.
+        if g<=prev_g: g=round(prev_g+1e-9,9); adjusted+=1
+        prev_g=g
+        o.write(f"{a.chr}\t{sid}\t{g:.9f}\t{pos}\n"); n+=1
     if n<2: raise SystemExit("Too few mapped variants")
-    print(f"variants={n} source_points={len(bp)} map={a.out}")
+    print(f"variants={n} source_points={len(bp)} plateau_tiebreaks={adjusted} map={a.out}")
 if __name__=="__main__": main()

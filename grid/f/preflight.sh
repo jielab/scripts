@@ -42,8 +42,8 @@ if [[ $scope == core || $scope == all ]]; then
   check_dir "$GRID_CSX_REF_DIR" PRSCSx_reference_root
   check_file "$GRID_CSX_SNPINFO" PRSCSx_snpinfo
   check_file "$GRID_CSX_BIM_PREFIX.bim" target_validation_bim
-  prscx=$(find "$GRID_ROOT/csx" -maxdepth 3 -type f \( -iname 'PRScsx.py' -o -iname 'prscsx.py' \) -print -quit 2>/dev/null || true)
-  [[ -n $prscx ]] && record PASS PRSCSx_program "$prscx" || record FAIL PRSCSx_program "$GRID_ROOT/csx"
+  prscx=$(find "$GRID_ROOT/f/csx" -maxdepth 3 -type f \( -iname 'PRScsx.py' -o -iname 'prscsx.py' \) -print -quit 2>/dev/null || true)
+  [[ -n $prscx ]] && record PASS PRSCSx_program "$prscx" || record FAIL PRSCSx_program "$GRID_ROOT/f/csx"
   for c in $(grid_expand_chrs "$GRID_CHRS" | awk '{print $1}'); do
     if grid_target_mode "$c" >/dev/null 2>&1; then record PASS "target_genotype_chr$c" "$GRID_TARGET_DIR"; else record FAIL "target_genotype_chr$c" "$GRID_TARGET_DIR"; fi
   done
@@ -65,7 +65,7 @@ if [[ $scope == arg || $scope == all ]]; then
     check_file "$GRID_ARG_TREES_DIR/chr$c.variants.tsv.gz" "ARG_Needle_features_chr$c"
   done
   if ((fail)); then
-    record WARN ARG_build_command "bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
+    record WARN ARG_build_command "bash /mnt/d/scripts/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
   fi
 fi
 
@@ -79,7 +79,7 @@ if [[ $scope == grid || $scope == all ]]; then
   done
   for c in $(grid_expand_chrs "$GRID_CHRS"); do
     f="$GRID_ARG_TREES_DIR/chr$c.variants.tsv.gz"
-    [[ -s $f ]] && record PASS "ARG_features_chr$c" "$f" || record WARN "ARG_features_chr$c" 'created by refGen.sh make-arg --method needle'
+    [[ -s $f ]] && record PASS "ARG_features_chr$c" "$f" || record WARN "ARG_features_chr$c" 'created by arg.sh build --method needle'
   done
 fi
 

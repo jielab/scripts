@@ -48,12 +48,12 @@ GRID_SEED=${GRID_SEED:-20260904}
 GRID_SUMSTATS_CHUNK=${GRID_SUMSTATS_CHUNK:-500000}
 
 # PCA/ancestry/DiscoDivas.
-GRID_MED_FILE=${GRID_MED_FILE:-$GRID_ROOT/DiscoDivas/files/med.g1000.4pop.tsv}
-GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-$GRID_ROOT/DiscoDivas/files/g1k_hm3_maf5_woamb_wolr.pca.weight}
+GRID_MED_FILE=${GRID_MED_FILE:-/mnt/d/files/DiscoDivas/med.g1000.4pop.tsv}
+GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-/mnt/d/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight}
 GRID_COV_PCS=${GRID_COV_PCS:-20}
 GRID_DISTANCE_PCS=${GRID_DISTANCE_PCS:-10}
-GRID_AUTO_ANCESTRY=${GRID_AUTO_ANCESTRY:-TRUE}
-GRID_ANCESTRY_FILE=${GRID_ANCESTRY_FILE:-/mnt/d/data/ukb/phe/pca/ukb.ancestry.auto.tsv.gz}
+GRID_PCA_FILE=${GRID_PCA_FILE:-}
+GRID_ANCESTRY_FILE=${GRID_ANCESTRY_FILE:-}
 GRID_ANCESTRY_PROB_MIN=${GRID_ANCESTRY_PROB_MIN:-0.90}
 GRID_ANCHOR_PROB_MIN=${GRID_ANCHOR_PROB_MIN:-0.999}
 GRID_ANCHOR_MAX_PER_GROUP=${GRID_ANCHOR_MAX_PER_GROUP:-10000}
@@ -86,8 +86,7 @@ GRID_ARG_TREES_DIR=${GRID_ARG_TREES_DIR:-$GRID_ARG_OUT/trees}
 GRID_ARG_AFFINITY=${GRID_ARG_AFFINITY:-FALSE}
 
 # Evolutionary transport model and GRID scoring.
-GRID_GRID_ACTION=${GRID_GRID_ACTION:-all}
-GRID_LDSCORE_DIR=${GRID_LDSCORE_DIR:-$GRID_OUTPUT_ROOT/reference/ldscore}
+GRID_LDSCORE_DIR=${GRID_LDSCORE_DIR:-}
 GRID_REQUIRE_LD=${GRID_REQUIRE_LD:-TRUE}
 GRID_EXTERNAL_AGE=${GRID_EXTERNAL_AGE:-}
 GRID_MAX_SNPS_PER_CHR=${GRID_MAX_SNPS_PER_CHR:-0}
@@ -106,15 +105,6 @@ GRID_WRITE_PREDICTIONS=${GRID_WRITE_PREDICTIONS:-FALSE}
 GRID_ETHNICITY_COL=${GRID_ETHNICITY_COL:-auto}
 GRID_PHENOTYPE_COL=${GRID_PHENOTYPE_COL:-auto}
 GRID_EVAL_COVARIATES=${GRID_EVAL_COVARIATES:-auto}
-
-# Orchestration switches.
-GRID_RUN_CSX=${GRID_RUN_CSX:-TRUE}
-GRID_RUN_PCA=${GRID_RUN_PCA:-TRUE}
-GRID_RUN_ANCESTRY=${GRID_RUN_ANCESTRY:-TRUE}
-GRID_RUN_DISCO=${GRID_RUN_DISCO:-TRUE}
-GRID_RUN_ARG=${GRID_RUN_ARG:-TRUE}
-GRID_RUN_GRID=${GRID_RUN_GRID:-TRUE}
-GRID_RUN_EVAL=${GRID_RUN_EVAL:-TRUE}
 
 _grid_die(){ echo "ERROR: $*" >&2; exit 2; }
 _grid_need_value(){ [[ $# -ge 2 && -n ${2:-} && ${2:-} != --* ]] || _grid_die "$1 requires a value"; }
@@ -154,10 +144,10 @@ grid_parse_args(){
       --sumstats-chunk) _grid_need_value "$@"; GRID_SUMSTATS_CHUNK=$2; shift 2;;
 
       --med-file) _grid_need_value "$@"; GRID_MED_FILE=$2; shift 2;;
+      --pca-file) _grid_need_value "$@"; GRID_PCA_FILE=$2; shift 2;;
       --pca-weight) _grid_need_value "$@"; GRID_PCA_WEIGHT=$2; shift 2;;
       --cov-pcs) _grid_need_value "$@"; GRID_COV_PCS=$2; shift 2;;
       --distance-pcs) _grid_need_value "$@"; GRID_DISTANCE_PCS=$2; shift 2;;
-      --auto-ancestry) _grid_need_value "$@"; GRID_AUTO_ANCESTRY=$(grid_require_bool "$1" "$2"); shift 2;;
       --ancestry-file|--auto-ancestry-file) _grid_need_value "$@"; GRID_ANCESTRY_FILE=$2; shift 2;;
       --ancestry-prob-min|--ancestry-prob-threshold) _grid_need_value "$@"; GRID_ANCESTRY_PROB_MIN=$2; shift 2;;
       --anchor-prob-min) _grid_need_value "$@"; GRID_ANCHOR_PROB_MIN=$2; shift 2;;
@@ -190,7 +180,6 @@ grid_parse_args(){
       --arg-keep) _grid_need_value "$@"; GRID_ARG_KEEP=$2; shift 2;;
       --arg-affinity) _grid_need_value "$@"; GRID_ARG_AFFINITY=$(grid_require_bool "$1" "$2"); shift 2;;
 
-      --grid-action) _grid_need_value "$@"; GRID_GRID_ACTION=${2,,}; shift 2;;
       --ldscore-dir) _grid_need_value "$@"; GRID_LDSCORE_DIR=${2%/}; shift 2;;
       --require-ld) _grid_need_value "$@"; GRID_REQUIRE_LD=$(grid_require_bool "$1" "$2"); shift 2;;
       --external-age) _grid_need_value "$@"; GRID_EXTERNAL_AGE=$2; shift 2;;
@@ -207,18 +196,14 @@ grid_parse_args(){
       --eval-zero-shot) _grid_need_value "$@"; GRID_EVAL_ZERO_SHOT=$(grid_require_bool "$1" "$2"); shift 2;;
       --write-predictions) _grid_need_value "$@"; GRID_WRITE_PREDICTIONS=$(grid_require_bool "$1" "$2"); shift 2;;
 
-      --run-csx) _grid_need_value "$@"; GRID_RUN_CSX=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-pca) _grid_need_value "$@"; GRID_RUN_PCA=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-ancestry) _grid_need_value "$@"; GRID_RUN_ANCESTRY=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-disco) _grid_need_value "$@"; GRID_RUN_DISCO=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-arg) _grid_need_value "$@"; GRID_RUN_ARG=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-grid) _grid_need_value "$@"; GRID_RUN_GRID=$(grid_require_bool "$1" "$2"); shift 2;;
-      --run-eval) _grid_need_value "$@"; GRID_RUN_EVAL=$(grid_require_bool "$1" "$2"); shift 2;;
       -h|--help) exec bash "$GRID_F/help.sh";;
       *) _grid_die "unknown option '$1'";;
     esac
   done
   GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT%/}
+  [[ -n $GRID_LDSCORE_DIR ]] || GRID_LDSCORE_DIR="$GRID_OUTPUT_ROOT/reference/ldscore"
+  [[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="$GRID_DATA_ROOT/data/ukb/phe/pca/ukb.discodivas.pca.tsv.gz"
+  [[ -n $GRID_ANCESTRY_FILE ]] || GRID_ANCESTRY_FILE="$(dirname -- "$GRID_PCA_FILE")/ukb.ancestry.auto.tsv.gz"
   [[ $GRID_JOBS =~ ^[1-9][0-9]*$ ]] || _grid_die "--jobs must be a positive integer"
   [[ $GRID_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die "--threads must be a positive integer"
   [[ $GRID_ARG_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die "--arg-threads must be a positive integer"

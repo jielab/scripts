@@ -67,6 +67,7 @@ if (!is.null(dir)) {
   pca <- fread(pca_file, showProgress = FALSE)
 }
 
+if (toupper(get_arg("--projection-only", "FALSE")) == "TRUE") quit(status = 0L)
 if (is.null(med_file) || !file.exists(med_file)) stop("Missing --med file", call. = FALSE)
 med <- fread(med_file, showProgress = FALSE)
 id_col <- intersect(c("IID", "#IID", "eid"), names(pca))[1L]

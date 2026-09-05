@@ -547,7 +547,9 @@ standardize_sumstat <- function(d, N_default = as.numeric(Sys.getenv("C2_SUMSTAT
                 EAF = suppressWarnings(as.numeric(getv("EAF"))), BETA = suppressWarnings(as.numeric(getv("BETA"))),
                 SE = suppressWarnings(as.numeric(getv("SE"))), P = suppressWarnings(as.numeric(getv("P"))),
                 N = suppressWarnings(as.numeric(getv("N"))), source_file = source_file, joint = joint)
-  ans$N[!is.finite(ans$N)] <- N_default
+  meta_N <- le8_gwas_metadata(source_file)$N
+  if(is.finite(meta_N)&&meta_N>0) ans$N[!is.finite(ans$N)] <- meta_N
+  # Unknown N stays NA; no fabricated default sample size.
   ans$P[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] <- 2 * pnorm(abs(ans$BETA[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] /
                                                                           ans$SE[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1]), lower.tail = FALSE)
   ans |> filter(!is.na(SNP), SNP != "", is.finite(BETA), is.finite(SE), SE > 0) |> distinct(SNP, .keep_all = TRUE)
@@ -960,3 +962,14 @@ find_prs_vars <- function(dat, outcome = Y, max_n = 4) {
   ord <- order(!vapply(z, function(v) any(str_detect(tolower(v), fixed(tolower(key)))), logical(1)), z)
   head(z[ord], max_n)
 }
+
+
+# LE8_REVISION_UPDATES: 2026-09-05.5c-audit-v1
+.le8_patch_fdir <- Sys.getenv("LE8_FDIR", unset = "")
+if (!nzchar(.le8_patch_fdir)) {
+  .le8_patch_ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+  .le8_patch_fdir <- if (!is.null(.le8_patch_ofile)) dirname(.le8_patch_ofile) else file.path(dir0,"scripts/le8/f")
+}
+Sys.setenv(LE8_FDIR = .le8_patch_fdir)
+sys.source(file.path(.le8_patch_fdir,"c0_revision_core.R"), envir = .GlobalEnv)
+sys.source(file.path(.le8_patch_fdir,"c2_revision_mr.R"), envir = .GlobalEnv)

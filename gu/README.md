@@ -14,7 +14,7 @@ Zeberg 与 Pääbo 2020 Nature 文章没有发布一个以作者命名的 caller
 ## 可复制的运行顺序
 
 TRACE 需要先有整染色体 ARG。ARG 是可复用的数据准备产物，统一由
-`0data/refGen.sh make-arg` 构建。用户只需在 ARG 生成后运行 `gu.sh trace`；
+`gu/arg.sh build` 构建。用户只需在 ARG 生成后运行 `gu.sh trace`；
 TRACE 会在启动分析前自动完成只读 ARG 检查，不再提供单独的 `gu.sh arg`
 用户模块：
 
@@ -23,11 +23,11 @@ TRACE 会在启动分析前自动完成只读 ARG 检查，不再提供单独的
 
 ./gu.sh ibdmix --chr X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
 
 ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+bash /mnt/d/scripts/gu/arg.sh build --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
 
 ./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle --jobs 4
 
@@ -42,7 +42,7 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 
 ## 命令文件与并行调度
 
-`phyml`、`ibdmix`、`trace` 和 `as3` 使用同一个外层调度规则。每次请求先生成永久、可独立重跑的 `.cmd` 文件和 `<request>.cmd.list`；命令只引用正式 target prefix、永久结果目录与必要的永久 BED，不引用 `run.*`、临时 VCF 或临时 BED。TRACE 在进入该调度器前通过内部 `f/arg.sh` 调用 `refGen.sh make-arg --action check`，只读验证 ARG，不写入或转换 ARG 数据。
+`phyml`、`ibdmix`、`trace` 和 `as3` 使用同一个外层调度规则。每次请求先生成永久、可独立重跑的 `.cmd` 文件和 `<request>.cmd.list`；命令只引用正式 target prefix、永久结果目录与必要的永久 BED，不引用 `run.*`、临时 VCF 或临时 BED。TRACE 在进入该调度器前通过内部 `f/arg.trace_check.sh` 调用 `arg.sh check`，只读验证 ARG，不写入或转换 ARG 数据。
 
 重新提交 IBDmix 请求时，若某个染色体目录同时存在 `.complete` 和对应阈值的非空 `final/all_archaic_refs.*.segments.tsv.gz`，且未指定 `--replace-ibdmix TRUE`，外层调度器会直接报告 `[GU CMD] SKIP`。该判断发生在 target 预检和临时 PFILE→VCF 转换之前；`.cmd.list` 仍保留全部请求单元，便于审计和独立重跑。
 
@@ -213,21 +213,21 @@ TRACE 的输入不是 VCF，而是覆盖整条染色体的 mutation-bearing tski
 1KG VCF 的 `INFO/AA` 用作 tsinfer 的 ancestral allele；准备步骤会规范 `A|||` 等值，只保留 AA 等于 REF/ALT、低缺失、双等位 SNP 和 phased GT：
 
 ```bash
-bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
 ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr
 
-bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+bash /mnt/d/scripts/gu/arg.sh build --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
 ./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle
 ```
 
-执行顺序是 `refGen.sh make-arg → gu.sh trace`；ARG 检查是 TRACE 启动时的内在步骤。`--method tsinfer` 先把
+执行顺序是 `arg.sh build → gu.sh trace`；ARG 检查是 TRACE 启动时的内在步骤。`--method tsinfer` 先把
 `vcf/chr*.vcf.gz` 规范为持久的同级 `vcf.4arg/chr*.vcf.gz`，只保留有效
 `INFO/AA` 与 `FORMAT/GT`，再生成 ARG。Needle 的原生产物仍位于
 `arg/argn` 和 `arg/trees`；只有显式 `--format trace` 才会在
 `arg/trace/needle` 建立 TRACE 文件，因此不会与 tsinfer 或 GRID 文件混淆。
 ARG 只接受整染色体 `--chr`，Needle 当前只支持常染色体。
 
-TRACE 启动时会先验证：每条请求染色体存在 ARG；不是误标成 posterior 的坐标 chunk；site 数和覆盖跨度像整染色体；每个 chromosome-scoped run 内 node/sample/haplotype map 一致；缓存 provenance 未漂移。tsinfer ARG 要求 target 与 ARG 样本严格相等；Needle 的固定 panel 允许是 target 的子集，但 ARG 中每个样本必须存在于 target，TRACE 也只分析 ARG panel 中的节点。`arg_tsinfer.py` 从 VCF-Zarr 自动读取 ploidy，因此 pure male X 的每名男性是一个 ARG sample node。由于 X 是单倍体、常染色体是二倍体，`--chr 22,X` 之类的混合请求会自动拆成独立的 `chr22` 与 `chrX` TRACE 输出，完成后由 normalize 合并，不会把不兼容的 node map 强行联合。GU 随后依次执行：按 node 分组的 `trace-extract`、`trace-infer`、逐 haplotype 的 `trace-summarize`、标准化合并。
+TRACE 启动时会先验证：每条请求染色体存在 ARG；不是误标成 posterior 的坐标 chunk；site 数和覆盖跨度像整染色体；每个 chromosome-scoped run 内 node/sample/haplotype map 一致；缓存 provenance 未漂移。tsinfer ARG 要求 target 与 ARG 样本严格相等；Needle 的固定 panel 允许是 target 的子集，但 ARG 中每个样本必须存在于 target，TRACE 也只分析 ARG panel 中的节点。`arg.infer_tsinfer.py` 从 VCF-Zarr 自动读取 ploidy，因此 pure male X 的每名男性是一个 ARG sample node。由于 X 是单倍体、常染色体是二倍体，`--chr 22,X` 之类的混合请求会自动拆成独立的 `chr22` 与 `chrX` TRACE 输出，完成后由 normalize 合并，不会把不兼容的 node map 强行联合。GU 随后依次执行：按 node 分组的 `trace-extract`、`trace-infer`、逐 haplotype 的 `trace-summarize`、标准化合并。
 
 TRACE 默认保留完整染色体上下文，`--loci` 只在最终 segment 表中做 post-hoc clipping。若要做局部提取敏感性分析，可显式使用 `--trace-loci-mode extract`，此时才把 BED 传给 `trace-extract --include-regions`。未配置 HapMap genetic map 时，上游 TRACE 会按 `1e-8/bp/generation` 的均匀重组率运行。代码自带的小型真实 CLI 集成测试可用下面命令复核，它会运行 extract/infer/summarize/combine，并自动删除 `/tmp` 测试文件：
 
@@ -363,7 +363,16 @@ Individuals 页同时给出三种 burden：`raw_call` 是原始 calls 直接求�
 
 Shiny Overview 以五行 validation matrix 为主：预期角色、PhyML QC/tree carriers、IBDmix、TRACE、AS3 和结论；`not run`、`unsupported`、`exploratory` 分开显示。单-locus 解释与独立方法表保持在首屏，trajectory 和 individual rows 收入折叠面板。PhyML 页按“古参考 → tree candidate haplotypes → outside-clade controls”显示序列和树。
 
-`f/ukb.sh` 提供 `inspect-hap`、`make-panel`、`batches`、`hap-vcf`、`hap-arg-vcf` 等入口。Needle 是快速的单 ARG 路径，tsinfer 继续用于工程对照；若正式分析需要传播 ARG posterior uncertainty，可另做 SINGER posterior ARG 敏感性分析。
+`f/prep_ukb.sh` 专门检查、导出 UKB 原始 BGEN/芯片数据，通过 `gu.sh ukb` 调用，提供 `inspect-hap`、`make-panel`、`batches`、`hap-vcf`、`hap-arg-vcf` 等动作。已经有 phased PGEN 的数据直接使用 `arg.sh prep_gen`，不需要经过这套 BGEN 导出流程。
+
+## 代码入口
+
+- `arg.sh`：ARG 的 `prep_gen`、`build`；`build` 自动验证输出，验证失败则返回非零状态。`check` 仅用于事后只读复查。运行 `./arg.sh -h` 查看 1KG/UKB 的准备和构建命令，`--help-all` 查看完整选项。
+- `f/arg.*`：ARG 准备、Needle/tsinfer 推断及验证；原先重复的 VCF 准备脚本已合并。`arg.trace_check.sh` 是 `gu.sh trace` 的内部只读检查入口。
+- `f/phyml.sh`：PhyML 流程调度；所有 Python 阶段统一通过 `f/phyml.py` 的 `compare`、`region`、`anchor`、`evidence`、`tree`、`plot` 子命令调用，实现及 R 绘图代码集中在 `f/phyml/`。
+- `f/prep_ukb.sh`：UKB 原始数据准备；`gu.sh ukb` 的命令和参数保持兼容。
+
+`gu.env` 是本机运行配置，`gu.sh` 和 `install.sh` 都会读取，不能作为无用文件删除。目前它固定 AS3 Python 3.11；删除后安装与健康检查的默认版本会退回 3.9，还会丢失本机环境路径、模型路径及内存设置。
 
 ## 安装与检查
 

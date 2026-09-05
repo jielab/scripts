@@ -116,9 +116,12 @@ def main():
     tables.provenances.add_row(record=json.dumps({
         "schema_version":"1.0.0",
         "software":{"name":"refGen.argn_to_trees","version":"1"},
-        "parameters":{"source_method":"needle","node_time_units":"generations"},
+        "parameters":{"source_method":"needle","node_time_units":"generations",
+                      "ancestral_state_source":"tree_parsimony_not_external_AA",
+                      "mutations":"HAPS alleles mapped by parsimony"},
     },separators=(",",":")))
     ts=tables.tree_sequence()
-    Path(a.out).parent.mkdir(parents=True,exist_ok=True); ts.dump(a.out)
+    Path(a.out).parent.mkdir(parents=True,exist_ok=True)
+    temp=Path(a.out+'.next'); ts.dump(temp); temp.replace(a.out)
     print(f"trees={ts.num_trees} nodes={ts.num_nodes} samples={ts.num_samples} sites={ts.num_sites} mutations={ts.num_mutations} added_sites={added_sites} sequence_length={ts.sequence_length}")
 if __name__=="__main__": main()

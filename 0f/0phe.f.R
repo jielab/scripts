@@ -414,36 +414,59 @@ replace_code <- function(code, sep, mapping_df) {
 # model with delayed entry at the participant's baseline age, for example
 # Surv(age_at_baseline, bi2e, Yt2e).  It does *not* imply that an omic value
 # measured in adulthood was observed, or can be projected, at birth.
-t2e <- function(dat, domain, Y_date, birth_date, date_attend, date_lost, date_death,
-	              date_end = date_follow_end, prefix = NA, time_unit = "year") {
-	if (!is.na(prefix) && all(paste0(prefix, c(".Yt2e", ".Yr2e", ".t2e", ".r2e", ".b2e", ".bi2e")) %in% names(dat))) return(dat)
-	dt_att <- if (inherits(date_attend, "Date")) date_attend else as.Date(dat[[date_attend]])
-	for (v in c(birth_date, Y_date, date_lost, date_death, domain)) if (!is.null(v) && !is.na(v) && v %in% names(dat)) dat[[v]] <- as.Date(dat[[v]])
-	date_end0 <- if (inherits(date_end, "Date")) date_end else as.Date(date_end)
-	# Use the earliest observed censoring date.  The administrative end date is
-	# always present, so pmin() cannot return Inf when loss/death are both NA.
-	censor_dt <- pmin(dat[[date_lost]], dat[[date_death]], date_end0, na.rm = TRUE)
-	d_var <- if (!is.na(domain) && domain %in% names(dat)) domain else if (!is.na(domain) && paste0("icd10Ct_", domain) %in% names(dat)) paste0("icd10Ct_", domain) else NA_character_
-	d_is_date <- !is.na(d_var) && d_var == domain
-	dat <- dat %>% mutate(
-	  Yd = if_else(.data[[Y_date]] == dt_att, as.Date(NA), .data[[Y_date]]),
-	  is_aft = !is.na(Yd) & Yd > dt_att, is_bef = !is.na(Yd) & Yd < dt_att, is_nev = is.na(Yd),
-	  d_happ = if (!is.na(d_var)) { if (d_is_date) (!is.na(.data[[d_var]]) & .data[[d_var]] > dt_att) else (.data[[d_var]] > 0) } else FALSE,
-	  is_dty = is_nev & d_happ,
-	  Yt2e = case_when(is_aft ~ 1, is_dty ~ NA_real_, is_nev ~ 0, TRUE ~ NA_real_),
-	  Yr2e = case_when(is_bef ~ 1, is_dty ~ NA_real_, is_nev ~ 0, TRUE ~ NA_real_),
-	  f_dt = if_else(is_aft, Yd, censor_dt),
-	  r_dt = if_else(is_bef, Yd, as.Date(.data[[birth_date]])),
-	  bi_dt = case_when(is_bef ~ Yd, !is.na(Yt2e) ~ f_dt, TRUE ~ as.Date(NA)),
-	  t2e = if_else(!is.na(Yt2e), as.numeric(f_dt - dt_att), NA_real_),
-	  r2e = if_else(!is.na(Yr2e), as.numeric(dt_att - r_dt), NA_real_),
-	  b2e = case_when(Yr2e == 1 ~ -r2e, Yt2e == 1 ~  t2e, TRUE ~ NA_real_),
-	  bi2e = if_else(!is.na(bi_dt) & !is.na(.data[[birth_date]]),
-	                   as.numeric(bi_dt - .data[[birth_date]]), NA_real_)
-	) %>% { if (time_unit == "year") mutate(., t2e = t2e/365.25, r2e = r2e/365.25,
-	                                                b2e = b2e/365.25, bi2e = bi2e/365.25) else . }
-	if (!is.na(prefix)) dat <- dat %>% rename_with(~ paste0(prefix, ".", .), c(Yt2e, Yr2e, t2e, r2e, b2e, bi2e))
-	dat %>% dplyr::select(-Yd, -is_aft, -is_bef, -is_nev, -d_happ, -is_dty, -f_dt, -r_dt, -bi_dt)
+t2e <- function(dat,domain,Y_date,birth_date,date_attend,date_lost,date_death,
+                date_end=date_follow_end,prefix=NA,time_unit="year") {
+  n <- nrow(dat)
+  getdate <- function(x) {
+    if(inherits(x,"Date")) {
+      if(length(x)==1L) return(rep(x,n))
+      if(length(x)!=n) stop("Date vector length mismatch")
+      return(x)
+    }
+    if(is.null(x)||length(x)!=1L||is.na(x)||!x%in%names(dat)) return(rep(as.Date(NA),n))
+    z <- dat[[x]]
+    if(is.numeric(z)&&!inherits(z,"Date")) as.Date(z,origin="1970-01-01") else as.Date(z)
+  }
+  ba<-getdate(date_attend);bd<-getdate(birth_date);yd<-getdate(Y_date)
+  lost<-getdate(date_lost);dead<-getdate(date_death)
+  end<-as.Date(date_end);if(length(end)==1L)end<-rep(end,n)
+  if(length(end)!=n||anyNA(end))stop("Administrative end date must be valid",call.=FALSE)
+  censor<-pmin(lost,dead,end,na.rm=TRUE)
+  valid<-!is.na(ba)&!is.na(censor)&censor>=ba
+  # Same-day diagnosis is baseline disease (never an incident non-case).
+  prevalent<-!is.na(yd)&!is.na(ba)&yd<=ba
+  incident<-valid&!is.na(yd)&yd>ba&yd<=censor
+  beyond<-valid&!is.na(yd)&yd>censor
+  dirty<-rep(FALSE,n)
+  if(!is.null(domain)&&length(domain)==1L&&!is.na(domain)) {
+    dv<-if(domain%in%names(dat))domain else paste0("icd10Ct_",domain)
+    if(dv%in%names(dat)) {
+      zz<-dat[[dv]]
+      evidence<-if(inherits(zz,"Date"))!is.na(zz) else suppressWarnings(as.numeric(zz))>0
+      dirty<-is.na(yd)&!is.na(evidence)&evidence
+    }
+  }
+  yt<-ifelse(valid&!prevalent&!dirty,as.numeric(incident),NA_real_)
+  yr<-ifelse(valid&!dirty&!incident,as.numeric(prevalent),NA_real_)
+  stopdate<-censor;stopdate[incident]<-yd[incident]
+  forward<-ifelse(!is.na(yt),as.numeric(stopdate-ba),NA_real_)
+  # Backward clock remains descriptive; non-cases' r2e equals baseline age.
+  reverse<-ifelse(!is.na(yr),ifelse(prevalent,as.numeric(ba-yd),as.numeric(ba-bd)),NA_real_)
+  signed<-ifelse(prevalent,as.numeric(yd-ba),ifelse(incident,forward,NA_real_))
+  exitdate<-stopdate;exitdate[prevalent]<-yd[prevalent]
+  ageexit<-ifelse((prevalent|!is.na(yt))&!is.na(bd),as.numeric(exitdate-bd),NA_real_)
+  divisor<-if(time_unit=="year")365.25 else if(time_unit%in%c("day","days"))1 else
+    stop("time_unit must be year or day",call.=FALSE)
+  vals<-list(Yt2e=yt,Yr2e=yr,t2e=forward/divisor,r2e=reverse/divisor,
+             b2e=signed/divisor,bi2e=ageexit/divisor)
+  nm<-names(vals);if(length(prefix)==1L&&!is.na(prefix))nm<-paste0(prefix,".",nm)
+  dat[nm]<-vals
+  attr(dat,"le8_outcome_audit")<-data.frame(metric=c("N","prevalent_including_same_day",
+    "same_day","incident_within_followup","diagnosis_after_censor","invalid_followup","unknown_date_with_disease_evidence"),
+    value=c(n,sum(prevalent),sum(!is.na(yd)&!is.na(ba)&yd==ba),sum(incident),
+      sum(beyond),sum(!valid),sum(dirty)))
+  attr(dat,"le8_t2e_version")<-"2026-09-05.censor-inclusive-baseline-v1"
+  dat
 }
 
 # ICD-10 helper.

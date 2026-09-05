@@ -1,0 +1,129 @@
+{
+  "version": "2026-09-05.5c-audit-v1",
+  "base_commit": "f583951fb1e63f4e1c51ab492736d5911db00aa0",
+  "created_UTC": "20260905T060133.839581Z",
+  "allow_compatible": true,
+  "files": [
+    {
+      "path": "0f/0phe.f.R",
+      "old_sha256": "4a35b61c7e0143e7c15b4fc84c09f2754bd27f90767430bdaa85d8e1213319ed",
+      "new_sha256": "e588440f9f3a3750d0ca8ded28871197107c9a779e09af97f4a15625c9e39924",
+      "was_new": false
+    },
+    {
+      "path": "le8/le8.sh",
+      "old_sha256": "4bf7d6584db28a1cd5a8f59aa87201f0070f4427d93141953d097d8ab8b57b30",
+      "new_sha256": "d044f8b16c4105bde65691039fe7bfa892a6eee9915412f2f3c40621d95d7c00",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/comm.f.R",
+      "old_sha256": "68b423e7d752092a3de473998018dd9de7e982b3200ac2f70408f59a358e539f",
+      "new_sha256": "a71de92c4df24a4298d32511a75b465514e02ef6db43b1f45de30d529231c294",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c1_correlate.R",
+      "old_sha256": "848f091969ebb2a0853742af7df56f0191496a055eb19633d68d2eb8165c46a9",
+      "new_sha256": "7a2a109c30bee0528ce0a9d0fb2996aeb5e7cc9708d6fd8beb57e2ef7bb0fd67",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c2_cause.R",
+      "old_sha256": "760f9f8f90f3eebff4b37a000e58925cb1ee65ccc612eeaf07ae2e4d191db852",
+      "new_sha256": "03a551311e63afa5a8207e2315d3ba85823da00c564a27342ad5754c76a697b8",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c2_genetic_decompose.R",
+      "old_sha256": "883aa3e125038c1134026985f46c8bdbe623d3e0ab1c95cfb497b41acaee34d1",
+      "new_sha256": "883aa3e125038c1134026985f46c8bdbe623d3e0ab1c95cfb497b41acaee34d1",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c3_coloc.R",
+      "old_sha256": "86c4ba15e4705fc69be99e9b467b56791503faa3351f32b3df0d633493ebbe54",
+      "new_sha256": "77bc1445d949d370780c37a88f8fc1376d85d82397fc1d2b938a4328677c7911",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c4_connect.R",
+      "old_sha256": "11bb85f5197a3082f1a8186cd6c480a39b8145556712123690b6a8f8e3aacf1c",
+      "new_sha256": "39de6ba935016c01eff7d811631493e06093871c6cd7c3632a1f996c5e639128",
+      "was_new": false
+    },
+    {
+      "path": "le8/f/c5_consolidate.R",
+      "old_sha256": "3e0014b33e9a978cd37e859abbe0fecf999a1e231904ad396d1098d5fea56b57",
+      "new_sha256": "0a306696e54029269b5d4f4189e1cba4ab49ee6588b756ea8306886ee47e8c9e",
+      "was_new": false
+    },
+    {
+      "path": "le8/revision.conf.sh",
+      "old_sha256": null,
+      "new_sha256": "4c5db8393c82708fbe5633fd517f11b88bec05059c7b1c40506341fdfe6d4406",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c0_revision_core.R",
+      "old_sha256": null,
+      "new_sha256": "5a0b39f37a59a3667f262683118deb274367c00f51039ca3d77a478b241e9273",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c1_revision_temporal.R",
+      "old_sha256": null,
+      "new_sha256": "afa67d99cc93d8795bf5bc3c332a9087ed77dc10f304d70553f85438679f3edb",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c2_revision_dandelion.R",
+      "old_sha256": null,
+      "new_sha256": "f6cec6901006a7a030b998b4d22a863d8ce42384670bb55a355245555d982de8",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c2_revision_decompose.R",
+      "old_sha256": null,
+      "new_sha256": "d6e257def81a27ff4d0943286877401d7b8dd524892b38a6bab827cc6d208fbb",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c2_revision_evidence.R",
+      "old_sha256": null,
+      "new_sha256": "2d7ece72e04b0e0d9de99deaa0505c4f72728852ffaccb950c2c1f9821bfec5d",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c2_revision_mr.R",
+      "old_sha256": null,
+      "new_sha256": "9ef4d3820f7844193fd9c2a4c2c4a3ac40043d7e19d41474ef274d765fa46f78",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c3_revision_locus.R",
+      "old_sha256": null,
+      "new_sha256": "acd2e37edae20ccae0364ade5b5c1dd77a9bc68ea03d9b5aaa9a672535044833",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c4_revision_connection.R",
+      "old_sha256": null,
+      "new_sha256": "924ed8866a2718b7cf08c49345d510fddd5f47491b8ce9874128fbfa42998219",
+      "was_new": true
+    },
+    {
+      "path": "le8/f/c5_revision_validation.R",
+      "old_sha256": null,
+      "new_sha256": "33bf0f16cd6bf4ed09dfdfaf419c3be3f65519fedcd9184201144f57de579c1b",
+      "was_new": true
+    },
+    {
+      "path": "le8/tests/test_c4_empty_genetics.R",
+      "old_sha256": null,
+      "new_sha256": "1b06bb7b2fa71ccaa788abadc74638529cb1d8acc67e901c484264fe8a00c193",
+      "was_new": true
+    }
+  ],
+  "backup": "/mnt/d/scripts/_5c_code_backups/20260905T060133.839581Z"
+}

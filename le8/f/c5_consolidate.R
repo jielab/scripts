@@ -5,8 +5,8 @@ suppressPackageStartupMessages({
   source(file.path(fdir,"comm.f.R"));source(file.path(fdir,"c5_pred.R"))
 })
 LE8_JOB <- "c5_consolidate"
-C5_CODE_VERSION <- "2026-09-02.mechanism_weight2"
-C5_MODEL_VERSION <- "2026-09-02.mechanism_weight2"
+C5_CODE_VERSION <- "2026-09-05.5c-audit-v1"
+C5_MODEL_VERSION <- "2026-09-05.5c-audit-v1"
 OUTER <- as.integer(Sys.getenv("C5_OUTER_FOLDS",unset="5"))
 INNER <- as.integer(Sys.getenv("C5_INNER_FOLDS",unset="10"))
 HORIZON <- as.numeric(Sys.getenv("C5_HORIZON",unset="10"))
@@ -911,6 +911,12 @@ make_evidence_table <- function(layer,outdir,stability=tibble()){
 
 # 🚩 Main C5
 run_c5_layer <- function(layer=c("protein","metabolite")){
+  # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
+  layer <- match.arg(layer)
+  le8_load_revision(layer, "c5_consolidate")
+  .le8_review_env <- environment()
+  on.exit(le8_finish_revision(layer, "c5_consolidate", .le8_review_env), add=TRUE)
+
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir);rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE)
   module_file<-function(job)file.path(le8_job_dir(outdir,job),paste0(sub("_.*$","",job),".res.rds"))
   safe_module<-function(job,required=FALSE){
@@ -956,7 +962,7 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
   dat_all<-all0[,intersect(need,names(all0)),drop=FALSE]|>filter_analysis_cohort()|>make_outcome(Y)|>add_attained_age_time(Y)|>inner_join(biom,by="eid");rm(all0,biom);gc()
   tvar<-paste0(Y,".t2e");evar<-paste0(Y,".Yt2e");bvar<-paste0(Y,".b2e");bivar<-paste0(Y,".bi2e")
   clinical<-intersect(covs_use,names(dat_all));biom_vars<-intersect(biom_vars,names(dat_all))
-  prevalent_dat<-dat_all|>filter(is.finite(.data[[bvar]]),.data[[bvar]]<0)
+  prevalent_dat<-dat_all|>filter(is.finite(.data[[bvar]]),.data[[bvar]]<=0)
   dat<-dat_all[complete.cases(dat_all[,c(tvar,evar),drop=FALSE])&dat_all[[tvar]]>0,,drop=FALSE];rm(dat_all);invisible(gc())
   split<-make_outer_split(dat,evar=evar);dat$c5_split<-split
   message("C5/",layer,": N=",nrow(dat),", events=",sum(dat[[evar]]==1),", training=",sum(split=="training"),", validation=",sum(split=="validation"),", biomarkers=",length(biom_vars))
@@ -976,7 +982,7 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
   ranked<-if(nrow(training_screen))training_screen|>filter(is.finite(p.value))|>arrange(p.value)|>pull(term)|>intersect(biom_vars)else biom_vars
   pwas<-if(nrow(training_screen))training_screen|>filter(is.finite(FDR),FDR<.05)|>arrange(p.value)|>pull(term)|>intersect(biom_vars)else character()
   c2f<-u2$file;c2<-u2$data;m2<-c2$MR%||%tibble()
-  mrset<-if(nrow(m2))m2|>filter(is.finite(FDR_all),FDR_all<.05)|>arrange(pval)|>pull(exposure)|>unique()|>intersect(biom_vars)else character()
+  mrset<-if(nrow(m2)&&truthy(Sys.getenv("C5_GENETIC_EVIDENCE_INDEPENDENT",unset="FALSE")))m2|>filter(is.finite(FDR_all),FDR_all<.05)|>arrange(pval)|>pull(exposure)|>unique()|>intersect(biom_vars)else character()
   local_class<-if(layer=="protein")"cis"else"local"
   local_mrset<-if(nrow(m2))m2|>filter(analysis==local_class,is.finite(FDR_all),FDR_all<.05)|>arrange(pval)|>pull(exposure)|>unique()|>intersect(biom_vars)else character()
   # Training-only five-year landmark screen: this is the predictive component
@@ -999,20 +1005,19 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
   # The causal score is deliberately stricter than a union of all MR and all
   # coloc hits: require local/cis MR and robust colocalization for the same
   # feature. Distal/trans-only MR remains in the separate MR score.
-  geneticset<-if(u2$available&&u3$available)intersect(local_mrset,colocset)else character()
-  hybridset<-if(u2$available&&u3$available)unique(c(distalset,geneticset))else character()
+  geneticset<-if(u2$available&&u3$available&&truthy(Sys.getenv("C5_GENETIC_EVIDENCE_INDEPENDENT",unset="FALSE"))) le8_same_locus_candidates(m2,co3,layer) else character()
+  hybridset<-if(u2$available&&u3$available&&length(geneticset)&&length(distalset))unique(c(distalset,geneticset))else character()
   # A compact, transparent alternative to a black-box all-omic score. Candidate
   # selection uses only the outer training screen plus genetic/locus evidence.
   # Lower glmnet penalty factors favor distal and causal/locus-supported features;
   # training-ranked features lacking either support are retained but downweighted.
-  mechanismset<-unique(c(geneticset,distalset,head(ranked,C5_MECHANISM_N)))|>intersect(biom_vars)
+  mechanismset<-head(intersect(unique(c(geneticset,distalset,head(ranked,C5_MECHANISM_N))),biom_vars),C5_MECHANISM_N)
   mechanism_prior<-tibble(feature=mechanismset,
     distal_training=feature%in%distalset,genetic_locus=feature%in%geneticset)|>
     mutate(prior_class=case_when(genetic_locus&distal_training~"genetic + distal",
       genetic_locus~"genetic/locus",distal_training~"distal training signal",TRUE~"training-ranked only"),
-      penalty_factor=case_when(genetic_locus&distal_training~.40,genetic_locus~.55,
-        distal_training~.70,TRUE~1.50),
-      interpretation="Relative glmnet penalty; smaller values favor mechanism-supported features")
+      penalty_factor=1.0,
+      interpretation="Uniform glmnet penalty; evidence defines candidates, not hard-coded biomarker weights")
   mechanism_pf<-setNames(mechanism_prior$penalty_factor,mechanism_prior$feature)
   write_raw_csv(mechanism_prior,"c5.mechanism_weight_prior.csv",rawdir)
   # For this analysis, "User specified" means the ten strongest training-screen biomarkers.
@@ -1032,11 +1037,11 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
   c4_contract_ok<-u4$available&&all(required_c4_lists%in%names(l4))
   if(u4$available&&!c4_contract_ok)warning("C5: C4 result lacks the final list contract; C4 panels will be unavailable.",call.=FALSE)
   if(!c4_contract_ok)l4<-list(NS=character(),YS_all=character(),YSP_all=character())
-  ys4<-intersect(l4$YS_all%||%character(),biom_vars)
+  ys4<-if(c4_contract_ok)le8_training_connection_set(dat[split=="training",,drop=FALSE],biom_vars,intersect(vars.le8,names(dat)),intersect(vars.basic,names(dat)),rawdir)else character()
   # YS is selected without using disease outcome. Rebuild the outcome-ranked
   # NS and YSP-plus portions from the outer training screen to avoid leakage.
-  ns4<-if(c4_contract_ok)head(ranked,length(l4$NS))else character()
-  plus_n<-if(c4_contract_ok)length(setdiff(l4$YSP_all,l4$YS_all))else 0L
+  ns4<-if(c4_contract_ok)head(ranked,as.integer(le8_num_env("C5_CONNECTION_NS_N",160)))else character()
+  plus_n<-if(c4_contract_ok)as.integer(le8_num_env("C5_CONNECTION_PLUS_N",80))else 0L
   plus4<-if(plus_n>0L)head(setdiff(ranked,ys4),plus_n)else character()
   c4sets<-list(`C4 NS`=ns4,`C4 YS`=ys4,`C4 YSplus`=unique(c(ys4,plus4)))
   write_raw_csv(bind_rows(imap(c4sets,~tibble(set=.y,feature=.x))),"c5.connection_sets_training.csv",rawdir)
@@ -1054,9 +1059,9 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
     pw<-fit_glmnet_score(dat,pwas,tvar,evar,split,"PWAS/MWAS significant",lambda_rule="lambda.1se")
     mr<-fit_glmnet_score(dat,mrset,tvar,evar,split,"MR significant",lambda_rule="lambda.1se")
     ds<-fit_glmnet_score(dat,distalset,tvar,evar,split,"Distal antecedent",lambda_rule="lambda.1se")
-    gc<-fit_glmnet_score(dat,geneticset,tvar,evar,split,"Genetic causal",lambda_rule="lambda.1se")
+    gc<-fit_glmnet_score(dat,geneticset,tvar,evar,split,"Genetic-region evidence",lambda_rule="lambda.1se")
     hy<-fit_glmnet_score(dat,hybridset,tvar,evar,split,"Hybrid triangulated",lambda_rule="lambda.1se")
-    mw<-fit_glmnet_score(dat,mechanismset,tvar,evar,split,"Mechanism-weighted compact",
+    mw<-fit_glmnet_score(dat,mechanismset,tvar,evar,split,"Evidence-selected compact",
       lambda_rule="lambda.1se",penalty_factor=mechanism_pf)
     pa<-fit_glmnet_score(dat,pars,tvar,evar,split,"Parsimonious",lambda_rule="lambda.1se")
     ex<-fit_glmnet_score(dat,extended,tvar,evar,split,"Extended",lambda_rule="lambda.1se")
@@ -1076,7 +1081,7 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
 
   object_map<-setNames(list(sc$Pradeep,sc$Yu,sc$User,sc$PWAS,sc$MR,sc$Distal,sc$Genetic,sc$Hybrid,sc$Mechanism,sc$Parsimonious,sc$Extended,
     sc$C4_NS,sc$C4_YS,sc$C4_YSplus,sc$PRS),
-    c(all_glmnet_label,lightgbm_label,"User specified","PWAS/MWAS significant","MR significant","Distal antecedent","Genetic causal","Hybrid triangulated","Mechanism-weighted compact","Parsimonious","Extended",
+    c(all_glmnet_label,lightgbm_label,"User specified","PWAS/MWAS significant","MR significant","Distal antecedent","Genetic-region evidence","Hybrid triangulated","Evidence-selected compact","Parsimonious","Extended",
       "C4 NS","C4 YS","C4 YSplus","Genetic PRS"))
   base_score_rows<-score_rows|>filter(split!="prevalent")
   prev_rows<-imap_dfr(object_map,function(obj,nm)predict_prevalent_rows(obj,prevalent_dat,nm,bvar,base_score_rows))
@@ -1104,7 +1109,7 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
 
   method_names<-unique(score_rows$method)
   fig1_order<-c(all_glmnet_label,lightgbm_label,"User specified")
-  fig2_order<-c("Distal antecedent","Genetic causal","Hybrid triangulated","Mechanism-weighted compact")
+  fig2_order<-c("Distal antecedent","Genetic-region evidence","Hybrid triangulated","Evidence-selected compact")
   fig3_order<-c("C4 NS","C4 YS","C4 YSplus")
   # Write the primary panels before optional matching/bootstrap diagnostics.
   # If a very large metabolite run is interrupted later, the principal C5
@@ -1112,7 +1117,7 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
   save_plot(c5_make_5row_grid(fig1_order,pred,score_rows,list(),list(),"Prediction paradigms"),"c5.Fig1.simple_pred.png",24,13.5,outdir=outdir)
   save_plot(c5_make_5row_grid(fig2_order,pred,score_rows,list(),list(),"Evidence-screened prediction"),"c5.Fig2.screened_pred.png",24,13.5,outdir=outdir)
   save_plot(c5_make_5row_grid(fig3_order,pred,score_rows,list(),list(),"C4 connection-guided prediction"),"c5.Fig3.connection_pred.png",24,13.5,outdir=outdir)
-  lead_methods<-intersect(c(all_glmnet_label,lightgbm_label,"Distal antecedent","Genetic causal","Hybrid triangulated","Mechanism-weighted compact","C4 YSplus"),method_names)
+  lead_methods<-intersect(c(all_glmnet_label,lightgbm_label,"Distal antecedent","Genetic-region evidence","Hybrid triangulated","Evidence-selected compact","C4 YSplus"),method_names)
   individual_features<-unique(c(head(ranked,3L),intersect(C5_LEAD_ANCHORS,biom_vars)))|>head(6L)
   individual_lead_rows<-make_individual_lead_rows(dat,individual_features,training_screen,split,tvar,evar)
   lead_input<-bind_rows(score_rows|>filter(method%in%lead_methods),individual_lead_rows)
@@ -1160,12 +1165,12 @@ run_c5_layer <- function(layer=c("protein","metabolite")){
     write_raw_csv(cv$pred,"c5.prediction_rows_nested.csv",rawdir);write_raw_csv(cv$metrics,"c5.metrics_by_fold.csv",rawdir);write_raw_csv(cv$summary,"c5.metrics_summary.csv",rawdir);write_raw_csv(cv$selected,"c5.selected_by_fold.csv",rawdir);write_raw_csv(cv$stability,"c5.selection_stability.csv",rawdir)
   }
   ev<-make_evidence_table(layer,outdir,cv$stability);write_raw_csv(ev,"c5.evidence_consolidation.csv",rawdir)
-  set_sizes<-tibble(set=c(paste0(all_glmnet_label," (all)"),paste0(lightgbm_label," (preselected)"),"User","PWAS/MWAS significant","MR significant",paste0(local_class," MR significant"),"Robust colocalization","Distal antecedent","Genetic causal","Hybrid triangulated","Mechanism-weighted compact","Parsimonious","Extended","C4 NS","C4 YS","C4 YSplus","Genetic PRS"),
+  set_sizes<-tibble(set=c(paste0(all_glmnet_label," (all)"),paste0(lightgbm_label," (preselected)"),"User","PWAS/MWAS significant","MR significant",paste0(local_class," MR significant"),"Robust colocalization","Distal antecedent","Genetic-region evidence","Hybrid triangulated","Evidence-selected compact","Parsimonious","Extended","C4 NS","C4 YS","C4 YSplus","Genetic PRS"),
     N=c(length(biom_vars),length(yuvars),length(user),length(pwas),length(mrset),length(local_mrset),length(colocset),length(distalset),length(geneticset),length(hybridset),length(mechanismset),length(pars),length(extended),length(c4sets[[1]]),length(c4sets[[2]]),length(c4sets[[3]]),length(prs_vars)))
   candidate_sets<-bind_rows(tibble(set="PWAS/MWAS significant",feature=pwas),tibble(set="MR significant",feature=mrset),
     tibble(set=paste0(local_class," MR significant"),feature=local_mrset),tibble(set="Robust colocalization",feature=colocset),
-    tibble(set="Distal antecedent",feature=distalset),tibble(set="Genetic causal",feature=geneticset),
-    tibble(set="Hybrid triangulated",feature=hybridset),tibble(set="Mechanism-weighted compact",feature=mechanismset),
+    tibble(set="Distal antecedent",feature=distalset),tibble(set="Genetic-region evidence",feature=geneticset),
+    tibble(set="Hybrid triangulated",feature=hybridset),tibble(set="Evidence-selected compact",feature=mechanismset),
     tibble(set="Parsimonious",feature=pars),
     tibble(set="Extended",feature=extended),bind_rows(imap(c4sets,~tibble(set=.y,feature=.x))))|>distinct()
   write_raw_csv(set_sizes,"c5.input_set_sizes.csv",rawdir)

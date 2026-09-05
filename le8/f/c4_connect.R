@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c4_state_network.R"))
 })
 LE8_JOB <- "c4_connect"
-C4_CODE_VERSION <- "2026-09-02.state_network1"
+C4_CODE_VERSION <- "2026-09-05.5c-audit-v1"
 MAX_N <- as.integer(Sys.getenv("C4_MAX_N", unset = "60000"))
 BLOCK <- as.integer(Sys.getenv("C4_BLOCK", unset = "80"))
 FDR_CUT <- as.numeric(Sys.getenv("C4_FDR", unset = "0.05"))
@@ -116,7 +116,17 @@ mediation_one <- function(dat, component_var, feature, covars, tvar, evar, B=100
 }
 
 make_genetic_edges <- function(disc,rep,disease,membership){
-  if(!nrow(disc)||!nrow(rep))return(tibble())
+  # Preserve the edge schema when PRS inputs are absent or a scan is not estimable.
+  # Plotting and list export must handle unavailable evidence without inventing edges.
+  if(!nrow(disc)||!nrow(rep)) {
+    message("C4: genetic bridges unavailable; discovery rows=", nrow(disc),
+      "; replication rows=", nrow(rep))
+    return(tibble(feature=character(),prs=character(),prs_var=character(),
+      r_disc=double(),z_disc=double(),p_disc=double(),FDR_disc=double(),
+      r_rep=double(),z_rep=double(),p_rep=double(),FDR_rep=double(),
+      same_direction=logical(),replicated=logical(),disease_beta=double(),
+      disease_p=double(),set=character(),primary_component=character(),bridge_score=double()))
+  }
   dis<-disease;if(!"beta"%in%names(dis))dis$beta<-safe_log(dis$estimate)
   disc|>select(feature,prs=component,prs_var=component_var,r_disc=r,z_disc=z,p_disc=p.value,FDR_disc=FDR_component)|>
     left_join(rep|>select(feature,prs=component,r_rep=r,z_rep=z,p_rep=p.value,FDR_rep=FDR_component),by=c("feature","prs"))|>
@@ -335,6 +345,12 @@ plot_c4_legacy <- function(scan,sets,med,layer,outdir) {
 }
 
 run_c4_layer <- function(layer=c("protein","metabolite")) {
+  # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
+  layer <- match.arg(layer)
+  le8_load_revision(layer, "c4_connect")
+  .le8_review_env <- environment()
+  on.exit(le8_finish_revision(layer, "c4_connect", .le8_review_env), add=TRUE)
+
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir);rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE);cache<-file.path(rawdir,"c4.res.rds")
   if(cache_valid(cache)){
     old<-tryCatch(readRDS(cache),error=function(e)NULL)

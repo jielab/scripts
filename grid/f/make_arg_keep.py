@@ -21,7 +21,10 @@ def read_sample(path: str) -> pd.DataFrame:
     lower={x.lower():x for x in d.columns}
     col=lower.get("id_2") or lower.get("iid") or lower.get("id") or lower.get("id_1") or d.columns[min(1,len(d.columns)-1)]
     out=pd.DataFrame({"eid":d[col].astype(str)})
-    out=out[~out.eid.isin(["0","NA","nan",""])].drop_duplicates("eid")
+    if out.eid.duplicated().any(): raise SystemExit('Duplicate sample IID is ambiguous')
+    fid = lower.get('fid') or lower.get('id_1')
+    out['fid'] = d[fid].astype(str) if fid else '0'
+    out=out[~out.eid.isin(["0","NA","nan",""])]
     out["source_order"]=np.arange(len(out),dtype=np.int64)
     return out
 
@@ -59,10 +62,13 @@ def main():
         for _,r in anc.iterrows():
             c=f"posterior_{r['pop']}"; vals.append(pd.to_numeric(r.get(c,np.nan),errors="coerce"))
         anc["prob"]=vals
-    d=s.merge(anc[["eid","pop","prob"]],on="eid",how="left"); d["pop"]=d["pop"].fillna("OTH")
+    if anc.eid.duplicated().any(): raise SystemExit('Duplicate sample IDs in ancestry table')
+    d=s.merge(anc[["eid","pop","prob"]],on="eid",how="left",validate='one_to_one'); d["pop"]=d["pop"].fillna("OTH")
     if a.custom_keep:
         k=pd.read_csv(a.custom_keep,sep=None,engine="python",comment="#",header=None,dtype=str)
-        wanted=[x for x in k.iloc[:,0].astype(str) if x in set(d.eid)]
+        wanted=k.iloc[:,1 if k.shape[1]>1 else 0].astype(str).tolist()
+        if len(set(wanted)) != len(wanted) or not set(wanted)<=set(d.eid):
+            raise SystemExit('Custom keep contains duplicate or unknown sample IDs')
         rank={x:i for i,x in enumerate(wanted)}; d=d[d.eid.isin(rank)].copy(); d["rank"]=d.eid.map(rank); d=d.sort_values("rank")
     else:
         from itertools import zip_longest
@@ -74,6 +80,7 @@ def main():
         # Round-robin ordering ensures the initial ARG scaffold contains all groups.
         selected=[eid for row in zip_longest(*anchor_lists) for eid in row if eid is not None]
         selected=list(dict.fromkeys(selected))
+        if not a.full and a.max_individuals>0: selected=selected[:a.max_individuals]
         remaining=d[~d.eid.isin(selected)].copy()
         if a.full or a.max_individuals<=0:
             fill=remaining.sort_values("source_order").eid.tolist()
@@ -96,7 +103,7 @@ def main():
     if not len(d): raise SystemExit("No ARG samples selected")
     Path(a.out_keep).parent.mkdir(parents=True,exist_ok=True)
     with open(a.out_keep,"w") as h:
-        h.write("#FID\tIID\n"); h.writelines(f"{x}\t{x}\n" for x in d.eid)
+        h.write("#FID\tIID\n"); h.writelines(f"{r.fid}\t{r.eid}\n" for r in d.itertuples())
     d[["eid","pop","prob","source_order"]].to_csv(a.out_panel,sep="\t",index=False)
     print(f"selected_individuals={len(d)} pop_counts={d['pop'].value_counts().to_dict()}")
 if __name__=="__main__": main()

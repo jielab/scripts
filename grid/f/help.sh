@@ -3,10 +3,30 @@ cat <<'HELP'
 GRID: Genealogy-informed effect transport for multi-ancestry PRS
 
 Usage
-  ./grid.sh pca|ancestry|csx|disco|arg|grid|eval|all [options]
+  ./pca.sh [options]
+  ./csx.sh [options]
+  ./disco.sh [options]
+  ./grid.sh grid|eval [options]
+  ./grid.sh pca [options]        shortcut for ./pca.sh
 
 Recommended order
-  pca -> ancestry -> csx -> disco -> arg -> grid -> eval
+  pca.sh (once per cohort) -> csx.sh -> disco.sh
+  ./grid.sh grid -> ./grid.sh eval
+  grid automatically checks ARG, extracts LD, assembles features, fits the
+  model, generates weights and scores participants in one run.
+  ancestry is an internal stage of pca.sh.
+
+PCA preparation
+  --pca-file PATH               existing/projected PC table; defaults to
+      /mnt/d/data/ukb/phe/pca/ukb.discodivas.pca.tsv.gz
+  --pca-weight PATH             /mnt/d/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+  --med-file PATH               /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
+  --cov-pcs 20 --distance-pcs 10
+  --ancestry-file PATH          output; defaults beside the PC table
+  --ancestry-prob-threshold 0.90
+  Existing projected PCs skip PLINK projection even if distance/ancestry files
+  are missing. Each downstream stage reuses complete outputs. Use --replace
+  TRUE when changing inputs/settings to rebuild all stages.
 
 Core defaults
   --dir-gwas /mnt/d/data.BIG/gwas/4grid
@@ -18,7 +38,6 @@ Core defaults
   --phe-file /mnt/d/data/ukb/phe/Rdata/phe.rds
   --output-root /mnt/d/analysis/grid
   --trait height                  one of height, ldl, t2dm
-  --traits height,ldl,t2dm        used by all
   --pops AFR,EAS,EUR,SAS
   --chrs 1-22
   --jobs 4 --threads 8 --replace FALSE
@@ -27,16 +46,14 @@ ARG-Needle options
   --arg-hap-dir /mnt/h/ukbGen/37/hap
       Accepts phased BGEN + Oxford .sample, or phased PGEN + .psam files.
   --arg-out/--arg-dir DIR         reusable ARG root [beside hap directory: ../arg]
-  --arg-action check|all          validate prebuilt ARG-Needle data [check]
 
   ARG construction is shared data preparation and is no longer performed by
   grid.sh. Build it first (ARG-Needle is the default method):
-    bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle \
+    bash /mnt/d/scripts/gu/arg.sh build --method needle \
       --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
       --map-dir /mnt/d/data.BIG/refGen/maps/GRCh37
 
 GRID model options
-  --grid-action ld|transport|weights|score|all
   --ldscore-dir DIR               generated from PRS-CSx HDF5 LD panels
   --external-age FILE             optional GEVA/other age table; ARG age remains primary
   --grid-ridge-alpha 10
@@ -51,24 +68,21 @@ Evaluation
 Examples:
   cd /mnt/d/scripts/grid
 
-  ./grid.sh pca
-  ./grid.sh ancestry
+  ./grid.sh pca # project PCA to 1KG, calculate genetic distance, infer ancestry
 
-  ./grid.sh csx --trait height --chrs 22
-  ./grid.sh disco --trait height
-
-  ./grid.sh arg --chrs 22
+  ./csx.sh --trait height --chrs 22
+  ./disco.sh --trait height
 
   ./grid.sh grid --trait height --chrs 22
   ./grid.sh eval --trait height
 
-  ./grid.sh csx --trait ldl --chrs 22
-  ./grid.sh disco --trait ldl
+  ./csx.sh --trait ldl --chrs 22
+  ./disco.sh --trait ldl
   ./grid.sh grid --trait ldl --chrs 22
   ./grid.sh eval --trait ldl
 
-  ./grid.sh csx --trait t2dm --chrs 22
-  ./grid.sh disco --trait t2dm
+  ./csx.sh --trait t2dm --chrs 22
+  ./disco.sh --trait t2dm
   ./grid.sh grid --trait t2dm --chrs 22
   ./grid.sh eval --trait t2dm
 HELP

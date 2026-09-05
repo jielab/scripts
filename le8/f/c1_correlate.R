@@ -6,8 +6,8 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c1_pgs.R"))
 })
 LE8_JOB <- "c1_correlate"
-C1_CODE_VERSION     <- "2026-09-03.le4_vldl_deepdive3"
-C1_SCAN_VERSION     <- "2026-09-03.le4_primary1"
+C1_CODE_VERSION     <- "2026-09-05.5c-audit-v1"
+C1_SCAN_VERSION     <- "2026-09-05.5c-audit-v1"
 
 TOP_N              <- as.integer(Sys.getenv("C1_TOP_N", unset = "30"))
 YY_TOP              <- as.integer(Sys.getenv("C1_YY_TOP", unset = "6"))
@@ -1115,7 +1115,7 @@ build_vldl_tg_deep_dive <- function(pgs_full,pgs_same,measured_le4,
         "Post-baseline incident"="#3F78A8"))+
       labs(title="g. Diagnosis-anchored measured-trait risk-set trajectory",
         subtitle="One baseline measurement per person; this is not a within-person longitudinal trajectory",
-        x="Years from baseline diagnosis boundary",y="Behavioral-LE4 log OR per 1 SD",
+        x="Years from baseline diagnosis boundary",y="LE4-adjusted log effect (OR / HR)",
         color=NULL,fill=NULL,size="Cases")+theme_5c(8)+theme(legend.position="bottom")
 
   hh<-as_tibble(measured_conditional)
@@ -1141,6 +1141,12 @@ build_vldl_tg_deep_dive <- function(pgs_full,pgs_same,measured_le4,
 
 # 🚩 Main C1
 run_c1_layer <- function(layer=c("protein","metabolite")) {
+  # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
+  layer <- match.arg(layer)
+  le8_load_revision(layer, "c1_correlate")
+  .le8_review_env <- environment()
+  on.exit(le8_finish_revision(layer, "c1_correlate", .le8_review_env), add=TRUE)
+
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir)
   rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE)
   scan_cache<-file.path(rawdir,paste0("c1.scan.",C1_SCAN_VERSION,".rds"));selected_cache<-file.path(rawdir,"c1.res.rds")

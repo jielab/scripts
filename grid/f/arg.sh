@@ -11,7 +11,7 @@ case "$GRID_ARG_ACTION" in
   all|check) ;;
   prepare|infer|convert|features|affinity)
     echo "ERROR: ARG construction moved to refGen.sh data preparation." >&2
-    echo "Run: bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --dir-pfile $GRID_ARG_HAP_DIR --map-dir ${GRID_ARG_MAP_DIR:-MAP_DIR} --ancestry-file $GRID_ANCESTRY_FILE --chr $GRID_CHRS" >&2
+    echo "Run: bash /mnt/d/scripts/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --dir-pfile $GRID_ARG_HAP_DIR --map-dir ${GRID_ARG_MAP_DIR:-MAP_DIR} --ancestry-file $GRID_ANCESTRY_FILE --chr $GRID_CHRS" >&2
     exit 2
     ;;
   *) _grid_die "bad --arg-action=$GRID_ARG_ACTION (GRID now supports check/all only)";;
@@ -32,7 +32,7 @@ for c in "${CHRS[@]}"; do
 done
 if ((missing)); then
   echo "Prepare the reusable ARG data with:" >&2
-  echo "  bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --dir-pfile $GRID_ARG_HAP_DIR --map-dir ${GRID_ARG_MAP_DIR:-MAP_DIR} --ancestry-file $GRID_ANCESTRY_FILE --chr $GRID_CHRS" >&2
+  echo "  bash /mnt/d/scripts/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --dir-pfile $GRID_ARG_HAP_DIR --map-dir ${GRID_ARG_MAP_DIR:-MAP_DIR} --ancestry-file $GRID_ANCESTRY_FILE --chr $GRID_CHRS" >&2
   exit 2
 fi
 

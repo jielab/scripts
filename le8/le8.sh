@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# LE8_REVISION_UPDATES: additional settings; existing CLI remains authoritative.
+_le8_revision_home="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$_le8_revision_home/revision.conf.sh" ]]; then
+  source "$_le8_revision_home/revision.conf.sh"
+fi
 
 set -euo pipefail
 

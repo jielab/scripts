@@ -76,11 +76,11 @@ Examples:
 
   ./gu.sh ibdmix --chr X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-  bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+  bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
 
   ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-  bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+  bash /mnt/d/scripts/gu/arg.sh build --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
   ./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle --jobs 4
 
   ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/38/pfile/chr --jobs 4
@@ -444,7 +444,7 @@ if [[ $METHOD == as3 && " $GU_CHRS " == *" X "* ]]; then
 fi
 if [[ $METHOD == trace ]]; then
   trace_precheck_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}
-  [[ -d $GU_ARG_DIR ]] || { echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; build it with refGen.sh make-arg" >&2; exit 2; }
+  [[ -d $GU_ARG_DIR ]] || { echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; build it with arg.sh build" >&2; exit 2; }
   trace_refgen_method='' trace_refgen_format=native trace_refgen_root=$GU_ARG_DIR
   if [[ -s $GU_ARG_DIR/ARG_TRACE_BUILD.tsv ]]; then
     trace_refgen_method=$(awk -F'\t' '$1=="method"{print $2;exit}' "$GU_ARG_DIR/ARG_TRACE_BUILD.tsv")
@@ -458,13 +458,13 @@ if [[ $METHOD == trace ]]; then
     env GU_ARG_DIR="$trace_refgen_root" GU_ARG_METHOD="$trace_refgen_method" GU_ARG_FORMAT="$trace_refgen_format" \
       GU_TARGET_ROOT="$GU_TARGET_ROOT" GU_TARGET_VCF_DIR="$GU_TARGET_ROOT/vcf" \
       GU_TARGET_GEN_PREFIX="$GU_TARGET_GEN_PREFIX" GU_SAMPLE_PANEL="$GU_SAMPLE_PANEL" \
-      GU_BUILD="$GU_BUILD" GU_CHRS="$trace_precheck_chrs" bash "$F/arg.sh" check
+      GU_BUILD="$GU_BUILD" GU_CHRS="$trace_precheck_chrs" bash "$F/arg.trace_check.sh" check
     export GU_ARG_CHECKED=1
   fi
   for c in $trace_precheck_chrs; do
     if ! find -L "$GU_ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print 2>/dev/null |
       awk -v c="$c" 'BEGIN{IGNORECASE=1;found=0}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)")||b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))found=1}END{exit !found}'; then
-      echo "ERROR: TRACE requires a TRACE-format full-chromosome ARG for chr$c under $GU_ARG_DIR; build it with refGen.sh make-arg (add --format trace for needle)" >&2
+      echo "ERROR: TRACE requires a TRACE-format full-chromosome ARG for chr$c under $GU_ARG_DIR; build it with arg.sh build (add --format trace for needle)" >&2
       exit 2
     fi
   done
@@ -1562,7 +1562,7 @@ case "$METHOD" in
     export GU_SQLITE=${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}
     exec Rscript -e "shiny::runApp('$ROOT/shiny', host=Sys.getenv('GU_SHINY_HOST','127.0.0.1'), port=as.integer(Sys.getenv('GU_SHINY_PORT','3838')), launch.browser=interactive())"
     ;;
-  ukb) exec bash "$F/ukb.sh" "$ACTION" ;;
+  ukb) exec bash "$F/prep_ukb.sh" "$ACTION" ;;
 esac
 }
 

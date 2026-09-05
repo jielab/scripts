@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-exec bash "$ROOT/f/run_legacy_module.sh" ancestry "$@"
