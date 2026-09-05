@@ -205,7 +205,7 @@ PY
       bash "$F/add_aa_from_1kg.sh" --in "$RAW/chr$c.vcf.gz" --ref "$ref" --out "$AAOUT/chr$c.vcf.gz" --threads "$THREADS"
     done
     echo "AA-tagged phased VCFs are ready under: $AAOUT"
-    echo "Next: ./gu.sh arg build --target-vcf-dir $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
+    echo "Next: bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen ${GU_TARGET_ROOT:-/mnt/h/ukbGen/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
     ;;
 
   inspect-typed)

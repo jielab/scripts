@@ -10,6 +10,11 @@ from pathlib import Path
 
 import tskit
 
+from csv_compat import enable_wide_csv_fields
+
+
+enable_wide_csv_fields()
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"ERROR: ARG post-build check failed: {message}")

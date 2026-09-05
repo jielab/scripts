@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+cat <<'HELP'
+GRID: Genealogy-informed effect transport for multi-ancestry PRS
+
+Usage
+  ./grid.sh pca|ancestry|csx|disco|arg|grid|eval|all [options]
+
+Recommended order
+  pca -> ancestry -> csx -> disco -> arg -> grid -> eval
+
+Core defaults
+  --dir-gwas /mnt/d/data.BIG/gwas/4grid
+      Flat files: height.AFR.gz, height.EAS.gz, ..., t2dm.SAS.gz
+  --dir-gen /mnt/d/data/ukb/gen/typ
+      Target chr1..chr22 PLINK bfiles or pfiles used for PRS scoring.
+      If absent, GRID automatically uses /mnt/h/ukbGen/37/hap when PGENs exist.
+  --dir-imp /mnt/h/ukbGen/37/imp
+  --phe-file /mnt/d/data/ukb/phe/Rdata/phe.rds
+  --output-root /mnt/d/analysis/grid
+  --trait height                  one of height, ldl, t2dm
+  --traits height,ldl,t2dm        used by all
+  --pops AFR,EAS,EUR,SAS
+  --chrs 1-22
+  --jobs 4 --threads 8 --replace FALSE
+
+ARG-Needle options
+  --arg-hap-dir /mnt/h/ukbGen/37/hap
+      Accepts phased BGEN + Oxford .sample, or phased PGEN + .psam files.
+  --arg-out/--arg-dir DIR         reusable ARG root [beside hap directory: ../arg]
+  --arg-action check|all          validate prebuilt ARG-Needle data [check]
+
+  ARG construction is shared data preparation and is no longer performed by
+  grid.sh. Build it first (ARG-Needle is the default method):
+    bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle \
+      --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
+      --map-dir /mnt/d/data.BIG/refGen/maps/GRCh37
+
+GRID model options
+  --grid-action ld|transport|weights|score|all
+  --ldscore-dir DIR               generated from PRS-CSx HDF5 LD panels
+  --external-age FILE             optional GEVA/other age table; ARG age remains primary
+  --grid-ridge-alpha 10
+  --grid-max-snps-per-chr 0       0 means all matched SNPs
+  --require-ld TRUE
+
+Evaluation
+  --eval-repeats 100 --eval-folds 5 --min-group 100
+  --eval-zero-shot TRUE           evaluates ancestry-matched/posterior scores without phenotype tuning
+  --eval-tuned TRUE               separately reports phenotype-tuned stacking as a comparator
+
+Examples:
+  cd /mnt/d/scripts/grid
+
+  ./grid.sh pca
+  ./grid.sh ancestry
+
+  ./grid.sh csx --trait height --chrs 22
+  ./grid.sh disco --trait height
+
+  ./grid.sh arg --chrs 22
+
+  ./grid.sh grid --trait height --chrs 22
+  ./grid.sh eval --trait height
+
+  ./grid.sh csx --trait ldl --chrs 22
+  ./grid.sh disco --trait ldl
+  ./grid.sh grid --trait ldl --chrs 22
+  ./grid.sh eval --trait ldl
+
+  ./grid.sh csx --trait t2dm --chrs 22
+  ./grid.sh disco --trait t2dm
+  ./grid.sh grid --trait t2dm --chrs 22
+  ./grid.sh eval --trait t2dm
+HELP

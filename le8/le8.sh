@@ -9,6 +9,10 @@ if ! command -v conda >/dev/null 2>&1 && [[ -x "${HOME}/anaconda3/bin/conda" ]];
   export PATH="${HOME}/anaconda3/condabin:${PATH}"
 fi
 
+# Keep the original command line so the script can relaunch itself inside a
+# cgroup after parsing the requested resource limits.
+original_args=("$@")
+
 
 # 🚩 Life's Essential 8 supervised 5C omics pipeline
 usage() {
@@ -64,6 +68,9 @@ Core options:
       --shared-shell FILE  Shared 0phe.f.sh library.
       --r-bin FILE         Rscript executable.
       --cores N            R worker count. Default: 4.
+      --memory-limit-gb N  Hard RAM cap for the complete LE8 process tree.
+                          Default: 32. Use 0 to disable the guard.
+      --memory-swap-gb N   Additional swap cap under cgroup v2. Default: 4.
       --seed N             Random seed. Default: 2026.
       --gpu-coloc-bin FILE GPU-coloc executable. Default: gpu-coloc.
       --preflight          Check scripts, paths and software, then exit.
@@ -177,6 +184,8 @@ MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
 PHE_F=/mnt/d/scripts/0f/0phe.f.sh
 R_BIN=Rscript
 N_CORES=4
+LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
+LE8_MEMORY_SWAP_GB="${LE8_MEMORY_SWAP_GB:-4}"
 SEED=2026
 GPU_COLOC_BIN=gpu-coloc
 
@@ -228,6 +237,8 @@ while [[ $# -gt 0 ]]; do
     --shared-shell) PHE_F="$2"; shift 2 ;;
     --r-bin) R_BIN="$2"; shift 2 ;;
     --cores) N_CORES="$2"; shift 2 ;;
+    --memory-limit-gb) LE8_MEMORY_LIMIT_GB="${2:?ERROR: --memory-limit-gb requires N}"; shift 2 ;;
+    --memory-swap-gb) LE8_MEMORY_SWAP_GB="${2:?ERROR: --memory-swap-gb requires N}"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
     --gpu-coloc-bin) GPU_COLOC_BIN="$2"; shift 2 ;;
     --preflight) preflight_only=TRUE; shift ;;
@@ -237,13 +248,72 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="$(realpath -- "${BASH_SOURCE[0]}")"
+script_dir="$(dirname -- "$script_path")"
 fdir="$script_dir/f"
 export DIRSCRIPT="$script_dir"
 export LE8_FDIR="$fdir"
 
 
 # 🚩 Runtime resources
+[[ "$LE8_MEMORY_LIMIT_GB" =~ ^[0-9]+$ ]] || {
+  echo "ERROR: --memory-limit-gb must be a non-negative integer; got '$LE8_MEMORY_LIMIT_GB'." >&2
+  exit 2
+}
+[[ "$LE8_MEMORY_SWAP_GB" =~ ^[0-9]+$ ]] || {
+  echo "ERROR: --memory-swap-gb must be a non-negative integer; got '$LE8_MEMORY_SWAP_GB'." >&2
+  exit 2
+}
+
+# A cgroup cap accounts for the R parent, forked workers, and external tools as
+# one unit.  This is the important distinction from ulimit, which can only cap
+# each process independently.  systemd-run --scope keeps the terminal itself
+# outside the capped cgroup and propagates the worker's exit status.
+memory_limit_mode=disabled
+if (( LE8_MEMORY_LIMIT_GB > 0 )); then
+  if [[ "${LE8_MEMORY_SCOPE_ACTIVE:-0}" == 1 ]]; then
+    memory_limit_mode=cgroup-v2
+  else
+    user_systemd_state=""
+    if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+      user_systemd_state="$(systemctl --user is-system-running 2>/dev/null || true)"
+    fi
+    if [[ "$user_systemd_state" == running || "$user_systemd_state" == degraded ]]; then
+      echo "LE8 memory guard: ${LE8_MEMORY_LIMIT_GB} GiB RAM + ${LE8_MEMORY_SWAP_GB} GiB swap (cgroup process-tree hard cap)." >&2
+      if systemd-run --user --scope --quiet --collect \
+          -p "MemoryMax=${LE8_MEMORY_LIMIT_GB}G" \
+          -p "MemorySwapMax=${LE8_MEMORY_SWAP_GB}G" \
+          -p OOMPolicy=kill \
+          -- env LE8_MEMORY_SCOPE_ACTIVE=1 \
+            LE8_MEMORY_LIMIT_GB="$LE8_MEMORY_LIMIT_GB" \
+            LE8_MEMORY_SWAP_GB="$LE8_MEMORY_SWAP_GB" \
+            bash "$script_path" "${original_args[@]}"; then
+        exit 0
+      else
+        memory_scope_status=$?
+        if (( memory_scope_status == 137 )); then
+          echo "ERROR: LE8 was killed; it likely reached the ${LE8_MEMORY_LIMIT_GB} GiB cgroup memory limit." >&2
+          echo "       Reduce --cores or raise --memory-limit-gb before retrying." >&2
+        fi
+        exit "$memory_scope_status"
+      fi
+    fi
+
+    # Portable fallback for WSL distributions without a running user systemd
+    # manager.  It is weaker than a cgroup because the cap applies per process,
+    # but it still prevents a single R process from exhausting the whole VM.
+    memory_limit_kib=$((LE8_MEMORY_LIMIT_GB * 1024 * 1024))
+    if ulimit -v "$memory_limit_kib" 2>/dev/null; then
+      memory_limit_mode=per-process-ulimit
+      echo "WARNING: cgroup memory control is unavailable; using a ${LE8_MEMORY_LIMIT_GB} GiB per-process ulimit." >&2
+    else
+      echo "ERROR: unable to enforce the requested LE8 memory limit; refusing to run without a guard." >&2
+      exit 2
+    fi
+  fi
+fi
+export LE8_MEMORY_LIMIT_GB LE8_MEMORY_SWAP_GB
+
 # Forked R workers can each materialize large model frames. Four workers keep
 # the 440k-participant metabolomics scans stable when other WSL jobs are active;
 # callers can still override this deliberately with N_CORES.
@@ -430,6 +500,13 @@ preflight() {
   echo "  traits: $trait_csv"
   echo "  jobs: ${selected[*]}"
   echo "  parallel workers: $N_CORES (OMP/BLAS threads per worker: $OMP_NUM_THREADS)"
+  if [[ "$memory_limit_mode" == cgroup-v2 ]]; then
+    echo "  memory guard: ${LE8_MEMORY_LIMIT_GB} GiB RAM + ${LE8_MEMORY_SWAP_GB} GiB swap (cgroup process tree)"
+  elif [[ "$memory_limit_mode" == per-process-ulimit ]]; then
+    echo "  memory guard: ${LE8_MEMORY_LIMIT_GB} GiB virtual memory per process (ulimit fallback)"
+  else
+    echo "  memory guard: disabled"
+  fi
   echo "  MR-link-2: $RUN_MRlink2; DANDELION: $RUN_Dandelion; GPU-coloc: $RUN_GPU_COLOC"
   echo "  C5 nested CV: $C5_NESTED_CV"
   echo "  directionality anchors: $C1_DIRECTION_ANCHORS"

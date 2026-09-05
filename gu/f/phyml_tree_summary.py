@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
 
+from csv_compat import enable_wide_csv_fields
+
+
+enable_wide_csv_fields()
 
 def safe_label(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-")

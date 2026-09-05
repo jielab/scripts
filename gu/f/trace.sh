@@ -12,6 +12,7 @@ case "$LOCI_MODE" in posthoc|extract) ;; *) echo "ERROR: internal trace-loci-mod
 GROUP_SIZE=${TRACE_GROUP_SIZE:-50}; JEX=${TRACE_JOB_EXTRACT:-1}; JIN=${TRACE_JOB_INFER:-8}; JSUM=${TRACE_JOB_SUMMARIZE:-8}
 TARC=${TRACE_T_ARCHAIC:-15000}; POST=${TRACE_POSTERIOR_THRESHOLD:-0.90}; MINBP=${TRACE_PHYSICAL_LENGTH_THRESHOLD:-50000}; MINCM=${TRACE_GENETIC_DISTANCE_THRESHOLD:-0.05}; WIN=${TRACE_WINDOW_SIZE:-1000}
 SAMPLE_MAP=${TRACE_SAMPLE_MAP:-$OUT/samples/trace_sample_map.tsv}; TARGET_SAMPLES=${TRACE_TARGET_SAMPLES:-}
+TRACE_ARG_METHOD=$(awk -F'\t' '$1=="method"{print $2;exit}' "$ARG_DIR/ARG_TRACE_BUILD.tsv" 2>/dev/null || true)
 REPLACE=${TRACE_REPLACE:-0}; [[ $REPLACE == 0 || $REPLACE == 1 ]] || { echo "ERROR: internal replace-trace state must be 0 or 1" >&2; exit 2; }
 TRACE_FINAL=$OUT/final/trace_haplotype_segments.tsv.gz
 if [[ $ACTION == run && $REPLACE == 0 && -s $TRACE_FINAL ]]; then
@@ -26,7 +27,10 @@ if [[ $ACTION != check && $REPLACE == 1 ]]; then
   mkdir -p "$OUT"/{extract,datafiles,infer,calls,final}
 fi
 
-find_trees(){ local c=$1; find "$ARG_DIR" -type f \( -name '*.trees' -o -name '*.tsz' \) -print | awk -v c="$c" 'BEGIN{IGNORECASE=1}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)"))print;else if(b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))print}' | sort; }
+# GU TRACE consumes mutation-bearing, TRACE-formatted trees stored directly in
+# ARG_DIR. Native method artifacts stay in their method directories and are
+# exported explicitly with `refGen.sh make-arg --format trace`.
+find_trees(){ local c=$1; find -L "$ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print | awk -v c="$c" 'BEGIN{IGNORECASE=1}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)"))print;else if(b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))print}' | sort; }
 validate_tree_scope(){
   local tree=$1 chr=$2
   python3 - "$tree" "$chr" "${TRACE_MIN_FULL_ARG_SITES:-10000}" "${TRACE_MIN_FULL_ARG_SPAN_FRACTION:-0.5}" <<'PY'
@@ -53,7 +57,7 @@ PY
 }
 write_manifest(){
   local mf=$OUT/manifest/tree_files.tsv c f idx; printf 'chr\tposterior\ttree_file\n' > "$mf"
-  for c in $CHRS; do mapfile -t fs < <(find_trees "$c"); (( ${#fs[@]} )) || { echo "ERROR: no ARG tree for chr$c under $ARG_DIR" >&2; exit 1; }
+  for c in $CHRS; do mapfile -t fs < <(find_trees "$c"); (( ${#fs[@]} )) || { echo "ERROR: no GU TRACE-format ARG tree for chr$c under $ARG_DIR. Build it with refGen.sh make-arg (add --format trace for needle), then run gu.sh trace." >&2; exit 1; }
     if printf '%s\n' "${fs[@]}" | grep -Eqi '(_part[0-9]+|chunk[._-]?[0-9]+)'; then echo "ERROR: coordinate-split ARG detected for chr$c; chunks cannot be posterior replicates" >&2; exit 1; fi
     idx=0; for f in "${fs[@]}"; do validate_tree_scope "$f" "$c"; idx=$((idx+1)); printf '%s\t%s\t%s\n' "$c" "$idx" "$f" >> "$mf"; done
   done
@@ -81,7 +85,15 @@ prepare_sample_map(){
     if [[ -n $vcf ]]; then
       bcftools query -l "$vcf" | sort -u > "$work/chr${chr}.target.samples"
       awk -F'\t' 'NR>1&&NF>=2{print $2}' "$chr_map" | sort -u > "$work/chr${chr}.arg.samples"
-      if ! cmp -s "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples"; then
+      if [[ $TRACE_ARG_METHOD == needle ]]; then
+        comm -13 "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples" > "$work/chr${chr}.arg_not_target.samples"
+        if [[ -s $work/chr${chr}.arg_not_target.samples ]]; then
+          echo "ERROR: TRACE Needle ARG contains chr$chr samples absent from the target cohort" >&2
+          head -10 "$work/chr${chr}.arg_not_target.samples" >&2 || true
+          return 1
+        fi
+        echo "TRACE Needle panel sample check passed chr$chr: ARG=$(wc -l < "$work/chr${chr}.arg.samples") target=$(wc -l < "$work/chr${chr}.target.samples")"
+      elif ! cmp -s "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples"; then
         echo "ERROR: TRACE target samples differ from the chr$chr ARG sample map; a target cohort cannot be projected onto a 1KG-only ARG" >&2
         echo "Only in target VCF:" >&2; comm -23 "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples" | head -10 >&2 || true
         echo "Only in ARG:" >&2; comm -13 "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples" | head -10 >&2 || true

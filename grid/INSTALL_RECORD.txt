@@ -1,0 +1,82 @@
+GRID local installation record
+==============================
+
+Installed: 2026-09-04 (Asia/Shanghai)
+Release: 2026.09.04-argneedle
+Source archive: /mnt/d/Downloads/GRID_ARGNeedle_20260904.zip
+Source SHA256: 5d8adecfde7a60b8322b89944089eaae0b45b2a1e1144af872546e7eb4e08162
+Destination: /mnt/d/scripts/grid
+Pre-install backup: /mnt/d/scripts/grid.backup.20260904-134341
+
+Installation method
+-------------------
+The release archive was verified against its bundled FILES.sha256 manifest in
+a native-Linux staging directory.  The archive omitted directories used by the
+new launcher (csx, DiscoDivas and legacy helpers), so those existing assets were
+preserved and the verified release was overlaid on the destination.  The old
+launcher is also retained as grid.legacy.sh and grid.legacy.unmodified.sh.
+
+Runtime
+-------
+Miniforge: /home/huangj/miniforge3
+Conda environment: /home/huangj/miniforge3/envs/grid-argneedle
+Python 3.10.14; R 4.2.3; PLINK 2.0.0-a.6.9; bgenix 1.1.7
+NumPy 1.26.4; tskit 0.6.4; msprime 1.3.4
+ARG-Needle 1.0.3; arg-needle-lib 1.1.3; ASMC 1.4.0
+
+ARG-Needle 1.0.3 is pinned because it is the newest official release compatible
+with the NumPy <2 / tskit 0.6 ABI used by the bundled PRS-CSx workflow.
+
+ARG-Needle checkouts:
+  /home/huangj/software/arg-needle/arg-needle
+    fa112f61f7ce1550b255edd4a76bec9dbcf4af00
+  /home/huangj/software/arg-needle/arg-needle-scripts
+    9fe3e1104164067356236e633648a4adbc760c1b
+
+Installed/prepared data
+-----------------------
+GRCh37 genetic maps: /mnt/d/data.BIG/refGen/maps/GRCh37
+  archive SHA256: 25a5eab7b4a9b47203cd2889fc77b7941242bdbae934aa7a7f3e1ad3184346e0
+Flat GWAS inputs: /mnt/d/data.BIG/gwas/4grid/{height,ldl,t2dm}.{AFR,EAS,EUR,SAS}.gz
+PRS-CSx reference: /mnt/d/data.BIG/refLD/csx
+Target/phased PGENs: /mnt/h/ukbGen/37/hap
+Target validation BIM: /mnt/h/ukbGen/37/hap/ukb_array.bim
+Phenotype: /mnt/d/data/ukb/phe/Rdata/phe.rds
+Ancestry: /mnt/d/data/ukb/phe/pca/ukb.ancestry.auto.tsv.gz
+
+Validation reports
+------------------
+Core: /mnt/d/analysis/grid/preflight.core.tsv
+ARG:  /mnt/d/analysis/grid/preflight.arg.tsv
+Shared UKB ARG root: /mnt/h/ukbGen/37/arg
+Validated chr22 pilot: 200 individuals, 400 haplotypes, 10,200 trees,
+  10,207 sites and 17,972 placed mutations
+Original smoke outputs: /home/huangj/grid_arg_smoke
+Smoke scratch: /home/huangj/grid_arg_smoke_scratch
+
+Local compatibility corrections
+-------------------------------
+* Auto-activate the local conda runtime from grid.sh and isolate its R/Python libs.
+* Accept phased PGEN/PSAM input as well as BGEN/SAMPLE input.
+* Recognize official Shapeit4 chrN.b37.gmap.gz maps.
+* Keep PRS-CSx SNP-info and target validation BIM as separate inputs.
+* Accept headers used by the installed LDL and T2DM GWAS files.
+* Fix successful parallel jobs exiting under `set -e` when the job count reached 0.
+* Make the release runbook options match the implemented command-line interface.
+* Move ARG construction to /mnt/d/scripts/0data/refGen.sh make-arg. ARG-Needle
+  is the default; legacy tsinfer/tsdate remains available for GU TRACE.
+* Make grid.sh consume/check /mnt/h/ukbGen/37/arg and make GU TRACE consume
+  only the legacy flat chrN.trees files, preventing method-format confusion.
+
+Rollback
+--------
+The complete pre-install tree is preserved at the backup path above.  Restore it
+with a verified file-copy operation after moving the current tree aside; do not
+delete the backup until the installation has been accepted.
+
+Network note
+------------
+The original WSL resolver file was saved as:
+  /etc/resolv.conf.grid-backup.20260904-134608
+The active resolver was changed to 1.1.1.1 because the generated resolver was
+unreachable.  Downloads used the Windows proxy at 127.0.0.1:7897.

@@ -1,0 +1,18 @@
+{
+  "required_files": 29,
+  "dispatcher_lines": 11,
+  "file_count": 53,
+  "total_bytes": 207863,
+  "issues": [
+    "missing/empty: csx/PRScsx.py",
+    "missing/empty: DiscoDivas/files/g1k_hm3_maf5_woamb_wolr.pca.weight",
+    "missing/empty: DiscoDivas/files/med.g1000.4pop.tsv",
+    "missing/empty: grid.legacy.unmodified.sh",
+    "cache artifacts: f/__pycache__,f/__pycache__/arg_affinity.cpython-313.pyc,f/__pycache__/combine_scores.cpython-313.pyc,f/__pycache__/arg_features.cpython-313.pyc,f/__pycache__/build_argneedle_map.cpython-313.pyc,f/__pycache__/build_transport_table.cpython-313.pyc,f/__pycache__/extract_ld_scores.cpython-313.pyc,f/__pycache__/argn_to_trees.cpython-313.pyc",
+    "stale primary ARG backend reference in arg.sh",
+    "not executable: grid.legacy.sh",
+    "not executable: f/eval_grid.R",
+    "not executable: f/disco_zero.R"
+  ],
+  "status": "FAIL"
+}

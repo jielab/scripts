@@ -3,6 +3,7 @@ set -euo pipefail
 
 dir0=${dir0:-/mnt/d}
 dirfunc=${dirfunc:-$dir0/scripts/0f}
+refgen_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 
 
 # 🚩 Reference-genome builder
@@ -10,6 +11,7 @@ usage() {
     cat <<'EOF'
 Usage:
   ./refGen.sh make-pfile [options]
+  ./refGen.sh make-arg --dir-gen DIR [--method needle|tsinfer] [options]
   ./refGen.sh download_archaic [options]
   ./refGen.sh lift-bed --dir-in DIR --dir-out DIR --chain-file FILE [options]
 
@@ -30,7 +32,13 @@ Modules:
     as XY for PLINK 1 input or PLINK2's PAR1/PAR2 codes for VCF input), and chrY always
     means non-PAR Y. When --chr is omitted, pgen discovers and processes all
     supported chromosomes in the input directory; bed-only discovers all
-    complete chr*.pgen/.pvar[.zst]/.psam filesets.
+     complete chr*.pgen/.pvar[.zst]/.psam filesets.
+
+  make-arg
+    Build reusable, full-chromosome ARG data beside the target genotype data.
+    ARG-Needle is the default method; tsinfer/tsdate remains available. Either
+    method can export GU TRACE's mutation-bearing tree/sample-map contract with
+    --format trace. Detailed execution is implemented in f/refGen.arg.*.
 
   download_archaic
     Download Vindija, Altai, Chagyrskaya, Denisova, and Denisova25 VCFs and
@@ -52,6 +60,28 @@ Common options:
   --vcf-prefix PREFIX      Backward-compatible alias for --input-prefix.
   --replace TRUE|FALSE     Replace complete requested outputs [FALSE].
   -h, --help               Show this help.
+
+make-arg options:
+  --dir-gen DIR            Dataset/build root (for example .../1kg/37 or
+                           /mnt/h/ukbGen/37), or its pfile/hap directory.
+  --method METHOD          needle (default) or tsinfer.
+  --format FORMAT          native (default) or trace; trace exports to
+                           <arg-dir>/trace/<method>/.
+  --arg-dir DIR            ARG root [dataset/build root/arg].
+  --chr LIST               Full chromosomes [1-22 for needle; 1-22,X for tsinfer].
+  --grch 37|38             Genome build [37].
+  --dir-pfile DIR          Phased PGEN directory for needle.
+  --dir-vcf DIR            Indexed phased VCF directory for tsinfer.
+  --map-dir DIR            Genetic maps required by needle.
+  --ancestry-file FILE     Sample ancestry table used for a balanced needle panel.
+  --scratch DIR            Native-Linux temporary directory for needle.
+  --max-individuals N      Needle pilot panel size [20000].
+  --seed-haplotypes N      Initial Needle scaffold [4000].
+  --anchors-per-pop N      AFR/EAS/EUR/SAS anchors [1000].
+  --full TRUE|FALSE        Use all target individuals with needle [FALSE].
+  --action ACTION          all, prepare, infer, convert, features, affinity,
+                           or check for needle; build or check for tsinfer [all/build].
+  --threads N --jobs N     Worker threads and chromosome jobs [8 and 1].
 
 make-pfile options:
   --out-files LIST         pgen, bed, or pgen,bed [pgen].
@@ -127,6 +157,19 @@ Examples:
   ./refGen.sh make-pfile --input-format bed --split-sex TRUE \
     --dir-input /mnt/h/ukbGen/37/typ/raw --dir-pfile /mnt/h/ukbGen/37/typ
 
+  # UK Biobank reusable ARG (ARG-Needle is the default method).
+  ./refGen.sh make-arg --dir-gen /mnt/h/ukbGen/37 --method needle \
+    --dir-pfile /mnt/h/ukbGen/37/hap --map-dir /mnt/d/data.BIG/refGen/maps/GRCh37 \
+    --ancestry-file /mnt/d/data/ukb/phe/pca/ukb.ancestry.auto.tsv.gz
+
+  # 1KG tsinfer ARG exported for GU TRACE.
+  ./refGen.sh make-arg --dir-gen /mnt/d/data.BIG/refGen/1kg/37 \
+    --method tsinfer --format trace --chr 22,X
+
+  # UKB Needle ARG exported for GU TRACE (autosomes only).
+  ./refGen.sh make-arg --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap \
+    --method needle --format trace --chr 22
+
   ./refGen.sh download_archaic \
     --root /mnt/d/data.BIG/refGen/archaic --jobs 8
 
@@ -153,6 +196,17 @@ Reference download locations (download manually into the corresponding vcf/):
     https://cdna.eva.mpg.de/denisova/Den25/VCF/
 EOF
 }
+
+# ARG construction is a data-preparation concern. Keep this large workflow out
+# of refGen.sh and dispatch it to the backend-specific f/refGen.arg.* helpers.
+if [[ ${1:-} == make-gen4arg || ${1:-} == make_gen4arg ]]; then
+    shift
+    exec bash "$refgen_root/f/refGen.make_gen4arg.sh" "$@"
+fi
+if [[ ${1:-} == make-arg || ${1:-} == make_arg ]]; then
+    shift
+    exec bash "$refgen_root/f/refGen.arg.sh" "$@"
+fi
 
 
 # 🚩 Shared helpers

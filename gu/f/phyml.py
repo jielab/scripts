@@ -11,6 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 
+from csv_compat import enable_wide_csv_fields
+
+
+enable_wide_csv_fields()
 
 BASES = {"A", "C", "G", "T"}
 

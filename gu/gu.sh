@@ -23,9 +23,8 @@ GU archaic introgression workflow
 Usage:
   ./gu.sh phyml [check|match] [--loci FILE | --chr LIST] [--grch 37|38] [options]
   ./gu.sh ibdmix [check] [--loci FILE | --chr LIST] [--grch 37|38] [options]
-  ./gu.sh trace [check|extract|infer|segments] [--loci FILE | --chr LIST] [--grch 37|38] [options]
+  ./gu.sh trace [extract|infer|segments] [--loci FILE | --chr LIST] [--grch 37|38] [options]
   ./gu.sh as3 [check] [--loci FILE | --chr LIST] [--grch 38] [options]
-  ./gu.sh arg build [--chr LIST] [--grch 37|38] [options]
   ./gu.sh normalize
   ./gu.sh shiny
   ./gu.sh ukb inspect-hap|make-panel|batches|hap-vcf|hap-arg-vcf|inspect-typed
@@ -49,19 +48,18 @@ Method options:
   phyml:  --plot-phy TRUE|FALSE --replace-phyml TRUE|FALSE
           --phyml-region-mode core|ld --phyml-ld-r2 FLOAT
           --phyml-window-bp INT --phyml-jobs INT
-          Exact BED core is the default; ld enables anchor-SNP LD shrinkage.
+          BED loci always use the complete core for Stage 1. The anchor is an
+          optional later zoom; core|ld is retained for request provenance.
   ibdmix: --replace-ibdmix TRUE|FALSE
   trace:  --replace-trace TRUE|FALSE --trace-loci-mode posthoc|extract
   as3:    --replace-as3 TRUE|FALSE --as3-target-chunk-size INT
           Target samples per in-memory AS3 chunk [256].
-  arg:    --replace-arg TRUE|FALSE --arg-dir DIR
-          --target-vcf-dir DIR
   ukb:    --ukb-hap-root DIR --ukb-ref-fasta FILE --sample-panel FILE
           --ukb-keep FILE --ukb-1kg-vcf-dir DIR
           --ukb-vcf-out DIR --ukb-arg-vcf-out DIR
           --ukb-batch-size INT --ukb-anchors-per-group INT
 
-Command orchestration (phyml, ibdmix, trace, as3, arg):
+Command orchestration (phyml, ibdmix, trace, as3):
   --run-cmd TRUE|FALSE
           Always write one permanent command per analysis unit. TRUE executes
           generated commands locally; FALSE only writes them [TRUE].
@@ -72,27 +70,39 @@ Command orchestration (phyml, ibdmix, trace, as3, arg):
           Concurrent local command files when --run-cmd TRUE [4].
 
 Examples:
+  cd /mnt/d/scripts/gu
+
   ./gu.sh phyml --loci /mnt/d/files/gu.37.bed --plot-phy TRUE --jobs 4
+
   ./gu.sh ibdmix --chr X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
-  ./gu.sh arg build --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
+
+  bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+
   ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
+
+  bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+  ./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle --jobs 4
+
   ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/38/pfile/chr --jobs 4
+
   ./gu.sh normalize
   ./gu.sh shiny
+
+  pgrep -af 'gu.sh (phyml|ibdmix|trace|as3)'
+  tail -f "$(find /mnt/d/analysis/gu -type f -name '*.background.log' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)"
 HELP
 }
 
 case "${1:-help}" in help|-h|--help) usage; exit 0;; esac
 METHOD=$1; shift
-case "$METHOD" in phyml|ibdmix|trace|as3|arg|normalize|shiny|ukb) ;; *) echo "ERROR: unknown method: $METHOD" >&2; usage >&2; exit 2;; esac
+case "$METHOD" in phyml|ibdmix|trace|as3|normalize|shiny|ukb) ;; *) echo "ERROR: unknown method: $METHOD" >&2; usage >&2; exit 2;; esac
 
 ACTION=""
 case "$METHOD" in
   phyml) valid_actions=' check match ';;
   ibdmix) valid_actions=' check ';;
-  trace) valid_actions=' check extract infer segments ';;
+  trace) valid_actions=' extract infer segments ';;
   as3) valid_actions=' check ';;
-  arg) valid_actions=' build ';;
   normalize) valid_actions=' ';;
   shiny) valid_actions=' ';;
   ukb) valid_actions=' inspect-hap make-panel batches hap-vcf hap-arg-vcf inspect-typed ';;
@@ -131,8 +141,6 @@ REPLACE_AS3_INPUT=FALSE
 REPLACE_AS3_SET=0
 AS3_TARGET_CHUNK_SIZE_INPUT=${AS3_TARGET_CHUNK_SIZE:-64}
 AS3_TARGET_CHUNK_SIZE_SET=0
-REPLACE_ARG_INPUT=FALSE
-REPLACE_ARG_SET=0
 AUTO_NORMALIZE_INPUT=FALSE
 TRACE_LOCI_MODE_INPUT=posthoc
 TRACE_LOCI_MODE_SET=0
@@ -152,8 +160,6 @@ UNIT_JOBS_INPUT=4
 UNIT_JOBS_SET=0
 ARG_DIR_INPUT=""
 ARG_DIR_SET=0
-TARGET_VCF_DIR_INPUT=""
-TARGET_VCF_DIR_SET=0
 SAMPLE_PANEL_INPUT=""
 UKB_OPTION_SET=0
 UKB_HAP_ROOT_INPUT=""
@@ -185,7 +191,6 @@ while (( $# )); do
     --replace-trace) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --replace-trace requires TRUE or FALSE" >&2; exit 2; }; REPLACE_TRACE_INPUT=$2; REPLACE_TRACE_SET=1; shift 2;;
     --replace-as3) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --replace-as3 requires TRUE or FALSE" >&2; exit 2; }; REPLACE_AS3_INPUT=$2; REPLACE_AS3_SET=1; shift 2;;
     --as3-target-chunk-size) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --as3-target-chunk-size requires a positive integer" >&2; exit 2; }; AS3_TARGET_CHUNK_SIZE_INPUT=$2; AS3_TARGET_CHUNK_SIZE_SET=1; shift 2;;
-    --replace-arg) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --replace-arg requires TRUE or FALSE" >&2; exit 2; }; REPLACE_ARG_INPUT=$2; REPLACE_ARG_SET=1; shift 2;;
     --auto-normalize) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --auto-normalize requires TRUE or FALSE" >&2; exit 2; }; AUTO_NORMALIZE_INPUT=$2; shift 2;;
     --trace-loci-mode) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --trace-loci-mode requires posthoc or extract" >&2; exit 2; }; TRACE_LOCI_MODE_INPUT=$2; TRACE_LOCI_MODE_SET=1; shift 2;;
     --phyml-window-bp) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --phyml-window-bp requires a positive integer" >&2; exit 2; }; PHYML_WINDOW_BP_INPUT=$2; PHYML_WINDOW_BP_SET=1; shift 2;;
@@ -196,7 +201,6 @@ while (( $# )); do
     --foreground) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --foreground requires TRUE or FALSE" >&2; exit 2; }; FOREGROUND_INPUT=$2; FOREGROUND_SET=1; shift 2;;
     --jobs) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --jobs requires a positive integer" >&2; exit 2; }; UNIT_JOBS_INPUT=$2; UNIT_JOBS_SET=1; shift 2;;
     --arg-dir) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --arg-dir requires DIR" >&2; exit 2; }; ARG_DIR_INPUT=$2; ARG_DIR_SET=1; shift 2;;
-    --target-vcf-dir) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --target-vcf-dir requires DIR" >&2; exit 2; }; TARGET_VCF_DIR_INPUT=$2; TARGET_VCF_DIR_SET=1; shift 2;;
     --sample-panel) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --sample-panel requires FILE" >&2; exit 2; }; SAMPLE_PANEL_INPUT=$2; shift 2;;
     --ukb-hap-root) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --ukb-hap-root requires DIR" >&2; exit 2; }; UKB_HAP_ROOT_INPUT=$2; UKB_OPTION_SET=1; shift 2;;
     --ukb-typed-root) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --ukb-typed-root requires DIR" >&2; exit 2; }; UKB_TYPED_ROOT_INPUT=$2; UKB_OPTION_SET=1; shift 2;;
@@ -228,37 +232,27 @@ if (( REPLACE_IBDMIX_SET )) && [[ $METHOD != ibdmix || ${ACTION:-run} != run ]];
 if (( REPLACE_TRACE_SET )) && [[ $METHOD != trace ]]; then echo "ERROR: --replace-trace is only valid with trace" >&2; exit 2; fi
 if (( REPLACE_AS3_SET )) && [[ $METHOD != as3 || ${ACTION:-run} != run ]]; then echo "ERROR: --replace-as3 is only valid with the default AS3 analysis" >&2; exit 2; fi
 if (( AS3_TARGET_CHUNK_SIZE_SET )) && [[ $METHOD != as3 ]]; then echo "ERROR: --as3-target-chunk-size is only valid with as3" >&2; exit 2; fi
-if (( REPLACE_ARG_SET )) && [[ $METHOD != arg ]]; then echo "ERROR: --replace-arg is only valid with arg" >&2; exit 2; fi
-if (( ARG_DIR_SET )) && [[ $METHOD != arg && $METHOD != trace ]]; then echo "ERROR: --arg-dir is only valid with arg or trace" >&2; exit 2; fi
-if (( TARGET_VCF_DIR_SET )) && [[ $METHOD != arg ]]; then echo "ERROR: --target-vcf-dir is only valid with arg" >&2; exit 2; fi
+if (( ARG_DIR_SET )) && [[ $METHOD != trace ]]; then echo "ERROR: --arg-dir is valid only with trace" >&2; exit 2; fi
 if (( UKB_OPTION_SET )) && [[ $METHOD != ukb ]]; then echo "ERROR: --ukb-* options are only valid with ukb" >&2; exit 2; fi
 if (( TRACE_LOCI_MODE_SET )) && [[ $METHOD != trace ]]; then echo "ERROR: --trace-loci-mode is only valid with trace" >&2; exit 2; fi
 if (( PHYML_WINDOW_BP_SET || PHYML_JOBS_SET || PHYML_LD_R2_SET || PHYML_REGION_MODE_SET )) && [[ $METHOD != phyml ]]; then echo "ERROR: --phyml-window-bp/--phyml-jobs/--phyml-ld-r2/--phyml-region-mode are only valid with phyml" >&2; exit 2; fi
 if (( RUN_CMD_SET || FOREGROUND_SET || UNIT_JOBS_SET )); then
-  command_action=${ACTION:-run}; [[ $METHOD != arg ]] || command_action=${ACTION:-build}
+  command_action=${ACTION:-run}
   case "$METHOD:$command_action" in
-    phyml:run|ibdmix:run|trace:run|trace:extract|trace:infer|trace:segments|as3:run|arg:build) ;;
-    *) echo "ERROR: --run-cmd/--foreground/--jobs are valid only with phyml, ibdmix, trace analysis actions, as3, or arg build" >&2; exit 2 ;;
+    phyml:run|ibdmix:run|trace:run|trace:extract|trace:infer|trace:segments|as3:run) ;;
+    *) echo "ERROR: --run-cmd/--foreground/--jobs are valid only with phyml, ibdmix, trace analysis actions, or as3" >&2; exit 2 ;;
   esac
 fi
 if (( TARGET_INPUT_SET != TARGET_DIR_INPUT_SET )); then
   echo "ERROR: --target and --target-dir must be supplied together" >&2
   exit 2
 fi
-if (( TARGET_INPUT_SET && TARGET_VCF_DIR_SET )); then
-  echo "ERROR: use either --target/--target-dir or --target-vcf-dir for arg, not both" >&2
-  exit 2
-fi
 if (( TARGET_INPUT_SET )); then
-  case "$METHOD" in phyml|ibdmix|trace|as3|arg) ;; *) echo "ERROR: --target/--target-dir are only valid with phyml, ibdmix, trace, as3, or arg" >&2; exit 2;; esac
+  case "$METHOD" in phyml|ibdmix|trace|as3) ;; *) echo "ERROR: --target/--target-dir are only valid with phyml, ibdmix, trace, or as3" >&2; exit 2;; esac
   [[ $TARGET_INPUT =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $TARGET_INPUT != "." && $TARGET_INPUT != ".." ]] || {
     echo "ERROR: --target must contain only letters, numbers, '.', '_' or '-', and must not be '.' or '..'" >&2
     exit 2
   }
-fi
-if [[ $METHOD == arg && -n $LOCI_INPUT ]]; then
-  echo "ERROR: arg requires full chromosomes; --loci would create a partial ARG that TRACE cannot use. Use --chr LIST." >&2
-  exit 2
 fi
 
 PLOT_PHY_INPUT=$(gu_bool "$PLOT_PHY_INPUT") || { echo "ERROR: --plot-phy must be TRUE or FALSE" >&2; exit 2; }
@@ -266,7 +260,6 @@ REPLACE_PHYML_INPUT=$(gu_bool "$REPLACE_PHYML_INPUT") || { echo "ERROR: --replac
 REPLACE_IBDMIX_INPUT=$(gu_bool "$REPLACE_IBDMIX_INPUT") || { echo "ERROR: --replace-ibdmix must be TRUE or FALSE" >&2; exit 2; }
 REPLACE_TRACE_INPUT=$(gu_bool "$REPLACE_TRACE_INPUT") || { echo "ERROR: --replace-trace must be TRUE or FALSE" >&2; exit 2; }
 REPLACE_AS3_INPUT=$(gu_bool "$REPLACE_AS3_INPUT") || { echo "ERROR: --replace-as3 must be TRUE or FALSE" >&2; exit 2; }
-REPLACE_ARG_INPUT=$(gu_bool "$REPLACE_ARG_INPUT") || { echo "ERROR: --replace-arg must be TRUE or FALSE" >&2; exit 2; }
 AUTO_NORMALIZE_INPUT=$(gu_bool "$AUTO_NORMALIZE_INPUT") || { echo "ERROR: --auto-normalize must be TRUE or FALSE" >&2; exit 2; }
 RUN_CMD_INPUT=$(gu_bool "$RUN_CMD_INPUT") || { echo "ERROR: --run-cmd must be TRUE or FALSE" >&2; exit 2; }
 FOREGROUND_INPUT=$(gu_bool "$FOREGROUND_INPUT") || { echo "ERROR: --foreground must be TRUE or FALSE" >&2; exit 2; }
@@ -283,7 +276,6 @@ awk -v x="$PHYML_LD_R2_INPUT" 'BEGIN{exit !(x ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)
 
 GU_AUTO_NORMALIZE=0
 [[ $AUTO_NORMALIZE_INPUT == FALSE ]] || GU_AUTO_NORMALIZE=1
-GU_ARG_REPLACE=0; [[ $REPLACE_ARG_INPUT == FALSE ]] || GU_ARG_REPLACE=1
 IBDMIX_REPLACE=0; [[ $REPLACE_IBDMIX_INPUT == FALSE ]] || IBDMIX_REPLACE=1
 TRACE_REPLACE=0; [[ $REPLACE_TRACE_INPUT == FALSE ]] || TRACE_REPLACE=1
 AS3_REPLACE=0; [[ $REPLACE_AS3_INPUT == FALSE ]] || AS3_REPLACE=1
@@ -296,7 +288,7 @@ PHYML_REGION_MODE=$PHYML_REGION_MODE_INPUT
 GU_RUN_CMD=$RUN_CMD_INPUT
 GU_FOREGROUND=$FOREGROUND_INPUT
 GU_UNIT_JOBS=$UNIT_JOBS_INPUT
-export GU_AUTO_NORMALIZE GU_ARG_REPLACE IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
+export GU_AUTO_NORMALIZE IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
 export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_FOREGROUND GU_UNIT_JOBS
 if [[ $METHOD == phyml ]]; then
   PHYML_PLOT_PHY=$PLOT_PHY_INPUT
@@ -450,13 +442,29 @@ if [[ $METHOD == as3 && " $GU_CHRS " == *" X "* ]]; then
   echo "ERROR: AS3 supports GRCh38 autosomes 1-22 only; chrX is unavailable" >&2
   exit 2
 fi
-if [[ $METHOD == trace && ( ${ACTION:-run} == check || ${GU_CMD_WORKER:-0} == 1 ) ]]; then
+if [[ $METHOD == trace ]]; then
   trace_precheck_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}
-  [[ -d $GU_ARG_DIR ]] || { echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; run ./gu.sh arg build first" >&2; exit 2; }
+  [[ -d $GU_ARG_DIR ]] || { echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; build it with refGen.sh make-arg" >&2; exit 2; }
+  trace_refgen_method='' trace_refgen_format=native trace_refgen_root=$GU_ARG_DIR
+  if [[ -s $GU_ARG_DIR/ARG_TRACE_BUILD.tsv ]]; then
+    trace_refgen_method=$(awk -F'\t' '$1=="method"{print $2;exit}' "$GU_ARG_DIR/ARG_TRACE_BUILD.tsv")
+    trace_refgen_format=trace
+    trace_refgen_root=$(cd -- "$GU_ARG_DIR/../.." && pwd -P)
+  elif [[ -s $GU_ARG_DIR/ARG_TSINFER_BUILD.txt ]]; then
+    trace_refgen_method=tsinfer
+  fi
+  if [[ -n $trace_refgen_method && ${GU_ARG_CHECKED:-0} != 1 ]]; then
+    echo "[GU CHECK] ARG check first: method=$trace_refgen_method format=$trace_refgen_format root=$trace_refgen_root"
+    env GU_ARG_DIR="$trace_refgen_root" GU_ARG_METHOD="$trace_refgen_method" GU_ARG_FORMAT="$trace_refgen_format" \
+      GU_TARGET_ROOT="$GU_TARGET_ROOT" GU_TARGET_VCF_DIR="$GU_TARGET_ROOT/vcf" \
+      GU_TARGET_GEN_PREFIX="$GU_TARGET_GEN_PREFIX" GU_SAMPLE_PANEL="$GU_SAMPLE_PANEL" \
+      GU_BUILD="$GU_BUILD" GU_CHRS="$trace_precheck_chrs" bash "$F/arg.sh" check
+    export GU_ARG_CHECKED=1
+  fi
   for c in $trace_precheck_chrs; do
-    if ! find "$GU_ARG_DIR" -type f \( -name '*.trees' -o -name '*.tsz' \) -print 2>/dev/null |
+    if ! find -L "$GU_ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print 2>/dev/null |
       awk -v c="$c" 'BEGIN{IGNORECASE=1;found=0}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)")||b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))found=1}END{exit !found}'; then
-      echo "ERROR: TRACE requires a full-chromosome ARG for chr$c under $GU_ARG_DIR; run ./gu.sh arg build --chr $c --grch $GU_BUILD first" >&2
+      echo "ERROR: TRACE requires a TRACE-format full-chromosome ARG for chr$c under $GU_ARG_DIR; build it with refGen.sh make-arg (add --format trace for needle)" >&2
       exit 2
     fi
   done
@@ -490,20 +498,19 @@ GU_TARGET_NAMESPACE=$GU_TARGET
 # Each worker re-enters gu.sh with exactly one native analysis unit, so the
 # method scripts and their scientific/output contracts remain unchanged.
 gu_command_action(){
-  if [[ $METHOD == arg ]]; then printf '%s\n' "${ACTION:-build}"; else printf '%s\n' "${ACTION:-run}"; fi
+  printf '%s\n' "${ACTION:-run}"
 }
 
 gu_command_orchestration_enabled(){
   local action; action=$(gu_command_action)
   case "$METHOD:$action" in
-    phyml:run|ibdmix:run|trace:run|trace:extract|trace:infer|trace:segments|as3:run|arg:build) return 0 ;;
+    phyml:run|ibdmix:run|trace:run|trace:extract|trace:infer|trace:segments|as3:run) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 gu_command_output(){
   local unit_label=$1 request_units=$2 override=""
-  if [[ $METHOD == arg ]]; then printf '%s\n' "$GU_ARG_DIR"; return; fi
   case "$METHOD" in
     phyml) override=${PHYML_OUT:-} ;;
     ibdmix) override=${IBDMIX_OUT:-} ;;
@@ -522,7 +529,7 @@ gu_write_analysis_unit_cmd(){
 
   worker_action=$(gu_command_action)
   cmd_args=("$ROOT/gu.sh" "$METHOD")
-  if [[ -n $ACTION || $METHOD == arg ]]; then cmd_args+=("$worker_action"); fi
+  if [[ -n $ACTION ]]; then cmd_args+=("$worker_action"); fi
   case "$kind" in
     locus)
       unit_bed=$out/$unit_label.bed
@@ -545,11 +552,7 @@ gu_write_analysis_unit_cmd(){
     cmd_args+=(--chr "$chr")
   fi
   cmd_args+=(--grch "$GU_BUILD")
-  if [[ $METHOD == arg && $TARGET_VCF_DIR_SET == 1 ]]; then
-    cmd_args+=(--target-vcf-dir "$TARGET_VCF_DIR_INPUT")
-  else
-    cmd_args+=(--target "$GU_TARGET" --target-dir "$GU_TARGET_GEN_PREFIX")
-  fi
+  cmd_args+=(--target "$GU_TARGET" --target-dir "$GU_TARGET_GEN_PREFIX")
   case "$METHOD" in
     phyml)
       cmd_args+=(--plot-phy "$PLOT_PHY_INPUT" --replace-phyml "$REPLACE_PHYML_INPUT"
@@ -563,12 +566,11 @@ gu_write_analysis_unit_cmd(){
       output_var=TRACE_OUT
       ;;
     as3) cmd_args+=(--replace-as3 "$REPLACE_AS3_INPUT" --as3-target-chunk-size "$AS3_TARGET_CHUNK_SIZE_INPUT"); output_var=AS3_OUT ;;
-    arg) cmd_args+=(--replace-arg "$REPLACE_ARG_INPUT" --arg-dir "$GU_ARG_DIR") ;;
   esac
   # A unit command is already the leaf worker. Keep it attached to the local
   # scheduler (or an HPC scheduler) instead of recursively launching itself.
   cmd_args+=(--foreground TRUE)
-  [[ $METHOD == arg ]] || cmd_args+=(--auto-normalize FALSE)
+  cmd_args+=(--auto-normalize FALSE)
   [[ -z ${GU_SAMPLE_PANEL:-} ]] || cmd_args+=(--sample-panel "$GU_SAMPLE_PANEL")
 
   cmd=$out/$unit_label.cmd
@@ -647,7 +649,7 @@ gu_orchestrate_analysis_cmds(){
   if [[ -z $GU_LOCI_MAP_FILE && -z $command_chrs ]]; then
     case "$METHOD" in
       as3) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22" ;;
-      ibdmix|trace|arg) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
+      ibdmix|trace) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
     esac
   fi
   if [[ -n $GU_LOCI_MAP_FILE ]]; then
@@ -659,7 +661,7 @@ gu_orchestrate_analysis_cmds(){
     request_units=$(awk '{print NF}' <<< "$command_chrs"); unit_kind=chromosome
   fi
   (( request_units > 0 )) || { echo "ERROR: no $METHOD analysis units selected" >&2; return 2; }
-  if [[ $METHOD == arg ]]; then cmd_root=$GU_ARG_DIR; else cmd_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE; fi
+  cmd_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE
   mkdir -p "$cmd_root"
   list=$cmd_root/${scope_label}.cmd.list
   list_tmp=$list.tmp.$$
@@ -692,19 +694,14 @@ gu_orchestrate_analysis_cmds(){
   fi
   echo "[GU CMD] run_cmd=TRUE mode=local jobs=$effective_jobs"
   gu_run_analysis_cmds_local "$list" "$effective_jobs"
-  if (( GU_AUTO_NORMALIZE )) && [[ $METHOD != arg ]]; then bash "$ROOT/gu.sh" normalize; fi
+  if (( GU_AUTO_NORMALIZE )); then bash "$ROOT/gu.sh" normalize; fi
 }
 
 gu_launch_analysis_request_background(){
   local log_root stamp base log pid_file status_file pid cmd_list job_pattern
   local runner
-  if [[ $METHOD == arg ]]; then
-    log_root=$GU_ARG_DIR/log
-    cmd_list=$GU_ARG_DIR/${scope_label}.cmd.list
-  else
-    log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
-    cmd_list=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
-  fi
+  log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
+  cmd_list=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
   mkdir -p "$log_root"
   stamp=$(date '+%Y%m%d-%H%M%S')
   # METHOD-specific roots allow different modules to run concurrently.  The
@@ -784,7 +781,6 @@ fi
 USES_TARGET=0
 case "$METHOD" in
   phyml|ibdmix|trace|as3) USES_TARGET=1 ;;
-  arg) (( TARGET_VCF_DIR_SET )) || USES_TARGET=1 ;;
 esac
 
 declare -A GU_TARGET_SOURCE=() GU_TARGET_INDEX=() GU_TARGET_PVAR=() GU_TARGET_PSAM=() GU_TARGET_FORMAT=()
@@ -882,8 +878,8 @@ if (( USES_TARGET )); then
   [[ -z ${GU_TARGET_NATIVE_VCF_PREFIX:-} ]] || gu_check_log "native target VCF prefix=$GU_TARGET_NATIVE_VCF_PREFIX (autosomes chrN; male X chrX.male; run temp uses symlinks)"
   (( GU_CHRX_MALE_ONLY == 0 )) || gu_check_log "chrX default=male-only haploid non-PAR; PFILE preferred=$(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" X)"
   (( GU_CHRX_PAR_DIPLOID == 0 )) || gu_check_log "chrX locus contract=PAR diploid; source=$(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" X); PLINK PAR1/PAR2 export=internal chrX.vcf.gz"
-  [[ $METHOD == trace || $METHOD == arg || -d $GU_ARCHAIC_ROOT ]] || gu_check_fail "archaic reference root is missing: $GU_ARCHAIC_ROOT"
-  gu_check_log "archaic reference root=$GU_ARCHAIC_ROOT$([[ $METHOD == trace || $METHOD == arg ]] && printf ' (not used by %s)' "${METHOD^^}")"
+  [[ $METHOD == trace || -d $GU_ARCHAIC_ROOT ]] || gu_check_fail "archaic reference root is missing: $GU_ARCHAIC_ROOT"
+  gu_check_log "archaic reference root=$GU_ARCHAIC_ROOT$([[ $METHOD == trace ]] && printf ' (not used by %s)' "${METHOD^^}")"
   if [[ $METHOD == as3 ]]; then
     gu_check_log "AS3 GRCh38 reference panel=$AS3_REFERENCE_PANEL_DIR"
     gu_check_log "AS3 reference map=$AS3_REFERENCE_MAP"
@@ -1012,7 +1008,7 @@ if (( USES_TARGET )); then
   fi
   if [[ -n $GU_SAMPLE_PANEL ]]; then gu_check_log "sample metadata=$GU_SAMPLE_PANEL"
   elif [[ $METHOD == phyml ]]; then gu_check_log "WARNING: sample metadata was not found; phyml will infer chrX haploidy from GT width when possible"
-  elif [[ $METHOD == trace || $METHOD == arg ]]; then gu_check_log "sample metadata was not found; ${METHOD^^} will use VCF/tree sample identities"
+  elif [[ $METHOD == trace ]]; then gu_check_log "sample metadata was not found; TRACE will use VCF/tree sample identities"
   elif [[ $METHOD == as3 ]]; then gu_check_log "WARNING: sample metadata was not found; AS3 will use target VCF sample IDs, but population-stratified normalization will be unavailable"
   else gu_check_fail "$METHOD requires sample metadata; use --sample-panel FILE or place samples.txt beside the target files"
   fi
@@ -1026,25 +1022,9 @@ if (( USES_TARGET )); then
   fi
   gu_check_log "preflight file check=PASS; log=$GU_CHECK_LOG"
 else
-  GU_TARGET_VCF_DIR=${TARGET_VCF_DIR_INPUT:-${GU_TARGET_VCF_DIR:-$GU_TARGET_ROOT/vcf}}
+  GU_TARGET_VCF_DIR=${GU_TARGET_VCF_DIR:-$GU_TARGET_ROOT/vcf}
   if [[ $METHOD != ukb && -z $GU_SAMPLE_PANEL ]]; then
     GU_SAMPLE_PANEL=$GU_TARGET_ROOT/samples.txt
-  fi
-  if [[ $METHOD == arg ]]; then
-    arg_check_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}
-    if [[ " $arg_check_chrs " == *" X "* ]]; then
-      GU_CHRX_MALE_ONLY=1
-      arg_x_vcf=$GU_TARGET_VCF_DIR/chrX.vcf.gz
-      [[ -s $arg_x_vcf && ( -s $arg_x_vcf.tbi || -s $arg_x_vcf.csi ) ]] || {
-        echo "ERROR: ARG chrX requires an indexed pure-male haploid VCF at $arg_x_vcf" >&2
-        exit 2
-      }
-      [[ -s $GU_SAMPLE_PANEL ]] || {
-        echo "ERROR: ARG chrX validation requires --sample-panel with sample and sex columns" >&2
-        exit 2
-      }
-      gu_validate_chrx_male_vcf "$arg_x_vcf" "$GU_BUILD" "$GU_SAMPLE_PANEL" || exit 2
-    fi
   fi
 fi
 
@@ -1163,7 +1143,7 @@ gu_prepare_target_vcfs(){
       [[ $pvar != *.zst ]] || pfile_args+=(vzs)
       if [[ $c == X && $GU_CHRX_MALE_ONLY == 1 ]]; then
         gu_check_log "chrX PFILE is already haploid; each male contributes one non-PAR X haplotype"
-      elif [[ $METHOD == phyml || $METHOD == as3 || $METHOD == trace || $METHOD == arg ]]; then
+      elif [[ $METHOD == phyml || $METHOD == as3 || $METHOD == trace ]]; then
         info_prefix=$chr_tmp/.pgen-info
         info=$(plink2 "${pfile_args[@]}" --pgen-info --out "$info_prefix" 2>&1) || { printf '%s\n' "$info" | tee -a "$GU_CHECK_LOG"; gu_check_fail "plink2 --pgen-info failed for $pbase"; }
         rm -f "$info_prefix.log"
@@ -1577,7 +1557,6 @@ case "$METHOD" in
     fi
     if [[ ${ACTION:-run} == run ]]; then maybe_refresh_normalized_outputs; fi
     ;;
-  arg) bash "$F/arg.sh" "${ACTION:-build}" ;;
   normalize) refresh_normalized_outputs ;;
   shiny)
     export GU_SQLITE=${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}

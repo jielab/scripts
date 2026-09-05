@@ -133,6 +133,8 @@ C2_HERITABILITY_FILE=""
 | `--dry-run` | 打印执行计划后退出 |
 | `--analysis-root DIR` | 覆盖输出根目录 |
 | `--cores N` | R worker 数；默认 4 |
+| `--memory-limit-gb N` | 整个 LE8 进程树的 RAM 硬上限；默认 32 GiB，设为 `0` 可禁用 |
+| `--memory-swap-gb N` | cgroup 可额外使用的 swap；默认 4 GiB |
 | `--seed N` | 随机种子；默认 2026 |
 | `--grch auto\|37\|38` | 基因组版本；默认自动识别 |
 
@@ -225,8 +227,16 @@ SNP/基因组版本匹配默认采用磁盘外排，减少大文件在内存中�
 | `--match-sort-memory-mb` / `LE8_MATCH_SORT_MEMORY_MB` | 512 MB |
 | `--match-tmp-dir` / `LE8_MATCH_TMP_DIR` | `/mnt/d/tmp` |
 | `--cores` / `N_CORES` | 4 |
+| `--memory-limit-gb` / `LE8_MEMORY_LIMIT_GB` | 32 GiB（整个任务进程树） |
+| `--memory-swap-gb` / `LE8_MEMORY_SWAP_GB` | 4 GiB |
 
-包装器默认把常见 BLAS/OpenMP 线程数设为 1，以避免 fork worker 与底层线程叠加造成内存和 CPU 过量占用。运行前应确保临时目录和输出目录有足够磁盘空间。
+包装器默认通过 WSL 的 cgroup v2 为完整任务树设置 `32 GiB RAM + 4 GiB swap` 的硬上限，并把常见 BLAS/OpenMP 线程数设为 1。达到上限时，systemd 只终止 LE8 任务组，不会把调用它的 terminal 放进同一个受限组。没有可用的 user systemd 时，脚本会明确警告并退回到单进程 `ulimit`。运行前应确保临时目录和输出目录有足够磁盘空间。
+
+例如，把总 RAM 上限改为 24 GiB、禁止使用 swap：
+
+```bash
+./le8.sh --memory-limit-gb 24 --memory-swap-gb 0 [其他参数]
+```
 
 ## 故障排查
 
@@ -258,4 +268,3 @@ le8/
     ├── s2_nonlin.R
     └── comm.f.R
 ```
-

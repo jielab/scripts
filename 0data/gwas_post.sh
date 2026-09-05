@@ -162,28 +162,31 @@ MAGMA options:
                           usable per-SNP N column, or falls back to gwas_N=100000
 
 Examples:
-  ./gwas_post.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small TRUE --p-small 1e-4 --run-cmd TRUE
+  cd /mnt/d/scripts/0data
+
   ./gwas_post.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small FALSE --run-cmd TRUE
-  ./gwas_post.sh all --dir-raw /mnt/h/gwas/met --dir-out /mnt/d/data.BIG/gwas/met --grch 38 --liftover FALSE --run-cmd TRUE --jobs 12
-  ./gwas_post.sh all --dir-raw /mnt/h/gwas/prot --dir-out /mnt/d/data.BIG/gwas/prot --grch 38 --liftover FALSE --run-cmd TRUE --jobs 12
-  ./gwas_post.sh format,lead,mplot --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small FALSE --liftover FALSE --run-cmd TRUE --jobs 3
-  ./gwas_post.sh magma --label prot --category common --grch 38 --jobs 6
-  ./gwas_post.sh magma --label met --category common --grch 38 --jobs 6
+
+  for label in prot met; do ./gwas_post.sh magma --label "$label" --category common --grch 38 --jobs 6; done
   ./gwas_post.sh magma --label main --category common --grch auto --jobs 6
-  ./gwas_post.sh magma,mplot --label main --add-panel magma --grch auto --jobs 6
+
+  ./gwas_post.sh liftover --label main --category common --grch 37 --liftover TRUE --run-cmd TRUE --jobs 3
+
+  ./gwas_post.sh cis --label prot --category common --grch 38 --cis-bed /mnt/d/files/ppp_3k.38.bed --run-cmd TRUE --jobs 6
+
+  ./gwas_post.sh lead --label met --category common --grch 38 --run-cmd TRUE --jobs 12
+
   ./gwas_post.sh mplot --label prot --add-panel magma --grch 38 --write-sig TRUE --add-signal /mnt/d/data.BIG/gwas/prot/rare/rare_collapse.tsv --match-col Protein --match-value '[trait]' --locus-pos Gene_chr,Gene_Start,Gene_end --display-col Gene,beta,p-value --replace TRUE --run-cmd TRUE --jobs 6
   ./gwas_post.sh mplot --label met --add-panel magma --grch 38 --replace TRUE --run-cmd TRUE --jobs 6
   ./gwas_post.sh mplot --label main --add-panel magma --grch auto --replace TRUE --run-cmd TRUE --jobs 6
-  ./gwas_post.sh pgs --label prot --category common --grch 38 --pgs-pfile-dir /mnt/h/ukbGen/38/imp --run-cmd TRUE --jobs 6 --foreground FALSE
-  ./gwas_post.sh pgs --label met --category common --grch 38 --pgs-pfile-dir /mnt/h/ukbGen/38/imp --run-cmd TRUE --jobs 6 --foreground TRUE
-  tail -f /mnt/d/data.BIG/gwas/prot/.project/common/cmd/pgs/gwas_post.background.log
-  bash /mnt/d/data.BIG/gwas/prot/pgs/pgs.step2.cmd
-  bash /mnt/d/data.BIG/gwas/met/pgs/pgs.step2.cmd
+
+  for label in prot met; do ./gwas_post.sh pgs --label "$label" --category common --grch 38 --pgs-pfile-dir /mnt/h/ukbGen/38/imp --run-cmd TRUE --jobs 6 --foreground FALSE; done
+  for label in prot met; do bash "/mnt/d/data.BIG/gwas/$label/pgs/pgs.step2.cmd"; done
+
+  for label in prot met; do ./gwas_post.sh all --dir-raw "/mnt/h/gwas/$label" --dir-out "/mnt/d/data.BIG/gwas/$label" --grch 38 --liftover FALSE --run-cmd TRUE --jobs 12; done
+
   pgrep -af 'gwas_post.sh'
   pstree -ap "$(pgrep -f 'gwas_post.sh --dir-raw')"
-
-  # Re-run only lead SNP discovery from existing common/<GWAS>/gwas/<GWAS>.gz
-  ./gwas_post.sh lead --label met --grch 38 --jobs 12
+  tail -f /mnt/d/data.BIG/gwas/{prot,met}/.project/common/cmd/pgs/gwas_post.background.log
 USAGE
 }
 
@@ -1825,12 +1828,16 @@ else
 fi
 
 gwas_post_clump_complete(){
-  [[ -s "\$CLUMP_DONE" ]] && { [[ -s "\${MERGED}.clumps" ]] || gwas_post_lead_awk_has_no_rows; }
+  [[ -s "\$CLUMP_DONE" ]] && {
+    [[ -s "\${MERGED}.clumps" ]] || gwas_post_lead_awk_has_no_rows ||
+      awk -F '\t' 'NR==2&&\$2=="clump"&&\$6=="no_reference_matched_variants"{ok=1}END{exit !ok}' "\$CLUMP_DONE"
+  }
 }
 
 gwas_post_cojo_complete(){
   [[ -s "\$COJO_DONE" ]] && {
-    [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]] || gwas_post_lead_awk_has_no_rows
+    [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]] || gwas_post_lead_awk_has_no_rows ||
+      awk -F '\t' 'NR==2&&\$2=="cojo"&&\$6=="no_reference_matched_variants"{ok=1}END{exit !ok}' "\$COJO_DONE"
   }
 }
 
@@ -2097,11 +2104,11 @@ if run_lead; then
     clump_was_done=FALSE
     cojo_was_done=FALSE
     cojo_skipped=FALSE
+    clump_has_usable_input=FALSE
+    cojo_has_matched_input=FALSE
     if [[ "\$REPLACE" != "TRUE" ]]; then
-      [[ -s "\$CLUMP_DONE" && -s "\${MERGED}.clumps" ]] && clump_was_done=TRUE
-      if [[ -s "\$COJO_DONE" ]] && [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]]; then
-        cojo_was_done=TRUE
-      fi
+      gwas_post_clump_complete && clump_was_done=TRUE
+      gwas_post_cojo_complete && cojo_was_done=TRUE
     fi
     rm -f -- "\${MERGED}.lead.done"
     if [[ "\$clump_was_done" != "TRUE" ]]; then
@@ -2165,6 +2172,7 @@ if run_lead; then
     elif gwas_post_has_data_rows "\$assoc"; then
       gwas_post_filter_clump_multiallelic "\$ref" "\$tag" "\$assoc"
       if gwas_post_has_data_rows "\$assoc"; then
+        clump_has_usable_input=TRUE
         pfile_modifier=()
         [[ ! -s "\${ref}.pvar.zst" ]] || pfile_modifier=(vzs)
         pfile_keep=()
@@ -2184,6 +2192,7 @@ if run_lead; then
       cojo_skipped=TRUE
       gwas_post_log "SKIP gcta chr\$chr: significant variant has missing/invalid EAF; see \${QC_PREFIX}.\${tag}.cojo_skip.log"
     elif gwas_post_has_data_rows "\$ma"; then
+      cojo_has_matched_input=TRUE
       gwas_post_prepare_gcta_bfile "\$cref" "\$chr" "\$ma" "\${jp}.gcta_ref"
       run_tool "\$jp" gcta --bfile "\$GCTA_BFILE" "\${GCTA_CHR_ARGS[@]}" \
         --cojo-file "\$ma" --cojo-slct --cojo-p "\$P_LEAD" --out "\$jp"
@@ -2202,12 +2211,18 @@ if run_lead; then
         concat_chr_outputs "\$CLUMP" "\$MERGED" "\$labels" clumps
         if [[ -s "\${MERGED}.clumps" ]]; then
           gwas_post_mark_phase_done clump
+        elif [[ "\$clump_has_usable_input" != "TRUE" ]]; then
+          gwas_post_log "clump complete with no reference-matched significant variants"
+          gwas_post_mark_phase_done clump no_reference_matched_variants
         fi
       fi
       if [[ "\$cojo_was_done" != "TRUE" && "\$cojo_skipped" != "TRUE" ]]; then
         concat_chr_outputs "\$COJO" "\$MERGED" "\$labels" jma.cojo cma.cojo ldr.cojo
         if [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]]; then
           gwas_post_mark_phase_done cojo
+        elif [[ "\$cojo_has_matched_input" != "TRUE" ]]; then
+          gwas_post_log "COJO complete with no reference-matched significant variants"
+          gwas_post_mark_phase_done cojo no_reference_matched_variants
         fi
       fi
       rm -f "\$labels" "\$refs"

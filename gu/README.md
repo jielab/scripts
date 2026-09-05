@@ -1,28 +1,35 @@
 # GU：现代人古人类基因片段分析流程
 
-GU 用统一入口运行四类分析，并把可比较的结果标准化到 SQLite/TSV，供 R Shiny 查询和可视化。
+GU 用统一入口运行四类分析，并把可比较的结果标准化到 SQLite/TSV，供 R Shiny 查询和可视化。当前 PhyML 分层流程版本为 `2026-09-04.4`。
 
 | 模块 | 适合的分析范围 | archaic reference VCF | 关键限制 |
 |---|---|---:|---|
-| `phyml` | 候选 loci；也可按固定窗口扫描整条染色体 | 需要 | 1KG/现代人单倍型与古基因组直接比较；PhyML 构树为显式可选步骤；不是正式的 genome-wide tract caller |
+| `phyml` | 候选 loci；也可按固定窗口扫描整条染色体 | 需要 | region-first、anchor-optional；先保存完整区域相似性，再做 derived/outgroup/复现性与树过滤；不是正式的 genome-wide tract caller |
 | `ibdmix` | 全染色体/全基因组；loci 可作为有侧翼的局部运行 | 需要 | 常染色体是原生路径；男性 non-PAR X 需 pseudo-diploid 接口适配，结果标记 experimental |
 | `trace` | 已有整染色体 ARG 后做全染色体联合推断；loci 在结果端裁剪 | 不需要 | UKB 单倍型必须进入同一套 ARG；不能像 PCA 一样投影到只含 1KG 的 ARG |
 | `as3` | 官方支持的 GRCh38 常染色体 chr1–22 | 需要 | loci 模式仍按整条染色体预处理/推断，最后裁到 loci；GRCh37 和 chrX 都在任何大文件预处理前停止 |
 
-Zeberg 与 Pääbo 2020 Nature 文章没有发布一个以作者命名的 caller。其 Methods 是构建 1000 Genomes 单倍型，并以 PhyML 3.3、HKY85 模型和 bootstrap 重建系统树。因此本流程使用 `phyml` 作为唯一模块名。由于完整 1KG 数据在一个 locus 内也可能产生数千种不同单倍型，GU 默认不自动构树。
+Zeberg 与 Pääbo 2020 Nature 文章没有发布一个以作者命名的 caller。其 Methods 是构建 1000 Genomes 单倍型，并以 PhyML 3.3、HKY85 模型和 bootstrap 重建系统树。因此本流程使用 `phyml` 作为唯一模块名。由于完整 1KG 数据在一个 locus 内也可能产生数千种不同单倍型，GU 默认不运行包含全部 unique H types 的超大探索树；`--plot-phy TRUE` 只运行常见单倍型区域树和过滤后的 candidate-focused trees，除非显式设置 `PHYML_RUN_ALL_UNIQUE_TREE=TRUE`。
 
 ## 可复制的运行顺序
 
-以下命令与 `./gu.sh --help` 一致。TRACE 需要先有整染色体 ARG，因此把 `arg build` 也列在运行顺序中：
+TRACE 需要先有整染色体 ARG。ARG 是可复用的数据准备产物，统一由
+`0data/refGen.sh make-arg` 构建。用户只需在 ARG 生成后运行 `gu.sh trace`；
+TRACE 会在启动分析前自动完成只读 ARG 检查，不再提供单独的 `gu.sh arg`
+用户模块：
 
 ```bash
 ./gu.sh phyml --loci /mnt/d/files/gu.37.bed --plot-phy TRUE --jobs 4
 
 ./gu.sh ibdmix --chr X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-./gu.sh arg build --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
+bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
 
 ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
+
+bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+
+./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle --jobs 4
 
 ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/38/pfile/chr
 
@@ -35,7 +42,7 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 
 ## 命令文件与并行调度
 
-`phyml`、`ibdmix`、`trace`、`as3` 和 `arg build` 使用同一个外层调度规则。每次请求先生成永久、可独立重跑的 `.cmd` 文件和 `<request>.cmd.list`；命令只引用正式 target prefix、永久结果目录与必要的永久 BED，不引用 `run.*`、临时 VCF 或临时 BED。
+`phyml`、`ibdmix`、`trace` 和 `as3` 使用同一个外层调度规则。每次请求先生成永久、可独立重跑的 `.cmd` 文件和 `<request>.cmd.list`；命令只引用正式 target prefix、永久结果目录与必要的永久 BED，不引用 `run.*`、临时 VCF 或临时 BED。TRACE 在进入该调度器前通过内部 `f/arg.sh` 调用 `refGen.sh make-arg --action check`，只读验证 ARG，不写入或转换 ARG 数据。
 
 重新提交 IBDmix 请求时，若某个染色体目录同时存在 `.complete` 和对应阈值的非空 `final/all_archaic_refs.*.segments.tsv.gz`，且未指定 `--replace-ibdmix TRUE`，外层调度器会直接报告 `[GU CMD] SKIP`。该判断发生在 target 预检和临时 PFILE→VCF 转换之前；`.cmd.list` 仍保留全部请求单元，便于审计和独立重跑。
 
@@ -47,7 +54,7 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 
 不同模块的后台请求彼此独立，可以同时提交，例如同时运行 `phyml --foreground FALSE` 与 `ibdmix --foreground FALSE`。launcher 日志/PID/状态文件按 method、scope、时间和启动进程编号唯一命名；每个请求的 target 转换也使用独立的 `run.*` 临时目录。`--jobs` 是单个请求内部的并行度，因此同时提交多个模块时应按总 CPU、内存和 GPU 容量分配各自的值。默认 `--auto-normalize FALSE` 可避免多个模块完成时同时刷新同一个 SQLite；需要自动刷新时建议只给其中一个请求设置 `--auto-normalize TRUE`。
 
-调度单元遵循各方法的原生分析边界：PhyML/IBDmix 的 `--loci` 每行一个命令；TRACE/AS3 把同一染色体的 loci 聚合成一个命令，以保留整染色体模型上下文；所有 `--chr` 请求和 ARG 都是每条染色体一个命令。因此 `--chr 22,X` 会生成两个完全独立的任务；全基因组 IBDmix/TRACE/ARG 生成 23 个命令，AS3 生成 22 个。`--jobs` 只控制任务间并行；PhyML 的 `--phyml-jobs` 仍控制单条染色体任务内的窗口并行，两者不要同时设得过高。外层只改变任务组织方式，不改变五个模块内部的科学计算。
+调度单元遵循各方法的原生分析边界：PhyML/IBDmix 的 `--loci` 每行一个命令；TRACE/AS3 把同一染色体的 loci 聚合成一个命令，以保留整染色体模型上下文；所有 `--chr` 请求都是每条染色体一个命令。因此 `--chr 22,X` 会生成两个完全独立的任务；全基因组 IBDmix/TRACE 生成 23 个命令，AS3 生成 22 个。`--jobs` 只控制任务间并行；PhyML 的 `--phyml-jobs` 仍控制单条染色体任务内的窗口并行，两者不要同时设得过高。外层只改变任务组织方式，不改变四个模块内部的科学计算。
 
 ## 输出、缓存与分享目录
 
@@ -75,7 +82,7 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 
 ## BED、坐标与 build
 
-`--loci` 文件为 BED：`chrom  start0  end  locus_id`，0-based、half-open。`--loci` 与 `--chr` 互斥。第四列是 locus/lead-SNP 标签；PhyML 会优先把同名变异作为 LD 锚点，未找到可用同名 SNP 时才使用最靠近原始 BED 中点的合格 SNP。GRCh37/38 分别使用 `/mnt/d/files/gu.37.bed` 与 `/mnt/d/files/gu.38.bed`；PhyML 未给 `--loci/--chr` 时按 `--grch` 自动选择其中一个，不会改写源 BED。仓库同时带有这两个五-locus 示例，ABO 与 APOE 是 negative controls。
+`--loci` 文件为 BED：`chrom  start0  end  locus_id`，0-based、half-open。`--loci` 与 `--chr` 互斥。第四列对 PhyML 是可选的 exact-marker 标签，只用于完整区域扫描之后的二级 zoom；缺失、写错或在 VCF 中找不到都不会删除区域候选。SNV、MNV 和 `rs8176719` 一类 indel 都按确切 VCF record 单独记录，不用邻近 SNP 代替。GRCh37/38 分别使用 `/mnt/d/files/gu.37.bed` 与 `/mnt/d/files/gu.38.bed`；PhyML 未给 `--loci/--chr` 时按 `--grch` 自动选择其中一个，不会改写源 BED。当前默认文件分别包含 8 个 GRCh37 loci 和 5 个 GRCh38 loci，ABO 与 APOE 是 negative controls。
 
 `--loci-flank` 默认 `100kb`，支持 `bp/kb/mb`。GU 保存原始 `*.core.bed`、实际计算的 `*.bed` 和同时列出 core/analysis 边界的 `*.map.tsv`。侧翼会在染色体端点截断，并进入请求签名，因此不同 flank 不会误用同一结果。
 
@@ -104,13 +111,85 @@ AS3 仅支持 GRCh38 chr1–22；指定 chrX 会在预处理前报错。
 ./gu.sh phyml --chr 3,9,12,19,X --grch 37 --run-cmd FALSE
 ```
 
-对 `--loci`，默认 `--phyml-region-mode core` 把输入 BED 视为预先定义的核心单倍型区间，flank 只用于输入准备与诊断，不再把一个明确的 core 自动缩成几 kb。要复现旧版 `locus.sh/locus.R` 的 anchor + `--r2-unphased` block 思路，可显式指定 `--phyml-region-mode ld`；此时在搜索区间内按未分相基因型剂量计算 LD，以 `r² >= 0.98`（可用 `--phyml-ld-r2` 修改）界定构树区间。`--chr` 的探索扫描没有 BED 锚点，仍按完整固定窗口分析。
+### 分层顺序
 
-如果一个 locus 在指定阈值下连 anchor 在内不足 2 个高-LD SNP，GU 不会降低阈值或用单 SNP 强行构树。该单元以成功状态结束，在 `final/loci.tsv`/`skipped_loci.tsv` 保留 `low_ld_information` 及 anchor、搜索 SNP 数和通过 SNP 数，`final/trees.tsv` 记录 `not_run_low_ld_information`。这是可解释的 negative/low-information 结果，不会再使其他 loci 或整个 `.cmd.list` 失败。
+对 `--loci`，BED 的完整 core 永远先于 anchor 分析。`--phyml-region-mode ld` 和 `--phyml-ld-r2` 为旧命令兼容及请求 provenance 保留，但不会再用 anchor-SNP LD block 缩小 Stage 1。
 
-每个 locus 会输出 `search_sites.tsv`、`ld.tsv`、`selected_region.tsv`、`ancestral.tsv`；`INFO/AA` 中可与 REF/ALT 对齐的祖先等位基因组成 `Ancestral` outgroup 并进入 PHYLIP。`--plot-phy TRUE` 运行 PhyML 后，candidate carriers 直接由树内部边定义：同一古人类谱系、至少两个现代单倍型、bootstrap ≥70；`direct_match_pass` 只保留作 pairwise 描述，不参与 carrier 判定。没有足够 AA 时树仍可生成，但 normalize 标为 `unrooted_tree`，不能当成完整复现。比较缓存使用 `final/comparison.input.meta.tsv`，包含命令、代码、VCF、古基因组与 sample 输入签名；任一改变都会触发重算并清除旧树派生产物。
+1. **区域发现（anchor-independent）**：保存每个 core 内全部现代 H types、全部可用古人类参考投影、完整 H × reference pairwise matrix、局部高相似片段和按 overlap 聚类的 regional families。Stage 1 不使用 BED 第 4 列、祖先等位基因、YRI/AFR 频率、复现性或 bootstrap。
+2. **常见单倍型区域树（anchor-independent）**：`--plot-phy TRUE` 时按旧 workflow 的 `n > 10` 规则（默认 `PHYML_COMMON_TREE_MIN_COPIES=11`）建立 all-archaic、Neanderthal 和 Denisovan common-H trees。
+3. **精确 anchor zoom（可选）**：读取 BED 第 4 列指定的 exact VCF record，把 allele 分配到 sample-haplotype copies 和 SNP-defined H types。未提供、未找到或 phase 无法判定时写出明确的 `not_evaluable` 状态，不把它解释成阴性。
+4. **derived/outgroup filter**：要求古人类谱系 consensus allele 相对 `INFO/AA` 为 derived，并在 YRI（不可用时 AFR）中低频；同时要求 diagnostic markers 形成连续 cluster。
+5. **复现性过滤与 focused tree**：正式 filtered candidate 默认至少有 2 个总 copies、2 个 non-outgroup copies和 3 个 diagnostic matches。singleton 仍永久保留在 Stage 1，并可作为 `candidate_context`，但不能单独产生高置信度 locus call。
+6. **独立方法验证**：PhyML 是 haplotype candidate layer；正式生物学结论应再与同一个体的 IBDmix、TRACE 或 AS3 tract overlap 结合。
 
-`--chr X` 可以运行，会按 `--phyml-window-bp`（默认 500 kb）在 pure non-PAR `chrX.male` 上分窗，每名男性只贡献一个 haplotype。PAR-scoped `--loci` 则从 `chrXY` 导出男女样本的 diploid phased haplotypes，结果中的 `x_class=par_diploid`。最终表按窗口流式写盘，不再把整条染色体的全部序列保存在 Python list 中；峰值内存主要由单个活动窗口、样本数和 `--phyml-jobs` 决定。内存紧张时先用 `--phyml-jobs 1`，再减小 `--phyml-window-bp`。它属于分窗探索扫描，不应与 IBDmix/TRACE/AS3 的 tract calls 等同。
+`introgression_call` 报告区域 tract，`anchor_linked_introgression_call` 单独报告 named marker 与该 tract 的连接。anchor 与区域 candidate 不一致时，两者不会被强行合并。
+
+### 关键输出
+
+所有分层结果位于每个运行目录的 `final/`：
+
+| 层 | 主要文件 | 含义 |
+|---|---|---|
+| Stage 1 区域清单 | `region_haplotypes.unfiltered.tsv`、`region_archaic_references.unfiltered.tsv`、`region_matches.unfiltered.tsv` | 全部现代 H types、实际 chromosome-copy 分母、全部古参考以及所有 H × reference 比较 |
+| Stage 1 候选与片段 | `region_haplotype_candidates.unfiltered.tsv`、`region_match_segments.unfiltered.tsv`、`region_candidate_families.unfiltered.tsv` | 宽松相似性候选、观察到的 matching-marker span 和重叠 family；均不是 introgression call |
+| 常见 H trees | `region_common_tree_inputs.tsv`、`region_common_trees.tsv`、`region_tree_clades.unfiltered.tsv` | `n >= 11` 的区域树输入、状态和全部满足基本结构的 archaic-modern clades |
+| exact anchor | `anchors.tsv`、`anchor_copies.tsv`、`anchor_haplotypes.tsv`、`anchor_allele_groups.tsv` | exact marker 的 REF/ALT、古参考 allele、现代 copies、H groups 和 common-H 归属 |
+| filtered evidence | `evidence_sites.tsv`、`evidence_haplotypes.tsv` | 完整 fate tables，包括通过和未通过原因 |
+| pass-only views | `diagnostic_sites.filtered.tsv`、`diagnostic_candidates.filtered.tsv`、`anchor_zoom_candidates.tsv` | 通过 derived/outgroup/连续性/复现性规则的便捷视图 |
+| focused trees / 结论 | `evidence_trees.tsv`、`evidence_loci.tsv` | bootstrap、candidate purity、candidate sensitivity、区域 call 与 anchor-linked call |
+| provenance | `archaic_references.selected.tsv`、`region_scan_parameters.json`、`evidence_parameters.json` | 实际参考面板、阈值和运行参数 |
+
+`region_scan_loci.unfiltered.tsv` 会为失败、skip 或缺少 sequence artifact 的 locus 保留 `stage1_status=not_evaluable:<raw status>`；不能把“未完成/不可评价”当成“未检测到 introgression”。`direct_match_pass` 只表示原始 A/C/G/T identity，保留用于兼容，不是 carrier 判定或 introgression call。诸如 `798/847` 的值表示 847 个双方可调用 alignment columns 中有 798 个碱基相同，不表示 carriers 数量。
+
+### 默认阈值与树行为
+
+```bash
+# Stage 1 local similarity
+export PHYML_REGION_SCAN_MIN_SITES=12
+export PHYML_REGION_SCAN_MIN_PROP=0.90
+export PHYML_REGION_SCAN_MAX_GAP_BP=50000
+export PHYML_REGION_FULL_MIN_SITES=10
+export PHYML_REGION_FULL_MIN_PROP=0.80
+export PHYML_REGION_FAMILY_MIN_OVERLAP=0.50
+
+# Common-H trees
+export PHYML_COMMON_TREE_MIN_COPIES=11
+export PHYML_COMMON_TREE_MIN_SITES=10
+export PHYML_REGION_TREE_BOOTSTRAP_MIN=70
+
+# Derived/outgroup/recurrence filters
+export PHYML_OUTGROUP=YRI
+export PHYML_OUTGROUP_FALLBACK=AFR
+export PHYML_MAX_OUTGROUP_ALLELE_FREQ=0.05
+export PHYML_MAX_OUTGROUP_HAPLOTYPE_FREQ=0.05
+export PHYML_MIN_OUTGROUP_COPIES=20
+export PHYML_MIN_DIAGNOSTIC_SITES=3
+export PHYML_MIN_DIAGNOSTIC_MATCH_PROP=0.80
+export PHYML_MIN_CANDIDATE_COPIES=2
+export PHYML_MAX_DIAGNOSTIC_GAP_BP=50000
+
+# Candidate-focused tree
+export PHYML_EVIDENCE_BOOTSTRAP_MIN=70
+export PHYML_EVIDENCE_BOOTSTRAP_STRONG=90
+export PHYML_EVIDENCE_MIN_PURITY=0.80
+export PHYML_EVIDENCE_MIN_SENSITIVITY=0.50
+export PHYML_EVIDENCE_CONTROLS=24
+export PHYML_EVIDENCE_TREE_FLANK_BP=5000
+```
+
+不要为让特定 locus “通过”而反复调阈值；修改阈值时应预先声明，并用固定 sensitivity grid 报告。PhyML bootstrap 是重采样 alignment columns 后某拓扑边的出现比例，不是“该 locus 有多少概率来自 introgression”。
+
+`--plot-phy FALSE` 仍完成区域清单、anchor zoom、evidence fate tables 和显式的 `not_requested` tree 状态；`--plot-phy TRUE` 才运行分层树与 QC PNG。全 unique-H tree 默认关闭，可显式设置 `PHYML_RUN_ALL_UNIQUE_TREE=TRUE`。单棵树失败时已完成比较和其他树会保留；默认 `PHYML_TREE_FAILURE_POLICY=warn`，需要把任一树失败视为作业失败时改为 `error`。
+
+默认自动寻找本地完整的 `Altai Chagyr Vindija Denisova Denisova25` 面板，并把实际选择写入 `archaic_references.selected.tsv`。可显式固定面板：
+
+```bash
+export PHYML_REFS='Altai Chagyr Vindija Denisova Denisova25'
+```
+
+比较缓存使用 `final/comparison.input.meta.tsv`；原始输入签名一致时可复用旧 raw comparison，但新版 region scan、anchor zoom、outgroup filters 和 layered summaries 每次重建。需要强制重做 raw comparison 时使用 `--replace-phyml TRUE`。
+
+`--chr X` 按 `--phyml-window-bp`（默认 500 kb）在 pure non-PAR `chrX.male` 上分窗，每名男性只贡献一个 X haplotype；因此 `total_haplotype_copies` 是实际男性 X chromosome 数，不是常染色体式的二倍样本数。PAR-scoped loci 使用男女样本的 diploid phased haplotypes。全染色体模式默认只做原始分窗比较；如确需开启分层 evidence，可设置 `PHYML_EVIDENCE_WHOLE_CHROMOSOME=TRUE`，但它仍是探索扫描，不能与 IBDmix/TRACE/AS3 tract calls 等同。
 
 共享函数 `match_HAP`、`match_SNP` 和 `check_GRCH` 位于 `0f/0phe.f.sh`，不是 `0phe.f.R`。路径默认相对本仓库解析，也可用 `PHE_F` 覆盖。
 
@@ -129,17 +208,26 @@ IBDmix 上游模型和常用评估以二倍体常染色体 genotype 为对象，
 
 ## ARG 与 TRACE
 
-TRACE 的输入不是 VCF，而是覆盖整条染色体的 tskit `.trees/.tsz` ARG。1KG VCF 的 `INFO/AA` 用作 ancestral allele；GU 的准备步骤会规范 `A|||` 等值，只保留 AA 等于 REF/ALT、低缺失、双等位 SNP 和 phased GT，再用 `tsinfer` 构建工程验证 ARG：
+TRACE 的输入不是 VCF，而是覆盖整条染色体的 mutation-bearing tskit `.trees/.tsz` ARG。`tsinfer` 与 `needle` 都可生成该格式；`--format trace` 把方法原生输出转换到互不冲突的 `arg/trace/<method>/`。Needle 转换会把样本节点表改成 TRACE 的 `tree_node_id/sample/haplotype` 契约，并明确将归一化节点时间标为 generations。
+
+1KG VCF 的 `INFO/AA` 用作 tsinfer 的 ancestral allele；准备步骤会规范 `A|||` 等值，只保留 AA 等于 REF/ALT、低缺失、双等位 SNP 和 phased GT：
 
 ```bash
-./gu.sh arg build   --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr
-./gu.sh trace check --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr
-./gu.sh trace       --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr
+bash /mnt/d/scripts/0data/refGen.sh make-arg --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr
+
+bash /mnt/d/scripts/0data/refGen.sh make-arg --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle
 ```
 
-执行顺序是 `arg build → trace check → trace`；`arg build` 内部先把 `vcf/chr*.vcf.gz` 规范为持久的同级 `vcf.4arg/chr*.vcf.gz`，只保留有效 `INFO/AA` 与 `FORMAT/GT`，再生成 ARG。prepared VCF 和 `.trees` 都带输入/参数/代码签名，签名漂移时不会静默复用；Zarr/LMDB 仍位于 WSL 临时目录并在退出时删除。ARG 只接受整染色体 `--chr`，拒绝会产生局部树的 `--loci`。
+执行顺序是 `refGen.sh make-arg → gu.sh trace`；ARG 检查是 TRACE 启动时的内在步骤。`--method tsinfer` 先把
+`vcf/chr*.vcf.gz` 规范为持久的同级 `vcf.4arg/chr*.vcf.gz`，只保留有效
+`INFO/AA` 与 `FORMAT/GT`，再生成 ARG。Needle 的原生产物仍位于
+`arg/argn` 和 `arg/trees`；只有显式 `--format trace` 才会在
+`arg/trace/needle` 建立 TRACE 文件，因此不会与 tsinfer 或 GRID 文件混淆。
+ARG 只接受整染色体 `--chr`，Needle 当前只支持常染色体。
 
-`trace check` 会先验证：每条请求染色体存在 ARG；不是误标成 posterior 的坐标 chunk；site 数和覆盖跨度像整染色体；每个 chromosome-scoped run 内 node/sample/haplotype map 一致；target 样本与 ARG 样本一致；缓存 provenance 未漂移。`arg_tsinfer.py` 从 VCF-Zarr 自动读取 ploidy，因此 pure male X 的每名男性是一个 ARG sample node。由于 X 是单倍体、常染色体是二倍体，`--chr 22,X` 之类的混合请求会自动拆成独立的 `chr22` 与 `chrX` TRACE 输出，完成后由 normalize 合并，不会把不兼容的 node map 强行联合。GU 随后依次执行：按 node 分组的 `trace-extract`、`trace-infer`、逐 haplotype 的 `trace-summarize`、标准化合并。
+TRACE 启动时会先验证：每条请求染色体存在 ARG；不是误标成 posterior 的坐标 chunk；site 数和覆盖跨度像整染色体；每个 chromosome-scoped run 内 node/sample/haplotype map 一致；缓存 provenance 未漂移。tsinfer ARG 要求 target 与 ARG 样本严格相等；Needle 的固定 panel 允许是 target 的子集，但 ARG 中每个样本必须存在于 target，TRACE 也只分析 ARG panel 中的节点。`arg_tsinfer.py` 从 VCF-Zarr 自动读取 ploidy，因此 pure male X 的每名男性是一个 ARG sample node。由于 X 是单倍体、常染色体是二倍体，`--chr 22,X` 之类的混合请求会自动拆成独立的 `chr22` 与 `chrX` TRACE 输出，完成后由 normalize 合并，不会把不兼容的 node map 强行联合。GU 随后依次执行：按 node 分组的 `trace-extract`、`trace-infer`、逐 haplotype 的 `trace-summarize`、标准化合并。
 
 TRACE 默认保留完整染色体上下文，`--loci` 只在最终 segment 表中做 post-hoc clipping。若要做局部提取敏感性分析，可显式使用 `--trace-loci-mode extract`，此时才把 BED 传给 `trace-extract --include-regions`。未配置 HapMap genetic map 时，上游 TRACE 会按 `1e-8/bp/generation` 的均匀重组率运行。代码自带的小型真实 CLI 集成测试可用下面命令复核，它会运行 extract/infer/summarize/combine，并自动删除 `/tmp` 测试文件：
 
@@ -275,7 +363,7 @@ Individuals 页同时给出三种 burden：`raw_call` 是原始 calls 直接求�
 
 Shiny Overview 以五行 validation matrix 为主：预期角色、PhyML QC/tree carriers、IBDmix、TRACE、AS3 和结论；`not run`、`unsupported`、`exploratory` 分开显示。单-locus 解释与独立方法表保持在首屏，trajectory 和 individual rows 收入折叠面板。PhyML 页按“古参考 → tree candidate haplotypes → outside-clade controls”显示序列和树。
 
-`f/ukb.sh` 提供 `inspect-hap`、`make-panel`、`batches`、`hap-vcf`、`hap-arg-vcf` 等入口。大样本正式 TRACE 建议使用 SINGER posterior ARG；`tsinfer` 后端更适合流程工程验证和探索分析。
+`f/ukb.sh` 提供 `inspect-hap`、`make-panel`、`batches`、`hap-vcf`、`hap-arg-vcf` 等入口。Needle 是快速的单 ARG 路径，tsinfer 继续用于工程对照；若正式分析需要传播 ARG posterior uncertainty，可另做 SINGER posterior ARG 敏感性分析。
 
 ## 安装与检查
 
