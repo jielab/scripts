@@ -1,0 +1,4 @@
+locus_id	tree_scope	lineage_filter	input_status	common_min_copies	n_common_haplotype_types	n_tree_sites	n_tree_tips	phy_file
+rs6525167	region_common_unfiltered_all_archaic	ALL	ready	11	6	148	12	/mnt/d/analysis/gu/phyml/1kg/chrX_rs6525167/loci/haplotypes.region_common.phy
+rs6525167	region_common_unfiltered_lineage	Denisovan	ready	11	6	148	9	/mnt/d/analysis/gu/phyml/1kg/chrX_rs6525167/loci/haplotypes.region_common.Denisovan.phy
+rs6525167	region_common_unfiltered_lineage	Neanderthal	ready	11	6	147	10	/mnt/d/analysis/gu/phyml/1kg/chrX_rs6525167/loci/haplotypes.region_common.Neanderthal.phy

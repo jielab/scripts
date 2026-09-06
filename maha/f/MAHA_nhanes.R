@@ -11,6 +11,7 @@ if(length(.bootstrap_missing)){cat("[NHANES INPUT CHECK] Required code/helper fi
 pacman::p_load(tidyverse, haven, survey, survival, broom, writexl, patchwork, cowplot)
 invisible(lapply(c("0phe.f.R","assoc.f.R","pred.f.R","plot.f.R"),function(f)source(file.path(.helper_dir,f))))
 source(file.path(.this_dir,"comm.f.R"))
+source(file.path(.this_dir,"nhanes_meat_sensitivity.R"))
 cohort_prefix <- "nhanes"
 maha_auxdir <- Sys.getenv("MAHA_AUXDIR", unset = file.path(maha_outdir, cohort_prefix))
 dir.create(maha_outdir, recursive = TRUE, showWarnings = FALSE)
@@ -339,13 +340,14 @@ food_group_day <- function(iff, fcd = NULL, day = 1) {
 			fish = str_detect(fd, "fish|salmon|tuna|sardine|cod|trout|seafood|shrimp|crab|lobster"),
 			poultry = str_detect(fd, "chicken|turkey"),
 			red_processed_meat = str_detect(fd, "beef|pork|lamb|bacon|sausage|ham|hot dog|frankfurter|pepperoni|salami"),
+			processed_meat_proxy = ifelse(is.na(food_desc), NA, maha_processed_meat_flag(food_desc)),
 			sweets_pastries = str_detect(fd, "cake|cookie|pie|doughnut|donut|pastry|candy|chocolate|ice cream|dessert|sweet|sugar"),
 			ssb = str_detect(fd, "soft drink|soda|cola|fruit drink|sweetened beverage|sports drink|energy drink"),
 			fried_fast = str_detect(fd, "fried|french fries|pizza|burger|fast food"),
 			coffee_tea = str_detect(fd, "coffee|tea")
 		)
 	groups <- c("fruit","berry","vegetable","green_leafy","allium","legumes","nuts","dairy","lowfat_dairy",
-		"whole_grain","refined_grain","fish","poultry","red_processed_meat","sweets_pastries","ssb","fried_fast","coffee_tea")
+		"whole_grain","refined_grain","fish","poultry","red_processed_meat","processed_meat_proxy","sweets_pastries","ssb","fried_fast","coffee_tea")
 	out %>%
 		filter(is.finite(SEQN), is.finite(grams)) %>%
 		group_by(SEQN) %>%
@@ -540,6 +542,8 @@ construct_diet_scores <- function(dat.in, score_source = "observed_repeated_reca
 			protein_g_kg = protein_g / weight_kg,
 			healthy_fat_ratio = (mufa_g + pufa_g) / (sfat_g + 0.1),
 			upf_proxy = refined_grain + sweets_pastries + ssb + fried_fast + red_processed_meat,
+			upf_processed_proxy = refined_grain + sweets_pastries + ssb + fried_fast + processed_meat_proxy,
+			upf_nomeat_proxy = refined_grain + sweets_pastries + ssb + fried_fast,
 			nuts_legumes = nuts + legumes,
 			other_veg = pmax(vegetable - green_leafy, 0),
 			alcohol_limit = qscore(alcohol_g, reverse = TRUE),
@@ -552,6 +556,8 @@ construct_diet_scores <- function(dat.in, score_source = "observed_repeated_reca
 			maha_c_wholegrain = qscore(whole_grain),
 			maha_c_fat = qscore(healthy_fat_ratio),
 			maha_c_upf = qscore(upf_proxy, reverse = TRUE),
+			maha_c_upf_processed = qscore(upf_processed_proxy, reverse = TRUE),
+			maha_c_upf_nomeat = qscore(upf_nomeat_proxy, reverse = TRUE),
 			maha_c_alcohol = qscore(alcohol_g, reverse = TRUE),
 			maha_c_sodium = qscore(sodium_mg, reverse = TRUE),
 
@@ -591,6 +597,8 @@ construct_diet_scores <- function(dat.in, score_source = "observed_repeated_reca
 		) %>%
 		mutate(
 			diet.maha.sum = rowmean_min(., c("maha_c_protein","maha_c_dairy","maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf","maha_c_alcohol","maha_c_sodium"), 0.60),
+			diet.maha_processed.sum = rowmean_min(., c("maha_c_protein","maha_c_dairy","maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf_processed","maha_c_alcohol","maha_c_sodium"), 0.60),
+			diet.maha_nomeat.sum = rowmean_min(., c("maha_c_protein","maha_c_dairy","maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf_nomeat","maha_c_alcohol","maha_c_sodium"), 0.60),
 			diet.maha_bal.sum = rowmean_min(., c("maha_c_protein","maha_c_dairy","maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf","maha_c_sodium"), 0.60),
 			diet.maha_strict.sum = rowmean_min(., c("maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf","maha_c_alcohol","maha_c_sodium", "dash_c_redmeat"), 0.60),
 			diet.maha_nodairy.sum = rowmean_min(., c("maha_c_protein","maha_c_veg","maha_c_fruit","maha_c_wholegrain","maha_c_fat","maha_c_upf","maha_c_alcohol","maha_c_sodium"), 0.60),
@@ -1547,7 +1555,7 @@ dat <- dat %>%
 for (v in c("cad_q", "copd_q")) dat[[v]][is.infinite(dat[[v]])] <- NA_real_
 
 food_vars <- c("fruit","berry","vegetable","green_leafy","allium","legumes","nuts","dairy","lowfat_dairy",
-	"whole_grain","refined_grain","fish","poultry","red_processed_meat","sweets_pastries","ssb","fried_fast","coffee_tea")
+	"whole_grain","refined_grain","fish","poultry","red_processed_meat","processed_meat_proxy","sweets_pastries","ssb","fried_fast","coffee_tea")
 nutrient_vars <- c("kcal", "protein_g", "carb_g", "sugar_g", "fiber_g", "fat_g", "sfat_g", "mufa_g", "pufa_g", "chol_mg", "sodium_mg", "alcohol_g")
 for (v in food_vars) if (!v %in% names(dat)) dat[[v]] <- NA_real_
 for (v in nutrient_vars) if (!v %in% names(dat)) dat[[v]] <- NA_real_
@@ -1583,6 +1591,7 @@ Y.mort.plot <- c("death", "heart_death", "cvd_death", "cancer_death", "diabetes_
 
 nhanes_validation <- nhanes_validate_maha(dat_mort_obs, covs.mort)
 nhanes_construct <- nhanes_construct_profile(dat1_obs)
+write_xlsx(nhanes_meat_sensitivity(dat_mort_obs, covs.mort), "Reviewer.meat_proxy_sensitivity.xlsx")
 })
 
 maha_run_step("fig3", {
@@ -1817,7 +1826,11 @@ write_xlsx(
 	list(
 		score_distribution = plot_sum,
 		density_curve = density_dat,
-		spearman_matrix = as.data.frame(cor_mat, check.names = FALSE)
+		spearman_matrix = as.data.frame(cor_mat, check.names = FALSE),
+    pairwise_N = as.data.frame(crossprod(!is.na(score_mat))),
+    metadata = data.frame(N = nrow(score_mat), sample = "dat1_obs: observed repeated-recall mean, age >=20, eligible dietary weights; descriptive main cycles",
+      cycles = paste(main_cycles, collapse = "; "), method = "Unweighted Spearman, pairwise complete observations",
+      shared_figure = "Shared FigS1 and NHANES construct figure read this exact same correlation matrix")
 	),
 	"FigS3.score_distribution_concordance.out.xlsx"
 )

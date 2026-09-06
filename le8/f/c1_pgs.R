@@ -103,7 +103,7 @@ run_c1_pgs_scan <- function(layer, features, covars, outcome = Y, rawdir = NULL,
   covars <- intersect(covars, names(base))
 
   message("C1/", layer, ": scan ", length(score_map),
-    " inherited omic scores in the genotyped cohort (sequential, memory-safe)")
+    " inherited omic scores in the genotyped cohort (sequential; full PGS matrix remains in memory)")
   rows <- lapply(names(score_map), function(feature) {
     gcol <- score_map[[feature]]
     d <- base

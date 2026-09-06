@@ -1,0 +1,44 @@
+PLINK v2.0.0-a.7.0LM AVX2 AMD (25 Apr 2026)         cog-genomics.org/plink/2.0/
+(C) 2005-2026 Shaun Purcell, Christopher Chang    GNU General Public License v3
+Logging to /tmp/saige-prep-test-79qdxudw/chr1.log.
+Options in effect:
+  --dummy 500 6000
+  --make-pgen
+  --memory 1000
+  --out /tmp/saige-prep-test-79qdxudw/chr1
+  --seed 823
+  --threads 2
+
+Start time: Sun Sep  6 21:09:47 2026
+72362 MiB RAM detected, ~38631 available; reserving 1000 MiB for main
+workspace.
+Using up to 2 compute threads.
+Dummy data (500 samples, 6000 SNPs) written to
+/tmp/saige-prep-test-79qdxudw/chr1-temporary.pgen +
+/tmp/saige-prep-test-79qdxudw/chr1-temporary.pvar +
+/tmp/saige-prep-test-79qdxudw/chr1-temporary.psam .
+500 samples (500 females, 0 males; 500 founders) loaded from
+/tmp/saige-prep-test-79qdxudw/chr1-temporary.psam.
+6000 variants loaded from /tmp/saige-prep-test-79qdxudw/chr1-temporary.pvar.
+1 binary phenotype loaded (253 cases, 247 controls).
+Writing /tmp/saige-prep-test-79qdxudw/chr1.psam ... done.
+Writing /tmp/saige-prep-test-79qdxudw/chr1.pvar ... 0%1%2%3%4%5%6%7%8%9%10%11%12%13%14%15%16%17%18%19%20%21%22%23%24%25%26%27%28%29%30%31%32%33%34%35%36%37%38%39%40%41%42%43%44%45%46%47%48%49%50%51%52%53%54%55%56%57%58%59%60%61%62%63%64%65%66%67%68%69%70%71%72%73%74%75%76%77%78%79%80%81%82%83%84%85%86%87%88%89%90%91%92%93%94%95%96%97%98%99%done.
+Writing /tmp/saige-prep-test-79qdxudw/chr1.pgen ... 0%done.
+End time: Sun Sep  6 21:09:47 2026
+/tmp/saige-prep-test-79qdxudw/.prep/run.cmd.sh
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/saige-prep-test-79qdxudw/chr1 --maf .01 --mac 100 --max-alleles 2 --geno .1 --hwe 1e-15 0 --indep-pairwise 1000kb 0.1 --out /tmp/saige-prep-test-79qdxudw/.prep/chr1.prune
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/saige-prep-test-79qdxudw/chr1 --extract /tmp/saige-prep-test-79qdxudw/.prep/chr1.prune.prune.in --make-bed --out /tmp/saige-prep-test-79qdxudw/.prep/chr1.prune
+/mnt/d/software/bin/plink --bfile /tmp/saige-prep-test-79qdxudw/.prep/chr1.prune --make-bed --out /tmp/saige-prep-test-79qdxudw/typ.prune --threads 2 --memory 1000
+/tmp/saige-prep-test-79qdxudw/.prep/run.cmd.sh
+RESUME chr1.prune
+RESUME chr1.bed
+RESUME merge
+/mnt/d/scripts/gwas/f/saige_Rscript.sh /home/huangj/anaconda3/envs/saige/bin/createSparseGRM.R --plinkFile=/tmp/saige-prep-test-79qdxudw/typ.prune --nThreads=2 --numRandomMarkerforSparseKin=2000 --relatednessCutoff=0.125 --outputPrefix=/tmp/saige-prep-test-79qdxudw/typ
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py grm-links /tmp/saige-prep-test-79qdxudw/typ_relatednessCutoff_0.125_2000_randomMarkersUsed.sparseGRM.mtx /tmp/saige-prep-test-79qdxudw/typ
+/tmp/saige-prep-test-79qdxudw/.prep/run.cmd.sh
+RESUME chr1.prune
+RESUME chr1.bed
+RESUME merge
+RESUME sparseGRM
+RESUME grm-links
+PASS: actual SAIGE sparse GRM; FALSE -> TRUE resumes prune/merge; repeated TRUE resumes GRM

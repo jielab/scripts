@@ -1,0 +1,2 @@
+locus_id	anchor_provided	requested_anchor_id	anchor_id	chr	pos	ref	alt	variant_type	exact_anchor_found	modern_called_copies	modern_unassigned_copies	archaic_calls	neanderthal_consensus_allele_index	denisovan_consensus_allele_index	status	regional_analysis_effect
+rs7412	1	rs7412	rs7412	19	45412079	C	T	SNV	1	5008	0	Altai:0:C:mapped;Chagyr:0:C:mapped;Vindija:0:C:mapped;Denisova:0:C:mapped;Denisova25:0:C:mapped	0	0	complete	none;anchor_is_secondary

@@ -1199,12 +1199,14 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
       p0|>filter(is.finite(p.value))|>slice_min(p.value,n=max(GRADIENT_TOP,TOP_N),with_ties=FALSE)|>pull(term)))
     biom<-biom0[,intersect(c("eid",fig_features),names(biom0)),drop=FALSE]
   } else biom<-biom0
+  rm(biom0);invisible(gc())
 
   need<-unique(c("eid","ethnic.c",vars.basic,vars.le8,C1_TREATMENT_VARS,
     "birth_date","date_attend","date_lost","date_death",paste0("fod_icd10_",Y)))
   # Restrict C1 to participants with the omics assay.
-  dat<-read_all(need)|>inner_join(biom,by="eid")|>filter_analysis_cohort()|>make_outcome(Y)|>add_attained_age_time(Y)
-  rm(biom,biom0);invisible(gc())
+  # Filter the narrow phenotype table before materializing the wide join.
+  dat<-read_all(need)|>filter_analysis_cohort()|>inner_join(biom,by="eid")|>make_outcome(Y)|>add_attained_age_time(Y)
+  rm(biom);invisible(gc())
   features<-intersect(features_all,names(dat));covs_basic<-intersect(vars.basic,names(dat))
   covs_adj2_full<-intersect(unique(c(vars.adj2,C1_TREATMENT_VARS)),names(dat))
   covs_adj2<-intersect(unique(c(vars.basic,C1_LE4_COVARS,C1_TREATMENT_VARS)),names(dat))
@@ -1375,7 +1377,7 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     assoc_adj2,prevalent_adj2,birthline_adj2,outdir)
 
   # Fig3: same participants in basic and behavioral-LE4 residualized YY panels.
-  yy_need<-unique(c(bvar,top6,covs_adj2));yy_dat<-dat[complete.cases(dat[,intersect(yy_need,names(dat)),drop=FALSE]) & is.finite(dat[[bvar]]),,drop=FALSE]
+  yy_need<-unique(c(bvar,top6,covs_adj2));yy_dat<-dat[complete.cases(dat[,intersect(yy_need,names(dat)),drop=FALSE]) & is.finite(dat[[bvar]]),intersect(yy_need,names(dat)),drop=FALSE]
   omic_name<-ifelse(layer=="protein","protein","metabolite")
   p3a<-make_yy_panel(yy_dat,top6,bvar,covs_basic,paste0("a. Yin–Yang ",omic_name," patterns — basic adjustment"),
                      ifelse(layer=="protein","Mean protein z-score","Mean metabolite z-score"),smooth_lines=FALSE)

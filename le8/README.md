@@ -132,8 +132,8 @@ C2_HERITABILITY_FILE=""
 | `--preflight` | 检查环境、路径和必需文件后退出 |
 | `--dry-run` | 打印执行计划后退出 |
 | `--analysis-root DIR` | 覆盖输出根目录 |
-| `--cores N` | R worker 数；默认 4 |
-| `--memory-limit-gb N` | 整个 LE8 进程树的 RAM 硬上限；默认 64 GiB，设为 `0` 可禁用 |
+| `--cores N` | R worker 数；默认 2 |
+| `--memory-limit-gb N` | 整个 LE8 进程树的 RAM 硬上限；默认 32 GiB，设为 `0` 可禁用 |
 | `--memory-swap-gb N` | cgroup 可额外使用的 swap；默认 4 GiB |
 | `--seed N` | 随机种子；默认 2026 |
 | `--grch auto\|37\|38` | 基因组版本；默认自动识别 |
@@ -226,15 +226,15 @@ SNP/基因组版本匹配默认采用磁盘外排，减少大文件在内存中�
 | `--match-memory-mb` / `LE8_MATCH_MEMORY_MB` | 4096 MB |
 | `--match-sort-memory-mb` / `LE8_MATCH_SORT_MEMORY_MB` | 512 MB |
 | `--match-tmp-dir` / `LE8_MATCH_TMP_DIR` | `/mnt/d/tmp` |
-| `--cores` / `N_CORES` | 4 |
-| `--memory-limit-gb` / `LE8_MEMORY_LIMIT_GB` | 64 GiB（整个任务进程树） |
+| `--cores` / `N_CORES` | 2 |
+| `--memory-limit-gb` / `LE8_MEMORY_LIMIT_GB` | 32 GiB（整个任务进程树） |
 | `--memory-swap-gb` / `LE8_MEMORY_SWAP_GB` | 4 GiB |
 
-包装器默认通过 WSL 的 cgroup v2 为完整任务树设置 `64 GiB RAM + 4 GiB swap` 的硬上限，并把常见 BLAS/OpenMP 线程数设为 1。达到上限时，systemd 只终止 LE8 任务组，不会把调用它的 terminal 放进同一个受限组。没有可用的 user systemd 时，脚本会明确警告并退回到单进程 `ulimit`。运行前应确保临时目录和输出目录有足够磁盘空间。
+包装器默认通过 WSL 的 cgroup v2 为完整任务树设置 `32 GiB RAM + 4 GiB swap` 的硬上限，并把常见 BLAS/OpenMP 线程数设为 1。达到上限时，systemd 只终止 LE8 任务组，不会把调用它的 terminal 放进同一个受限组。没有可用的 user systemd 时，脚本会停止运行，避免单进程 `ulimit` 无法限制多进程总量的问题。运行前应确保临时目录和输出目录有足够磁盘空间。
 
-96 GB 主机可在 Windows 的 `%USERPROFILE%/.wslconfig` 的 `[wsl2]` 节设置 `memory=72GB`，为 Windows 留出余量。保存配置后，需在其他 WSL 任务结束后执行 `wsl --shutdown` 并重新打开 WSL；用 `free -h` 确认配额生效。64 GiB 是 LE8 上限，不是预留内存，WSL 内其他任务仍会竞争 RAM。
+96 GB 主机可在 Windows 的 `%USERPROFILE%/.wslconfig` 的 `[wsl2]` 节设置 `memory=72GB`，为 Windows 留出余量。保存配置后，需在其他 WSL 任务结束后执行 `wsl --shutdown` 并重新打开 WSL；用 `free -h` 确认配额生效。32 GiB 是 LE8 上限，不是预留内存，WSL 内其他任务仍会竞争 RAM。
 
-扫描在 fork 前及每项任务完成后执行垃圾回收，及时释放临时模型对象；C1 的时间窗口扫描先选取所需列，再筛选行，减少整张组学表的复制。默认仍为 4 个 worker；垃圾回收会增加一些 CPU 开销，但可减少连续拟合时的内存累积。
+扫描在 fork 前及每项任务完成后执行垃圾回收，及时释放临时模型对象；C1 在窄表上先筛选队列再连接组学表，绘图仅复制需要的列；C4 连接后释放原始组学表，中介分析仅抽取所需列。并行 worker 异常退出时停止扫描，避免把缺失结果写入缓存。默认使用 2 个 worker；垃圾回收会增加一些 CPU 开销，但可减少连续拟合时的内存累积。
 
 例如，把总 RAM 上限改为 24 GiB、禁止使用 swap：
 

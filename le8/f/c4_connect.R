@@ -369,6 +369,7 @@ run_c4_layer <- function(layer=c("protein","metabolite")) {
   dat0<-dat0[complete.cases(dat0[,comps,drop=FALSE]),,drop=FALSE]|>stratified_sample(evar,MAX_N)
   # Sample participants before joining the wide omics matrix; this materially reduces C4 peak memory.
   dat<-inner_join(dat0,biom|>filter(eid%in%dat0$eid),by="eid")
+  rm(biom,dat0);invisible(gc())
   fold<-stratified_split(dat,evar)
   scan_cache<-file.path(rawdir,"c4.LE8_proxy_scan.rds");scan_stage<-read_stage_cache(scan_cache)
   if(is.null(scan_stage)){
@@ -412,7 +413,8 @@ run_c4_layer <- function(layer=c("protein","metabolite")) {
   gscan<-bind_rows(gdisc,grep0);gedges<-make_genetic_edges(gdisc,grep0,disease,sets$membership)
   write_raw_csv(gscan,"c4.PRS_feature_associations.csv",rawdir);write_raw_csv(gedges,"c4.genetic_omic_disease_bridges.csv",rawdir)
   pairs<-sets$YS_edges|>left_join(disease|>select(feature=term,disease_p=p.value),by="feature")|>arrange(desc(strict_YS),FDR_disc,disease_p)|>slice_head(n=MED_TOP)
-  med_dat<-stratified_sample(dat,evar,MED_MAX_N)
+  med_need<-intersect(unique(c(tvar,evar,covs,comps,pairs$feature)),names(dat))
+  med_dat<-stratified_sample(dat[,med_need,drop=FALSE],evar,MED_MAX_N)
   mediation_cache<-file.path(rawdir,"c4.mediation_stage.rds");med<-read_stage_cache(mediation_cache)
   if(is.null(med)){
     med<-if(!nrow(pairs))tibble() else map_dfr(seq_len(nrow(pairs)),function(i){
@@ -444,5 +446,5 @@ run_c4_layer <- function(layer=c("protein","metabolite")) {
     "c4.out.xlsx");finalize_outputs(LE8_JOB,outdir);out
 }
 
-if(prot_DO)run_c4_layer("protein")
-if(met_DO)run_c4_layer("metabolite")
+if(prot_DO){invisible(run_c4_layer("protein"));gc(full=TRUE)}
+if(met_DO){invisible(run_c4_layer("metabolite"));gc(full=TRUE)}

@@ -17,7 +17,7 @@ analysis_file <- function(...) file.path(outdir, ...)
 step_order <- c(
 	"data_qc", "vip_phe", "ses", "move", "death", "srd", "icd", "audit_i67", "fod_ref", "gp_prep", "gp",
 	"biom", "hla_pca", "pgs", "merge", "audit_dates",
-	"qc", "drug", "gwas"
+	"qc", "drug", "phe4gwas"
 )
 
 start_step <- Sys.getenv("START_STEP", unset = "data_qc")
@@ -1427,18 +1427,19 @@ prot <- fread(paste0(dir0, '/data.BIG/gwas/prot/map_3k_v1.tsv'), sep = '\t', sel
 })
 
 
-run_if("gwas", {
+run_if("phe4gwas", {
 # 🚩 GWAS data
 dat <- read_rds("all")
 dat1 <- dat %>% filter(ethnic.c == "White") %>% rename(IID = eid) %>% mutate(FID = IID)
-for (Y in c("ihd", "stroke", "cvd_stroke_i", "stroke_o")) {
-	dat1 <- t2e(dat1, "cvd", paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_death, Y, "year")
+for (Y in c("cvd_cad", "stroke", "cvd_stroke_i", "stroke_o")) {
+	dat1 <- t2e(dat1, "cvd", paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_follow_end, Y, "year")
 }
 dat1 <- dat1 %>% mutate(center = factor(center)) %>%
-	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, le8.sco, siops, isei, egp, camsis, move, bald, matches("^bald1|^ihd|^stroke_|^hap|t2e$|^PC[1-4]$"), -starts_with("happy_"))
+	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, bald, matches("^bald1|^cvd_cad|^stroke_|^hap|t2e$|^PC[1-4]$"), -starts_with("happy_"))
 
 # mm <- model.matrix(~ center - 1, data = dat1)
 # colnames(mm) <- paste0("CR", seq_len(ncol(mm)))
 # dat1 <- cbind(dat1, as.data.table(mm))
+dir.create(file.path(indir, "common"), recursive = TRUE, showWarnings = FALSE)
 write.table(dat1, paste0(indir, "/common/ukb.phe"), na = "NA", append = FALSE, quote = FALSE, row.names = FALSE)
 })

@@ -85,14 +85,14 @@ prepare_sample_map(){
     if [[ -n $vcf ]]; then
       bcftools query -l "$vcf" | sort -u > "$work/chr${chr}.target.samples"
       awk -F'\t' 'NR>1&&NF>=2{print $2}' "$chr_map" | sort -u > "$work/chr${chr}.arg.samples"
-      if [[ $TRACE_ARG_METHOD == needle ]]; then
+      if [[ $TRACE_ARG_METHOD == needle || $TRACE_ARG_METHOD == threads ]]; then
         comm -13 "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples" > "$work/chr${chr}.arg_not_target.samples"
         if [[ -s $work/chr${chr}.arg_not_target.samples ]]; then
-          echo "ERROR: TRACE Needle ARG contains chr$chr samples absent from the target cohort" >&2
+          echo "ERROR: TRACE $TRACE_ARG_METHOD ARG contains chr$chr samples absent from the target cohort" >&2
           head -10 "$work/chr${chr}.arg_not_target.samples" >&2 || true
           return 1
         fi
-        echo "TRACE Needle panel sample check passed chr$chr: ARG=$(wc -l < "$work/chr${chr}.arg.samples") target=$(wc -l < "$work/chr${chr}.target.samples")"
+        echo "TRACE $TRACE_ARG_METHOD panel sample check passed chr$chr: ARG=$(wc -l < "$work/chr${chr}.arg.samples") target=$(wc -l < "$work/chr${chr}.target.samples")"
       elif ! cmp -s "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples"; then
         echo "ERROR: TRACE target samples differ from the chr$chr ARG sample map; a target cohort cannot be projected onto a 1KG-only ARG" >&2
         echo "Only in target VCF:" >&2; comm -23 "$work/chr${chr}.target.samples" "$work/chr${chr}.arg.samples" | head -10 >&2 || true

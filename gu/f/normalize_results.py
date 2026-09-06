@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse, bisect, gzip, hashlib, math, os, re, shutil, sqlite3, tempfile
 from pathlib import Path
 import pandas as pd
+from comm import resolve_tsv_path
 
 SEG_COLS=['dataset_id','sample_id','method','source','source_class','chr','start','end','length_bp','haplotype','method_haplotype_index','score','posterior','trait','locus_id','genome_build','batch_id','raw_file']
 REFERENCE_COLS=['dataset_id','population','genome_build','chr','start','end','source_class','reference_role','raw_file']
@@ -85,7 +86,7 @@ CORE_FILE_PATTERNS={
     'trace':(),
     'as3':(),
     'phyml':(
-        '**/final/*.tsv','**/loci/**/sites.tsv','**/loci/**/search_sites.tsv',
+        '**/final/*.tsv','**/final/evidence_parameters.json','**/final/*unfiltered.tsv.gz','**/loci/**/sites.tsv','**/loci/**/search_sites.tsv',
         '**/loci/**/ld.tsv','**/loci/**/selected_region.tsv','**/loci/**/archaic.tsv',
         '**/loci/**/ancestral.tsv',
         '**/loci/**/haplotypes.tsv','**/loci/**/haplotypes.phy','**/loci/**/haplotypes.phy.meta.tsv',
@@ -107,10 +108,18 @@ def package_core_results(analysis_root,output_dir):
                 files=[]
                 if src_root.is_dir():
                     for pattern in patterns:files.extend(src_root.glob(pattern))
-                files=sorted(set(x for x in files if x.is_file() and not is_transient_output(x) and x.stat().st_size>0))
+                files=sorted(set(resolve_tsv_path(x) for x in files if x.is_file() and not is_transient_output(x) and x.stat().st_size>0))
                 for src in files:
                     dst=dst_root/prefix/src.relative_to(src_root)
-                    dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
+                    dst.parent.mkdir(parents=True,exist_ok=True)
+                    if src.name.endswith('unfiltered.tsv'):
+                        # Legacy runs are packaged in the same compressed format
+                        # as new runs, without changing the original source.
+                        dst=dst.with_name(dst.name+'.gz')
+                        with src.open('rb') as reader, gzip.open(dst,'wb') as writer:
+                            shutil.copyfileobj(reader,writer,length=1024*1024)
+                    else:
+                        shutil.copy2(src,dst)
                 copied[method]+=len(files)
         for method in CORE_FILE_PATTERNS:
             dst=output_dir/method; backup=output_dir/f'.{method}.old.{os.getpid()}'

@@ -29,3 +29,31 @@ for (cores in c(1L,2L)) {
                       c(1L,4L,9L,16L,25L)))
 }
 cat("PASS: serial/fork scans preserve Cox estimates, missing-data handling and task order\n")
+
+N_CORES <- 2L
+stopifnot(identical(parallel_map(1:2,function(x)NULL),list(NULL,NULL)))
+failed <- suppressWarnings(try(parallel_map(1:2,function(x)stop("test worker failure")),silent=TRUE))
+stopifnot(inherits(failed,"try-error"))
+if (.Platform$OS.type != "windows") {
+  failed <- suppressWarnings(try(parallel_map(1:2,function(x) {
+    if(x==1L) tools::pskill(Sys.getpid(),signal=9L)
+    x
+  }),silent=TRUE))
+  stopifnot(inherits(failed,"try-error"),grepl("refusing partial results",as.character(failed)))
+}
+cat("PASS: worker failure/SIGKILL cannot silently produce partial scans; intentional NULL is preserved\n")
+
+# Verify the narrow mediation sample preserves participant selection and values.
+for (expr in parse("f/c4_connect.R")) {
+  if (is.call(expr) && identical(expr[[1]],as.name("<-")) &&
+      identical(expr[[2]],as.name("stratified_sample"))) eval(expr)
+}
+set.seed(30)
+wide <- as.data.frame(matrix(rnorm(6000L*100L),nrow=6000L))
+wide$eid <- seq_len(nrow(wide)); wide$event <- rep(c(0,1,NA),length.out=nrow(wide))
+cols <- c("eid","event","V1","V2")
+set.seed(31); full_sample <- stratified_sample(wide,"event",1000L)
+set.seed(31); narrow_sample <- stratified_sample(wide[,cols,drop=FALSE],"event",1000L)
+stopifnot(identical(full_sample[,cols],narrow_sample),
+          as.numeric(object.size(narrow_sample)) < as.numeric(object.size(full_sample))/10)
+cat("PASS: narrow C4 sampling preserves participants and values; fixture table size reduced >90%\n")

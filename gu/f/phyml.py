@@ -22,7 +22,7 @@ def main():
     command = sys.argv.pop(1)
     if command not in COMMANDS:
         raise SystemExit(f"Unknown PhyML stage: {command}")
-    module = importlib.import_module(f"phyml.{COMMANDS[command]}")
+    module = importlib.import_module(f"phyml_{COMMANDS[command]}")
     module.main()
 
 

@@ -19,7 +19,7 @@ fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 action=${GU_ACTION:-as3_run}
-runtime=${AS3_RUNTIME:-$script_dir/as3_upstream}
+runtime=${AS3_RUNTIME:-$script_dir/as3}
 model_dir=${AS3_MODEL_DIR:-${dir_ref:-/mnt/d/data.BIG/refGen}/archaic/38/models}
 data=${AS3_DATA_IN:?AS3_DATA_IN is required; run this internal helper through gu.sh}
 out=${AS3_OUT:-/mnt/d/analysis/gu/as3}
@@ -92,11 +92,11 @@ for required in \
     "$smoother_model_cp"; do
     [[ -s $required ]] || { echo "ERROR bundled AS3 runtime file missing: $required" >&2; exit 1; }
 done
-AS3_EXPECT_PYTHON=${AS3_PYTHON_VERSION:-3.9} "$as3_python" "$script_dir/as3_health.py" || {
+AS3_EXPECT_PYTHON=${AS3_PYTHON_VERSION:-3.9} "$as3_python" "$script_dir/as3/gu_health.py" || {
   echo "ERROR AS3 Python dependency/Torch/CUDA health check failed: $as3_python; run ./install.sh --repair-as3" >&2
   exit 1
 }
-"$as3_python" "$script_dir/as3_model_check.py" --runtime "$runtime" --model-dir "$model_dir" || {
+"$as3_python" "$script_dir/as3/gu_model_check.py" --runtime "$runtime" --model-dir "$model_dir" || {
   echo "ERROR AS3 bundled model definitions/checkpoints failed to load" >&2
   exit 1
 }

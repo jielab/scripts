@@ -48,14 +48,18 @@ def main():
     import importlib.metadata
     import arg_needle
     package=Path(arg_needle.__file__).parent
-    dependencies=[package/'inference.py',package/'resources/30-100-2000_CEU.decodingQuantities.gz',package/'resources/CEU.demo']
+    memory_adapter=Path(__file__).resolve().with_name('argneedle_memory.py')
+    from argneedle_memory import backend_path
+    backend=backend_path()
+    if not backend.is_file(): raise SystemExit(f'Missing bounded ASMC backend: {backend}; run f/build_asmc_memory.py --source /path/to/ASMC-1.4.0')
+    dependencies=[memory_adapter,backend,package/'inference.py',package/'decoders.py',package/'resources/30-100-2000_CEU.decodingQuantities.gz',package/'resources/CEU.demo']
     request={'schema':3,'inputs':[stamp(x) for x in (a.haps,a.map,sample,script,__file__,*dependencies) if Path(x).is_file()],
       'versions':{name:importlib.metadata.version(name) for name in ('arg-needle','arg-needle-lib')},
       'mode':a.mode,'scaffold':a.seed_haplotypes,'seed':a.random_seed,'normalize':a.normalize,
       'chr':a.chr,'trim':0,'demography':stamp(a.normalize_demography) if a.normalize_demography else 'default CEU'}
     rid=hashlib.sha256(json.dumps(request,sort_keys=True).encode()).hexdigest()
     paths={1:Path(str(prefix)+'.step1.argn'),2:Path(str(prefix)+'.step2.argn'),3:Path(str(prefix)+'.argn')}
-    bootstrap="import runpy,sys,random,numpy as np; seed=int(sys.argv.pop(1)); random.seed(seed); np.random.seed(seed); script=sys.argv.pop(1); sys.argv[0]=script; runpy.run_path(script,run_name='__main__')"
+    bootstrap="import runpy,sys,random,numpy as np; adapter=sys.argv.pop(1); runpy.run_path(adapter)['install'](); seed=int(sys.argv.pop(1)); random.seed(seed); np.random.seed(seed); script=sys.argv.pop(1); sys.argv[0]=script; runpy.run_path(script,run_name='__main__')"
     dirty=a.replace
     with open(a.log,'a',buffering=1) as log:
       th=next((x for x in ('--num_threads','--threads','--n_threads') if x in helptext),None)
@@ -72,7 +76,7 @@ def main():
         dirty=True
         for ds in range(step,4):
           Path(str(prefix)+f'.step{ds}.done').unlink(missing_ok=True); paths[ds].unlink(missing_ok=True)
-        cmd=[sys.executable,'-u','-c',bootstrap,str(a.random_seed),str(script),
+        cmd=[sys.executable,'-u','-c',bootstrap,str(memory_adapter),str(a.random_seed),str(script),
           '--hap_gz',a.haps,'--map',a.map,'--out',str(prefix),'--mode',a.mode,
           '--step',str(step),'--chromosome',str(a.chr),'--verbose','1','--trim_num_snps','0']
         if step==1: cmd+=['--num_snp_samples' if a.mode=='array' else '--num_sequence_samples',str(a.seed_haplotypes)]

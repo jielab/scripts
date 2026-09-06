@@ -465,6 +465,7 @@ make_shared_score_figure <- function() {
   save_pub(figS1, "FigS1.score_distribution_concordance.png", 14, 12.4)
   write_book(list(ukb_distribution = get_sheet(u, "score_distribution"), ukb_spearman = get_sheet(u, "spearman_matrix"),
                   nhanes_distribution = get_sheet(n, "score_distribution"), nhanes_spearman = get_sheet(n, "spearman_matrix"),
+                  nhanes_pairwise_N = get_sheet(n, "pairwise_N"), nhanes_metadata = get_sheet(n, "metadata"),
                   chns_distribution = get_sheet(c, "summary"), chns_spearman = get_sheet(c, "spearman")),
              "FigS1.score_distribution_concordance.out.xlsx")
 }
@@ -688,13 +689,14 @@ make_nhanes <- function() {
   figS5 <- align_publication_grid(list(list(pS5a, pS5b), list(pS5c, pS5d)), rel_widths = c(1, 1))
   save_pub(figS5, "FigS10_tmp.nhanes.construct_concordance.png", 16, 12.1)
   write_book(list(decile_profile = get_sheet(cp, "decile_profile"), component_metrics = cm, convergent_validity = get_sheet(cp, "convergent_validity"),
-                  score_distribution = sd, spearman_matrix = get_sheet(sc, "spearman_matrix")), "FigS10_tmp.nhanes.construct_concordance.out.xlsx")
+                  score_distribution = sd, spearman_matrix = get_sheet(sc, "spearman_matrix"),
+                  pairwise_N = get_sheet(sc, "pairwise_N"), metadata = get_sheet(sc, "metadata")), "FigS10_tmp.nhanes.construct_concordance.out.xlsx")
   copy_if_exists(aux_path("nhanes", "Table1.out.xlsx"), pub_path("Table1.nhanes.out.xlsx"))
 }
 
 make_chns <- function() {
   # Remove the superseded construct-validation FigS9 so a subsequent
-  # `all --pub-only` run has exactly one numbered CHNS FigS9.
+  # `final` run has exactly one numbered CHNS FigS9.
   stale_root <- pub_path(c("FigS9.chns.validation.png","FigS9.chns.validation.out.xlsx"))
   unlink(stale_root[file.exists(stale_root)],force=TRUE)
 
@@ -897,7 +899,14 @@ make_chns <- function() {
   copy_if_exists(aux_path("chns","Table1.out.xlsx"),pub_path("Table1.chns.out.xlsx"))
 }
 
-if (scope == "all") make_shared_score_figure()
+shared_inputs <- c(aux_path("ukb", "FigS3.score_distribution_concordance.out.xlsx"),
+  aux_path("nhanes", "FigS3.score_distribution_concordance.out.xlsx"),
+  aux_path("chns", "FigS7.score_distribution_concordance.out.xlsx"))
+if (all(file.exists(shared_inputs))) {
+  make_shared_score_figure()
+} else if (scope == "all") {
+  stop("Shared score figure requires all three cohort outputs: ", paste(shared_inputs[!file.exists(shared_inputs)], collapse = "; "))
+} else message("[publication] Shared score figure pending until all three cohorts have been run.")
 if (scope %in% c("ukb", "all")) make_ukb()
 if (scope %in% c("nhanes", "all")) make_nhanes()
 if (scope %in% c("chns", "all")) make_chns()

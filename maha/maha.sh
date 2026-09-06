@@ -4,7 +4,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  ./maha.sh [ukb|nhanes|chns|all] [--steps <internal-step-list>] [--pub-only]
+  ./maha.sh [ukb|nhanes|chns|all] [--steps <internal-step-list>]
+  ./maha.sh final [ukb|nhanes|chns|all]
   ./maha.sh --help
 
 Examples:
@@ -16,7 +17,13 @@ Examples:
   ./maha.sh chns
 
   ./maha.sh ukb --steps data_qc,fig2,fig3
-  ./maha.sh all --pub-only   # rebuild all manuscript figures from cached cohort outputs
+  ./maha.sh final   # rebuild all manuscript figures from cached cohort outputs
+
+Modules:
+  ukb, nhanes, chns       Run cohort analyses, then assemble final outputs.
+  all                    Run all cohort analyses, then assemble final outputs.
+  final [COHORT]         Integrate cached analyses into publication-ready figures
+                         and tables for Shiny/manuscripts. Default scope: all.
 
 Options:
   --rscript FILE          Rscript executable.
@@ -58,7 +65,7 @@ USAGE
 STEP="all"
 STEP_SET=0
 INTERNAL_STEPS=""
-PUB_ONLY=0
+FINAL_ONLY=0
 RSCRIPT_BIN=""
 OUTDIR=/mnt/d/analysis/maha
 MAHA_JOBS=4
@@ -82,8 +89,9 @@ while [[ $# -gt 0 ]]; do
     --steps)
       [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --steps requires a value." >&2; usage >&2; exit 2; }
       INTERNAL_STEPS="$2"; shift 2 ;;
-    --pub-only)
-      PUB_ONLY=1; shift ;;
+    final)
+      (( FINAL_ONLY == 0 )) || { echo "ERROR: final specified more than once." >&2; exit 2; }
+      FINAL_ONLY=1; shift ;;
     --rscript) RSCRIPT_BIN=${2:?ERROR: --rscript requires FILE}; shift 2 ;;
     --output-dir) OUTDIR=${2:?ERROR: --output-dir requires DIR}; shift 2 ;;
     --jobs) MAHA_JOBS=${2:?ERROR: --jobs requires N}; shift 2 ;;
@@ -188,6 +196,8 @@ run_one() {
   mkdir -p "$MAHA_AUXDIR"
 
   local launcher_log="${MAHA_AUXDIR}/launcher.log"
+  local run_status="${MAHA_AUXDIR}/run_status.txt"
+  printf 'RUNNING\ncohort=%s\nsteps=%s\nstarted=%s\n' "$cohort" "${INTERNAL_STEPS:-all}" "$(date -Is)" > "$run_status"
   : > "$launcher_log"
   {
     echo "======================================================================"
@@ -220,18 +230,22 @@ run_one() {
     local args=()
     [[ -z "$INTERNAL_STEPS" ]] || args+=("--steps=${INTERNAL_STEPS}")
     "$RSCRIPT_BIN" "$script" "${args[@]}"
-  } 2>&1 | tee -a "$launcher_log"
+  } 2>&1 | tee -a "$launcher_log" || {
+    printf 'FAILED\ncohort=%s\nfinished=%s\n' "$cohort" "$(date -Is)" > "$run_status"
+    return 1
+  }
+  printf 'COMPLETE\ncohort=%s\nsteps=%s\nfinished=%s\n' "$cohort" "${INTERNAL_STEPS:-all}" "$(date -Is)" > "$run_status"
 }
 
-run_publication() {
+run_final() {
   local scope="$1"
   local script="${SCRIPT_DIR}/f/MAHA_publication.R"
   [[ -f "$script" ]] || { echo "ERROR: publication script does not exist: $script" >&2; exit 3; }
-  echo "[MAHA] Building publication figures for scope=${scope}"
+  echo "[MAHA FINAL] Integrating publication figures and tables for scope=${scope}"
   "$RSCRIPT_BIN" "$script" "--cohort=${scope}"
 }
 
-if [[ "$PUB_ONLY" -eq 0 ]]; then
+if [[ "$FINAL_ONLY" -eq 0 ]]; then
   case "$STEP" in
     ukb) run_one ukb ;;
     nhanes) run_one nhanes ;;
@@ -240,11 +254,11 @@ if [[ "$PUB_ONLY" -eq 0 ]]; then
   esac
 fi
 
-if [[ "$PUB_ONLY" -eq 1 || -z "$INTERNAL_STEPS" ]]; then
-  run_publication "$STEP"
+if [[ "$FINAL_ONLY" -eq 1 || -z "$INTERNAL_STEPS" ]]; then
+  run_final "$STEP"
 else
-  echo "[MAHA] Analysis step selection completed; publication assembly skipped for --steps=${INTERNAL_STEPS}."
-  echo "[MAHA] After all required cohort outputs exist, run: ./maha.sh all --pub-only"
+  echo "[MAHA] Analysis step selection completed; final assembly skipped for --steps=${INTERNAL_STEPS}."
+  echo "[MAHA] After all required cohort outputs exist, run: ./maha.sh final"
 fi
 
 echo "[MAHA] Done. Publication figures are in: ${OUTDIR}"

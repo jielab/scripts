@@ -1,0 +1,300 @@
+{
+  "created_utc": "2026-09-06T03:31:44.511647+00:00",
+  "n_loci": 8,
+  "n_lineage_rows": 16,
+  "n_haplotype_rows": 66,
+  "coverage_threshold": 0.8,
+  "copy_phase": "IBDmix unphased; TRACE stored haplotype index",
+  "validation_denominator": "candidate individuals/copies, not callable genomes",
+  "tag_scope": "all stored biallelic core SNPs matching the representative archaic sequence; in-sample r2",
+  "input_files": [
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/anchor_copies.tsv",
+      "sha256": "a777efdb71a1ac3b31e643ff39b7cf80f1f7ac0b30839b0b027fe1816b04dc63"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/anchors.tsv",
+      "sha256": "aca7c61bcc2eb06cc2463881c4db8a0aa42fdd15bd0de07c9b1a50a2e5c999d5"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/evidence_haplotypes.tsv",
+      "sha256": "4706cb4e1cc9889fb1e8b1c017a62911dafe42fd25dc2aa6f7795ef8f2b77387"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/evidence_loci.tsv",
+      "sha256": "13039b87d7919676dc7134e0bd92ba759bc7ef6bb3696fa088ee8db4a586113e"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/evidence_sites.tsv",
+      "sha256": "ac86eaebc2cf989c1f98154d25258c9ce96a40874efc55c6ff4c14db05154bef"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/evidence_trees.tsv",
+      "sha256": "2dbf5d50edf949b46badcc8564a059a227dc15e8926354482eade99ee78675fd"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "8d3f5510af1cd34596a17858c26e5f91172349a7ad99f105f7fdee755cc1c113"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/loci/archaic.tsv",
+      "sha256": "ab16fa336eac66339e7d7769ba0f06657706b14bb0fb740da877337b1b602a1e"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr12_rs417915/loci/sites.tsv",
+      "sha256": "8362d76ffb0c124993c93e2c642a24f2292ef452dd857f2deaeb233c6667f704"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/anchor_copies.tsv",
+      "sha256": "fb65a991748c14f82749e209fa10e31e01ed76c7837f0b567253cec8c3e4b122"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/anchors.tsv",
+      "sha256": "afe3144ea04669d00a72ec3dff7bf4bc547ed54f390a2c0ce5d127e33858173e"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/evidence_haplotypes.tsv",
+      "sha256": "f7f6b88705eedbb5d5de7569fca0b4aa7841ae0d82e473858ae408e6faad454b"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/evidence_loci.tsv",
+      "sha256": "584800ef7f13dc34c773b236265b9c4cfe382e8f726256f7c564d712e5aa3777"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/evidence_sites.tsv",
+      "sha256": "707cd723fb75fd43e473b79137f54292c803a2cf69e2dc97390b55d0078edbb4"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/evidence_trees.tsv",
+      "sha256": "3dae30e0c37eb08280455ddab4d55f19e6440196b7da7367d4016ba642b52f40"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "3601a8d1e7af8f6cdc4a420afdf62eab1ae0581deba51e65b59deaeb88b6575f"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/loci/archaic.tsv",
+      "sha256": "5b1cd9d4f116538429110d186de27cd4bb9755edc25e3f84794924e6c692fc3e"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr19_rs7412/loci/sites.tsv",
+      "sha256": "158c583626b5304a2c65f8891a4b9bd38f4b7692ae2f3f8fc251e9bc5689dd17"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/anchor_copies.tsv",
+      "sha256": "a4084cd1dca8693ac3166560c97320accd5085c50756b9d84ed761123733d9d0"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/anchors.tsv",
+      "sha256": "0e4b7a7691399789edbb6e59751e40a6e388b516b3a93316a6d107a8c958b1bf"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/evidence_haplotypes.tsv",
+      "sha256": "d896d193992e24fe04ea149711e5481337357c28de873e10e1dac3776ad47df5"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/evidence_loci.tsv",
+      "sha256": "dfed469afbfb28486a75f86015a89cc187c805bcdefe2a5a4f9dbc6302a2e8ed"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/evidence_sites.tsv",
+      "sha256": "a4840e6aa7182273b9077854fdfa7239247339cd467584d005b2553f8579732d"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/evidence_trees.tsv",
+      "sha256": "2e1f5f58497c28788c497fce9d4f4074af04b64fbfc017f93af25c25a9668aac"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "f6d11bf58073aa45ee1a33a73305c4016b7eda7155bf1199c064c22dc7ec2968"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/loci/archaic.tsv",
+      "sha256": "057a30bd9ef53199d8ebaad812e04e7ca401d8b900d20f17a43c2f106c702f38"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr1_rs12405323/loci/sites.tsv",
+      "sha256": "cfabcd0b1ee269bb2c28f9f162afaf47772a2257c7a8d1d72d779fd96eaff5a8"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/anchor_copies.tsv",
+      "sha256": "e150647c816ec150df3b7619935d998a33b663eab1d79ab1c9c0fa23becf25d5"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/anchors.tsv",
+      "sha256": "fc65ab053d27fe76e6cf9c64ed1fe6b6e75c0f92f1f7bb4e0465a350057fb7f2"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/evidence_haplotypes.tsv",
+      "sha256": "4f6c5e3084cae285e4b3f9fff74253a6a96b4ba883e89ac77377d2124097504f"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/evidence_loci.tsv",
+      "sha256": "479b3c8a62564dcbf2cb8f57a4fa198c7e82e58255e4e8027c26963e7ad5890d"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/evidence_sites.tsv",
+      "sha256": "fa1909506137027cd04e57de26803ff3c76564c44debb4d10261c94ce0656017"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/evidence_trees.tsv",
+      "sha256": "fcf3756819718943e8b63c14b843fc36f7b5ad74ec91a723da5d2267bd2582ba"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "c1d8a8bb1354642f3385ea5cf505172e1258cf357bfd475e8c72f85b1dffdbc9"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/loci/archaic.tsv",
+      "sha256": "d028ec892a1033b6baa0b33bd5441f41cfcabb1ddc5c43457050f53ac547c553"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr3_rs35044562/loci/sites.tsv",
+      "sha256": "f753555f76928641ad99d23f130631989849ca99210955177df4d30ad88188e1"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/anchor_copies.tsv",
+      "sha256": "f0882ec099fc66551c74c2fc46c42495ded8e077019122dfbdbae2cbcbf86913"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/anchors.tsv",
+      "sha256": "0484df0e33c94649c2756e020920ef47414a7a39cdc395199954cccb37d55309"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/evidence_haplotypes.tsv",
+      "sha256": "d7ef1311ca1977d15107ca66729ec91af0a5d37fe35ea037af3002a622dc90ae"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/evidence_loci.tsv",
+      "sha256": "315c242427f82ce9ca935f431e08193d50abb759c4f3252149f495684fd41511"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/evidence_sites.tsv",
+      "sha256": "f1ff067996e71e895156e2172f4679854e3c2a7e1a57b25b4725055d697891df"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/evidence_trees.tsv",
+      "sha256": "1757a081f7e5b1e2a9422b7b9ba82243b77800211f6dd1899d24ab5e963ca728"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "60b93993ceb3766237e89b457e1775a1f953c43816fbd366dcaf433639c37f20"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/loci/archaic.tsv",
+      "sha256": "2f11b7c949affea8732bef1db74e4e715266c3e57196ef58c55099a049c3cd4b"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr6_rs9349320/loci/sites.tsv",
+      "sha256": "ac280b2bd17198ce5ab63305d4e611294ce3d4fa891d5846dde49890c63b6aac"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/anchor_copies.tsv",
+      "sha256": "bbfbeb8c327d5d1f9f780598617c1bb942c03fe36ecb5ee6d1e7abdce6481545"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/anchors.tsv",
+      "sha256": "e9513e26a7a2dd855b7bd563b96c29b3092b1e6bee8d2f609d002d95b024b718"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/evidence_haplotypes.tsv",
+      "sha256": "1f6dc9528d41120ec798607305504d3aac8ca77aec5899e881244a3c9805fba4"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/evidence_loci.tsv",
+      "sha256": "efd899f9f16a5685c31a4ecf99079ef021ca2b4a87ee3e8718b7a865507f7b4b"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/evidence_sites.tsv",
+      "sha256": "bc2e3736e397b49d14aab3071d18d3ca07b370af24ad18867b641f7da4c33c91"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/evidence_trees.tsv",
+      "sha256": "82939e7e9e729296b3663d8dbe41e62e585f75469a7b06984b814cfbe851862a"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "038177e398ceb0b7c23383d35f83ef4aeb7aa953a358c2b518d1139f2a05a845"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/loci/archaic.tsv",
+      "sha256": "590943bfe3343ed68f2433c2a83f5bea49d3180aed1f6b8f2841aff2c61f8bd8"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr8_rs1041791/loci/sites.tsv",
+      "sha256": "89b9d07aaf76f1165210a075c90e0767684c2c0d8d9c51e83ab0d43d9b4543ed"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/anchor_copies.tsv",
+      "sha256": "932e332e4f9e4cc889e5d2b833372601d6929a5808845875c901e1fb0536cfe5"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/anchors.tsv",
+      "sha256": "f0cbdee61436ecba79f2b0983c6bed0584bd14e62b1a52590e364fd1268f68ca"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/evidence_haplotypes.tsv",
+      "sha256": "402c15c891f439c01b3193e227adfbb26bdb175ef629a93f196b19d6573b8bd3"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/evidence_loci.tsv",
+      "sha256": "323c53483f350e5e82c2b9da00c91ac6e8bd90b1565761ad2582884adc8da9b1"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/evidence_sites.tsv",
+      "sha256": "b8f2bd25befa7d26a14d54246ca5e4b269b4c300474d43992801b69594ca578c"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/evidence_trees.tsv",
+      "sha256": "3dae30e0c37eb08280455ddab4d55f19e6440196b7da7367d4016ba642b52f40"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "6b770e892f17d090604fc5e9616f79b793036666366a4ddeecc5a169d9ce22ea"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/loci/archaic.tsv",
+      "sha256": "50f4d628f60f47894af353d877ec349fd5e53188c98accd7251cfb4b594b0ec8"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chr9_rs8176719/loci/sites.tsv",
+      "sha256": "a921fca55c54d5cc05ed5ac71d0d1649553248d65c17a8fba053b2ffeec934be"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/anchor_copies.tsv",
+      "sha256": "5db5bc2b0669f28e91343718921cca1372b6a01c26483ead8866eb3e33bf32d1"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/anchors.tsv",
+      "sha256": "0a833102ff2ff1574489ee265e2e8fed647489ec5913c29a22cc9f5c19cc8210"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/evidence_haplotypes.tsv",
+      "sha256": "057b936c023c1c4bbeb6888df9bc0eb164f2d707e58187f6f2334dcf165efcd1"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/evidence_loci.tsv",
+      "sha256": "647d381c9489c7cd532e911b2b3648d5231ab35fb69b52d29f7c7f71ea325720"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/evidence_sites.tsv",
+      "sha256": "14030e3ff0b394dceed04ea50d9de9f1b610ec8d60b6d542630d17d0f52cff33"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/evidence_trees.tsv",
+      "sha256": "7b786cf5db55982807d89a45b6b2e99820830e0ee852ea8fd4057164c3cdc214"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/final/region_haplotypes.unfiltered.tsv.gz",
+      "sha256": "bb734c15496012ea3a7591a12c6b0bdea3982e66231a4529c36b5ec361e43274"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/loci/archaic.tsv",
+      "sha256": "53a48fea0e2793193473c2af59bb83b943761502097272ddfde002fef3a895ef"
+    },
+    {
+      "path": "/mnt/d/scripts/gu/.audit/final_integration/normalize/phyml/1kg/chrX_rs6525167/loci/sites.tsv",
+      "sha256": "91c3a367dd6c0571e0049ad806d96ade45c928cc9242131628528491b76b270f"
+    }
+  ]
+}

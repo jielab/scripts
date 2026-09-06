@@ -1,0 +1,30 @@
+Skip shell step: prep_raw
+Skip shell step: fetch_fod
+Skip shell step: extract_fod
+Skip shell step: extract_pheno
+Skip shell step: extract_multi
+Skip shell step: process_linked
+
+========== RUN R: f/phe.R START_STEP=data_qc END_STEP=<default> RUN_STEPS=phe4gwas ==========
+ICD_SOURCES=icd10,icd9,opcs4,srd SAVE_AOD_TEXT=TRUE SAVE_AOD_LIST=FALSE MAKE_PHEWAS=FALSE
+Skip step: data_qc 
+Skip step: vip_phe 
+Skip step: ses 
+Skip step: move 
+Skip step: death 
+Skip step: srd 
+Skip step: icd 
+Skip step: audit_i67 
+Skip step: fod_ref 
+Skip step: gp_prep 
+Skip step: gp 
+Skip step: biom 
+Skip step: hla_pca 
+Skip step: pgs 
+Skip step: merge 
+Skip step: audit_dates 
+Skip step: drug 
+
+========== RUN STEP: phe4gwas ==========
+========== DONE STEP: phe4gwas ==========
+Privacy cleanup: removing phenotype audit rows containing UKB eids

@@ -20,7 +20,7 @@ case "${PHYML_TREE_FAILURE_POLICY:-warn}" in warn|error) ;; *) echo "ERROR: PHYM
 for cmd in python3 bcftools bash awk find; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: missing command: $cmd" >&2; exit 1; }
 done
-for required in phyml.py phyml/core.py phyml/tree_summary.py phyml/region_scan.py phyml/evidence.py phyml/anchor.py phyml/layered_plot.py phyml/tree_plot.R; do
+for required in phyml.py phyml_core.py phyml_tree_summary.py phyml_region_scan.py phyml_evidence.py phyml_thresholds.py phyml_anchor.py phyml_markers.tsv phyml_risk.py phyml_layered_plot.py phyml.tree_plot.R; do
   [[ -s $F/$required ]] || { echo "ERROR: PhyML module missing: $F/$required" >&2; exit 1; }
 done
 if (( plot_phy )) && ! command -v phyml >/dev/null 2>&1; then
@@ -174,15 +174,12 @@ region_scan_args=(
 
 evidence_args=(
   --out "$OUT"
+  --threshold-profile "${PHYML_THRESHOLD_PROFILE:-legacy_compatible}"
   --outgroup "${PHYML_OUTGROUP:-YRI}"
   --outgroup-fallback "${PHYML_OUTGROUP_FALLBACK:-AFR}"
   --max-outgroup-allele-freq "${PHYML_MAX_OUTGROUP_ALLELE_FREQ:-0.05}"
   --max-outgroup-haplotype-freq "${PHYML_MAX_OUTGROUP_HAPLOTYPE_FREQ:-0.05}"
   --min-outgroup-copies "${PHYML_MIN_OUTGROUP_COPIES:-20}"
-  --min-diagnostic-sites "${PHYML_MIN_DIAGNOSTIC_SITES:-3}"
-  --min-diagnostic-match-prop "${PHYML_MIN_DIAGNOSTIC_MATCH_PROP:-0.80}"
-  --min-candidate-copies "${PHYML_MIN_CANDIDATE_COPIES:-2}"
-  --max-diagnostic-gap-bp "${PHYML_MAX_DIAGNOSTIC_GAP_BP:-50000}"
   --min-neanderthal-refs "${PHYML_MIN_NEANDERTHAL_REFS:-2}"
   --min-other-lineage-refs "${PHYML_MIN_OTHER_LINEAGE_REFS:-1}"
   --evidence-controls "${PHYML_EVIDENCE_CONTROLS:-24}"
@@ -196,10 +193,20 @@ evidence_args=(
   --strong-min-diagnostic-sites "${PHYML_STRONG_MIN_DIAGNOSTIC_SITES:-10}"
   --strong-min-candidate-copies "${PHYML_STRONG_MIN_CANDIDATE_COPIES:-5}"
   --strong-min-archaic-tips "${PHYML_STRONG_MIN_ARCHAIC_TIPS:-2}"
-  --min-candidate-purity "${PHYML_EVIDENCE_MIN_PURITY:-0.80}"
-  --min-candidate-sensitivity "${PHYML_EVIDENCE_MIN_SENSITIVITY:-0.50}"
   --min-tree-candidate-types "${PHYML_EVIDENCE_MIN_CANDIDATE_TYPES:-1}"
 )
+# Profile defaults are shared with direct Python calls. Explicit overrides win.
+for threshold_pair in \
+  PHYML_MIN_DIAGNOSTIC_SITES:min-diagnostic-sites \
+  PHYML_MIN_DIAGNOSTIC_MATCH_PROP:min-diagnostic-match-prop \
+  PHYML_MIN_CANDIDATE_COPIES:min-candidate-copies \
+  PHYML_MAX_DIAGNOSTIC_GAP_BP:max-diagnostic-gap-bp \
+  PHYML_EVIDENCE_MIN_PURITY:min-candidate-purity \
+  PHYML_EVIDENCE_MIN_SENSITIVITY:min-candidate-sensitivity \
+  PHYML_MAX_ILS_PROBABILITY:max-ils-probability; do
+  threshold_env=${threshold_pair%%:*}
+  [[ -z ${!threshold_env:-} ]] || evidence_args+=("--${threshold_pair#*:}" "${!threshold_env}")
+done
 EVIDENCE_SAMPLE_PANEL=${PHYML_EVIDENCE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-}}
 [[ -n $EVIDENCE_SAMPLE_PANEL && -s $EVIDENCE_SAMPLE_PANEL ]] && evidence_args+=(--sample-file "$EVIDENCE_SAMPLE_PANEL")
 
@@ -217,6 +224,8 @@ if [[ -n ${GU_LOCI_FILE:-} ]]; then
     --out "$OUT"
     --refs "$PHYML_REFS_EFFECTIVE"
     --common-min-copies "${PHYML_COMMON_TREE_MIN_COPIES:-11}"
+    --genome-build "GRCh${GU_BUILD:?}"
+    --marker-map "${PHYML_MARKER_MAP:-$F/phyml_markers.tsv}"
   )
   [[ -n ${GU_LOCI_MAP_FILE:-} && -s ${GU_LOCI_MAP_FILE:-} ]] && anchor_args+=(--loci-map "$GU_LOCI_MAP_FILE")
   [[ ${GU_CHRX_MALE_ONLY:-0} == 1 ]] && anchor_args+=(--x-male-only)
@@ -260,7 +269,7 @@ comparison_record(){
   printf '\n'
   printf 'requested_region_mode\t%s\n' "$requested_region_mode"
   printf 'archaic_refs_source\t%s\n' "$PHYML_REFS_SOURCE"
-  stat -c 'script\t%n:%s:%Y' "$F/phyml.py" "$F/phyml/"*.py "$F/phyml/tree_plot.R" "$PHE_F"
+  stat -c 'script\t%n:%s:%Y' "$F/phyml.py" "$F/phyml_"*.py "$F/comm.py" "$F/phyml.tree_plot.R" "$PHE_F"
   [[ -z ${GU_LOCI_FILE:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_LOCI_FILE"
   [[ -z ${GU_LOCI_MAP_FILE:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_LOCI_MAP_FILE"
   [[ -z ${GU_SAMPLE_PANEL:-} ]] || stat -c 'input\t%n:%s:%Y' "$GU_SAMPLE_PANEL"
@@ -411,10 +420,11 @@ if (( evidence_enabled )); then
   python3 "$F/phyml.py" region summarize "${region_scan_args[@]}" --default-tree-status "$tree_default"
 
   # Establish one compatibility row per locus even when the huge all-unique tree
-  # is intentionally not run. phyml/evidence.py then replaces its interpretation
+  # is intentionally not run. phyml_evidence.py then replaces its interpretation
   # with the candidate-focused authoritative fields.
   python3 "$F/phyml.py" tree --out "$OUT" --skip-render --default-status not_requested
   python3 "$F/phyml.py" evidence summarize "${evidence_args[@]}" --default-tree-status "$tree_default"
+  python3 "$F/phyml_risk.py" --out "$OUT" --marker-map "${PHYML_MARKER_MAP:-$F/phyml_markers.tsv}"
 else
   python3 "$F/phyml.py" tree --out "$OUT" --skip-render --default-status not_requested
 fi

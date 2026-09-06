@@ -72,9 +72,9 @@ Core options:
       --mrlink2-ref-samples FILE  Sample table; default: sibling samples.txt.
       --shared-shell FILE  Shared 0phe.f.sh library.
       --r-bin FILE         Rscript executable.
-      --cores N            R worker count. Default: 4.
+      --cores N            R worker count. Default: 2.
       --memory-limit-gb N  Hard RAM cap for the complete LE8 process tree.
-                          Default: 64. Use 0 to disable the guard.
+                          Default: 32. Use 0 to disable the guard.
       --memory-swap-gb N   Additional swap cap under cgroup v2. Default: 4.
       --seed N             Random seed. Default: 2026.
       --gpu-coloc-bin FILE GPU-coloc executable. Default: gpu-coloc.
@@ -188,8 +188,8 @@ MRLINK2_REF_ID_DIR="${MRLINK2_REF_ID_DIR:-}"
 MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
 PHE_F=/mnt/d/scripts/0f/0phe.f.sh
 R_BIN=Rscript
-N_CORES=4
-LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-64}"
+N_CORES=2
+LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
 LE8_MEMORY_SWAP_GB="${LE8_MEMORY_SWAP_GB:-4}"
 SEED=2026
 GPU_COLOC_BIN=gpu-coloc
@@ -297,30 +297,26 @@ if (( LE8_MEMORY_LIMIT_GB > 0 )); then
       else
         memory_scope_status=$?
         if (( memory_scope_status == 137 )); then
-          echo "ERROR: LE8 was killed; it likely reached the ${LE8_MEMORY_LIMIT_GB} GiB cgroup memory limit." >&2
-          echo "       Reduce --cores or raise --memory-limit-gb before retrying." >&2
+          echo "ERROR: LE8 or its launcher received SIGKILL (exit 137); configured RAM cap: ${LE8_MEMORY_LIMIT_GB} GiB." >&2
+          echo "       Exit 137 alone cannot distinguish the cgroup limit, system-wide OOM, or an external kill." >&2
+          echo "       Check kernel logs: journalctl -k -b --no-pager -g 'oom-kill|Out of memory|Killed process'" >&2
+          echo "       After a WSL restart use -b -1. Reduce concurrent jobs; do not raise the cap without checking the cause." >&2
         fi
         exit "$memory_scope_status"
       fi
     fi
 
-    # Portable fallback for WSL distributions without a running user systemd
-    # manager.  It is weaker than a cgroup because the cap applies per process,
-    # but it still prevents a single R process from exhausting the whole VM.
-    memory_limit_kib=$((LE8_MEMORY_LIMIT_GB * 1024 * 1024))
-    if ulimit -v "$memory_limit_kib" 2>/dev/null; then
-      memory_limit_mode=per-process-ulimit
-      echo "WARNING: cgroup memory control is unavailable; using a ${LE8_MEMORY_LIMIT_GB} GiB per-process ulimit." >&2
-    else
-      echo "ERROR: unable to enforce the requested LE8 memory limit; refusing to run without a guard." >&2
-      exit 2
-    fi
+    # A per-process ulimit cannot enforce the requested process-tree budget:
+    # forked workers and external tools can collectively exhaust the WSL VM.
+    echo "ERROR: user systemd memory control is unavailable; refusing to run without a process-tree guard." >&2
+    echo "       Start the user systemd manager before retrying." >&2
+    exit 2
   fi
 fi
 export LE8_MEMORY_LIMIT_GB LE8_MEMORY_SWAP_GB
 
-# Forked R workers can each materialize large model frames. Four workers keep
-# concurrency bounded for the 440k-participant metabolomics scans;
+# Forked R workers can each materialize large model frames. Two workers reduce
+# peak memory for the 440k-participant metabolomics scans;
 # callers can still override this deliberately with N_CORES.
 export N_CORES
 export OMP_NUM_THREADS=1
@@ -507,8 +503,6 @@ preflight() {
   echo "  parallel workers: $N_CORES (OMP/BLAS threads per worker: $OMP_NUM_THREADS)"
   if [[ "$memory_limit_mode" == cgroup-v2 ]]; then
     echo "  memory guard: ${LE8_MEMORY_LIMIT_GB} GiB RAM + ${LE8_MEMORY_SWAP_GB} GiB swap (cgroup process tree)"
-  elif [[ "$memory_limit_mode" == per-process-ulimit ]]; then
-    echo "  memory guard: ${LE8_MEMORY_LIMIT_GB} GiB virtual memory per process (ulimit fallback)"
   else
     echo "  memory guard: disabled"
   fi

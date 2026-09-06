@@ -1,0 +1,17 @@
+locus_id	chr	pos	id	ref	alt	lineage	lineage_consensus	ancestral	lineage_reference_count	lineage_agreeing_reference_count	lineage_agreeing_references	outgroup_label	outgroup_called_copies	outgroup_archaic_allele_copies	outgroup_archaic_allele_frequency	nonoutgroup_called_copies	nonoutgroup_archaic_allele_copies	nonoutgroup_archaic_allele_frequency	archaic_differs_from_ancestral	diagnostic_site_pass	diagnostic_site_reason
+rs6525167	X	66204144	X:66204144:C:T	C	T	Denisovan	C	T	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	836	0.707874682472	1	1	pass
+rs6525167	X	66228389	X:66228389:A:T	A	T	Denisovan	T	A	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66229992	X:66229992:C:T	C	T	Denisovan	T	C	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66261436	X:66261436:T:C	T	C	Denisovan	C	T	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66264255	X:66264255:A:G	A	G	Denisovan	G	A	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66297194	X:66297194:T:C	T	C	Denisovan	C	T	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	837	0.708721422523	1	1	pass
+rs6525167	X	66317840	X:66317840:G:A	G	A	Denisovan	A	G	2	2	Denisova,Denisova25	YRI	52	0	0	1181	2	0.00169348010161	1	1	pass
+rs6525167	X	66335096	X:66335096:A:G	A	G	Denisovan	G	A	2	2	Denisova,Denisova25	YRI	52	2	0.0384615384615	1181	838	0.709568162574	1	1	pass
+rs6525167	X	66204144	X:66204144:C:T	C	T	Neanderthal	C	T	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	836	0.707874682472	1	1	pass
+rs6525167	X	66228389	X:66228389:A:T	A	T	Neanderthal	T	A	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66229992	X:66229992:C:T	C	T	Neanderthal	T	C	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66261436	X:66261436:T:C	T	C	Neanderthal	C	T	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66264255	X:66264255:A:G	A	G	Neanderthal	G	A	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	5	0.00423370025402	1	1	pass
+rs6525167	X	66297194	X:66297194:T:C	T	C	Neanderthal	C	T	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	837	0.708721422523	1	1	pass
+rs6525167	X	66317840	X:66317840:G:A	G	A	Neanderthal	A	G	3	3	Altai,Chagyr,Vindija	YRI	52	0	0	1181	2	0.00169348010161	1	1	pass
+rs6525167	X	66335096	X:66335096:A:G	A	G	Neanderthal	G	A	3	3	Altai,Chagyr,Vindija	YRI	52	2	0.0384615384615	1181	838	0.709568162574	1	1	pass

@@ -3,15 +3,15 @@
 set -eo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=f/target.sh
-source "$ROOT/f/target.sh"
+# shellcheck source=f/comm.sh
+source "$ROOT/f/comm.sh"
 [[ -s "$ROOT/gu.env" ]] && source "$ROOT/gu.env"
 ENV_NAME=${GU_ENV_NAME:-gu}
 SOFT=${GU_SOFT:-/mnt/d/software/gu}
 STATE=${GU_INSTALL_STATE:-$SOFT/.gu-install.state}
 YML=$ROOT/environment.yml
 IBDMIX_DIR=${IBDMIX_RUNTIME:-$SOFT/ibdmix}
-AS3_DIR=$ROOT/f/as3_upstream
+AS3_DIR=$ROOT/f/as3
 TRACE_DIR=${TRACE_RUNTIME:-$SOFT/trace}
 AS3_ENV_NAME=${AS3_ENV_NAME:-as3_mamba}
 AS3_PYTHON_VERSION=${AS3_PYTHON_VERSION:-3.9}
@@ -94,12 +94,12 @@ as3_python_path(){
 as3_env_ok(){
   local py
   py=$(as3_python_path) || return 1
-  AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3_health.py" >/dev/null 2>&1
+  AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3/gu_health.py" >/dev/null 2>&1
 }
 as3_health_report(){
   local py
   py=$(as3_python_path) || { echo "AS3 HEALTH ERROR: environment $AS3_ENV_NAME has no Python" >&2; return 1; }
-  AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3_health.py"
+  AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3/gu_health.py"
 }
 as3_repair_hdf5_abi(){
   local py=$1 built runtime
@@ -328,7 +328,7 @@ else
   cmake --build "$IBDMIX_DIR/build" --parallel "${GU_BUILD_JOBS:-4}"
 fi
 
-# AS3 inference source is vendored under f/as3_upstream; checkpoints live with
+# AS3 inference source is vendored under f/as3; checkpoints live with
 # the GRCh38 Ref1028 data.  No external AS3 checkout is read or updated.
 validate_bundled_as3_source
 if ! as3_env_ok; then

@@ -4,14 +4,12 @@ export PYTHONDONTWRITEBYTECODE=1
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 F=$ROOT/f
 GU_ORIGINAL_ARGS=("$@")
-# shellcheck source=f/regions.sh
-source "$F/regions.sh"
-# shellcheck source=f/target.sh
-source "$F/target.sh"
+# shellcheck source=f/comm.sh
+source "$F/comm.sh"
 [[ -s "$ROOT/gu.env" ]] && source "$ROOT/gu.env"
 
 
-# 🚩 Driver and CLI
+# 馃毄 Driver and CLI
 # Parse the complete driver before starting any long-running child process.
 # Keeping both the invocation and the final exit in one parsed command group
 # prevents a live process from reading newly appended/rearranged script bytes
@@ -25,9 +23,15 @@ Usage:
   ./gu.sh ibdmix [check] [--loci FILE | --chr LIST] [--grch 37|38] [options]
   ./gu.sh trace [extract|infer|segments] [--loci FILE | --chr LIST] [--grch 37|38] [options]
   ./gu.sh as3 [check] [--loci FILE | --chr LIST] [--grch 38] [options]
-  ./gu.sh normalize
+  ./gu.sh final
   ./gu.sh shiny
   ./gu.sh ukb inspect-hap|make-panel|batches|hap-vcf|hap-arg-vcf|inspect-typed
+
+Modules:
+  phyml, ibdmix, trace, as3  Analysis modules.
+  final                    Integrate analysis evidence into final tables and
+                           Shiny data for publication figures and tables.
+  shiny                    Launch the viewer for final outputs (not analysis).
 
 Region selection:
   --loci FILE   BED: chr, 0-based start, half-open end, optional ID in column 4.
@@ -41,8 +45,8 @@ Region selection:
                 analysis interval is wholly inside PAR1/PAR2 resolves to <PREFIX>XY;
                 missing chrXY, boundary-crossing, or mixed pure-X/PAR loci are errors.
                 Compressed .pvar.zst is auto-detected and read with PLINK2 'vzs'.
-  --auto-normalize TRUE|FALSE
-                Rebuild Shiny/SQLite after analysis [FALSE].
+  --auto-final TRUE|FALSE
+                Run final integration after analysis [FALSE].
 
 Method options:
   phyml:  --plot-phy TRUE|FALSE --replace-phyml TRUE|FALSE
@@ -85,7 +89,7 @@ Examples:
 
   ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/38/pfile/chr --jobs 4
 
-  ./gu.sh normalize
+  ./gu.sh final
   ./gu.sh shiny
 
   pgrep -af 'gu.sh (phyml|ibdmix|trace|as3)'
@@ -95,7 +99,7 @@ HELP
 
 case "${1:-help}" in help|-h|--help) usage; exit 0;; esac
 METHOD=$1; shift
-case "$METHOD" in phyml|ibdmix|trace|as3|normalize|shiny|ukb) ;; *) echo "ERROR: unknown method: $METHOD" >&2; usage >&2; exit 2;; esac
+case "$METHOD" in phyml|ibdmix|trace|as3|final|shiny|ukb) ;; *) echo "ERROR: unknown method: $METHOD" >&2; usage >&2; exit 2;; esac
 
 ACTION=""
 case "$METHOD" in
@@ -103,7 +107,7 @@ case "$METHOD" in
   ibdmix) valid_actions=' check ';;
   trace) valid_actions=' extract infer segments ';;
   as3) valid_actions=' check ';;
-  normalize) valid_actions=' ';;
+  final) valid_actions=' ';;
   shiny) valid_actions=' ';;
   ukb) valid_actions=' inspect-hap make-panel batches hap-vcf hap-arg-vcf inspect-typed ';;
 esac
@@ -141,7 +145,7 @@ REPLACE_AS3_INPUT=FALSE
 REPLACE_AS3_SET=0
 AS3_TARGET_CHUNK_SIZE_INPUT=${AS3_TARGET_CHUNK_SIZE:-64}
 AS3_TARGET_CHUNK_SIZE_SET=0
-AUTO_NORMALIZE_INPUT=FALSE
+AUTO_FINAL_INPUT=FALSE
 TRACE_LOCI_MODE_INPUT=posthoc
 TRACE_LOCI_MODE_SET=0
 PHYML_WINDOW_BP_INPUT=500000
@@ -191,7 +195,7 @@ while (( $# )); do
     --replace-trace) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --replace-trace requires TRUE or FALSE" >&2; exit 2; }; REPLACE_TRACE_INPUT=$2; REPLACE_TRACE_SET=1; shift 2;;
     --replace-as3) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --replace-as3 requires TRUE or FALSE" >&2; exit 2; }; REPLACE_AS3_INPUT=$2; REPLACE_AS3_SET=1; shift 2;;
     --as3-target-chunk-size) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --as3-target-chunk-size requires a positive integer" >&2; exit 2; }; AS3_TARGET_CHUNK_SIZE_INPUT=$2; AS3_TARGET_CHUNK_SIZE_SET=1; shift 2;;
-    --auto-normalize) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --auto-normalize requires TRUE or FALSE" >&2; exit 2; }; AUTO_NORMALIZE_INPUT=$2; shift 2;;
+    --auto-final) [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || { echo "ERROR: --auto-final requires TRUE or FALSE" >&2; exit 2; }; AUTO_FINAL_INPUT=$2; shift 2;;
     --trace-loci-mode) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --trace-loci-mode requires posthoc or extract" >&2; exit 2; }; TRACE_LOCI_MODE_INPUT=$2; TRACE_LOCI_MODE_SET=1; shift 2;;
     --phyml-window-bp) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --phyml-window-bp requires a positive integer" >&2; exit 2; }; PHYML_WINDOW_BP_INPUT=$2; PHYML_WINDOW_BP_SET=1; shift 2;;
     --phyml-jobs) [[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --phyml-jobs requires a positive integer" >&2; exit 2; }; PHYML_JOBS_INPUT=$2; PHYML_JOBS_SET=1; shift 2;;
@@ -260,7 +264,7 @@ REPLACE_PHYML_INPUT=$(gu_bool "$REPLACE_PHYML_INPUT") || { echo "ERROR: --replac
 REPLACE_IBDMIX_INPUT=$(gu_bool "$REPLACE_IBDMIX_INPUT") || { echo "ERROR: --replace-ibdmix must be TRUE or FALSE" >&2; exit 2; }
 REPLACE_TRACE_INPUT=$(gu_bool "$REPLACE_TRACE_INPUT") || { echo "ERROR: --replace-trace must be TRUE or FALSE" >&2; exit 2; }
 REPLACE_AS3_INPUT=$(gu_bool "$REPLACE_AS3_INPUT") || { echo "ERROR: --replace-as3 must be TRUE or FALSE" >&2; exit 2; }
-AUTO_NORMALIZE_INPUT=$(gu_bool "$AUTO_NORMALIZE_INPUT") || { echo "ERROR: --auto-normalize must be TRUE or FALSE" >&2; exit 2; }
+AUTO_FINAL_INPUT=$(gu_bool "$AUTO_FINAL_INPUT") || { echo "ERROR: --auto-final must be TRUE or FALSE" >&2; exit 2; }
 RUN_CMD_INPUT=$(gu_bool "$RUN_CMD_INPUT") || { echo "ERROR: --run-cmd must be TRUE or FALSE" >&2; exit 2; }
 FOREGROUND_INPUT=$(gu_bool "$FOREGROUND_INPUT") || { echo "ERROR: --foreground must be TRUE or FALSE" >&2; exit 2; }
 [[ $TRACE_LOCI_MODE_INPUT == posthoc || $TRACE_LOCI_MODE_INPUT == extract ]] || { echo "ERROR: --trace-loci-mode must be posthoc or extract" >&2; exit 2; }
@@ -274,8 +278,8 @@ awk -v x="$PHYML_LD_R2_INPUT" 'BEGIN{exit !(x ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)
 [[ -z $UKB_BATCH_SIZE_INPUT || $UKB_BATCH_SIZE_INPUT =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --ukb-batch-size must be a positive integer" >&2; exit 2; }
 [[ -z $UKB_ANCHORS_PER_GROUP_INPUT || $UKB_ANCHORS_PER_GROUP_INPUT =~ ^[0-9]+$ ]] || { echo "ERROR: --ukb-anchors-per-group must be a non-negative integer" >&2; exit 2; }
 
-GU_AUTO_NORMALIZE=0
-[[ $AUTO_NORMALIZE_INPUT == FALSE ]] || GU_AUTO_NORMALIZE=1
+GU_AUTO_FINAL=0
+[[ $AUTO_FINAL_INPUT == FALSE ]] || GU_AUTO_FINAL=1
 IBDMIX_REPLACE=0; [[ $REPLACE_IBDMIX_INPUT == FALSE ]] || IBDMIX_REPLACE=1
 TRACE_REPLACE=0; [[ $REPLACE_TRACE_INPUT == FALSE ]] || TRACE_REPLACE=1
 AS3_REPLACE=0; [[ $REPLACE_AS3_INPUT == FALSE ]] || AS3_REPLACE=1
@@ -288,7 +292,7 @@ PHYML_REGION_MODE=$PHYML_REGION_MODE_INPUT
 GU_RUN_CMD=$RUN_CMD_INPUT
 GU_FOREGROUND=$FOREGROUND_INPUT
 GU_UNIT_JOBS=$UNIT_JOBS_INPUT
-export GU_AUTO_NORMALIZE IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
+export GU_AUTO_FINAL IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
 export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_FOREGROUND GU_UNIT_JOBS
 if [[ $METHOD == phyml ]]; then
   PHYML_PLOT_PHY=$PLOT_PHY_INPUT
@@ -298,7 +302,7 @@ fi
 if (( ${#EXTRA[@]} )); then echo "ERROR: unknown $METHOD option: ${EXTRA[*]}" >&2; exit 2; fi
 
 
-# 🚩 Runtime environment
+# 馃毄 Runtime environment
 # Re-enter the general GU environment before creating request-scoped temporary
 # files.  Re-exec does not run EXIT traps, so doing this later would strand the
 # first process's region workspace.
@@ -345,7 +349,7 @@ else
 fi
 
 
-# 🚩 Target inputs
+# 馃毄 Target inputs
 # PFILE is the primary target format. Methods which require VCF receive a
 # single-run VCF under the analysis temporary directory.  AS3 is VCF-native, so it directly
 # reuses indexed chrN.vcf.gz inputs instead of needlessly round-tripping them
@@ -354,7 +358,7 @@ fi
 GU_TARGET_NATIVE_VCF_PREFIX=${GU_TARGET_NATIVE_VCF_PREFIX-$GU_TARGET_ROOT/vcf/chr}
 GU_TARGET_DIR=$GU_TARGET_GEN_PREFIX
 if [[ $METHOD == as3 ]]; then
-  AS3_RUNTIME=$F/as3_upstream
+  AS3_RUNTIME=$F/as3
   AS3_REFERENCE_PANEL_DIR=${AS3_REFERENCE_PANEL_DIR:-$GU_REF_ROOT/archaic/38/vcf}
   AS3_REFERENCE_MAP=${AS3_REFERENCE_MAP:-$AS3_REFERENCE_PANEL_DIR/Ref_Panel.map.txt}
   AS3_MASK_DIR=${AS3_MASK_DIR:-$GU_REF_ROOT/archaic/38/mask}
@@ -417,7 +421,7 @@ if [[ -n $LOCI_INPUT ]]; then
   GU_REGION_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gu-regions.XXXXXX")
   tmp_core="$GU_REGION_TMP_ROOT/.core.bed"; tmp_loci="$GU_REGION_TMP_ROOT/.analysis.bed"; tmp_map="$GU_REGION_TMP_ROOT/.map.tsv"
   gu_normalize_loci "$LOCI_INPUT" "$tmp_core"
-  GU_LOCI_FLANK_BP=$(python3 "$F/expand_loci.py" --input "$tmp_core" --output "$tmp_loci" --map "$tmp_map" --flank "$LOCI_FLANK_INPUT" --build "$GU_BUILD")
+  GU_LOCI_FLANK_BP=$(python3 "$F/comm.py" expand-loci --input "$tmp_core" --output "$tmp_loci" --map "$tmp_map" --flank "$LOCI_FLANK_INPUT" --build "$GU_BUILD")
   scope_key=$(gu_scope_id "$tmp_loci" "" "$LOCI_INPUT")
   scope_label=$(gu_scope_label "$tmp_loci" "" "$LOCI_INPUT")
   GU_LOCI_FILE="$GU_REGION_TMP_ROOT/$scope_key.bed"
@@ -458,7 +462,7 @@ if [[ $METHOD == trace ]]; then
     env GU_ARG_DIR="$trace_refgen_root" GU_ARG_METHOD="$trace_refgen_method" GU_ARG_FORMAT="$trace_refgen_format" \
       GU_TARGET_ROOT="$GU_TARGET_ROOT" GU_TARGET_VCF_DIR="$GU_TARGET_ROOT/vcf" \
       GU_TARGET_GEN_PREFIX="$GU_TARGET_GEN_PREFIX" GU_SAMPLE_PANEL="$GU_SAMPLE_PANEL" \
-      GU_BUILD="$GU_BUILD" GU_CHRS="$trace_precheck_chrs" bash "$F/arg.trace_check.sh" check
+      GU_BUILD="$GU_BUILD" GU_CHRS="$trace_precheck_chrs" bash "$F/arg.sh" trace_check check
     export GU_ARG_CHECKED=1
   fi
   for c in $trace_precheck_chrs; do
@@ -493,7 +497,7 @@ fi
 GU_TARGET_NAMESPACE=$GU_TARGET
 
 
-# 🚩 Command orchestration
+# 馃毄 Command orchestration
 # Command orchestration deliberately sits outside every method implementation.
 # Each worker re-enters gu.sh with exactly one native analysis unit, so the
 # method scripts and their scientific/output contracts remain unchanged.
@@ -570,7 +574,7 @@ gu_write_analysis_unit_cmd(){
   # A unit command is already the leaf worker. Keep it attached to the local
   # scheduler (or an HPC scheduler) instead of recursively launching itself.
   cmd_args+=(--foreground TRUE)
-  cmd_args+=(--auto-normalize FALSE)
+  cmd_args+=(--auto-final FALSE)
   [[ -z ${GU_SAMPLE_PANEL:-} ]] || cmd_args+=(--sample-panel "$GU_SAMPLE_PANEL")
 
   cmd=$out/$unit_label.cmd
@@ -694,7 +698,7 @@ gu_orchestrate_analysis_cmds(){
   fi
   echo "[GU CMD] run_cmd=TRUE mode=local jobs=$effective_jobs"
   gu_run_analysis_cmds_local "$list" "$effective_jobs"
-  if (( GU_AUTO_NORMALIZE )); then bash "$ROOT/gu.sh" normalize; fi
+  if (( GU_AUTO_FINAL )); then bash "$ROOT/gu.sh" final; fi
 }
 
 gu_launch_analysis_request_background(){
@@ -790,7 +794,7 @@ GU_TARGET_BUILD_FORMAT=""
 GU_CHECK_LOG=""
 
 
-# 🚩 Target validation
+# 馃毄 Target validation
 gu_check_log(){ printf '[GU CHECK] %s\n' "$*" | tee -a "$GU_CHECK_LOG"; }
 gu_check_fail(){ gu_check_log "ERROR: $*" >&2; exit 2; }
 gu_detect_target_chr(){
@@ -1057,7 +1061,7 @@ PHE_F=${PHE_F:-$ROOT/../0f/0phe.f.sh}
 source "$PHE_F"
 
 
-# 🚩 Genome-build validation
+# 馃毄 Genome-build validation
 # Use coordinate sentinels when pvars do not contain rsIDs.
 gu_check_grch_pvar_positions(){
   local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/phe/common/snp.lst}
@@ -1236,14 +1240,14 @@ AS3_OUT_OVERRIDE=${AS3_OUT:-}
 ensure_reference_callset_cache(){
   local -a cache_args=(--source "$AS3_PUBLISHED_CALLS_DIR" --cache "$AS3_REFERENCE_CALLSET_CACHE" --dataset-id "${AS3_REFERENCE_DATASET_ID:-AS3_1KG}")
   if python3 "$F/reference_callset_cache.py" check "${cache_args[@]}" --fast >/dev/null 2>&1; then
-    echo "[GU NORMALIZE] reference callset cache=ready: $AS3_REFERENCE_CALLSET_CACHE"
+    echo "[GU FINAL] reference callset cache=ready: $AS3_REFERENCE_CALLSET_CACHE"
     return 0
   fi
-  echo "[GU NORMALIZE] reference callset cache missing or invalid; preparing automatically"
+  echo "[GU FINAL] reference callset cache missing or invalid; preparing automatically"
   python3 "$F/reference_callset_cache.py" prepare "${cache_args[@]}"
 }
 
-refresh_normalized_outputs(){
+run_final(){
   local normalize_dir=${GU_NORMALIZE_DIR:-${GU_SHINY_DATA_DIR:-${GU_RSHINY_DIR:-$GU_ANALYSIS_ROOT/normalize}}}
   mkdir -p "$normalize_dir"
   local -a norm_args=(--analysis-root "$GU_ANALYSIS_ROOT" --output-dir "$normalize_dir" --database "${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}" --build "GRCh$GU_BUILD" --reciprocal-overlap "${GU_CATALOG_RECIP_OVERLAP:-0.5}")
@@ -1254,13 +1258,17 @@ refresh_normalized_outputs(){
   local pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}
   [[ ! -s $pop_panel ]] || norm_args+=(--sample-panel "$pop_panel")
   python3 "$F/normalize_results.py" "${norm_args[@]}"
+  local report_dir=${GU_PHYML_REPORT_DIR:-$(dirname "${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}")/review}
+  local -a report_args=(--normalize "$normalize_dir" --database "${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}" --output "$report_dir")
+  [[ -z ${LOCI_INPUT:-} ]] || report_args+=(--loci "$LOCI_INPUT")
+  python3 "$F/phyml_report.py" "${report_args[@]}"
 }
 
-maybe_refresh_normalized_outputs(){
-  case "${GU_AUTO_NORMALIZE:-0}" in
-    1) refresh_normalized_outputs ;;
-    0) echo "[GU NORMALIZE] deferred; run ./gu.sh normalize after all chromosome/batch jobs (use --auto-normalize TRUE to rebuild after each run)" ;;
-    *) echo "ERROR: internal auto-normalize state must be 0 or 1" >&2; return 2 ;;
+maybe_run_final(){
+  case "${GU_AUTO_FINAL:-0}" in
+    1) run_final ;;
+    0) echo "[GU FINAL] deferred; run ./gu.sh final after all chromosome/batch jobs (use --auto-final TRUE to rebuild after each run)" ;;
+    *) echo "ERROR: internal auto-final state must be 0 or 1" >&2; return 2 ;;
   esac
 }
 
@@ -1329,7 +1337,7 @@ gu_activate_locus(){
 }
 
 
-# 🚩 Analysis units
+# 馃毄 Analysis units
 # Group AS3 loci into one task per chromosome.
 gu_activate_loci_chr(){
   local chr=$1 base tmp label
@@ -1509,7 +1517,7 @@ run_as3_one(){
   export AS3_CLIP_LOCI_FILE
   local -a prep_args=(--reference-panel-dir "$AS3_REFERENCE_PANEL_DIR" --reference-map "$AS3_REFERENCE_MAP" --out "$AS3_DATA_OUT" --chr "$AS3_CHRS" --genome-build "b$GU_BUILD")
   if [[ $a == check ]]; then
-    bash "$F/as3_prep.sh" "${prep_args[@]}" --check-only || return
+    bash "$F/as3/gu_prep.sh" "${prep_args[@]}" --check-only || return
     (
       export GU_ACTION=as3_env_check AS3_DATA_IN="$AS3_DATA_OUT" AS3_RUNTIME
       bash "$F/as3.sh"
@@ -1518,7 +1526,7 @@ run_as3_one(){
   fi
   # Always re-enter preparation: it cheaply revalidates direct target/Ref1028
   # inputs and atomically refreshes the manifest when provenance changes.
-  bash "$F/as3_prep.sh" "${prep_args[@]}" || return
+  bash "$F/as3/gu_prep.sh" "${prep_args[@]}" || return
   (
     export GU_ACTION="as3_$a" AS3_DATA_IN="$AS3_DATA_OUT" AS3_RUNTIME
     bash "$F/as3.sh"
@@ -1526,15 +1534,15 @@ run_as3_one(){
 }
 
 
-# 🚩 Method dispatch
+# 馃毄 Method dispatch
 case "$METHOD" in
   phyml)
     run_per_analysis_unit run_phyml_one
-    [[ ${ACTION:-run} == check ]] || maybe_refresh_normalized_outputs
+    [[ ${ACTION:-run} == check ]] || maybe_run_final
     ;;
   ibdmix)
     run_per_analysis_unit run_ibdmix_one
-    [[ ${ACTION:-run} == check ]] || maybe_refresh_normalized_outputs
+    [[ ${ACTION:-run} == check ]] || maybe_run_final
     ;;
   trace)
     if [[ " $GU_REQUEST_CHRS " == *" X "* ]] && (( $(awk '{print NF}' <<< "$GU_REQUEST_CHRS") > 1 )); then
@@ -1547,7 +1555,7 @@ case "$METHOD" in
     else
       run_trace_request
     fi
-    if [[ ${ACTION:-run} == run || ${ACTION:-run} == infer || ${ACTION:-run} == segments ]]; then maybe_refresh_normalized_outputs; fi
+    if [[ ${ACTION:-run} == run || ${ACTION:-run} == infer || ${ACTION:-run} == segments ]]; then maybe_run_final; fi
     ;;
   as3)
     if [[ -n $GU_REQUEST_LOCI_FILE ]]; then
@@ -1555,12 +1563,12 @@ case "$METHOD" in
     else
       run_per_analysis_unit run_as3_one
     fi
-    if [[ ${ACTION:-run} == run ]]; then maybe_refresh_normalized_outputs; fi
+    if [[ ${ACTION:-run} == run ]]; then maybe_run_final; fi
     ;;
-  normalize) refresh_normalized_outputs ;;
+  final) run_final ;;
   shiny)
     export GU_SQLITE=${GU_SQLITE:-$GU_ANALYSIS_ROOT/gu.sqlite}
-    exec Rscript -e "shiny::runApp('$ROOT/shiny', host=Sys.getenv('GU_SHINY_HOST','127.0.0.1'), port=as.integer(Sys.getenv('GU_SHINY_PORT','3838')), launch.browser=interactive())"
+    exec Rscript --vanilla "$F/shiny.R"
     ;;
   ukb) exec bash "$F/prep_ukb.sh" "$ACTION" ;;
 esac

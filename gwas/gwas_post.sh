@@ -1,6 +1,11 @@
 #!/bin/bash
 # Clean GWAS Catalog statistics and prepare MAGMA/clump/COJO/PGS outputs.
 
+# New independent QC/LDSC modules live with the data utilities.
+case "${1:-}" in
+  compare|ldsc) exec bash "$(dirname "${BASH_SOURCE[0]}")/../0data/gwas_post.sh" "$@" ;;
+esac
+
 set -euo pipefail
 export LC_ALL=C
 
@@ -162,7 +167,7 @@ MAGMA options:
                           usable per-SNP N column, or falls back to gwas_N=100000
 
 Examples:
-  cd /mnt/d/scripts/0data
+  cd /mnt/d/scripts/gwas
 
   ./gwas_post.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small FALSE --run-cmd TRUE
 
@@ -428,9 +433,9 @@ fi
 [[ -z "$phef" ]] && phef="$dir0/scripts/0f/0phe.f.sh"
 [[ -z "$data_f" ]] && data_f="$dir0/scripts/0f/0data.f.sh"
 index_f="$dir0/scripts/0f/gwas_index.f.sh"
-perf_f="$dir0/scripts/0data/f/gwas_post_perf.f.sh"
+perf_f="${SCRIPT_PATH%/*}/f/gwas_post_perf.f.sh"
 [[ -z "$plot_f" ]] && plot_f="$dir0/scripts/0f/mplot.f.R"
-[[ -z "$mplot_r" ]] && mplot_r="$dir0/scripts/0data/f/gwas_post_mplot.R"
+[[ -z "$mplot_r" ]] && mplot_r="${SCRIPT_PATH%/*}/f/gwas_post_mplot.R"
 if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$dir0/files/glist.${grch}.bed"; fi
 [[ -z "$hm3" ]] && hm3="$dir0/data.BIG/refGen/hm3/hapmap3_r3.snp"
 [[ -z "$hm3_pos" ]] && hm3_pos="$dir0/data.BIG/refGen/hm3/hapmap3_r3_grch{grch}.snplist"

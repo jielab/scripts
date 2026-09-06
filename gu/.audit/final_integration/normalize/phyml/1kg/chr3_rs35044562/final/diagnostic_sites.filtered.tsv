@@ -1,0 +1,5 @@
+locus_id	chr	pos	id	ref	alt	lineage	lineage_consensus	ancestral	lineage_reference_count	lineage_agreeing_reference_count	lineage_agreeing_references	outgroup_label	outgroup_called_copies	outgroup_archaic_allele_copies	outgroup_archaic_allele_frequency	nonoutgroup_called_copies	nonoutgroup_archaic_allele_copies	nonoutgroup_archaic_allele_frequency	archaic_differs_from_ancestral	diagnostic_site_pass	diagnostic_site_reason
+rs35044562	3	45864732	rs10490770	T	C	Neanderthal	C	T	3	3	Altai,Chagyr,Vindija	YRI	216	0	0	4792	410	0.0855592654424	1	1	pass
+rs35044562	3	45889949	rs35731912	C	T	Neanderthal	T	C	3	3	Altai,Chagyr,Vindija	YRI	216	5	0.0231481481481	4792	449	0.0936978297162	1	1	pass
+rs35044562	3	45908116	rs13081482	A	T	Neanderthal	T	A	3	3	Altai,Chagyr,Vindija	YRI	216	0	0	4792	410	0.0855592654424	1	1	pass
+rs35044562	3	45909024	rs35044562	A	G	Neanderthal	G	A	3	3	Altai,Chagyr,Vindija	YRI	216	0	0	4792	410	0.0855592654424	1	1	pass

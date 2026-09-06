@@ -1,0 +1,34 @@
+2026-09-05 23:16:42 INFO     Bounded-memory threading enabled: one float64 posterior per site; ASMC batches <=16
+2026-09-05 23:16:42 INFO     Using sequence mode
+2026-09-05 23:16:42 INFO     Making HapData object
+2026-09-05 23:19:19 INFO     Hashing data is 5008 by 2054102
+2026-09-05 23:19:19 INFO     Making backup HapData object
+2026-09-05 23:22:09 INFO     Backup hashing data is 5008 by 2054102
+2026-09-05 23:22:09 INFO     DecodingParams:
+2026-09-05 23:22:09 INFO         foldData: True
+2026-09-05 23:22:09 INFO         usingCSFS: True
+2026-09-05 23:22:09 INFO         skipCSFSdistance: inf
+2026-09-05 23:22:09 INFO         compress: True
+2026-09-05 23:22:09 INFO         decodingMode: DecodingMode.sequenceFolded
+2026-09-05 23:22:09 INFO         useAncestral: False
+2026-09-05 23:22:09 INFO     Memory: 15839633408
+2026-09-05 23:22:09 INFO     Making ASMCDecoder
+Read 2504 samples.
+Read data for 5008 haploid samples and 2054102 markers, 0 of which are monomorphic. This job will focus on 5008 haploid samples.
+Using precomputed decoding info from /home/huangj/miniforge3/envs/grid/lib/python3.10/site-packages/arg_needle/resources/30-100-2000_CEU.decodingQuantities.gz
+Detected 16 float lanes and targeting AVX3_ZEN4
+Using expected coalescent times from /home/huangj/miniforge3/envs/grid/lib/python3.10/site-packages/arg_needle/resources/30-100-2000_CEU.decodingQuantities.gz
+2026-09-05 23:24:47 INFO     About to thread 4000 samples
+2026-09-05 23:24:47 INFO     Hashing parameters:
+2026-09-05 23:24:47 INFO       K for top K: 64
+2026-09-05 23:24:47 INFO       Word size: 16
+2026-09-05 23:24:47 INFO       Window cM size: 0.3
+2026-09-05 23:24:47 INFO       Tolerance: 1
+2026-09-05 23:24:47 INFO     Threading sample 1
+2026-09-05 23:24:47 INFO     Memory: 21465579520
+2026-09-05 23:24:47 INFO     Refining hashing on ID 1 using backup hasher
+2026-09-05 23:24:47 INFO     Selected hash results for 1:
+2026-09-05 23:24:47 INFO     Length = 923, middle = 461
+2026-09-05 23:24:47 INFO     (0, 319, [(0, 10.0)])
+2026-09-05 23:24:47 INFO     (1022016, 1023183, [(0, 10.0)])
+2026-09-05 23:24:47 INFO     (2049568, 2054101, [(0, 69.0)])

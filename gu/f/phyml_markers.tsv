@@ -1,0 +1,9 @@
+genome_build	marker_id	chr	pos	ref	alt	risk_allele	trait	source
+GRCh37	rs12405323	1	170418964	G	A	A	O shape	gu.b37.xlsx B3:B4; existing exact VCF record
+GRCh37	rs9349320	6	45269814	G	T	G	M shape	gu.b37.xlsx C3:C4; existing exact VCF record
+GRCh37	rs1041791	8	109112070	T	C	C	bald; U shape	gu.b37.xlsx D3:D4; existing exact VCF record
+GRCh37	rs417915	12	52842074	C	A	A	bald	gu.b37.xlsx E3:E4; existing exact VCF record
+GRCh37	rs6525167	X	66423003	G	A	A	bald; M shape; O shape	gu.b37.xlsx F3:F4; Ensembl GRCh37 variation/rs6525167; local X:66423003:G:A
+GRCh38	rs1041791	8	108099842	T	C	C	bald	Ensembl variation/rs1041791; bald.gz EA=C BETA=0.0407958
+GRCh38	rs417915	12	52448290	C	A	A	bald	Ensembl variation/rs417915; bald.gz EA=A BETA=0.0143388
+GRCh38	rs6525167	X	67203161	G	A	A	bald	Ensembl variation/rs6525167; bald.gz EA=A BETA=0.227762

@@ -1,0 +1,282 @@
+Sep 05 21:56:30 WIN-QNVME2PTKS9 unknown: WSL (378) ERROR: CheckConnection: getaddrinfo() failed: -3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: python3 invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: CPU: 9 PID: 293902 Comm: python3 Not tainted 6.6.87.2-microsoft-standard-WSL2 #1
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Call Trace:
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  <TASK>
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  dump_stack_lvl+0x4c/0x70
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  dump_stack+0x14/0x20
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  dump_header+0x51/0x260
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  oom_kill_process+0x100/0x1a0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  out_of_memory+0x11d/0x560
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  __alloc_pages_slowpath.constprop.0+0x88d/0xe80
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  __alloc_pages+0x31c/0x350
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  alloc_pages+0x98/0x160
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  folio_alloc+0x1a/0x40
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  filemap_alloc_folio+0xf9/0x100
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  __filemap_get_folio+0x152/0x2e0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  filemap_fault+0x177/0xc80
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  ? percpu_counter_add_batch+0x39/0xb0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  __do_fault+0x39/0x170
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  do_fault+0x2b5/0x570
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  __handle_mm_fault+0x751/0x840
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  handle_mm_fault+0xc7/0x2f0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  do_user_addr_fault+0x239/0x660
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  exc_page_fault+0x73/0x160
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  asm_exc_page_fault+0x2b/0x30
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: RIP: 0033:0x71f029817d40
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Code: Unable to access opcode bytes at 0x71f029817d16.
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: RSP: 002b:00007ffcc383cb38 EFLAGS: 00010246
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: RAX: 0000000000000000 RBX: 000060536cf54560 RCX: 0000000000000000
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: RDX: 00007ffcc383cbb0 RSI: 00007ffcc383cbc0 RDI: 000060536cf54560
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: RBP: 0000000000000000 R08: 000060536d4771bd R09: 0000000000008000
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: R10: 000060536d283e50 R11: 000060536d4771c4 R12: 00007ffcc383cbc0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: R13: 000060536d4771c4 R14: 000060536d11a918 R15: 000060536cf54560
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel:  </TASK>
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Mem-Info:
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: active_anon:617373 inactive_anon:17592667 isolated_anon:0
+                                         active_file:0 inactive_file:265 isolated_file:0
+                                         unevictable:0 dirty:0 writeback:2
+                                         slab_reclaimable:18365 slab_unreclaimable:42007
+                                         mapped:736 shmem:819 pagetables:50214
+                                         sec_pagetables:0 bounce:0
+                                         kernel_misc_reclaimable:0
+                                         free:79441 free_pcp:110 free_cma:0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 active_anon:2469492kB inactive_anon:70370668kB active_file:0kB inactive_file:32kB unevictable:0kB isolated(anon):0kB isolated(file):0kB mapped:2944kB dirty:0kB writeback:8kB shmem:3276kB shmem_thp:0kB shmem_pmdmapped:0kB anon_thp:0kB writeback_tmp:0kB kernel_stack:9360kB pagetables:200856kB sec_pagetables:0kB all_unreclaimable? no
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 DMA32 free:276128kB boost:0kB min:2428kB low:6420kB high:10412kB reserved_highatomic:0KB active_anon:0kB inactive_anon:3707920kB active_file:0kB inactive_file:0kB unevictable:0kB writepending:0kB present:4061820kB managed:3995648kB mlocked:0kB bounce:0kB free_pcp:0kB local_pcp:0kB free_cma:0kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: lowmem_reserve[]: 0 68452 68452 68452
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 Normal free:41636kB boost:0kB min:42624kB low:112716kB high:182808kB reserved_highatomic:0KB active_anon:2469492kB inactive_anon:66662748kB active_file:0kB inactive_file:32kB unevictable:0kB writepending:8kB present:71434240kB managed:70103124kB mlocked:0kB bounce:0kB free_pcp:440kB local_pcp:0kB free_cma:0kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: lowmem_reserve[]: 0 0 0 0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 DMA32: 6*4kB (UM) 4*8kB (UM) 6*16kB (UM) 6*32kB (UM) 7*64kB (UM) 8*128kB (UM) 2*256kB (U) 1*512kB (M) 3*1024kB (M) 2*2048kB (M) 65*4096kB (M) = 276248kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 Normal: 384*4kB (ME) 548*8kB (UME) 125*16kB (UME) 322*32kB (UME) 154*64kB (UME) 29*128kB (UME) 0*256kB 0*512kB 0*1024kB 1*2048kB (M) 2*4096kB (M) = 42032kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 hugepages_total=0 hugepages_free=0 hugepages_surp=0 hugepages_size=1048576kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Node 0 hugepages_total=0 hugepages_free=0 hugepages_surp=0 hugepages_size=2048kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 25566 total pagecache pages
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 24452 pages in swap cache
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Free swap  = 0kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Total swap = 18874368kB
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 18874015 pages RAM
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 0 pages HighMem/MovableOnly
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 349322 pages reserved
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: 0 pages hwpoisoned
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Tasks state (memory values in pages):
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    362]     0   362      778      128    45056        0             0 DebugShell
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    365]     0   365     1396      128    53248        0             0 agetty
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    371]   999   371     1073      512    53248        0             0 chronyd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    378]     0   378      818      576    45056        0             0 GnsEngine
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    435]     0   435      823      448    45056        0             0 init
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    438]     0   438      745      384    45056        0             0 init
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    439]     0   439      780      512    45056        0             0 init()
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    445]     0   445     5432     1083    94208      128             0 systemd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    446]     0   446      780      448    40960        0             0 init-systemd(Ub
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    454]     0   454    29536      256    86016        0             0 WSLGd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    459]  1000   459   245412     6337   425984        0             0 weston
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    467]     0   467      780      448    45056        0             0 init
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    505]     0   505    16707      382   106496        0          -250 systemd-journal
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    563]     0   563     6253      704    73728        0         -1000 systemd-udevd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    657]   991   657     5335      832    81920        0             0 systemd-resolve
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    661]   996   661    22758      384    86016        0             0 systemd-timesyn
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    671]     0   671     1059      192    53248        0             0 cron
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    672]   101   672     2399      320    61440        0          -900 dbus-daemon
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    679]     0   679     4494      384    77824        0             0 systemd-logind
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    689]     0   689      790      192    49152        0             0 agetty
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    693]   102   693    55628      448    98304        0             0 rsyslogd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    703]     0   703      779      192    49152        0             0 agetty
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    734]     0   734    26762     2816   110592        0             0 unattended-upgr
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    805]     0   805      781      192    40960        0             0 SessionLeader
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    806]     0   806      785      192    40960        0             0 Relay(315)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    807]  1000   807     1786      320    65536      640             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    808]     0   808     1706      192    57344      128             0 login
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    860]  1000   860     5128      832    86016        0           100 systemd
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    861]  1000   861     5291      559    77824       64           100 (sd-pam)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    887]  1000   887   111440     7672   438272     3328             0 Xwayland
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [    891]  1000   891     1754      896    61440        0             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1257]  1000  1257      747      512    45056        0             0 init
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1258]  1000  1258     2404      320    61440        0             0 dbus-daemon
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1259]  1000  1259    58835      576    98304        0             0 pulseaudio
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1263]  1000  1263     2371      128    57344        0             0 dbus-daemon
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1337]  1000  1337     2325      320    61440        0           200 dbus-daemon
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1699]  1000  1699     1255      512    49152       64             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1820]  1000  1820     1222      338    49152        0             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1821]  1000  1821      675      192    45056        0             0 sleep
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1822]  1000  1822   678141      640   819200    50112             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1886]  1000  1886  7661604    60919  6594560   457664             0 java
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1917]     0  1917      781      192    40960        0             0 SessionLeader
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1920]     0  1920      785      192    40960        0             0 Relay(1373)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   1936]  1000  1936     1786      384    57344      576             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   5297]     0  5297      781      192    40960        0             0 SessionLeader
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   5307]     0  5307      785      192    40960        0             0 Relay(4745)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [   5318]  1000  5318     1786      384    57344      640             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [  87281]  1000 87281     1222      384    45056       64             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [  87288]  1000 87288     1684      320    61440      512             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [  88416]  1000 88416  5426597  4438873 43352064   951296             0 R
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [  88417]  1000 88417      784      128    49152        0             0 tee
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 106935]     0 106935      781      192    40960        0             0 SessionLeader
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 106937]     0 106937      785      192    40960        0             0 Relay(106169)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 106939]  1000 106939     1786      320    53248      640             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158609]  1000 158609     1453      448    57344      256             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158614]  1000 158614     1453      308    57344      256             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158621]  1000 158621     1486      384    57344      320             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158622]  1000 158622      784      128    49152        0             0 tee
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158625]  1000 158625     1486      212    57344      320             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158651]  1000 158651     1519      384    61440      320             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 158654]  1000 158654     1780      348    61440      512             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 160703]  1000 160703      790       64    49152        0             0 tail
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 195868]     0 195868      781      192    40960        0             0 SessionLeader
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 195870]     0 195870      785      192    40960        0             0 Relay(194482)
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 195872]  1000 195872     1786      320    57344      640             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293797]  1000 293797     1651      382    61440      384             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293798]  1000 293798     1651      446    61440      320             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293799]  1000 293799     1651      382    61440      384             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293800]  1000 293800     1651      446    61440      384             0 bash
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293872]  1000 293872   106805      811   503808    15680             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293882]  1000 293882   106802      775   503808    15680             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293892]  1000 293892   106809      948   495616    15680             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293899]  1000 293899   106798      944   495616    15744             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293901]  1000 293901  4260187  3287466 33804288   656512             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293902]  1000 293902  4264057  2988369 33820672   983296             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293903]  1000 293903  3978546  3192405 31539200   660480             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: [ 293908]  1000 293908  6298401  4199791 49999872   881472             0 python3
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/run-r11d6a873143347b5ae75727f2501e39a.scope,task=R,pid=88416,uid=1000
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Out of memory: Killed process 88416 (R) total-vm:21706388kB, anon-rss:17752676kB, file-rss:2816kB, shmem-rss:0kB, UID:1000 pgtables:42336kB oom_score_adj:0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Tasks in /user.slice/user-1000.slice/user@1000.service/app.slice/run-r11d6a873143347b5ae75727f2501e39a.scope are going to be killed due to memory.oom.group set
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Out of memory: Killed process 87288 (bash) total-vm:6736kB, anon-rss:0kB, file-rss:1280kB, shmem-rss:0kB, UID:1000 pgtables:60kB oom_score_adj:0
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Out of memory: OOM victim 88416 (R) is already exiting. Skip killing the task
+Sep 05 21:56:30 WIN-QNVME2PTKS9 kernel: Out of memory: Killed process 88417 (tee) total-vm:3136kB, anon-rss:0kB, file-rss:512kB, shmem-rss:0kB, UID:1000 pgtables:48kB oom_score_adj:0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: python3 invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: CPU: 15 PID: 293903 Comm: python3 Not tainted 6.6.87.2-microsoft-standard-WSL2 #1
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Call Trace:
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  <TASK>
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  dump_stack_lvl+0x4c/0x70
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  dump_stack+0x14/0x20
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  dump_header+0x51/0x260
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  oom_kill_process+0x100/0x1a0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  out_of_memory+0x11d/0x560
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  __alloc_pages_slowpath.constprop.0+0x88d/0xe80
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  __alloc_pages+0x31c/0x350
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  alloc_pages+0x98/0x160
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  folio_alloc+0x1a/0x40
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  filemap_alloc_folio+0xf9/0x100
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  __filemap_get_folio+0x152/0x2e0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  filemap_fault+0x177/0xc80
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  ? percpu_counter_add_batch+0x39/0xb0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  __do_fault+0x39/0x170
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  do_fault+0x2b5/0x570
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  __handle_mm_fault+0x751/0x840
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  handle_mm_fault+0xc7/0x2f0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  do_user_addr_fault+0x239/0x660
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  exc_page_fault+0x73/0x160
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  asm_exc_page_fault+0x2b/0x30
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: RIP: 0033:0x72f2604489d0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Code: Unable to access opcode bytes at 0x72f2604489a6.
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: RSP: 002b:00007ffc470bf9f8 EFLAGS: 00010202
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: RAX: 000000000000012a RBX: 000000000000271c RCX: 0000000000000250
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: RDX: 0000000000000000 RSI: 000000000000271c RDI: 000061ac4d006110
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: RBP: 0000000000000001 R08: 000072f274403088 R09: 000072f2744030a0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: R10: 0000000000000001 R11: 0000000000000003 R12: 000000000000012a
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: R13: 000061ac4d006110 R14: 0000000000000011 R15: 00000000000158b3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel:  </TASK>
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Mem-Info:
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: active_anon:135145 inactive_anon:18075378 isolated_anon:0
+                                         active_file:385 inactive_file:0 isolated_file:0
+                                         unevictable:0 dirty:4 writeback:4
+                                         slab_reclaimable:17696 slab_unreclaimable:42077
+                                         mapped:337 shmem:800 pagetables:51444
+                                         sec_pagetables:0 bounce:0
+                                         kernel_misc_reclaimable:0
+                                         free:79483 free_pcp:8 free_cma:0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 active_anon:540580kB inactive_anon:72301512kB active_file:1540kB inactive_file:0kB unevictable:0kB isolated(anon):0kB isolated(file):0kB mapped:1348kB dirty:16kB writeback:16kB shmem:3200kB shmem_thp:0kB shmem_pmdmapped:0kB anon_thp:4618240kB writeback_tmp:0kB kernel_stack:9264kB pagetables:205776kB sec_pagetables:0kB all_unreclaimable? yes
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 DMA32 free:276236kB boost:0kB min:2428kB low:6420kB high:10412kB reserved_highatomic:0KB active_anon:0kB inactive_anon:3707932kB active_file:0kB inactive_file:0kB unevictable:0kB writepending:0kB present:4061820kB managed:3995648kB mlocked:0kB bounce:0kB free_pcp:0kB local_pcp:0kB free_cma:0kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: lowmem_reserve[]: 0 68452 68452 68452
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 Normal free:41696kB boost:0kB min:42624kB low:112716kB high:182808kB reserved_highatomic:0KB active_anon:540580kB inactive_anon:68593580kB active_file:936kB inactive_file:0kB unevictable:0kB writepending:32kB present:71434240kB managed:70103124kB mlocked:0kB bounce:0kB free_pcp:32kB local_pcp:0kB free_cma:0kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: lowmem_reserve[]: 0 0 0 0
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 DMA32: 5*4kB (UM) 3*8kB (U) 6*16kB (UM) 6*32kB (UM) 7*64kB (UM) 8*128kB (UM) 2*256kB (U) 1*512kB (M) 3*1024kB (M) 2*2048kB (M) 65*4096kB (M) = 276236kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 Normal: 266*4kB (UME) 409*8kB (UME) 200*16kB (UME) 510*32kB (UME) 190*64kB (UME) 36*128kB (UME) 5*256kB (UM) 0*512kB 0*1024kB 0*2048kB 0*4096kB = 41904kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 hugepages_total=0 hugepages_free=0 hugepages_surp=0 hugepages_size=1048576kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Node 0 hugepages_total=0 hugepages_free=0 hugepages_surp=0 hugepages_size=2048kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 14073 total pagecache pages
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 13434 pages in swap cache
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Free swap  = 0kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Total swap = 18874368kB
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 18874015 pages RAM
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 0 pages HighMem/MovableOnly
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 349322 pages reserved
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: 0 pages hwpoisoned
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Tasks state (memory values in pages):
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    362]     0   362      778      128    45056        0             0 DebugShell
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    365]     0   365     1396      128    53248        0             0 agetty
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    371]   999   371     1073      512    53248        0             0 chronyd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    378]     0   378      818      576    45056        0             0 GnsEngine
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    435]     0   435      821      448    45056        0             0 init
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    438]     0   438      745      384    45056        0             0 init
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    439]     0   439      780      512    45056        0             0 init()
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    445]     0   445     5400     1019    94208      128             0 systemd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    446]     0   446      780      448    40960        0             0 init-systemd(Ub
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    454]     0   454    29536      256    86016        0             0 WSLGd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    459]  1000   459   245412     6337   425984        0             0 weston
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    467]     0   467      780      448    45056        0             0 init
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    505]     0   505    16707      318   106496       64          -250 systemd-journal
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    563]     0   563     6253      704    73728        0         -1000 systemd-udevd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    657]   991   657     5335      832    81920        0             0 systemd-resolve
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    661]   996   661    22758      448    86016        0             0 systemd-timesyn
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    671]     0   671     1059      192    53248        0             0 cron
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    672]   101   672     2399      320    61440        0          -900 dbus-daemon
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    679]     0   679     4494      384    77824        0             0 systemd-logind
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    689]     0   689      790      192    49152        0             0 agetty
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    693]   102   693    55628      320    98304        0             0 rsyslogd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    703]     0   703      779      192    49152        0             0 agetty
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    734]     0   734    26762     2624   110592      192             0 unattended-upgr
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    805]     0   805      781      192    40960        0             0 SessionLeader
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    806]     0   806      785      192    40960        0             0 Relay(315)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    807]  1000   807     1786      320    65536      640             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    808]     0   808     1706      192    57344      128             0 login
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    860]  1000   860     5128      832    86016        0           100 systemd
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    861]  1000   861     5291      495    77824      128           100 (sd-pam)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    887]  1000   887   111440     7096   438272     3904             0 Xwayland
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [    891]  1000   891     1754      896    61440        0             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1257]  1000  1257      747      512    45056        0             0 init
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1258]  1000  1258     2404      320    61440        0             0 dbus-daemon
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1259]  1000  1259    58835      576    98304        0             0 pulseaudio
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1263]  1000  1263     2371      128    57344        0             0 dbus-daemon
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1337]  1000  1337     2325      320    61440        0           200 dbus-daemon
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1699]  1000  1699     1255      512    49152       64             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1820]  1000  1820     1222      338    49152        0             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1821]  1000  1821      675      192    45056        0             0 sleep
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1822]  1000  1822   678141      704   819200    50112             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1886]  1000  1886  7645220    61943  6463488   442832             0 java
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1917]     0  1917      781      192    40960        0             0 SessionLeader
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1920]     0  1920      785      192    40960        0             0 Relay(1373)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   1936]  1000  1936     1786      384    57344      576             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   5297]     0  5297      781      192    40960        0             0 SessionLeader
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   5307]     0  5307      785      192    40960        0             0 Relay(4745)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [   5318]  1000  5318     1786      448    57344      512             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 106935]     0 106935      781      192    40960        0             0 SessionLeader
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 106937]     0 106937      785      192    40960        0             0 Relay(106169)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 106939]  1000 106939     1786      320    53248      640             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158609]  1000 158609     1453      448    57344      256             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158614]  1000 158614     1453      308    57344      256             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158621]  1000 158621     1486      384    57344      320             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158622]  1000 158622      784      128    49152        0             0 tee
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158625]  1000 158625     1486      212    57344      320             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158651]  1000 158651     1519      384    61440      320             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 158654]  1000 158654     1780      348    61440      512             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 160703]  1000 160703      790       64    49152        0             0 tail
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 195868]     0 195868      781      192    40960        0             0 SessionLeader
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 195870]     0 195870      785      192    40960        0             0 Relay(194482)
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 195872]  1000 195872     1786      320    57344      640             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293797]  1000 293797     1651      382    61440      384             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293798]  1000 293798     1651      446    61440      320             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293799]  1000 293799     1651      382    61440      384             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293800]  1000 293800     1651      446    61440      384             0 bash
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293872]  1000 293872   106805      747   503808    15680             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293882]  1000 293882   106802      647   503808    15680             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293892]  1000 293892   106809      884   495616    15680             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293899]  1000 293899   106798      816   495616    15744             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293901]  1000 293901 35924343  5164724 52006912  1045056             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293902]  1000 293902  5050715  3699330 40124416  1059072             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293903]  1000 293903  5154094  4005967 40960000  1022400             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: [ 293908]  1000 293908  8184357  5247343 65101824  1021184             0 python3
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/init.scope,task=python3,pid=293908,uid=1000
+Sep 05 21:58:13 WIN-QNVME2PTKS9 kernel: Out of memory: Killed process 293908 (python3) total-vm:32737428kB, anon-rss:20987580kB, file-rss:1792kB, shmem-rss:0kB, UID:1000 pgtables:63576kB oom_score_adj:0
+Sep 05 21:58:15 WIN-QNVME2PTKS9 kernel: oom_reaper: reaped process 293908 (python3), now anon-rss:3388kB, file-rss:1792kB, shmem-rss:0kB

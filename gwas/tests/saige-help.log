@@ -1,0 +1,71 @@
+Loading required package: optparse
+R version 4.4.3 (2025-02-28)
+Platform: x86_64-conda-linux-gnu
+Running under: Ubuntu 24.04.4 LTS
+
+Matrix products: default
+BLAS/LAPACK: /home/huangj/anaconda3/envs/saige/lib/libopenblasp-r0.3.34.so;  LAPACK version 3.12.0
+
+locale:
+ [1] LC_CTYPE=C.UTF-8       LC_NUMERIC=C           LC_TIME=C.UTF-8       
+ [4] LC_COLLATE=C.UTF-8     LC_MONETARY=C.UTF-8    LC_MESSAGES=C.UTF-8   
+ [7] LC_PAPER=C.UTF-8       LC_NAME=C              LC_ADDRESS=C          
+[10] LC_TELEPHONE=C         LC_MEASUREMENT=C.UTF-8 LC_IDENTIFICATION=C   
+
+time zone: Asia/Shanghai
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] optparse_1.8.2 SAIGE_1.3.1   
+
+loaded via a namespace (and not attached):
+[1] compiler_4.4.3      Matrix_1.7-6        tools_4.4.3        
+[4] Rcpp_1.1.2          grid_4.4.3          data.table_1.18.6.1
+[7] RcppParallel_5.1.9  lattice_0.23-1     
+Usage: /home/huangj/anaconda3/envs/saige/bin/createSparseGRM.R [options]
+
+
+Options:
+	--plinkFile=PLINKFILE
+		path to plink file for creating the genetic relationship matrix (GRM)
+
+	--bedFile=BEDFILE
+		Path to bed file. If plinkFile is specified, 'plinkFile'.bed will be used
+
+	--bimFile=BIMFILE
+		Path to bim file. If plinkFile is specified, 'plinkFile'.bim will be used
+
+	--famFile=FAMFILE
+		Path to fam file. If plinkFile is specified, 'plinkFile'.fam will be used
+
+	--nThreads=NTHREADS
+		Number of threads (CPUs) to use
+
+	--memoryChunk=MEMORYCHUNK
+		The size (Gb) for each memory chunk. By default, 2
+
+	--outputPrefix=OUTPUTPREFIX
+		path and prefix to the output files [default='~/']
+
+	--numRandomMarkerforSparseKin=NUMRANDOMMARKERFORSPARSEKIN
+		number of randomly selected markers to be used to identify related samples for sparse GRM [default=2000]
+
+	--relatednessCutoff=RELATEDNESSCUTOFF
+		The threshold to treat two samples as unrelated if IsSparseKin is TRUE [default=0.125]
+
+	--isDiagofKinSetAsOne=ISDIAGOFKINSETASONE
+		Whether to set the diagnal elements in GRM to be 1 [default='FALSE'].
+
+	--minMAFforGRM=MINMAFFORGRM
+		minimum MAF of markers used for GRM
+
+	--maxMissingRateforGRM=MAXMISSINGRATEFORGRM
+		Optional. Maximum missing rate of markers used for GRM
+
+	-h, --help
+		Show this help message and exit
+
+

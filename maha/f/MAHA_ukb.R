@@ -11,7 +11,8 @@ maha_outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(dir0, "analysis", "ma
   file.path(.helper_dir, "assoc.f.R"),
   file.path(.helper_dir, "pred.f.R"),
   file.path(.helper_dir, "plot.f.R"),
-  file.path(.this_dir, "comm.f.R")
+  file.path(.this_dir, "comm.f.R"),
+  file.path(.this_dir, "ukb_followup.R")
 )
 .bootstrap_missing <- .bootstrap_files[!file.exists(.bootstrap_files)]
 if (length(.bootstrap_missing)) {
@@ -25,6 +26,7 @@ if (length(.bootstrap_missing)) {
 pacman::p_load(writexl, tidyverse, survival, flextable, patchwork, gtsummary, broom, cowplot)
 invisible(lapply(c("0phe.f.R", "assoc.f.R", "pred.f.R", "plot.f.R"), function(f) source(file.path(.helper_dir, f))))
 source(file.path(.this_dir, "comm.f.R"))
+source(file.path(.this_dir, "ukb_followup.R"))
 
 cohort_prefix <- "ukb"
 maha_auxdir <- Sys.getenv("MAHA_AUXDIR", unset = file.path(maha_outdir, cohort_prefix))
@@ -68,7 +70,9 @@ diet.q5.cols <- paste0("diet.", names(diet.lst), ".q5")
 diet.s100_q5.cols <- paste0("diet.", names(diet.lst), ".s100_q5")
 diet.order <- c("MEDI-Touch", "MEDI", "DASH", "MIND", "hPDI", "AHEI", "PHDI", "MODERN", "DIGM", maha_label)
 
-covs <- c("age", "sex.f", "center", "tdi", "PC1", "PC2", "bmi.pts", "bp.pts", "nonhdl.pts", "smoke.pts", "pa.pts", "sleep.pts")
+covs <- c("age.landmark", "sex.f", "center", "tdi", "PC1", "PC2", "bmi.pts", "bp.pts", "nonhdl.pts", "smoke.pts", "pa.pts", "sleep.pts")
+vars.risk <- c("age.landmark", "sex", "tdi", "PC1", "PC2")
+
 diet.inc <- c(maha_ref, "dash", "mind", "medi24")
 diet.inc.pts <- paste0("diet.", diet.inc, ".pts")
 diet.inc.s100 <- paste0("diet.", diet.inc, ".s100")
@@ -105,7 +109,7 @@ make_phewas_panel <- function(diet_name, show_x = TRUE) {
 	d <- res %>% filter(Diet == diet_name) %>% left_join(phewas_xmap, by = c("category", "phenotype"))
 	lab_d <- d %>% filter(is.finite(logp)) %>% slice_max(logp, n = 12, with_ties = FALSE)
 	panel_title <- recode(diet_name, MAHA = "a. MAHA PheWAS", DASH = "b. DASH PheWAS", .default = diet_name)
-	ggplot(d, aes(phe_x, logp, color = category)) +
+	ggplot(d, aes(phe_x, logp_display, color = category)) +
 		geom_point(size = 0.85, alpha = 0.85) +
 		geom_hline(yintercept = bonf_line, color = "#F2A3A3", linewidth = 0.35) +
 		ggrepel::geom_text_repel(
@@ -120,7 +124,7 @@ make_phewas_panel <- function(diet_name, show_x = TRUE) {
 			labels = phewas_centers$category,
 			expand = expansion(mult = c(0.01, 0.01))
 		) +
-		labs(title = panel_title, x = if (show_x) "Phenotypes" else NULL, y = expression(-log[10](italic(p)))) +
+		labs(title = panel_title, x = if (show_x) "Phenotypes" else NULL, y = "-log10(P); display cap 50") +
 		theme_bw(base_size = 9) +
 		theme(
 			plot.title = element_text(hjust = 0.5, face = "bold", size = 11),
@@ -250,7 +254,15 @@ extract_joint_risk <- function(dat1, Y_time, Y_event, Xfacet, Xline, covs, times
 			risk_upper_pct = 100 * risk_upper
 		) %>%
 		dplyr::select(Panel, Outcome, Facet_var, Facet_group, Line_var, Line_group, time, N, Events, risk, risk_lower, risk_upper, risk_pct, risk_lower_pct, risk_upper_pct)
-	res
+	res$N_model <- nrow(d)
+  res$Events_model <- sum(d[[Y_event]])
+  res$adjustment <- paste(covs2, collapse = "; ")
+  res$model <- "Cox; DASH + MAHA (no interaction)"
+  res$prediction <- "Fixed profile: numeric means; categorical modes in model sample"
+  res$covariate_profile <- paste(paste0(covs2, "=", vapply(nd[1, covs2, drop = FALSE], as.character, character(1))), collapse = "; ")
+  res$time_origin <- "End of all recorded WebQ assessments (or enrolment if later)"
+  res$N_complete9 <- sum(d$maha_n_components == 9)
+  res
 }
 
 ap_effect_from_assoc <- function(assoc_tbl, source_label, margins = c(1.05, 1.075, 1.10), priors = c(1.05, 1.10, 1.20)) {
@@ -615,7 +627,14 @@ run_joint_risk_one <- function(dat, Y, covs, t0 = 10) {
 	d2 <- dat %>% transmute(time = .data[[paste0(Y, ".t2e")]], event = .data[[paste0(Y, ".Yt2e")]], across(all_of(covs)), dash = factor(diet.dash.3c, levels = c("low", "middle", "high")), maha = factor(.data[[maha_3c]], levels = c("low", "middle", "high"))) %>% drop_na()
 	fit <- coxph(Surv(time, event) ~ dash * maha + ., data = d2 %>% dplyr::select(time, event, dash, maha, all_of(covs)))
 	nd <- crossing(dash = factor(c("low", "middle", "high"), levels = c("low", "middle", "high")), maha = factor(c("low", "middle", "high"), levels = c("low", "middle", "high"))); for (v in covs) nd[[v]] <- make_typical_value(d2[[v]]); stopifnot(!anyNA(nd))
-	bind_rows(lapply(seq_len(nrow(nd)), function(i) { ss <- summary(survfit(fit, newdata = nd[i, , drop = FALSE]), times = t0, extend = TRUE); data.frame(Y = Y, dash = as.character(nd$dash[i]), maha = as.character(nd$maha[i]), risk10 = round(100 * (1 - ss$surv), 2)) }))
+	bind_rows(lapply(seq_len(nrow(nd)), function(i) { ss <- summary(survfit(fit, newdata = nd[i, , drop = FALSE]), times = t0, extend = TRUE); data.frame(Y = Y, dash = as.character(nd$dash[i]), maha = as.character(nd$maha[i]), risk10 = 100 * (1 - ss$surv),
+      N_model = nrow(d2), Events_model = sum(d2$event),
+      N_group = sum(d2$dash == nd$dash[i] & d2$maha == nd$maha[i]),
+      Events_group = sum(d2$event[d2$dash == nd$dash[i] & d2$maha == nd$maha[i]]),
+      adjustment = paste(covs, collapse = "; "), model = "Cox; DASH * MAHA interaction",
+      prediction = "Fixed profile: numeric means; categorical modes in model sample",
+      covariate_profile = paste(paste0(covs, "=", vapply(nd[i, covs, drop = FALSE], as.character, character(1))), collapse = "; "),
+      time_origin = "End of all recorded WebQ assessments (or enrolment if later)") }))
 }
 
 plot_joint_heat <- function(d, ttl) {
@@ -879,6 +898,7 @@ ukb_required_inputs <- c(
   foods_dictionary = file.path(dir0, "files", "foods.xlsx"),
   diet_dictionary = file.path(indir, "common", "diet.lst"),
   diet_raw_rds = file.path(indir, "Rdata", "diet0.rds"),
+  phewas_rds = file.path(indir, "Rdata", "PheWAS.rds"),
   diet_fudan_rds = file.path(indir, "Rdata", "diet.fudan.rds")
 )
 cat("\n[UKB INPUT CHECK] Required analysis inputs:\n")
@@ -912,6 +932,10 @@ maha_configure_steps(
 
 maha_run_step("data_qc", {
 step_header("Data QC")
+# Read and release the large recall file before loading the main phenotype table.
+webq_raw <- readRDS(ukb_required_inputs[["diet_raw_rds"]])
+webq_window <- maha_webq_window(webq_raw)
+rm(webq_raw); invisible(gc())
 dat0 <- readRDS(paste0(indir, "/Rdata/all.rds"))
 
 dat <- dat0 %>%
@@ -924,10 +948,25 @@ dat <- dat0 %>%
 		across(all_of(diet.sum.cols), f3c, .names = "{sub('\\\\.sum$', '', .col)}.3c")
 	)
 
-for (Y in names(dx.lst)) {
-	dat[grep(paste0("^", Y, "\\.([Y]?(t2e|r2e))$"), names(dat))] <- NULL
-	dat <- t2e(dat, "cvd", paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_follow_end, Y, "year")
+# End of the entire recorded WebQ window also covers recalls whose food
+# values may have survived occasion-level QC in the existing score builder.
+rm(dat0); invisible(gc())
+dat$eid <- as.character(dat$eid)
+dat <- maha_set_landmark(dat, webq_window, diet.inc.s100)
+ukb_time_audit <- list()
+for (Y in Y.inc) {
+  dat[grep(paste0("^", Y, "\\.([Y]?(t2e|r2e)|b2e|bi2e)$"), names(dat))] <- NULL
+  dat <- maha_outcome_followup(dat, Y, date_follow_end)
+  ukb_time_audit[[Y]] <- attr(dat, "maha_outcome_audit")
 }
+write_xlsx(bind_rows(ukb_time_audit), "Reviewer.followup_audit.xlsx")
+writeLines(c(maha_followup_version,
+  "Survival time origin: max(enrolment, last of all recorded WebQ dates).",
+  "Outcome-specific events on/before landmark excluded; positive follow-up required.",
+  "Missing/undated WebQ records excluded from survival analysis, retained in descriptive analyses.",
+  "Cox age: enrolment age plus elapsed time to landmark. Other covariates remain enrolment measurements.",
+  "Existing diet scores unchanged; scoring is not optimized using outcomes.",
+  paste("Administrative censoring:", date_follow_end)), cohort_file("Reviewer.methods.txt"))
 
 dat <- dat %>% mutate(across(any_of(diet.inc.pts), ~ mk_hml(., group_pct_th), .names = "{sub('\\\\.pts$', '', .col)}.hml"))
 
@@ -936,12 +975,42 @@ if (!all(ukb_component_cols %in% names(dat))) {
   if (!"eid" %in% names(comp)) stop("UKB diet.maha.rds does not contain eid.", call. = FALSE)
   miss_comp <- setdiff(ukb_component_cols, names(comp))
   if (length(miss_comp)) stop("UKB diet.maha.rds missing MAHA component columns: ", paste(miss_comp, collapse = ", "), call. = FALSE)
-  comp <- comp %>% dplyr::select(eid, all_of(ukb_component_cols))
+  comp <- comp %>% mutate(eid = as.character(eid)) %>% dplyr::select(eid, all_of(ukb_component_cols))
   dat <- dat %>% dplyr::select(-any_of(ukb_component_cols)) %>% left_join(comp, by = "eid")
 }
 
+dat$maha_n_components <- rowSums(!is.na(dat[ukb_component_cols]))
+component_audit <- bind_rows(lapply(Y.inc, function(y) {
+  cc <- complete.cases(dat[, c(paste0(y, c(".t2e", ".Yt2e")), covs, diet.inc.pts)])
+  data.frame(Outcome = y, N = sum(cc), N_complete9 = sum(cc & dat$maha_n_components == 9),
+    proportion_complete9 = if (sum(cc)) mean(dat$maha_n_components[cc] == 9) else NA_real_)
+}))
+write_xlsx(list(complete_case_survival = component_audit,
+  score_sample = as.data.frame(table(dat$maha_n_components[!is.na(dat[[maha_sum]])]))),
+  "Reviewer.component_completeness.xlsx")
+# Mortality sensitivity keeps scaling fixed between available and complete-nine samples.
+component_sensitivity <- bind_rows(lapply(diet.inc, function(nm) {
+  d <- dat %>% filter(if_all(all_of(c("death.t2e", "death.Yt2e", covs, paste0("diet.", nm, ".sum"))), ~ !is.na(.)))
+  d$score <- zstd(d[[paste0("diet.", nm, ".sum")]])
+  bind_rows(lapply(c(FALSE, TRUE), function(full9) {
+    dd <- if (full9) d[d$maha_n_components == 9, ] else d
+    fit <- coxph(reformulate(c("score", covs), "Surv(death.t2e, death.Yt2e)"), data = dd)
+    broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE) %>% filter(term == "score") %>%
+      mutate(Diet = nm, sample = if (full9) "All nine MAHA components" else "Original available-score rule",
+        N = nrow(dd), Events = sum(dd$death.Yt2e), scaling = "One SD in available-score model sample, held fixed")
+  }))
+}))
+write_xlsx(component_sensitivity, "Reviewer.complete9_mortality_sensitivity.xlsx")
 ukb_validation <- ukb_validate_maha(dat)
 ukb_construct <- ukb_construct_profile(dat)
+group_audit <- bind_rows(lapply(diet.inc, function(nm) {
+  dat %>% filter(!is.na(.data[[paste0("diet.", nm, ".3c")]])) %>%
+    group_by(group = .data[[paste0("diet.", nm, ".3c")]]) %>%
+    summarise(Diet = nm, N = n(), minimum_raw_score = min(.data[[paste0("diet.", nm, ".sum")]], na.rm = TRUE),
+      maximum_raw_score = max(.data[[paste0("diet.", nm, ".sum")]], na.rm = TRUE), .groups = "drop")
+}))
+group_audit$rule <- "Unweighted rank quartiles among White participants with each score: Q1 low; Q2-Q3 middle; Q4 high; ties may split"
+write_xlsx(group_audit, "Reviewer.group_cutpoints.xlsx")
 })
 
 maha_run_step("table1", {
@@ -969,23 +1038,13 @@ pacman::p_load(PheWAS, writexl, ggrepel)
 
 dat1 <- dat
 Xs <- diet.inc.s100
-phewas.rds <- cohort_file("phewas.res.rds")
-phewas.res <- if (file.exists(phewas.rds)) {
-	readRDS(phewas.rds)
-} else {
-	x <- plot_phewas(dat1, phecode = NA, Xs = Xs, varX = vars.basic)
-	saveRDS(x, phewas.rds)
-	x
-}
-phewas.res$plots <- Map(\(p, x)
-	p + labs(title = var2lab(x)) + theme(
-		plot.title = element_text(hjust = 0.5, face = "bold"),
-		axis.title = element_text(face = "bold"),
-		axis.title.x = element_text(size = 11, margin = margin(t = 6)),
-		axis.text.x = element_text(size = 8, angle = -30, vjust = 1, hjust = 1, face = "bold")
-	), phewas.res$plots, Xs
-)
-names(phewas.res$plots) <- Xs; phewas.res$plots
+phewas.res <- maha_raw_phewas(dat1, Xs, vars.basic,
+  file.path(indir, "Rdata", "PheWAS.rds"), cohort_file("phewas_raw_v1"),
+  replace = any(c("all", "fig1") %in% strsplit(Sys.getenv("MAHA_REPLACE_STEPS"), ",", fixed = TRUE)[[1]]))
+writeLines(c("Raw P preserved; BH FDR computed separately for each score.",
+  "Main and supplementary PheWAS plots cap -log10(P) at 50 for display only.",
+  "P=0 is retained in p_raw and flagged; logp uses .Machine$double.xmin for underflow.",
+  paste("Input signature:", phewas.res$signature)), cohort_file("Reviewer.phewas_methods.txt"))
 
 lab <- setNames(unname(diet.lst[gsub("^diet\\.|\\.(sum|pts|q5|s100|s100_q5)$", "", Xs)]), Xs)
 
@@ -995,11 +1054,10 @@ res <- phewas.res$res %>%
 		Diet = recode(snp, !!!lab),
 		category = tolower(category),
 		description = stringr::str_squish(description),
-		logp = -log10(p),
-		FDR = p.adjust(p, "BH"),
+		logp = logp,
 		sig_bonf = bonferroni %in% TRUE
 	) %>%
-	filter(!is.na(Diet), is.finite(p), p > 0)
+	filter(!is.na(Diet), is.finite(p), p >= 0)
 
 write_xlsx(res %>% filter(logp >= 10), "Fig1.phewas.top.xlsx")
 
@@ -1043,9 +1101,11 @@ cat_diff <- dm %>%
 
 death_tbl <- res %>% filter(description == dx.lst["death"]) %>% arrange(p) %>% dplyr::select(Diet, beta, SE, p, logp, sig_bonf, n_total)
 
-phewas_xmap <- phewas.res$plots[[Xs[1]]]$data %>%
-	transmute(category = tolower(category), phenotype = as.character(phenotype), phe_x = seq) %>%
-	distinct(category, phenotype, .keep_all = TRUE)
+phewas_xmap <- res %>%
+  distinct(category, phenotype) %>%
+  arrange(category, suppressWarnings(as.numeric(phenotype)), phenotype) %>%
+  mutate(phe_x = row_number())
+
 phewas_centers <- phewas_xmap %>%
 	group_by(category) %>%
 	summarise(phe_x = mean(phe_x), first_x = min(phe_x), .groups = "drop") %>%
@@ -1179,7 +1239,7 @@ for (x in paste0("diet.", c("maha", "dash", "mind", "medi24"), ".pts")) dat.ab[[
 
 assoc.ab <- assoc_reg(
 	dat.ab, paste0("diet.", c("maha", "dash", "mind", "medi24"), ".pts"),
-	covs, names(dx.lst), type = "t2e"
+	covs, Y.inc, type = "t2e"
 ) %>%
 	mutate(
 		Outcome = factor(unname(dx.lst[Outcome]), levels = outcome_levels),
@@ -1240,7 +1300,7 @@ alt_cols <- c("balanced" = "#E76F51", "strict" = "#C77DFF", "no dairy" = "#2A9D8
 dat.cd <- dat
 for (x in paste0("diet.", maha.extra, ".pts")) dat.cd[[x]] <- as.numeric(scale(dat.cd[[x]]))
 
-assoc.cd <- assoc_reg(dat.cd, paste0("diet.", maha.extra, ".pts"), covs, names(dx.lst), type = "t2e") %>%
+assoc.cd <- assoc_reg(dat.cd, paste0("diet.", maha.extra, ".pts"), covs, Y.inc, type = "t2e") %>%
 	mutate(
 		Outcome = factor(unname(dx.lst[Outcome]), levels = outcome_levels),
 		Diet = factor(unname(alt_lab[gsub("^diet\\.|\\.(pts|q5|qt)$", "", Exposure)]), levels = alt_levels)
@@ -1329,13 +1389,13 @@ dat1 <- dat %>% mutate(diet.dash.3c = factor(diet.dash.3c, levels = c("low", "mi
 
 Y <- "death"
 
-risk10_by_dash <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "diet.dash.3c", "maha3c", vars.basic, times = 10, Xfacetlab = "DASH", Xlinelab = "MAHA", panel = "b. 10-year risk by DASH strata")
-risk10_by_maha <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "maha3c", "diet.dash.3c", vars.basic, times = 10, Xfacetlab = "MAHA", Xlinelab = "DASH", panel = "c. 10-year risk by MAHA strata")
-incidence_by_dash <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "diet.dash.3c", "maha3c", vars.basic, times = seq(0, 10, by = 0.1), Xfacetlab = "DASH", Xlinelab = "MAHA", panel = "e. Incidence by DASH strata")
-incidence_by_maha <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "maha3c", "diet.dash.3c", vars.basic, times = seq(0, 10, by = 0.1), Xfacetlab = "MAHA", Xlinelab = "DASH", panel = "f. Incidence by MAHA strata")
+risk10_by_dash <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "diet.dash.3c", "maha3c", vars.risk, times = 10, Xfacetlab = "DASH", Xlinelab = "MAHA", panel = "b. 10-year risk by DASH strata")
+risk10_by_maha <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "maha3c", "diet.dash.3c", vars.risk, times = 10, Xfacetlab = "MAHA", Xlinelab = "DASH", panel = "c. 10-year risk by MAHA strata")
+incidence_by_dash <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "diet.dash.3c", "maha3c", vars.risk, times = seq(0, 10, by = 0.1), Xfacetlab = "DASH", Xlinelab = "MAHA", panel = "e. Incidence by DASH strata")
+incidence_by_maha <- extract_joint_risk(dat1, paste0(Y, ".t2e"), paste0(Y, ".Yt2e"), "maha3c", "diet.dash.3c", vars.risk, times = seq(0, 10, by = 0.1), Xfacetlab = "MAHA", Xlinelab = "DASH", panel = "f. Incidence by MAHA strata")
 
-pa <- plot_risk(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), X1 = "diet.dash.3c", X2 = "maha3c", covs = vars.basic, method = "10years", t0 = 10, X1lab = "DASH", X2lab = "MAHA", group_bgcolor = TRUE, title = NULL, leg_position = "top", leg_direction = "horizontal", tab = TRUE)
-pb <- plot_risk(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), X1 = "maha3c", X2 = "diet.dash.3c", covs = vars.basic, method = "10years", t0 = 10, X1lab = "MAHA", X2lab = "DASH", group_bgcolor = TRUE, title = NULL, leg_position = "top", leg_direction = "horizontal", tab = TRUE)
+pa <- plot_risk(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), X1 = "diet.dash.3c", X2 = "maha3c", covs = vars.risk, method = "10years", t0 = 10, X1lab = "DASH", X2lab = "MAHA", group_bgcolor = TRUE, title = NULL, leg_position = "top", leg_direction = "horizontal", tab = TRUE)
+pb <- plot_risk(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), X1 = "maha3c", X2 = "diet.dash.3c", covs = vars.risk, method = "10years", t0 = 10, X1lab = "MAHA", X2lab = "DASH", group_bgcolor = TRUE, title = NULL, leg_position = "top", leg_direction = "horizontal", tab = TRUE)
 fig2_title_theme <- theme(
 	plot.title = element_text(face = "bold", hjust = 0.5, size = 16, margin = margin(b = 4)),
 	plot.title.position = "plot"
@@ -1368,8 +1428,8 @@ pb <- pb + labs(title = "c. 10-year risk by MAHA strata") + fig2_title_theme +
 		plot.margin = margin(5.5, 14, 5.5, 5.5)
 	)
 
-pc <- plot_cuminc_joint(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), Xfacet = "diet.dash.3c", Xline = "maha3c", covs = vars.basic, t0 = 10, Xfacetlab = "DASH", Xlinelab = "MAHA", title = NULL, leg_position = "top", leg_direction = "horizontal")
-pd <- plot_cuminc_joint(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), Xfacet = "maha3c", Xline = "diet.dash.3c", covs = vars.basic, t0 = 10, Xfacetlab = "MAHA", Xlinelab = "DASH", title = NULL, leg_position = "top", leg_direction = "horizontal")
+pc <- plot_cuminc_joint(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), Xfacet = "diet.dash.3c", Xline = "maha3c", covs = vars.risk, t0 = 10, Xfacetlab = "DASH", Xlinelab = "MAHA", title = NULL, leg_position = "top", leg_direction = "horizontal")
+pd <- plot_cuminc_joint(dat1, Y_time = paste0(Y, ".t2e"), Y_event = paste0(Y, ".Yt2e"), Xfacet = "maha3c", Xline = "diet.dash.3c", covs = vars.risk, t0 = 10, Xfacetlab = "MAHA", Xlinelab = "DASH", title = NULL, leg_position = "top", leg_direction = "horizontal")
 pc <- pc + labs(title = "e. Incidence by DASH strata") + fig2_title_theme +
 	theme(
 		legend.text = element_text(color = "grey30", face = "bold", size = 10, margin = margin(l = 4, r = 8)),
@@ -1737,12 +1797,12 @@ p_structure <- ggplot(structure_long, aes(Diet, 100 * value, group = Metric, sha
   theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(face = "bold"), legend.position = "bottom")
 
 valid_person_tiles <- tile_map$spatial_tile
-mort_covs <- setdiff(covs, c("center", "age", "sex.f", "tdi"))
+mort_covs <- setdiff(covs, c("center", "age.landmark", "sex.f", "tdi"))
 fit_within_tile <- function(lbl) {
   dd <- geo %>% filter(spatial_tile %in% valid_person_tiles) %>%
     mutate(score_z = zstd(.data[[lbl]]), spatial_tile = droplevels(factor(spatial_tile))) %>%
-    dplyr::select(death.t2e, death.Yt2e, score_z, age, sex.f, tdi, all_of(mort_covs), spatial_tile) %>% drop_na()
-  fm <- as.formula(paste0("Surv(death.t2e, death.Yt2e) ~ score_z + age + sex.f + tdi",
+    dplyr::select(death.t2e, death.Yt2e, score_z, age.landmark, sex.f, tdi, all_of(mort_covs), spatial_tile) %>% drop_na()
+  fm <- as.formula(paste0("Surv(death.t2e, death.Yt2e) ~ score_z + age.landmark + sex.f + tdi",
                          if (length(mort_covs)) paste0(" + ", paste(mort_covs, collapse = " + ")) else "",
                          " + strata(spatial_tile)"))
   fit <- coxph(fm, data = dd, ties = "efron")
@@ -1782,8 +1842,8 @@ geo_sensitivity_one <- function(tile_m, min_n) {
       msb <- ssb/(k-1); msw <- ssw/(n-k); n0 <- (n - sum(as.numeric(gn)^2)/n)/(k-1)
       icc <- pmax(0, (msb-msw)/(msb+(n0-1)*msw))
     }
-    mc <- setdiff(covs, c("center", "age", "sex.f", "tdi")); dm <- dx %>% dplyr::select(death.t2e, death.Yt2e, score_z, age, sex.f, tdi, all_of(mc), tile) %>% drop_na()
-    fm <- as.formula(paste0("Surv(death.t2e, death.Yt2e) ~ score_z + age + sex.f + tdi",
+    mc <- setdiff(covs, c("center", "age.landmark", "sex.f", "tdi")); dm <- dx %>% dplyr::select(death.t2e, death.Yt2e, score_z, age.landmark, sex.f, tdi, all_of(mc), tile) %>% drop_na()
+    fm <- as.formula(paste0("Surv(death.t2e, death.Yt2e) ~ score_z + age.landmark + sex.f + tdi",
                            if(length(mc)) paste0(" + ", paste(mc, collapse=" + ")) else "", " + strata(tile)"))
     cf <- tryCatch(broom::tidy(coxph(fm, data=dm, ties="efron"), exponentiate=TRUE, conf.int=TRUE) %>% filter(term=="score_z"), error=function(e) tibble())
     tibble(tile_m = tile_m, min_n = min_n, Diet = lbl, N = nrow(dm), Tiles = nlevels(dm$tile), Spatial_ICC = icc,
@@ -2448,7 +2508,7 @@ maha_run_step("figS2", {
 step_header("eFigure 2: head-to-head comparison of PheWAS")
 pacman::p_load(tidyverse, ggrepel, patchwork)
 
-dm2 <- dm %>% transmute(phenotype, description, beta.MAHA = as.numeric(beta.MAHA), beta.DASH = as.numeric(beta.DASH), logp.MAHA = as.numeric(logp.MAHA), logp.DASH = as.numeric(logp.DASH), delta_logp = as.numeric(delta_logp), delta_beta = as.numeric(delta_beta), sig_pattern = recode(as.character(sig_pattern), DASH_only = "DASH only", MAHA_only = "MAHA only")) %>% filter(if_all(c(beta.MAHA, beta.DASH, logp.MAHA, logp.DASH), is.finite)) %>% mutate(sig_pattern = ifelse(sig_pattern %in% c("Both", "DASH only", "MAHA only"), sig_pattern, "Neither"), logp.MAHA.cap = pmin(logp.MAHA, 15), logp.DASH.cap = pmin(logp.DASH, 15))
+dm2 <- dm %>% transmute(phenotype, description, beta.MAHA = as.numeric(beta.MAHA), beta.DASH = as.numeric(beta.DASH), logp.MAHA = as.numeric(logp.MAHA), logp.DASH = as.numeric(logp.DASH), delta_logp = as.numeric(delta_logp), delta_beta = as.numeric(delta_beta), sig_pattern = recode(as.character(sig_pattern), DASH_only = "DASH only", MAHA_only = "MAHA only")) %>% filter(if_all(c(beta.MAHA, beta.DASH, logp.MAHA, logp.DASH), is.finite)) %>% mutate(sig_pattern = ifelse(sig_pattern %in% c("Both", "DASH only", "MAHA only"), sig_pattern, "Neither"), logp.MAHA.cap = pmin(logp.MAHA, 50), logp.DASH.cap = pmin(logp.DASH, 50))
 bonf <- -log10(0.05 / nrow(dm2)); cols <- c("Both" = "#3B82F6", "DASH only" = "#F97316", "MAHA only" = "#10B981")
 lab_p <- bind_rows(dm2 %>% filter(sig_pattern == "DASH only") %>% slice_max(delta_logp, n = 10), dm2 %>% filter(sig_pattern == "MAHA only") %>% slice_min(delta_logp, n = 4), dm2 %>% filter(sig_pattern == "Both") %>% slice_max(abs(delta_logp), n = 4)) %>% distinct(phenotype, .keep_all = TRUE)
 lab_b <- bind_rows(dm2 %>% filter(sig_pattern == "DASH only") %>% slice_max(abs(delta_beta), n = 3), dm2 %>% filter(sig_pattern == "MAHA only") %>% slice_max(abs(delta_beta), n = 2), dm2 %>% filter(sig_pattern == "Both") %>% slice_max(abs(delta_beta), n = 2)) %>% distinct(phenotype, .keep_all = TRUE)
@@ -2468,8 +2528,8 @@ p1 <- ggplot() +
 		max.iter = 200000, min.segment.length = 0, segment.alpha = .55,
 		max.overlaps = Inf, show.legend = FALSE) +
 	scale_color_manual(values = cols) + scale_shape_manual(values = c("Both" = 16, "DASH only" = 17, "MAHA only" = 15)) +
-	coord_cartesian(xlim = c(0, 16), ylim = c(0, 16), expand = FALSE, clip = "off") + scale_x_continuous(breaks = seq(0, 15, 3)) + scale_y_continuous(breaks = seq(0, 15, 3)) +
-	labs(x = "DASH: -log10(P)", y = "MAHA: -log10(P)", title = "a. Association strength") + thm
+	coord_cartesian(xlim = c(0, 52), ylim = c(0, 52), expand = FALSE, clip = "off") + scale_x_continuous(breaks = seq(0, 50, 10)) + scale_y_continuous(breaks = seq(0, 50, 10)) +
+	labs(x = "DASH: -log10(P); display cap 50", y = "MAHA: -log10(P); display cap 50", title = "a. Association significance") + thm
 
 p2 <- ggplot() +
 	geom_point(data = dm2 %>% filter(sig_pattern == "Neither"), aes(beta.DASH, beta.MAHA), color = "grey70", alpha = 0.35, size = 1) +
@@ -2498,7 +2558,7 @@ maha_run_step("figS3", {
 step_header("eFigure 4: 10-year joint DASH and MAHA categories")
 
 tab2.risk <- bind_rows(lapply(Y.inc, function(Y) run_joint_risk_one(dat, Y, covs)))
-tab2.risk.out <- tab2.risk %>% mutate(Outcome = dx.lst[Y]) %>% dplyr::select(Outcome, dash, maha, risk10)
+tab2.risk.out <- tab2.risk %>% mutate(Outcome = dx.lst[Y]) %>% dplyr::select(Outcome, dash, maha, risk10, everything())
 write_xlsx(tab2.risk.out, "FigS4.joint_risk.out.xlsx")
 
 plist.risk <- lapply(Y.inc, function(Y) plot_joint_heat(tab2.risk %>% filter(Y == !!Y), dx.lst[Y]))

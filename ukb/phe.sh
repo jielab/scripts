@@ -31,7 +31,7 @@ Shell steps:
   prep_raw fetch_fod extract_fod extract_pheno extract_multi process_linked
 
 R steps:
-  data_qc vip_phe ses move death srd icd audit_i67 fod_ref gp_prep gp biom hla_pca pgs merge ckm audit_ckm audit_dates drug gwas
+  data_qc vip_phe ses move death srd icd audit_i67 fod_ref gp_prep gp biom hla_pca pgs merge ckm audit_ckm audit_dates drug phe4gwas
 
 Association analyses (forest and PheWAS) have moved to ./assoc.sh.
 
@@ -134,7 +134,7 @@ if command -v python3 >/dev/null 2>&1; then python_cmd=python3; else python_cmd=
 privacy_cleanup_completed_run=TRUE
 
 shell_steps=(prep_raw fetch_fod extract_fod extract_pheno extract_multi process_linked)
-r_steps=(data_qc vip_phe ses move death srd icd audit_i67 fod_ref gp_prep gp biom hla_pca pgs merge ckm audit_ckm audit_dates drug gwas)
+r_steps=(data_qc vip_phe ses move death srd icd audit_i67 fod_ref gp_prep gp biom hla_pca pgs merge ckm audit_ckm audit_dates drug phe4gwas)
 
 all_steps=(all "${shell_steps[@]}" "${r_steps[@]}")
 contains() { local x="$1"; shift; for y in "$@"; do [[ "$x" == "$y" ]] && return 0; done; return 1; }

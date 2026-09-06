@@ -51,7 +51,7 @@ LE8_JOB <- if (exists("LE8_JOB")) LE8_JOB else Sys.getenv("LE8_JOB", unset = "")
 prot_DO <- truthy(Sys.getenv("PROT_DO", unset = "TRUE"))
 met_DO <- truthy(Sys.getenv("MET_DO", unset = "TRUE"))
 LE8_REPLACE <- truthy(Sys.getenv("LE8_REPLACE", unset = "FALSE"))
-N_CORES <- max(1L, suppressWarnings(as.integer(Sys.getenv("N_CORES", unset = "4"))))
+N_CORES <- max(1L, suppressWarnings(as.integer(Sys.getenv("N_CORES", unset = "2"))))
 if (!is.finite(N_CORES)) N_CORES <- 1L
 SEED <- as.integer(Sys.getenv("SEED", unset = "2026"))
 set.seed(SEED)
@@ -212,7 +212,14 @@ parallel_map <- function(x, fun) {
   }
   if (.Platform$OS.type != "windows" && N_CORES > 1L && length(x) > 1L) {
     message("Parallel scan: ", min(N_CORES, length(x)), " workers for ", length(x), " tasks")
-    parallel::mclapply(x, run_one, mc.cores = min(N_CORES, length(x)), mc.preschedule = TRUE)
+    # Wrap successful results so an intentional NULL can be distinguished from
+    # a child killed by OOM. Never silently save an incomplete association scan.
+    result <- parallel::mclapply(x, function(item) list(value = run_one(item)),
+      mc.cores = min(N_CORES, length(x)), mc.preschedule = TRUE,
+      mc.allow.recursive = FALSE)
+    failed <- vapply(result, function(z) is.null(z) || inherits(z, "try-error"), logical(1))
+    if (any(failed)) stop("Parallel scan worker failed or was killed; refusing partial results. Reduce --cores and inspect the task log.", call. = FALSE)
+    lapply(result, `[[`, "value")
   } else lapply(x, run_one)
 }
 # Third-party analysis packages often print one routine progress line per

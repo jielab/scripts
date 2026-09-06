@@ -1,0 +1,5 @@
+Test artifacts: /tmp/argneedle-memory-test-g3r8evsd
+PASS sequence: identical tree tables for steps 1/2/3 (including normalization); 300 haplotypes; verified resume
+PASS array: identical tree tables for steps 1/2/3 (including normalization); 300 haplotypes; verified resume
+2026-09-06 08:55:24 INFO     Bounded-memory threading enabled: one float64 posterior per site; ASMC batches <=16; native scratch pages discarded after each window
+PASS compatibility rejection and idempotent install

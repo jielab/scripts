@@ -1,0 +1,48 @@
+2026-09-06 08:54:35 INFO     Bounded-memory threading enabled: one float64 posterior per site; ASMC batches <=16; native scratch pages discarded after each window
+2026-09-06 08:54:35 INFO     Using sequence mode
+2026-09-06 08:54:35 INFO     Making HapData object
+2026-09-06 08:56:58 INFO     Hashing data is 5008 by 2054102
+2026-09-06 08:56:58 INFO     Making backup HapData object
+2026-09-06 08:59:42 INFO     Backup hashing data is 5008 by 2054102
+2026-09-06 08:59:42 INFO     DecodingParams:
+2026-09-06 08:59:42 INFO         foldData: True
+2026-09-06 08:59:42 INFO         usingCSFS: True
+2026-09-06 08:59:42 INFO         skipCSFSdistance: inf
+2026-09-06 08:59:42 INFO         compress: True
+2026-09-06 08:59:42 INFO         decodingMode: DecodingMode.sequenceFolded
+2026-09-06 08:59:42 INFO         useAncestral: False
+2026-09-06 08:59:42 INFO     Memory: 15838289920
+2026-09-06 08:59:42 INFO     Making ASMCDecoder
+Read 2504 samples.
+Read data for 5008 haploid samples and 2054102 markers, 0 of which are monomorphic. This job will focus on 5008 haploid samples.
+Using precomputed decoding info from /home/huangj/miniforge3/envs/grid/lib/python3.10/site-packages/arg_needle/resources/30-100-2000_CEU.decodingQuantities.gz
+Detected 16 float lanes and targeting AVX3_ZEN4
+Using expected coalescent times from /home/huangj/miniforge3/envs/grid/lib/python3.10/site-packages/arg_needle/resources/30-100-2000_CEU.decodingQuantities.gz
+2026-09-06 09:02:15 INFO     About to thread 4000 samples
+2026-09-06 09:02:15 INFO     Hashing parameters:
+2026-09-06 09:02:15 INFO       K for top K: 64
+2026-09-06 09:02:15 INFO       Word size: 16
+2026-09-06 09:02:15 INFO       Window cM size: 0.3
+2026-09-06 09:02:15 INFO       Tolerance: 1
+2026-09-06 09:02:15 INFO     Threading sample 1
+2026-09-06 09:02:15 INFO     Memory: 21464514560
+2026-09-06 09:02:15 INFO     Refining hashing on ID 1 using backup hasher
+2026-09-06 09:02:15 INFO     Selected hash results for 1:
+2026-09-06 09:02:15 INFO     Length = 12, middle = 6
+2026-09-06 09:02:15 INFO     (0, 319, [(0, 10.0)])
+2026-09-06 09:02:15 INFO     (1108320, 1108351, [(0, 10.0)])
+2026-09-06 09:02:15 INFO     (2049568, 2054101, [(0, 69.0)])
+2026-09-06 09:02:32 INFO     PROBE window pass=1 windows=12 rss_gib=19.532
+2026-09-06 09:02:32 INFO     Refining hashing on ID 1 using backup hasher
+2026-09-06 09:02:50 INFO     PROBE window pass=2 windows=12 rss_gib=19.571
+2026-09-06 09:02:50 INFO     Refining hashing on ID 1 using backup hasher
+2026-09-06 09:03:08 INFO     PROBE window pass=3 windows=12 rss_gib=19.595
+memory.peak: 21827166208
+memory.swap.peak: 0
+memory.events: low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+PASS: full input, scaffold=4000, 12 representative windows x 3 passes; no complete sample; probe only, no full-build checkpoint

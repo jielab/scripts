@@ -1,0 +1,2 @@
+locus_id	anchor_provided	requested_anchor_id	anchor_id	chr	pos	ref	alt	variant_type	exact_anchor_found	modern_called_copies	modern_unassigned_copies	archaic_calls	neanderthal_consensus_allele_index	denisovan_consensus_allele_index	status	regional_analysis_effect
+rs6525167	1	rs6525167	X:66423003:G:A	X	66423003	G	A	SNV	1	1233	0	Altai:1:A:mapped;Chagyr:1:A:mapped;Vindija:1:A:mapped;Denisova:1:A:mapped;Denisova25:1:A:mapped	1	1	complete	none;anchor_is_secondary

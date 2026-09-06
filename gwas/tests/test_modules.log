@@ -1,0 +1,145 @@
+null device 
+          1 
+Comparison written to /tmp/gwas-tests-7bxyenuq/compare
+PLINK v2.0.0-a.7.0LM AVX2 AMD (25 Apr 2026)         cog-genomics.org/plink/2.0/
+(C) 2005-2026 Shaun Purcell, Christopher Chang    GNU General Public License v3
+Logging to /tmp/gwas-tests-7bxyenuq/gen/chr1.log.
+Options in effect:
+  --dummy 500 100
+  --make-pgen
+  --out /tmp/gwas-tests-7bxyenuq/gen/chr1
+  --seed 7
+
+Start time: Sun Sep  6 21:07:54 2026
+72362 MiB RAM detected, ~38258 available; reserving 36181 MiB for main
+workspace.
+Using up to 32 threads (change this with --threads).
+Dummy data (500 samples, 100 SNPs) written to
+/tmp/gwas-tests-7bxyenuq/gen/chr1-temporary.pgen +
+/tmp/gwas-tests-7bxyenuq/gen/chr1-temporary.pvar +
+/tmp/gwas-tests-7bxyenuq/gen/chr1-temporary.psam .
+500 samples (500 females, 0 males; 500 founders) loaded from
+/tmp/gwas-tests-7bxyenuq/gen/chr1-temporary.psam.
+100 variants loaded from /tmp/gwas-tests-7bxyenuq/gen/chr1-temporary.pvar.
+1 binary phenotype loaded (245 cases, 255 controls).
+Writing /tmp/gwas-tests-7bxyenuq/gen/chr1.psam ... done.
+Writing /tmp/gwas-tests-7bxyenuq/gen/chr1.pvar ... 0%1%2%3%4%5%6%7%8%9%10%11%12%13%14%15%16%17%18%19%20%21%22%23%24%25%26%27%28%29%30%31%32%33%34%35%36%37%38%39%40%41%42%43%44%45%46%47%48%49%50%51%52%53%54%55%56%57%58%59%60%61%62%63%64%65%66%67%68%69%70%71%72%73%74%75%76%77%78%79%80%81%82%83%84%85%86%87%88%89%90%91%92%93%94%95%96%97%98%99%done.
+Writing /tmp/gwas-tests-7bxyenuq/gen/chr1.pgen ... 0%done.
+End time: Sun Sep  6 21:07:54 2026
+/tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe height qt height.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/analysis.phe
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --glm hide-covar allow-no-covars omit-ref no-x-sex cols=+omitted,+a1freq,+nobs --pheno /tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/analysis.phe --pheno-name height --no-psam-pheno --mac 5 --max-alleles 2 --out /tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/chr1 --covar /tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/analysis.phe --covar-name C1,C2,C3,C4 --covar-variance-standardize
+python3 /mnt/d/scripts/gwas/f/gwas_io.py plink2 /tmp/gwas-tests-7bxyenuq/output/height/gwas/height.plink2.gz /tmp/gwas-tests-7bxyenuq/output/height/gwas/plink2/chr1.height.glm.linear
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/height/gwas/height.plink2.gz 37
+/tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe bald ordinal bald.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/analysis.phe
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --glm hide-covar allow-no-covars omit-ref no-x-sex cols=+omitted,+a1freq,+nobs --pheno /tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/analysis.phe --pheno-name bald --no-psam-pheno --mac 5 --max-alleles 2 --out /tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/chr1 --covar /tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/analysis.phe --covar-name C1,C2,C3,C4 --covar-variance-standardize
+python3 /mnt/d/scripts/gwas/f/gwas_io.py plink2 /tmp/gwas-tests-7bxyenuq/output/bald/gwas/bald.plink2.gz /tmp/gwas-tests-7bxyenuq/output/bald/gwas/plink2/chr1.bald.glm.linear
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/bald/gwas/bald.plink2.gz 37
+/tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe bald12 bt bald12.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/analysis.phe
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --glm hide-covar allow-no-covars omit-ref no-x-sex cols=+omitted,+a1freq,+nobs firth-fallback --pheno /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/analysis.phe --pheno-name bald12 --no-psam-pheno --mac 5 --max-alleles 2 --out /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/chr1 --1 --covar /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/analysis.phe --covar-name C1,C2,C3,C4 --covar-variance-standardize
+python3 /mnt/d/scripts/gwas/f/gwas_io.py plink2 /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/bald12.plink2.gz /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/plink2/chr1.bald12.glm.logistic.hybrid
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/bald12.plink2.gz 37
+/tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe cvd_cad.Yt2e bt cvd_cad.Yt2e.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/analysis.phe
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --glm hide-covar allow-no-covars omit-ref no-x-sex cols=+omitted,+a1freq,+nobs firth-fallback --pheno /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/analysis.phe --pheno-name cvd_cad.Yt2e --no-psam-pheno --mac 5 --max-alleles 2 --out /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/chr1 --1 --covar /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/analysis.phe --covar-name C1,C2,C3,C4 --covar-variance-standardize
+python3 /mnt/d/scripts/gwas/f/gwas_io.py plink2 /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/cvd_cad.Yt2e.plink2.gz /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/plink2/chr1.cvd_cad.Yt2e.glm.logistic.hybrid
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/cvd_cad.Yt2e.plink2.gz 37
+plink2: time-to-event is unsupported; use run_regenie --type t2e
+/tmp/gwas-tests-7bxyenuq/gen/.prep/run.cmd.sh
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --maf .01 --mac 100 --max-alleles 2 --geno .1 --hwe 1e-15 0 --indep-pairwise 1000kb 0.1 --out /tmp/gwas-tests-7bxyenuq/gen/.prep/chr1.prune
+/mnt/d/software/bin/plink2 --threads 2 --memory 1000 --pfile /tmp/gwas-tests-7bxyenuq/gen/chr1 --extract /tmp/gwas-tests-7bxyenuq/gen/.prep/chr1.prune.prune.in --make-bed --out /tmp/gwas-tests-7bxyenuq/gen/.prep/chr1.prune
+/mnt/d/software/bin/plink --bfile /tmp/gwas-tests-7bxyenuq/gen/.prep/chr1.prune --make-bed --out /tmp/gwas-tests-7bxyenuq/gen/typ.prune --threads 2 --memory 1000
+/tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe height qt height.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/analysis.phe
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/analysis.phe --phenoCol height --qt --step 1 --bed /tmp/gwas-tests-7bxyenuq/gen/typ.prune --lowmem --lowmem-prefix /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/tmp --out /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/step1 --covarFile /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py pgen-view /tmp/gwas-tests-7bxyenuq/gen/chr1 /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/chr1.input
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/analysis.phe --phenoCol height --qt --step 2 --pgen /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/chr1.input --pred /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/step1_pred.list --minMAC 5 --out /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/chr1 --covarFile /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_io.py regenie /tmp/gwas-tests-7bxyenuq/output/height/gwas/height.regenie.gz /tmp/gwas-tests-7bxyenuq/output/height/gwas/regenie/chr1_height.regenie
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/height/gwas/height.regenie.gz 37
+/tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe bald ordinal bald.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/analysis.phe
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/analysis.phe --phenoCol bald --qt --step 1 --bed /tmp/gwas-tests-7bxyenuq/gen/typ.prune --lowmem --lowmem-prefix /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/tmp --out /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/step1 --covarFile /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py pgen-view /tmp/gwas-tests-7bxyenuq/gen/chr1 /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/chr1.input
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/analysis.phe --phenoCol bald --qt --step 2 --pgen /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/chr1.input --pred /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/step1_pred.list --minMAC 5 --out /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/chr1 --covarFile /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_io.py regenie /tmp/gwas-tests-7bxyenuq/output/bald/gwas/bald.regenie.gz /tmp/gwas-tests-7bxyenuq/output/bald/gwas/regenie/chr1_bald.regenie
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/bald/gwas/bald.regenie.gz 37
+/tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe bald12 bt bald12.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/analysis.phe
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/analysis.phe --phenoCol bald12 --bt --step 1 --bed /tmp/gwas-tests-7bxyenuq/gen/typ.prune --lowmem --lowmem-prefix /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/tmp --out /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/step1 --covarFile /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py pgen-view /tmp/gwas-tests-7bxyenuq/gen/chr1 /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/chr1.input
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/analysis.phe --phenoCol bald12 --bt --step 2 --pgen /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/chr1.input --pred /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/step1_pred.list --minMAC 5 --out /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/chr1 --firth --approx --pThresh 0.01 --covarFile /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_io.py regenie /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/bald12.regenie.gz /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/regenie/chr1_bald12.regenie
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/bald12/gwas/bald12.regenie.gz 37
+/tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe cvd_cad.Yt2e bt cvd_cad.Yt2e.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/analysis.phe
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/analysis.phe --phenoCol cvd_cad.Yt2e --bt --step 1 --bed /tmp/gwas-tests-7bxyenuq/gen/typ.prune --lowmem --lowmem-prefix /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/tmp --out /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/step1 --covarFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py pgen-view /tmp/gwas-tests-7bxyenuq/gen/chr1 /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/chr1.input
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/analysis.phe --phenoCol cvd_cad.Yt2e --bt --step 2 --pgen /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/chr1.input --pred /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/step1_pred.list --minMAC 5 --out /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/chr1 --firth --approx --pThresh 0.01 --covarFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_io.py regenie /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/cvd_cad.Yt2e.regenie.gz /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/regenie/chr1_cvd_cad.Yt2e.regenie
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/cvd_cad.Yt2e/gwas/cvd_cad.Yt2e.regenie.gz 37
+/tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/run.cmd.sh
+/usr/bin/Rscript /mnt/d/scripts/gwas/f/gwas_inputs.R /tmp/gwas-tests-7bxyenuq/phe /tmp/gwas-tests-7bxyenuq/phe cvd_cad.t2e t2e cvd_cad.Yt2e age,sex center /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/analysis.phe
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/analysis.phe --phenoColList cvd_cad.t2e --eventColList cvd_cad.Yt2e --t2e --step 1 --bed /tmp/gwas-tests-7bxyenuq/gen/typ.prune --lowmem --lowmem-prefix /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/tmp --out /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/step1 --covarFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py pgen-view /tmp/gwas-tests-7bxyenuq/gen/chr1 /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/chr1.input
+/mnt/d/software/bin/regenie --threads 2 --bsize 1000 --phenoFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/analysis.phe --phenoColList cvd_cad.t2e --eventColList cvd_cad.Yt2e --t2e --step 2 --pgen /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/chr1.input --pred /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/step1_pred.list --minMAC 5 --out /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/chr1 --covarFile /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/analysis.phe --covarColList C1,C2,C3,C4
+python3 /mnt/d/scripts/gwas/f/gwas_io.py regenie /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/cvd_cad.t2e.regenie.gz /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/regenie/chr1_cvd_cad.t2e.regenie
+python3 /mnt/d/scripts/gwas/f/gwas_runner.py build-metadata /tmp/gwas-tests-7bxyenuq/output/cvd_cad.t2e/gwas/cvd_cad.t2e.regenie.gz 37
+/tmp/gwas-tests-7bxyenuq/ldsc/ldsc.cmd.sh
+*********************************************************************
+* LD Score Regression (LDSC)
+* Version 1.0.1
+* (C) 2014-2019 Brendan Bulik-Sullivan and Hilary Finucane
+* Broad Institute of MIT and Harvard / MIT Department of Mathematics
+* GNU General Public License v3
+*********************************************************************
+Call: 
+./munge_sumstats.py \
+--signed-sumstats BETA,0 \
+--out /tmp/gwas-tests-7bxyenuq/ldsc/01.ld.tsv \
+--merge-alleles /tmp/gwas-tests-7bxyenuq/hm3 \
+--N-col N \
+--chunksize 10000 \
+--a1 EA \
+--a2 NEA \
+--snp SNP \
+--sumstats /tmp/gwas-tests-7bxyenuq/ldsc/01.ld.tsv.input.gz \
+--p P 
+
+Interpreting column names as follows:
+EAF:	Allele frequency
+EA:	Allele 1, interpreted as ref allele for signed sumstat.
+N:	Sample size
+P:	p-Value
+BETA:	Directional summary statistic as specified by --signed-sumstats.
+SNP:	Variant ID (e.g., rs number)
+NEA:	Allele 2, interpreted as non-ref allele for signed sumstat.
+
+Reading list of SNPs for allele merge from /tmp/gwas-tests-7bxyenuq/hm3
+Read 1000 SNPs for allele merge.
+Reading sumstats from /tmp/gwas-tests-7bxyenuq/ldsc/01.ld.tsv.input.gz into memory 10000 SNPs at a time.
+. done
+Read 1000 SNPs from --sumstats file.
+Removed 0 SNPs not in --merge-alleles.
+Removed 0 SNPs with missing values.
+Removed 0 SNPs with INFO <= 0.9.
+Removed 0 SNPs with MAF <= 0.01.
+Removed 0 SNPs with out-of-bounds p-values.
+Removed 0 variants that were not SNPs or were strand-ambiguous.
+1000 SNPs remain.
+Removed 0 SNPs with duplicated rs numbers (1000 SNPs remain).
+Removed 0 SNPs with N < 6666.66666667 (1000 SNPs remain).
+Median value of SIGNED_SUMSTATS was 0.0, which seems sensible.
+Removed 0 SNPs whose alleles did not match --merge-alleles (1000 SNPs remain).
+Writing summary statistics for 1000 SNPs (1000 with nonmissing beta) to /tmp/gwas-tests-7bxyenuq/ldsc/01.ld.tsv.sumstats.gz.
+
+Metadata:
+Mean chi^2 = 16.495
+Lambda GC = 33.275
+Max chi^2 = 1373.873
+1 Genome-wide significant SNPs (some may have been removed by filtering).
+
+Conversion finished at Sun Sep  6 21:08:00 2026
+Total time elapsed: 0.03s
+PASS: comparison QC, four real PLINK2 runs, five real REGENIE runs, compressed PVAR, prune/merge, method normalization, LDSC munge, unsupported T2E guard
