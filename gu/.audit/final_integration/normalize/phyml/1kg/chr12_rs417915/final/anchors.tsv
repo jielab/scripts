@@ -1,2 +1,0 @@
-locus_id	anchor_provided	requested_anchor_id	anchor_id	chr	pos	ref	alt	variant_type	exact_anchor_found	modern_called_copies	modern_unassigned_copies	archaic_calls	neanderthal_consensus_allele_index	denisovan_consensus_allele_index	status	regional_analysis_effect
-rs417915	1	rs417915	rs417915	12	52842074	C	A	SNV	1	5008	0	Altai:NA:NA:position_absent;Chagyr:NA:NA:position_absent;Vindija:NA:NA:position_absent;Denisova:NA:NA:position_absent;Denisova25:NA:NA:position_absent			complete	none;anchor_is_secondary

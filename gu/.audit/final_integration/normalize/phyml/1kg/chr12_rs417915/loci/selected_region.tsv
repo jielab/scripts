@@ -1,2 +1,0 @@
-locus_id	chr	core_start	core_end	analysis_start	analysis_end	anchor_pos	selected_start	selected_end	selected_bp	selection_method	ld_r2_threshold	n_search_sites	n_ld_sites	n_tree_sites	n_ancestral_sites
-rs417915	12	52838480	52893941	52738480	52993941	52842074	52838480	52893941	55461	explicit_bed_core	NA	4915	1168	550	533

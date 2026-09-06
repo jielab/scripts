@@ -1,2 +1,0 @@
-locus_id	tree_status	tree_file	stats_file	plot_file	n_bootstrap_nodes	bootstrap_min	bootstrap_median	bootstrap_max	candidate_lineage	tree_has_ancestral_outgroup	candidate_clade_pass	candidate_clade_rule	candidate_clade_bootstrap	candidate_clade_node	candidate_clade_side	candidate_clade_n_tips	candidate_clade_modern_tips	candidate_clade_archaic_tips	candidate_clade_specificity	candidate_clade_tips	tree_newick
-rs8176719	not_requested									0	0	tree_edge_same_archaic_lineage									
