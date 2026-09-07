@@ -30,6 +30,13 @@ cd /mnt/d/scripts/gu
 ./arg.sh build --dir-gen /mnt/d/data.BIG/refGen/1kg/37 \
   --method threads --format trace --threads 8 --jobs 1
 
+# ARG inputs for the gu.sh TRACE examples (run prep_gen first).
+# 1KG: tsinfer, chr22 and non-PAR X.
+bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
+
+# UKB: Needle with TRACE output, chr22.
+bash /mnt/d/scripts/gu/arg.sh build --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
+
 All options and alternatives: ./arg.sh --help-all
 HELP
 }

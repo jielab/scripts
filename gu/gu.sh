@@ -80,11 +80,9 @@ Examples:
 
   ./gu.sh ibdmix --chr X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-  bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen /mnt/d/data.BIG/refGen/1kg/37 --chr 22,X
-
+  # Build ARG inputs first; see ./arg.sh --help for examples.
   ./gu.sh trace --chr 22,X --grch 37 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/37/pfile/chr --jobs 4
 
-  bash /mnt/d/scripts/gu/arg.sh build --method needle --format trace --dir-gen /mnt/h/ukbGen/37 --dir-pfile /mnt/h/ukbGen/37/hap --chr 22
   ./gu.sh trace --chr 22 --grch 37 --target ukb --target-dir /mnt/h/ukbGen/37/hap/chr --arg-dir /mnt/h/ukbGen/37/arg/trace/needle --jobs 4
 
   ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg --target-dir /mnt/d/data.BIG/refGen/1kg/38/pfile/chr --jobs 4
