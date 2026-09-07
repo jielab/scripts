@@ -1,11 +1,6 @@
 #!/bin/bash
 # Clean GWAS Catalog statistics and prepare MAGMA/clump/COJO/PGS outputs.
 
-# New independent QC/LDSC modules live with the data utilities.
-case "${1:-}" in
-  compare|ldsc) exec bash "$(dirname "${BASH_SOURCE[0]}")/../0data/gwas_post.sh" "$@" ;;
-esac
-
 set -euo pipefail
 export LC_ALL=C
 
@@ -15,7 +10,7 @@ ORIGINAL_ARGS=("$@")
 usage() {
 cat <<'USAGE'
 Usage:
-  ./gwas_post.sh [step] [--dir-raw dir_raw] [--dir-clean dir_clean] [options]
+  ./format_gwas.sh [step] [--dir-raw dir_raw] [--dir-clean dir_clean] [options]
 
 Core options:
   step                   comma-separated format|magma|liftover|cis|lead|mplot|pgs, or all [all]
@@ -169,28 +164,28 @@ MAGMA options:
 Examples:
   cd /mnt/d/scripts/gwas
 
-  ./gwas_post.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small FALSE --run-cmd TRUE
+  ./format_gwas.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data.BIG/gwas/main --grch auto --small FALSE --run-cmd TRUE
 
-  for label in prot met; do ./gwas_post.sh magma --label "$label" --category common --grch 38 --jobs 6; done
-  ./gwas_post.sh magma --label main --category common --grch auto --jobs 6
+  for label in prot met; do ./format_gwas.sh magma --label "$label" --category common --grch 38 --jobs 6; done
+  ./format_gwas.sh magma --label main --category common --grch auto --jobs 6
 
-  ./gwas_post.sh liftover --label main --category common --grch 37 --liftover TRUE --run-cmd TRUE --jobs 3
+  ./format_gwas.sh liftover --label main --category common --grch 37 --liftover TRUE --run-cmd TRUE --jobs 3
 
-  ./gwas_post.sh cis --label prot --category common --grch 38 --cis-bed /mnt/d/files/ppp_3k.38.bed --run-cmd TRUE --jobs 6
+  ./format_gwas.sh cis --label prot --category common --grch 38 --cis-bed /mnt/d/files/ppp_3k.38.bed --run-cmd TRUE --jobs 6
 
-  ./gwas_post.sh lead --label met --category common --grch 38 --run-cmd TRUE --jobs 12
+  ./format_gwas.sh lead --label met --category common --grch 38 --run-cmd TRUE --jobs 12
 
-  ./gwas_post.sh mplot --label prot --add-panel magma --grch 38 --write-sig TRUE --add-signal /mnt/d/data.BIG/gwas/prot/rare/rare_collapse.tsv --match-col Protein --match-value '[trait]' --locus-pos Gene_chr,Gene_Start,Gene_end --display-col Gene,beta,p-value --replace TRUE --run-cmd TRUE --jobs 6
-  ./gwas_post.sh mplot --label met --add-panel magma --grch 38 --replace TRUE --run-cmd TRUE --jobs 6
-  ./gwas_post.sh mplot --label main --add-panel magma --grch auto --replace TRUE --run-cmd TRUE --jobs 6
+  ./format_gwas.sh mplot --label prot --add-panel magma --grch 38 --write-sig TRUE --add-signal /mnt/d/data.BIG/gwas/prot/rare/rare_collapse.tsv --match-col Protein --match-value '[trait]' --locus-pos Gene_chr,Gene_Start,Gene_end --display-col Gene,beta,p-value --replace TRUE --run-cmd TRUE --jobs 6
+  ./format_gwas.sh mplot --label met --add-panel magma --grch 38 --replace TRUE --run-cmd TRUE --jobs 6
+  ./format_gwas.sh mplot --label main --add-panel magma --grch auto --replace TRUE --run-cmd TRUE --jobs 6
 
-  for label in prot met; do ./gwas_post.sh pgs --label "$label" --category common --grch 38 --pgs-pfile-dir /mnt/h/ukbGen/38/imp --run-cmd TRUE --jobs 6 --foreground FALSE; done
+  for label in prot met; do ./format_gwas.sh pgs --label "$label" --category common --grch 38 --pgs-pfile-dir /mnt/h/ukbGen/38/imp --run-cmd TRUE --jobs 6 --foreground FALSE; done
   for label in prot met; do bash "/mnt/d/data.BIG/gwas/$label/pgs/pgs.step2.cmd"; done
 
-  for label in prot met; do ./gwas_post.sh all --dir-raw "/mnt/h/gwas/$label" --dir-out "/mnt/d/data.BIG/gwas/$label" --grch 38 --liftover FALSE --run-cmd TRUE --jobs 12; done
+  for label in prot met; do ./format_gwas.sh all --dir-raw "/mnt/h/gwas/$label" --dir-out "/mnt/d/data.BIG/gwas/$label" --grch 38 --liftover FALSE --run-cmd TRUE --jobs 12; done
 
-  pgrep -af 'gwas_post.sh'
-  pstree -ap "$(pgrep -f 'gwas_post.sh --dir-raw')"
+  pgrep -af 'format_gwas.sh'
+  pstree -ap "$(pgrep -f 'format_gwas.sh --dir-raw')"
   tail -f /mnt/d/data.BIG/gwas/{prot,met}/.project/common/cmd/pgs/gwas_post.background.log
 USAGE
 }
@@ -538,7 +533,7 @@ if [[ "$run_cmd" == "TRUE" && "$is_bsub" != "TRUE" && "$foreground" != "TRUE" ]]
   if declare -F phe_check_existing_tasks >/dev/null 2>&1; then
     # Only reject another run of the same module set.  Different modules use
     # separate coordinator files, generated commands, and per-module logs.
-    phe_check_existing_tasks "gwas_post.sh $step"
+    phe_check_existing_tasks "format_gwas.sh $step"
   fi
   phe_run_background --title "background gwas_post $label/$category/$step" "$background_log" bash "$SCRIPT_PATH" "${ORIGINAL_ARGS[@]}" --foreground TRUE
   exit 0

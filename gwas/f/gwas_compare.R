@@ -1,15 +1,20 @@
 #!/usr/bin/env Rscript
-# QC comparison extracted from gwas/gwas_plot.R; standardized summary statistics.
+# Multi-GWAS QC comparison of standardized summary statistics.
 suppressPackageStartupMessages(library(data.table))
 args <- commandArgs(TRUE)
 if (!length(args) || any(args %in% c('-h', '--help'))) {
-  cat('Usage: gwas_post.sh compare --gwas-files A.gz,B.gz[,C.gz] [options]\n',
+  cat('Usage: gwas_compare.sh compare --gwas-files A.gz,B.gz[,C.gz] [options]\n',
       '--output-dir DIR (default ./gwas_compare) --labels CSV --grch 37|38\n',
       '--mplot TRUE --compare-beta TRUE --compare-EAF TRUE\n',
       '--p-threshold 5e-8 --significant first|either|both (default first)\n',
       'Input: SNP CHR POS EA NEA P; BETA/EAF required when compared. Same build required.\n',
       'First GWAS is compared with each follower. Palindromic SNPs and duplicate\n',
-      'allele/position keys are excluded from scatter plots and counted in QC.\n')
+      'allele/position keys are excluded from scatter plots and counted in QC.\n',
+      '\nExamples:\n',
+      '  gwas_compare.sh compare --gwas-files A.gz,B.gz,C.gz --labels A,B,C --output-dir qc\n',
+      '  gwas_compare.sh compare --gwas-files A.gz,B.gz --significant either --p-threshold 5e-8\n',
+      '  gwas_compare.sh compare --gwas-files A.gz,B.gz --mplot FALSE --compare-beta TRUE --compare-EAF TRUE\n',
+      'Use gwas_compare.sh -h for full paths and output descriptions.\n')
   quit(status=0)
 }
 opt <- list('output-dir'='gwas_compare', mplot='TRUE', 'compare-beta'='TRUE',

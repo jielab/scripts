@@ -469,6 +469,381 @@ t2e <- function(dat,domain,Y_date,birth_date,date_attend,date_lost,date_death,
   dat
 }
 
+# ADuLT: single disease, no family history; requires an external population CIP.
+# ADuLT for one phenotype at a time, without family history.
+# Exact conditional means under Pedersen et al., Nat Commun 2023,
+# doi:10.1038/s41467-023-41210-z (not a reciprocal-age approximation).
+# This file does NOT estimate population cumulative incidence from UKB.
+# Reference interface: LTFHPlus::estimate_liability(), documented v2.2.0.
+# Patch version: 2026-09-06.1
+
+adu_bool <- function(x, name = "option") {
+  x <- toupper(trimws(as.character(x)))
+  if (length(x) != 1L || is.na(x) || !x %in% c("TRUE", "FALSE", "T", "F", "1", "0", "YES", "NO"))
+    stop(name, " must be TRUE or FALSE", call. = FALSE)
+  x %in% c("TRUE", "T", "1", "YES")
+}
+adu_num <- function(x) {
+  if (is.numeric(x)) return(as.numeric(x))
+  suppressWarnings(as.numeric(as.character(x)))
+}
+adu_date <- function(x) {
+  if (inherits(x, "Date")) return(as.Date(x))
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+  if (is.numeric(x)) return(as.Date(x, origin = "1970-01-01"))
+  # Reject malformed strings rather than interpreting an arbitrary numeric age as a date.
+  z <- trimws(as.character(x))
+  z[z %in% c("", "NA", ".")] <- NA_character_
+  bad <- !is.na(z) & !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", z)
+  if (any(bad)) stop("Dates must be Date objects or ISO YYYY-MM-DD strings.", call. = FALSE)
+  as.Date(z, format = "%Y-%m-%d")
+}
+adu_sex <- function(x) {
+  z <- tolower(trimws(as.character(x)))
+  z[z %in% c("female", "f")] <- "0"
+  z[z %in% c("male", "m")] <- "1"
+  z[z %in% c("", "na", ".")] <- NA_character_
+  bad <- !is.na(z) & !z %in% c("0", "1", "all")
+  if (any(bad)) stop("Sex must use 0=female, 1=male, or (CIP only) 'all'.", call. = FALSE)
+  z
+}
+adu_read_table <- function(file) {
+  if (!file.exists(file)) stop("Missing file: ", file, call. = FALSE)
+  sep <- if (grepl("\\.csv$", file, ignore.case = TRUE)) "," else "\t"
+  utils::read.table(file, header = TRUE, sep = sep, quote = "\"", comment.char = "",
+                    check.names = FALSE, stringsAsFactors = FALSE,
+                    colClasses = "character", na.strings = c("NA", ""))
+}
+
+# Z = total liability ~ N(0,1), Var(G)=Cov(G,Z)=h2; E[G|Z]=h2*Z.
+# Unfixed case: Z >= q; fixed case: Z=q; control: Z <= q.
+# No family information and the same h2 for everyone in a trait are required.
+adu_posterior <- function(status, cip, h2 = 0.5, case_mode = "unfixed", eps = 1e-5) {
+  if (!case_mode %in% c("unfixed", "fixed")) stop("case_mode must be unfixed or fixed")
+  if (length(h2) != 1L || !is.finite(h2) || h2 <= 0 || h2 > 1) stop("h2 must be in (0,1]")
+  if (length(status) != length(cip)) stop("status/cip length mismatch")
+  if (!is.finite(eps) || eps <= 0 || eps >= 0.5) stop("eps must be in (0,0.5)")
+  status <- adu_num(status); cip <- adu_num(cip)
+  if (any(!is.na(status) & !status %in% 0:1)) stop("status must be 0, 1, or NA")
+  if (any(!is.na(cip) & (!is.finite(cip) | cip < 0 | cip > 1))) stop("cip must be in [0,1] or NA")
+  ok <- !is.na(status) & !is.na(cip)
+  k <- pmin(1 - eps, pmax(eps, cip[ok]))
+  # qnorm(lower.tail=FALSE) avoids subtracting very small CIP from 1.
+  q <- stats::qnorm(k, lower.tail = FALSE)
+  log_phi <- stats::dnorm(q, log = TRUE)
+  z <- ifelse(status[ok] == 1,
+              if (case_mode == "fixed") q else exp(log_phi - log(k)),
+              -exp(log_phi - log1p(-k)))
+  out <- rep(NA_real_, length(status)); out[ok] <- h2 * z
+  out
+}
+
+# Derive all-cases + controls from the selected diagnosis source.
+# Does not reuse Yt2e: that column intentionally excludes prevalent cases.
+adu_observations <- function(dat, date_col, end_date,
+                             evidence_col = NULL, status_col = NULL,
+                             birth_col = "birth_date", attend_col = "date_attend",
+                             lost_col = "date_lost", death_col = "date_death") {
+  n <- nrow(dat)
+  if (!n) stop("No participants available for ADuLT")
+  req <- c(date_col, birth_col, attend_col, lost_col, death_col, "sex")
+  absent <- setdiff(req, names(dat))
+  if (length(absent)) stop("Missing required columns: ", paste(absent, collapse = ", "), call. = FALSE)
+  bd <- adu_date(dat[[birth_col]]); ba <- adu_date(dat[[attend_col]])
+  dx <- adu_date(dat[[date_col]]); lost <- adu_date(dat[[lost_col]])
+  dead <- adu_date(dat[[death_col]]); end <- adu_date(end_date)
+  if (length(end) == 1L) end <- rep(end, n)
+  if (length(end) != n || anyNA(end)) stop("Administrative end date must be valid")
+  # Same UKB censoring rule as the existing t2e() helper.
+  censor <- pmin(lost, dead, end, na.rm = TRUE)
+  sex <- adu_sex(dat$sex)
+  evidence <- rep(FALSE, n)
+  evidence_used <- character()
+  if (!is.null(evidence_col) && length(evidence_col) == 1L && !is.na(evidence_col) && nzchar(evidence_col)) {
+    if (evidence_col %in% names(dat)) {
+      ev <- adu_num(dat[[evidence_col]])
+      evidence <- evidence | (!is.na(ev) & ev > 0)
+      evidence_used <- c(evidence_used, evidence_col)
+    } else {
+      warning("No ", evidence_col, "; undated cases cannot be detected from that count column.", call. = FALSE)
+    }
+  }
+  # Only specify a source-matched disease status column; never a broad CVD indicator.
+  if (!is.null(status_col) && length(status_col) == 1L && !is.na(status_col) && nzchar(status_col)) {
+    if (!status_col %in% names(dat)) stop("Missing explicitly configured status_col: ", status_col)
+    ev <- adu_num(dat[[status_col]])
+    if (any(!is.na(ev) & !ev %in% 0:1)) stop("Configured status column is not 0/1: ", status_col)
+    evidence <- evidence | (!is.na(ev) & ev == 1)
+    evidence_used <- c(evidence_used, status_col)
+  }
+  reason <- rep("ok", n)
+  mark <- function(bad, label) {
+    take <- !is.na(bad) & bad & reason == "ok"
+    reason[take] <<- label
+  }
+  mark(is.na(bd) | is.na(ba), "missing_birth_or_attendance")
+  mark(is.na(censor) | censor < ba | ba <= bd, "invalid_observation_window")
+  mark(!is.na(dx) & dx <= bd, "diagnosis_at_or_before_birth")
+  mark(is.na(dx) & evidence, "disease_evidence_but_no_date")
+  mark(is.na(sex) | !sex %in% c("0", "1"), "missing_sex")
+  event <- !is.na(dx) & dx <= censor
+  age <- as.numeric(censor - bd) / 365.25
+  age[event] <- as.numeric(dx[event] - bd[event]) / 365.25
+  mark(!is.finite(age) | age <= 0 | age > 120, "invalid_age")
+  status <- as.integer(event); status[reason != "ok"] <- NA_integer_
+  age[reason != "ok"] <- NA_real_
+  data.frame(status = status, age = age, sex = sex,
+             birth_year = as.integer(format(bd, "%Y")),
+             prevalent = event & !is.na(ba) & dx <= ba,
+             diagnosis_after_censor = !is.na(dx) & dx > censor,
+             reason = reason, stringsAsFactors = FALSE,
+             evidence_columns = paste(evidence_used, collapse = ";"))
+}
+
+# Explicit opt-in provisional calibration from the selected UKB cohort.
+# Retrospective age-from-birth histories include prevalent cases. This cannot
+# correct survival to recruitment, healthy-volunteer selection or incomplete
+# pre-recruitment diagnoses, and is NOT a population lifetime-risk estimate.
+adu_cohort_cip <- function(dat, trait, end_date, file, audit_dir,
+                            input_source = "all.rds; White GWAS cohort") {
+  if (file.exists(file)) stop("CIP already exists; refusing to replace it: ", file)
+  ob <- adu_observations(dat, paste0("fod_icd10_", trait), end_date,
+                          evidence_col = paste0("cnt_icd10_", trait))
+  death <- adu_date(dat$date_death)
+  censor <- pmin(adu_date(dat$date_lost), death, adu_date(end_date), na.rm = TRUE)
+  competing <- !is.na(death) & death == censor & !is.na(ob$status) & ob$status == 0
+  curves <- list(); counts <- list()
+  for (sx in c("0", "1")) {
+    ii <- which(ob$sex == sx & !is.na(ob$status))
+    if (!length(ii)) stop("No usable observations for sex ", sx)
+    times <- sort(unique(ob$age[ii]))
+    group <- match(ob$age[ii], times)
+    exits <- tabulate(group, length(times))
+    cases <- tabulate(group[ob$status[ii] == 1], length(times))
+    deaths <- tabulate(group[competing[ii]], length(times))
+    risk <- length(ii) - c(0, head(cumsum(exits), -1))
+    survival <- cumprod(1 - (cases + deaths) / risk)
+    cif <- cumsum(c(1, head(survival, -1)) * cases / risk)
+    keep <- cases > 0 | seq_along(times) == length(times)
+    curves[[sx]] <- data.frame(trait = trait, sex = sx,
+      age = c(0, times[keep]), cip = c(0, cif[keep]),
+      source = paste("UKB_EMPIRICAL_PROVISIONAL", input_source,
+        "retrospective birth-age Aalen-Johansen; death competing; selected survivors; pipeline testing only", sep = "; "),
+      interpolation = "constant")
+    counts[[sx]] <- data.frame(sex = sx, eligible = length(ii),
+      cases = sum(cases), competing_deaths = sum(deaths),
+      max_age = max(times), final_cip = tail(cif, 1))
+  }
+  result <- do.call(rbind, curves)
+  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
+  dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+  write.table(result, file, sep = "\t", quote = FALSE, row.names = FALSE)
+  write.table(do.call(rbind, counts), file.path(audit_dir, paste0(basename(file), ".qc.tsv")),
+    sep = "\t", quote = FALSE, row.names = FALSE)
+  writeLines(c(paste("Created:", Sys.time()), paste("Input:", input_source),
+    paste("Administrative censor:", end_date),
+    "PROVISIONAL: cohort-derived calibration for pipeline testing, not population CIP.",
+    "All eligible participants are retrospectively treated as at risk from birth.",
+    "Recruitment survivor bias, healthy-volunteer selection, historical underascertainment and birth-cohort effects remain.",
+    "CAD on/before censor is the event; otherwise death at censor is competing; loss/admin end is censored.",
+    "Same-day CAD/death counts as CAD. Invalid/undated disease observations are excluded.",
+    "Replace with externally validated age-specific cumulative incidence for inference.",
+    "Required columns: trait sex age cip source; sex 0=female, 1=male; cip in [0,1].",
+    "Optional interpolation=constant preserves this empirical step curve; absent means linear interpolation.",
+    "After replacing CIP, regenerate ukb.phe and rerun both REGENIE stages for .adu."),
+    file.path(audit_dir, paste0(basename(file), ".provenance.txt")))
+  invisible(result)
+}
+
+# Interpolation in AGE only, within an explicitly selected curve.
+# No extrapolation, no inferred birth cohorts, no empirical UKB prevalence fallback.
+adu_lookup_cip <- function(cip_table, trait, obs) {
+  req <- c("trait", "sex", "age", "cip", "source")
+  if (length(setdiff(req, names(cip_table)))) stop("CIP file requires: ", paste(req, collapse = ", "))
+  zz <- cip_table[!is.na(cip_table$trait) & cip_table$trait == trait, , drop = FALSE]
+  if (!nrow(zz)) stop("No CIP curve for trait '", trait, "'.")
+  zz$sex <- adu_sex(zz$sex); zz$age <- adu_num(zz$age); zz$cip <- adu_num(zz$cip)
+  if (anyNA(zz[c("sex", "age", "cip", "source")]) ||
+      any(!is.finite(zz$age) | zz$age < 0 | zz$age > 120) ||
+      any(!is.finite(zz$cip) | zz$cip < 0 | zz$cip > 1)) stop("Invalid CIP entries for ", trait)
+  if (any(!nzchar(trimws(zz$source)) | grepl("TODO|TO_FILL|SYNTHETIC|EXAMPLE", zz$source, ignore.case = TRUE)))
+    stop("Supply a real population CIP source; templates/synthetic curves are not analysis input.")
+  if (any(grepl("UKB_EMPIRICAL_PROVISIONAL", zz$source, fixed = TRUE)))
+    warning(trait, ": using provisional UKB cohort CIP for pipeline testing; replace for population-calibrated inference.", call. = FALSE)
+  if (any(zz$sex == "all") && any(zz$sex != "all")) stop("Do not mix pooled and sex-specific CIP curves for ", trait)
+  if (all(zz$sex == "all")) warning(trait, ": pooled CIP; sex-specific calibration is unavailable.", call. = FALSE)
+  has_birth <- "birth_year" %in% names(zz) && any(!is.na(zz$birth_year) & nzchar(zz$birth_year))
+  if (has_birth) {
+    zz$birth_year <- adu_num(zz$birth_year)
+    if (anyNA(zz$birth_year) || any(zz$birth_year != floor(zz$birth_year))) stop("CIP birth_year must be complete integer years")
+  } else {
+    warning(trait, ": CIP is not stratified by birth year; cohort effects remain unmodelled in Y.", call. = FALSE)
+  }
+  key <- if (has_birth) paste(zz$sex, zz$birth_year, sep = "|") else zz$sex
+  s <- if (all(zz$sex == "all")) rep("all", nrow(obs)) else obs$sex
+  query_key <- if (has_birth) paste(s, obs$birth_year, sep = "|") else s
+  good <- !is.na(obs$status) & is.finite(obs$age)
+  needed <- unique(query_key[good])
+  missing_keys <- setdiff(needed, unique(key))
+  if (length(missing_keys)) stop("CIP missing strata for ", trait, ": ", paste(head(missing_keys, 12), collapse = ", "))
+  ans <- rep(NA_real_, nrow(obs))
+  for (ky in unique(key)) {
+    z <- zz[key == ky, , drop = FALSE]; z <- z[order(z$age), , drop = FALSE]
+    if (nrow(z) < 2 || anyDuplicated(z$age)) stop("CIP needs >=2 unique ages per stratum: ", trait, "/", ky)
+    if (any(diff(z$cip) < 0)) stop("CIP must be non-decreasing: ", trait, "/", ky)
+    if (diff(range(z$cip)) == 0) stop("CIP curve is constant; cannot encode onset age: ", trait, "/", ky)
+    ii <- which(good & query_key == ky)
+    if (!length(ii)) next
+    a <- obs$age[ii]
+    # Text serialization can round an endpoint by a few floating-point ulps.
+    if (any(a < min(z$age) - 1e-8 | a > max(z$age) + 1e-8))
+      stop(sprintf("CIP age coverage insufficient for %s/%s: needed %.3f..%.3f, supplied %.3f..%.3f. No extrapolation performed.",
+                   trait, ky, min(a), max(a), min(z$age), max(z$age)))
+    a <- pmax(min(z$age), pmin(max(z$age), a))
+    interpolation <- if ("interpolation" %in% names(z)) unique(z$interpolation) else "linear"
+    if (length(interpolation) != 1L || is.na(interpolation) || !interpolation %in% c("linear", "constant"))
+      stop("CIP interpolation must be linear or constant for ", trait, "/", ky)
+    ans[ii] <- stats::approx(z$age, z$cip, xout = a, method = interpolation,
+                            f = 0, ties = "ordered", rule = 1)$y
+  }
+  list(cip = ans, source = paste(unique(zz$source), collapse = "; "),
+       sex_stratified = !all(zz$sex == "all"), birth_stratified = has_birth)
+}
+
+# Main entry point used inside phe4gwas, BEFORE select() removes the dates.
+ukb_add_adult <- function(dat, indir, outdir, end_date,
+                          default_traits = c("cvd_cad", "stroke", "cvd_stroke_i", "stroke_o")) {
+  if (!adu_bool(Sys.getenv("ADULT_ENABLE", "FALSE"), "ADULT_ENABLE")) return(dat)
+  if (!nrow(dat)) stop("No participants after the existing White filter")
+  if (all(c("FID", "IID") %in% names(dat)) &&
+      (anyNA(dat$FID) || anyNA(dat$IID) || anyDuplicated(paste(dat$FID, dat$IID, sep = "|"))))
+    stop("FID/IID must be non-missing and unique")
+  traits_text <- Sys.getenv("ADULT_TRAITS", paste(default_traits, collapse = ","))
+  traits <- unique(trimws(strsplit(traits_text, ",", fixed = TRUE)[[1]]))
+  traits <- traits[nzchar(traits)]
+  if (!length(traits) || any(!grepl("^[A-Za-z][A-Za-z0-9_.]*$", traits))) stop("Invalid ADULT_TRAITS")
+  cip_file <- Sys.getenv("ADULT_CIP_FILE", file.path(indir, "common", "adu_cip.tsv"))
+  config_file <- Sys.getenv("ADULT_TRAIT_FILE", "")
+  case_mode <- tolower(Sys.getenv("ADULT_CASE_MODE", "unfixed"))
+  if (!case_mode %in% c("unfixed", "fixed")) stop("ADULT_CASE_MODE must be unfixed or fixed")
+  standardize <- adu_bool(Sys.getenv("ADULT_STANDARDIZE", "TRUE"), "ADULT_STANDARDIZE")
+  eps <- adu_num(Sys.getenv("ADULT_MIN_CIP", "1e-5"))
+  if (length(eps) != 1L || !is.finite(eps) || eps <= 0 || eps >= 0.5) stop("Invalid ADULT_MIN_CIP")
+  cfg <- data.frame(trait = traits, date_col = paste0("fod_icd10_", traits),
+                    evidence_col = paste0("cnt_icd10_", traits), status_col = "",
+                    h2 = 0.5, stringsAsFactors = FALSE)
+  if (nzchar(config_file)) {
+    ov <- adu_read_table(config_file)
+    if (!"trait" %in% names(ov) || anyNA(ov$trait) || anyDuplicated(ov$trait)) stop("Invalid trait configuration")
+    if (length(setdiff(traits, ov$trait))) stop("Trait configuration must contain every ADULT_TRAITS entry")
+    ov <- ov[match(traits, ov$trait), , drop = FALSE]
+    for (nm in intersect(setdiff(names(cfg), "trait"), names(ov))) cfg[[nm]] <- ov[[nm]]
+  }
+  cfg$h2 <- adu_num(cfg$h2)
+  if (any(!is.finite(cfg$h2) | cfg$h2 <= 0 | cfg$h2 > 1)) stop("h2 must be in (0,1]")
+  if (anyNA(cfg$date_col) || any(!nzchar(cfg$date_col))) stop("Missing date_col in trait configuration")
+  dir.create(file.path(outdir, "adu"), recursive = TRUE, showWarnings = FALSE)
+  audit_dir <- file.path(outdir, "adu")
+  # Aggregate-only manifest: no participant IDs or participant-level dates.
+  manifest <- cfg
+  manifest$date_col_present <- cfg$date_col %in% names(dat)
+  manifest$evidence_col_present <- !is.na(cfg$evidence_col) & cfg$evidence_col %in% names(dat)
+  utils::write.table(manifest, file.path(audit_dir, "input_manifest.tsv"), sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
+  absent <- cfg$date_col[!manifest$date_col_present]
+  if (length(absent)) stop("ADuLT stopped: missing diagnosis columns (not converted to controls): ", paste(absent, collapse = ", "))
+  if (!file.exists(cip_file)) {
+    template <- file.path(audit_dir, "adu_cip.template.tsv")
+    writeLines("trait\tsex\tage\tcip\tsource", template)
+    stop("ADuLT requires population cumulative incidence curves. Missing: ", cip_file,
+         "\nHeader template: ", template, "\nThe existing ukb.phe has NOT been overwritten.", call. = FALSE)
+  }
+  cip_table <- adu_read_table(cip_file)
+  if (!nrow(cip_table)) stop("CIP file has no data; fill it from a documented population source.")
+  new_values <- vector("list", length(traits)); names(new_values) <- paste0(traits, ".adu")
+  qc <- vector("list", length(traits)); reasons <- vector("list", length(traits))
+  for (j in seq_along(traits)) {
+    tr <- traits[j]
+    ob <- adu_observations(dat, cfg$date_col[j], end_date,
+                           evidence_col = cfg$evidence_col[j], status_col = cfg$status_col[j])
+    cc <- adu_lookup_cip(cip_table, tr, ob)
+    if (case_mode == "fixed" && (!cc$sex_stratified || !cc$birth_stratified))
+      warning(tr, ": fixed-case mode used without sex AND birth-year-stratified CIP. Unfixed is recommended.", call. = FALSE)
+    raw <- adu_posterior(ob$status, cc$cip, cfg$h2[j], case_mode, eps)
+    nc <- sum(ob$status == 1L, na.rm = TRUE); nn <- sum(ob$status == 0L, na.rm = TRUE)
+    if (!nc || !nn) stop(tr, ": no analysable cases or no controls; no ukb.phe written.")
+    mu <- mean(raw, na.rm = TRUE); ss <- stats::sd(raw, na.rm = TRUE)
+    if (!is.finite(ss) || ss <= 0) stop(tr, ": zero/non-finite ADuLT phenotype variance")
+    new_values[[j]] <- if (standardize) (raw - mu) / ss else raw
+    if (nc / (nc + nn) < 1/80)
+      warning(tr, ": case fraction <1/80. ADuLT paper cautions about QT test calibration; inspect QQ and allele counts.", call. = FALSE)
+    qs <- as.data.frame(table(ob$reason), stringsAsFactors = FALSE)
+    names(qs) <- c("reason", "n"); qs$trait <- tr
+    reasons[[j]] <- qs[, c("trait", "reason", "n")]
+    qc[[j]] <- data.frame(trait = tr, output = paste0(tr, ".adu"), date_col = cfg$date_col[j],
+                          n = nrow(dat), cases = nc, controls = nn,
+                          prevalent_cases = sum(ob$prevalent & !is.na(raw), na.rm = TRUE),
+                          missing = sum(is.na(raw)), case_fraction = nc/(nc+nn),
+                          diagnosis_after_censor = sum(ob$diagnosis_after_censor, na.rm = TRUE),
+                          age_min = min(ob$age, na.rm = TRUE), age_max = max(ob$age, na.rm = TRUE),
+                          cip_clipped = sum(!is.na(raw) & (cc$cip < eps | cc$cip > 1-eps), na.rm = TRUE),
+                          case_mode = case_mode, h2 = cfg$h2[j], standardized = standardize,
+                          raw_mean = mu, raw_sd = ss, source = cc$source,
+                          cip_sex_stratified = cc$sex_stratified,
+                          cip_birth_year_stratified = cc$birth_stratified,
+                          evidence_columns = ob$evidence_columns[1], stringsAsFactors = FALSE)
+    message(sprintf("ADuLT %-16s: cases=%d (prevalent=%d), controls=%d, missing=%d",
+                    tr, nc, qc[[j]]$prevalent_cases, nn, sum(is.na(raw))))
+  }
+  # Add no columns until every requested trait succeeds. Never change t2e columns.
+  for (nm in names(new_values)) dat[[nm]] <- new_values[[nm]]
+  utils::write.table(do.call(rbind, qc), file.path(audit_dir, "phenotype_qc.tsv"), sep = "\t", quote = TRUE, row.names = FALSE, na = "NA")
+  utils::write.table(do.call(rbind, reasons), file.path(audit_dir, "exclusion_counts.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+  # The curve is aggregate reference information, not participant data.
+  utils::write.table(cip_table, file.path(audit_dir, "cip_used.tsv"), sep = "\t", quote = TRUE, row.names = FALSE, na = "NA")
+  version <- if (requireNamespace("LTFHPlus", quietly = TRUE)) as.character(utils::packageVersion("LTFHPlus")) else "not installed (closed form used)"
+  writeLines(c("ADuLT engine: exact closed-form posterior mean, no family history",
+               "Patch version: 2026-09-06.1", paste("LTFHPlus:", version),
+               paste("CIP file:", normalizePath(cip_file, winslash = "/")),
+               paste("CIP MD5:", unname(tools::md5sum(cip_file))),
+               paste("Administrative end:", paste(unique(as.character(end_date)), collapse = ",")),
+               "No genotype or PRS was used to construct Y. CIP comes from the recorded file; see source for provisional UKB calibration.",
+               capture.output(sessionInfo())), file.path(audit_dir, "run_metadata.txt"))
+  dat
+}
+
+# Optional reference check on a small, synthetic grid. This is NOT the GWAS engine.
+# It calls the official package API and checks agreement relative to its Monte Carlo SE.
+adu_check_ltfhplus <- function(tol = 0.005, seed = 20260906L) {
+  if (!requireNamespace("LTFHPlus", quietly = TRUE)) stop("Install LTFHPlus first")
+  set.seed(seed)
+  k <- rep(c(0.001, 0.01, 0.1, 0.3), 3)
+  status <- rep(c(0, 1, 1), each = 4)
+  mode <- rep(c("unfixed", "unfixed", "fixed"), each = 4)
+  q <- stats::qnorm(k, lower.tail = FALSE)
+  id <- paste0("test_", seq_along(k))
+  tbl <- data.frame(fam_ID = id, PID = id, role = "o",
+                    lower = ifelse(status == 0, -Inf, q),
+                    upper = ifelse(status == 0 | mode == "fixed", q, Inf))
+  fit <- as.data.frame(LTFHPlus::estimate_liability(.tbl = tbl, h2 = 0.5,
+                                                   pid = "PID", fam_id = "fam_ID", role = "role",
+                                                   out = "genetic", tol = tol))
+  if (!"PID" %in% names(fit)) stop("Unexpected LTFHPlus output: missing PID")
+  est_col <- grep("^genetic.*_est$", names(fit), value = TRUE)
+  se_col <- grep("^genetic.*_se$", names(fit), value = TRUE)
+  if (length(est_col) != 1L || length(se_col) != 1L)
+    stop("Unexpected LTFHPlus output columns: ", paste(names(fit), collapse = ", "))
+  m <- match(id, fit$PID)
+  expected <- vapply(seq_along(k), function(i) adu_posterior(status[i], k[i], 0.5, mode[i]), numeric(1))
+  result <- data.frame(status = status, cip = k, case_mode = mode, analytic = expected,
+                       package = fit[[est_col]][m], package_se = fit[[se_col]][m])
+  result$abs_difference <- abs(result$analytic - result$package)
+  result$pass <- result$abs_difference <= pmax(0.02, 6 * result$package_se)
+  print(result)
+  if (anyNA(result$pass) || !all(result$pass)) stop("LTFHPlus cross-check did not pass; inspect version, output, and Monte Carlo error.")
+  invisible(result)
+}
+
+
 # ICD-10 helper.
 get_icd <- function(ver, dat.code = NA, dat.date = NA, dat.this, code.this, label.this,
                     save_aod_list = TRUE, save_aod_text = TRUE) {

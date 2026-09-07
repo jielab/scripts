@@ -905,7 +905,7 @@ run_if("gp_prep", {
 pacman::p_load(tidyverse, data.table, stringr)
 
 mapdir <- file.path(indir, "common", "map")
-lstdir <- file.path(indir, "common")
+lstdir <- file.path(outdir, "gp_prep")
 dir.create(lstdir, showWarnings = FALSE, recursive = TRUE)
 
 r2 <- fread(file.path(mapdir, "read2_to_phecode.csv"))[, .(code = read2_code, phecode)]
@@ -1434,12 +1434,32 @@ dat1 <- dat %>% filter(ethnic.c == "White") %>% rename(IID = eid) %>% mutate(FID
 for (Y in c("cvd_cad", "stroke", "cvd_stroke_i", "stroke_o")) {
 	dat1 <- t2e(dat1, "cvd", paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_follow_end, Y, "year")
 }
+# ADuLT must use the original dates, before select() drops them. Existing
+# .t2e/.Yt2e are retained; ADuLT includes dated prevalent cases as well.
+# Enable with ADULT_ENABLE=TRUE; the default new phenotype is cvd_cad.adu.
+if (adu_bool(Sys.getenv("ADULT_ENABLE", "FALSE")) &&
+    adu_bool(Sys.getenv("ADULT_CIP_FROM_UKB", "FALSE"))) {
+	adu_cohort_cip(dat1, "cvd_cad", date_follow_end,
+		Sys.getenv("ADULT_CIP_FILE", file.path(indir, "common", "adu_cip.tsv")),
+		audit_dir = file.path(outdir, "adu"),
+		input_source = paste(file.path(indir, "Rdata", "all.rds"), "White GWAS cohort"))
+}
+dat1 <- ukb_add_adult(dat1, indir = indir, outdir = outdir,
+                      end_date = date_follow_end, default_traits = "cvd_cad")
 dat1 <- dat1 %>% mutate(center = factor(center)) %>%
-	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, bald, matches("^bald1|^cvd_cad|^stroke_|^hap|t2e$|^PC[1-4]$"), -starts_with("happy_"))
+	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, bald, matches("^bald1|^cvd_cad|^stroke_|^hap|t2e$|^PC[1-4]$"), ends_with(".adu"), -starts_with("happy_"))
 
 # mm <- model.matrix(~ center - 1, data = dat1)
 # colnames(mm) <- paste0("CR", seq_len(ncol(mm)))
 # dat1 <- cbind(dat1, as.data.table(mm))
 dir.create(file.path(indir, "common"), recursive = TRUE, showWarnings = FALSE)
-write.table(dat1, paste0(indir, "/common/ukb.phe"), na = "NA", append = FALSE, quote = FALSE, row.names = FALSE)
+# Stage the completed table beside the destination; errors cannot truncate the
+# existing phenotype file. Rename only after ADuLT and the entire write succeed.
+phe_destination <- file.path(indir, "common", "ukb.phe")
+phe_staged <- tempfile("ukb.phe.", tmpdir = dirname(phe_destination))
+write.table(dat1, phe_staged, na = "NA", append = FALSE, quote = FALSE, row.names = FALSE)
+if (!file.rename(phe_staged, phe_destination)) {
+	unlink(phe_staged)
+	stop("Could not replace ", phe_destination)
+}
 })

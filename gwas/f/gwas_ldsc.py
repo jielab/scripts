@@ -13,7 +13,14 @@ def boolean(x):
     return x.upper() == 'TRUE'
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__)
+    p=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Examples (replace /path/... with your files):
+  gwas_compare.sh ldsc --gwas-files /path/A.gz,/path/B.gz --output-dir /path/ldsc-results \\
+    --merge-alleles /path/w_hm3.snplist \\
+    --ref-ld-chr /path/eur_w_ld_chr/ --w-ld-chr /path/eur_w_ld_chr/
+  Add --run FALSE to write commands only, --run-rg FALSE for h2 only,
+  or --N 10000 if the actual sample size is 10000 and no N column is present.
+''')
     p.add_argument('--gwas-files',required=True,help='Comma-separated standardized GWAS files')
     p.add_argument('--output-dir',default='ldsc')
     p.add_argument('--ldsc-software-dir',default='/mnt/d/software/ldsc')

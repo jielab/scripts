@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# gwas_post.sh-specific CLI adapter for the reusable mh_plot() implementation
+# format_gwas.sh-specific CLI adapter for the reusable mh_plot() implementation
 # supplied by PLOT_F (normally /mnt/d/scripts/0f/mplot.f.R).
 
 main <- function() {

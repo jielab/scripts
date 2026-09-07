@@ -21,6 +21,8 @@ Options:
   -h, --h, --help        Show this help message.
 
 liftGen options:
+  --bim-file FILE        Lift one BIM instead of PVARs; preserve rows/alleles,
+                         mark unsafe mappings POS=-1, link BED/FAM/NOSEX.
   --dir-in DIR           GRCh37 pfile directory containing chr*.pvar.zst.
   --dir-out DIR          GRCh38 output directory.
   --chain-file FILE      hg19-to-hg38 liftOver chain (.gz is accepted).
@@ -154,6 +156,13 @@ liftgen_output_is_complete() {
 }
 
 run_liftgen() {
+    if [[ -n "${bim_file:-}" ]]; then
+        python3 "$SCRIPT_DIR/f/lift_bim.py" "$(to_wsl_path "$bim_file")" \
+            "$(to_wsl_path "${dir_out:?ERROR: --dir-out required}")" \
+            "$(to_wsl_path "${chain_file:?ERROR: --chain-file required}")" \
+            "$(to_wsl_path "${ref_fasta:-/mnt/d/data.BIG/refGen/fasta/GRCH38.fasta}")"
+        return
+    fi
     # Keep every PVAR row in its original position.  Only POS changes; rows that
     # cannot be mapped and verified against the target reference receive POS=-1.
     set -o pipefail
@@ -591,6 +600,7 @@ while [[ $# -gt 0 ]]; do
         --snp-file) snp_file=${2:?ERROR: --snp-file needs a value}; shift 2 ;;
         --snp-file-type) snp_file_type=${2:?ERROR: --snp-file-type needs a value}; shift 2 ;;
         --flank) flank=${2:?ERROR: --flank needs a value}; flank_set=Y; shift 2 ;;
+        --bim-file) bim_file=${2:?ERROR: --bim-file needs a value}; shift 2 ;;
         --dir-in) dir_in=${2:?ERROR: --dir-in needs a value}; shift 2 ;;
         --input|--pgs-input) pgs_input=${2:?ERROR: $1 needs a value}; shift 2 ;;
         --pgs-pfile-dir) pgs_pfile_dir=${2:?ERROR: --pgs-pfile-dir needs a value}; shift 2 ;;

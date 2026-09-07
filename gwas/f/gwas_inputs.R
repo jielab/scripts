@@ -27,11 +27,14 @@ if(nrow(d)<10 || uniqueN(d[[trait]])<2) stop('Insufficient phenotype variation/s
 for(v in cats) set(d,j=v,value=factor(d[[v]]))
 variable <- covs[vapply(covs,function(v) uniqueN(d[[v]])>1,logical(1))]
 if(length(variable)) {
-  z <- as.data.frame(d[,..variable]); names(z)<-paste0('V',seq_along(variable))
+  z <- as.data.frame(d[,..variable])
+  # Keep readable names in analysis.phe and the actual GWAS command/log.
+  names(z)<-make.names(variable,unique=TRUE)
   m <- model.matrix(~.,z)[,-1,drop=FALSE]
   # Drop dependent columns after complete-case filtering (e.g. male-only bald).
   full <- cbind(Intercept=1,m); qr0<-qr(full); keep<-sort(qr0$pivot[seq_len(qr0$rank)])
-  m <- full[,setdiff(keep,1L),drop=FALSE]; colnames(m)<-paste0('C',seq_len(ncol(m)))
+  m <- full[,setdiff(keep,1L),drop=FALSE]
+  colnames(m)<-make.names(colnames(m),unique=TRUE)
 } else m <- matrix(nrow=nrow(d),ncol=0)
 out <- cbind(d[,..need],as.data.table(m))
 fwrite(out,a[8],sep='\t',na='NA',quote=FALSE)

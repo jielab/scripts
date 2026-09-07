@@ -36,6 +36,19 @@ R steps:
 Association analyses (forest and PheWAS) have moved to ./assoc.sh.
 
 Examples:
+  # Add cvd_cad.adu using common/adu_cip.tsv:
+  ADULT_ENABLE=TRUE ADULT_TRAITS=cvd_cad \
+    ADULT_CIP_FILE=/mnt/d/data/ukb/phe/common/adu_cip.tsv \
+    ./phe.sh --steps phe4gwas
+  # CIP columns: trait sex age cip source; optional birth_year.
+  # ADULT_STANDARDIZE=TRUE and ADULT_CASE_MODE=unfixed are defaults.
+  # ADULT_TRAIT_FILE optionally supplies trait/date/evidence/status/h2 mappings.
+  # Missing or incomplete CIP stops before replacing common/ukb.phe.
+  # ADULT_CIP_FROM_UKB=TRUE explicitly creates a missing provisional CAD CIP
+  # from all.rds for pipeline testing; it refuses to overwrite existing CIP.
+  # Replace provisional CIP with population data, then regenerate ukb.phe.
+  # Generated GP lists, fetched FOD lists, and CIP QC/provenance go to
+  # --output-dir/{gp_prep,fetch_fod,adu}; common holds durable inputs/ukb.phe.
   ./phe.sh --datasets vip --steps extract_pheno
   ./phe.sh --save-aod-list TRUE --steps icd,merge
   ./phe.sh --start-step prep_raw --end-step process_linked --run-r FALSE
@@ -264,6 +277,7 @@ run_shell_step prep_raw prep_raw
 
 # 🚩 Fetch FOD fields.
 fetch_fod() {
+    mkdir -p "$outdir/fetch_fod"
     : > fod.lst.tmp
     for page in {2401..2417}; do
         fn="https://biobank.ndph.ox.ac.uk/ukb/label.cgi?id=$page"
@@ -273,7 +287,7 @@ fetch_fod() {
             echo "Page $page not found"
         fi
     done
-    cat fod.lst.tmp | grep -E '<tr class="row_odd"' | grep 'field.cgi' | sed -E 's/<[^>]*>//g' | sed -E 's/^([0-9]+)([A-Za-z]+.*)/\1 \2/' | cut -d " " -f 1,3 | sed 's/^/p/; s/ /\t/' > "$phedir/common/fod.each.lst"
+    cat fod.lst.tmp | grep -E '<tr class="row_odd"' | grep 'field.cgi' | sed -E 's/<[^>]*>//g' | sed -E 's/^([0-9]+)([A-Za-z]+.*)/\1 \2/' | cut -d " " -f 1,3 | sed 's/^/p/; s/ /\t/' > "$outdir/fetch_fod/fod.each.lst"
 }
 run_shell_step fetch_fod fetch_fod
 
@@ -281,7 +295,7 @@ run_shell_step fetch_fod fetch_fod
 # 🚩 Extract FOD fields.
 extract_fod() {
     local dat=fod
-    awk 'BEGIN{print "eid"}{print $1}' "$phedir/common/$dat.each.lst" > "$dat.id"
+    awk 'BEGIN{print "eid"}{print $1}' "$outdir/fetch_fod/$dat.each.lst" > "$dat.id"
     cols=$(grep -nwf "$dat.id" pheno.id.2col | sed 's/:/ /' | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
     [[ -n "$cols" ]] || { echo "ERROR: no columns found for $dat.each.lst" >&2; exit 1; }
     zcat raw/pheno.tab.gz | cut -f "$cols" | gzip -f > "$dat.date.tab.gz"

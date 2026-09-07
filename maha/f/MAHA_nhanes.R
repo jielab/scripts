@@ -664,7 +664,7 @@ term_result <- function(fit, term) {
 	tt <- broom::tidy(fit, conf.int = TRUE) %>% filter(.data$term == term)
 	if (nrow(tt) == 0) return(NULL)
 	beta <- as.numeric(tt$estimate[1])
-	se <- as.numeric(tt$std.error[1])
+	se <- as.numeric(sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]]))
 	lo <- if ("conf.low" %in% names(tt)) as.numeric(tt$conf.low[1]) else beta - 1.96 * se
 	hi <- if ("conf.high" %in% names(tt)) as.numeric(tt$conf.high[1]) else beta + 1.96 * se
 	p <- if ("p.value" %in% names(tt) && is.finite(tt$p.value[1])) as.numeric(tt$p.value[1]) else 2 * pnorm(-abs(beta / se))
@@ -721,7 +721,7 @@ fit_disc <- function(dat.in, Y, trad_nm, trad_lab, maha_nm = "maha", maha_lab = 
 	if (is.null(fit)) return(NULL)
 	tt <- broom::tidy(fit, conf.int = TRUE) %>% filter(grepl("^discord", term))
 	if (nrow(tt) == 0) return(NULL)
-	beta <- as.numeric(tt$estimate[1]); se <- as.numeric(tt$std.error[1])
+	beta <- as.numeric(tt$estimate[1]); se <- as.numeric(sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]]))
 	lo <- if ("conf.low" %in% names(tt)) as.numeric(tt$conf.low[1]) else beta - 1.96 * se
 	hi <- if ("conf.high" %in% names(tt)) as.numeric(tt$conf.high[1]) else beta + 1.96 * se
 	p <- if ("p.value" %in% names(tt) && is.finite(tt$p.value[1])) as.numeric(tt$p.value[1]) else 2 * pnorm(-abs(beta / se))
@@ -1416,7 +1416,7 @@ nhanes_validate_maha <- function(dat.in, covs.in) {
     fm <- as.formula(paste0("Surv(death_time_y, death) ~ score",if(length(cov.use)) paste0(" + ",paste(cov.use,collapse=" + ")) else ""))
     fit <- tryCatch(survey::svycoxph(fm,design=des),error=function(e)NULL)
     beta<-se<-p<-NA_real_
-    if(!is.null(fit)) {tt<-broom::tidy(fit)%>%filter(term=="score");if(nrow(tt)){beta<-tt$estimate[1];se<-tt$std.error[1];p<-tt$p.value[1]}}
+    if(!is.null(fit)) {tt<-broom::tidy(fit)%>%filter(term=="score");if(nrow(tt)){beta<-tt$estimate[1];se<-sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]]);p<-tt$p.value[1]}}
     tibble(pattern_id=i,pattern=paste(ifelse(sg>0,"+","-"),collapse=""),is_prespecified_MAHA=all(sg==1),N=nrow(dd),deaths=sum(dd$death==1),
            beta=beta,se=se,HR=exp(beta),CI_low=exp(beta-1.96*se),CI_high=exp(beta+1.96*se),P=p,protective_Z=-beta/se,
            rho_established_anchor=suppressWarnings(cor(raw_score,anchor,method="spearman",use="complete.obs")))
@@ -1436,8 +1436,8 @@ nhanes_validate_maha <- function(dat.in, covs.in) {
     keep<-if(is.na(drop_key))nhanes_component_keys else setdiff(nhanes_component_keys,drop_key); raw_score<-rowMeans(as.matrix(d0[,paste0("maha_c_",keep),drop=FALSE]))
     dd<-d0;dd$score<-zstd(raw_score);des<-make_design(dd);fm<-as.formula(paste0("Surv(death_time_y, death) ~ score",if(length(cov.use))paste0(" + ",paste(cov.use,collapse=" + "))else""))
     fit<-survey::svycoxph(fm,design=des);tt<-broom::tidy(fit)%>%filter(term=="score")
-    tibble(label=lab,omitted=ifelse(is.na(drop_key),"None",drop_key),N=nrow(dd),deaths=sum(dd$death==1),beta=tt$estimate[1],se=tt$std.error[1],HR=exp(tt$estimate[1]),
-      CI_low=exp(tt$estimate[1]-1.96*tt$std.error[1]),CI_high=exp(tt$estimate[1]+1.96*tt$std.error[1]),P=tt$p.value[1],rho_primary=suppressWarnings(cor(raw_score,primary,method="spearman")))
+    tibble(label=lab,omitted=ifelse(is.na(drop_key),"None",drop_key),N=nrow(dd),deaths=sum(dd$death==1),beta=tt$estimate[1],se=sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]]),HR=exp(tt$estimate[1]),
+      CI_low=exp(tt$estimate[1]-1.96*sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]])),CI_high=exp(tt$estimate[1]+1.96*sqrt(stats::vcov(fit)[tt$term[1], tt$term[1]])),P=tt$p.value[1],rho_primary=suppressWarnings(cor(raw_score,primary,method="spearman")))
   })
   p1<-ggplot(nul,aes(protective_Z))+geom_histogram(bins=35,boundary=0)+geom_vline(xintercept=obs$protective_Z,linewidth=.9)+
     labs(title="a. Mortality criterion validity",subtitle="Matched scores use identical 9 components; only directions differ",x="Protective Z statistic (-beta/SE)",y="Matched-null scores")+theme_classic(base_size=11)

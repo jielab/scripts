@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Performance overrides for gwas_post.sh at multi-thousand-GWAS scale.
+# Performance overrides for format_gwas.sh at multi-thousand-GWAS scale.
 # This file is sourced by each generated per-GWAS command after 0data.f.sh.
 
 # Preserve the original fill function so integrated format-time N filling can
