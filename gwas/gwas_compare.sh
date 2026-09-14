@@ -45,8 +45,8 @@ ldsc options:
 shiny options (interactive Shiny Manhattan tracks and LD block boundaries):
   --labels CSV                Optional track labels in input order
   --races CSV                 Optional ancestry labels; default: filename suffix
-  --block-dir DIR             [race].[37|38].bed files (default: /mnt/i/refLD/block)
-  --ld-dir DIR                PRS-CSx HDF5 root (default: /mnt/i/refLD/csx)
+  --block-dir DIR             [race].[37|38].bed files (default: /mnt/e/refLD/block)
+  --ld-dir DIR                PRS-CSx HDF5 root (default: /mnt/e/refLD/csx)
   --ld-python PATH            Python with h5py/numpy/pandas (default: ~/anaconda3/bin/python)
   --ld-max-snps 300           Shared display SNP limit for the five LD panels (2–1000)
   --port 3841 --host 127.0.0.1 Local Shiny server address
@@ -55,7 +55,7 @@ shiny options (interactive Shiny Manhattan tracks and LD block boundaries):
   --p-threshold 5e-8           Significance guide line
   --chain-dir DIR             UCSC chains (default: /mnt/d/files/liftOver)
   --liftover-bin PATH          Default: /mnt/d/software/bin/liftOver
-  --reference-dir DIR          Indexed FASTA (default: /mnt/i/refGen/fasta)
+  --reference-dir DIR          Indexed FASTA (default: /mnt/e/refGen/fasta)
   --gene-dir DIR               glist.37.bed / glist.38.bed (default: /mnt/d/files)
   shiny prefers adjacent .thin.gz files when available; compare/ldsc use full GWAS.
   All inputs must share one source build. The GRCh selector converts cached
@@ -65,15 +65,15 @@ Examples:
 cd /mnt/d/scripts/gwas
 
 ./gwas_compare.sh compare \
-  --project-dir /mnt/i/gwas/main --category common --anchor bald0 --require-grch 38 \
+  --project-dir /mnt/d/data/gwas/main --category common --anchor bald0 --require-grch 38 \
   --mplot TRUE --compare-beta TRUE --compare-EAF TRUE \
   --output-dir /mnt/d/analysis/gwas/compare
 
-./gwas_compare.sh ldsc --dir-gwas /mnt/i/gwas/main --category common --anchor bald0 --require-grch 38 --missing-n skip --dir-out /mnt/d/analysis/gwas/main/ldsc
+./gwas_compare.sh ldsc --dir-gwas /mnt/d/data/gwas/main --category common --anchor bald0 --require-grch 38 --missing-n skip --dir-out /mnt/d/analysis/gwas/main/ldsc
 
 # 4grid: six formatted height GWAS, with EUR first for pairwise comparisons.
 # List the files explicitly so later LDL/T2DM outputs are not included.
-gwas_root=/mnt/i/gwas/4grid/common
+gwas_root=/mnt/d/data/gwas/4grid/common
 trait=height
 gwas_files=()
 for ancestry in EUR AFR EAS HIS SAS ALL; do
@@ -97,7 +97,7 @@ gwas_csv=$(IFS=,; echo "${gwas_files[*]}")
 
 # R Shiny: generate .thin.gz first using gwas_format.sh thin (see its examples).
 trait=height
-gwas_root=/mnt/i/gwas/4grid/common
+gwas_root=/mnt/d/data/gwas/4grid/common
 gwas_files=()
 for race in EUR AFR EAS HIS SAS ALL; do
   gwas_files+=("$gwas_root/$trait.$race/gwas/$trait.$race.thin.gz")
@@ -105,7 +105,7 @@ done
 gwas_csv=$(IFS=,; echo "${gwas_files[*]}")
 ./gwas_compare.sh shiny \
   --gwas-files "$gwas_csv" \
-  --block-dir /mnt/i/refLD/block --ld-dir /mnt/i/refLD/csx --port 3841 \
+  --block-dir /mnt/e/refLD/block --ld-dir /mnt/e/refLD/csx --port 3841 \
   --output-dir "/mnt/d/analysis/gwas/4grid/shiny/$trait"
 HELP
 }
@@ -137,18 +137,18 @@ ldsc_software_dir=/mnt/d/software/ldsc
 conda=$(type -P conda || true)
 conda=${conda:-$HOME/anaconda3/bin/conda}
 conda_env=ldsc ldsc_python=''
-merge_alleles=/mnt/i/refLD/ldsc/hm3/w_hm3.snplist
-ref_ld_chr=/mnt/i/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.
-w_ld_chr=/mnt/i/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.
+merge_alleles=/mnt/e/refLD/ldsc/hm3/w_hm3.snplist
+ref_ld_chr=/mnt/e/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.
+w_ld_chr=/mnt/e/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.
 sample_size='' missing_n=error
 run_munge=TRUE run_h2=TRUE run_rg=TRUE run=TRUE
 
 # Interactive block viewer. All settings remain visible at the entry point.
-block_dir=/mnt/i/refLD/block
-ld_dir=/mnt/i/refLD/csx ld_python="$HOME/anaconda3/bin/python" ld_max_snps=300
+block_dir=/mnt/e/refLD/block
+ld_dir=/mnt/e/refLD/csx ld_python="$HOME/anaconda3/bin/python" ld_max_snps=300
 port=3841 host=127.0.0.1 launch_browser=FALSE max_points=12000 races=''
 chain_dir=/mnt/d/files/liftOver liftover_bin=/mnt/d/software/bin/liftOver
-reference_dir=/mnt/i/refGen/fasta gene_dir=/mnt/d/files
+reference_dir=/mnt/e/refGen/fasta gene_dir=/mnt/d/files
 
 
 # 🚩 Command-line arguments

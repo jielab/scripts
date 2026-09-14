@@ -18,25 +18,6 @@ from phyml_gwas_input import write
 
 
 class LineageTests(unittest.TestCase):
-    def test_interrupted_mask_download_resumes_and_validates_gzip(self):
-        payload=gzip.compress(b'archaic reference quality mask\n'*100)
-        requested=[]
-        def response(request,**kwargs):
-            lo,hi=map(int,request.get_header('Range').split('=')[1].split('-'))
-            hi=min(hi,len(payload)-1);requested.append(lo)
-            body=payload[lo:hi+1]
-            if len(requested)==1:body=body[:4]  # First connection closes early.
-            result=io.BytesIO(body);result.status=206
-            result.headers={'Content-Length':str(hi-lo+1),'Content-Range':f'bytes {lo}-{hi}/{len(payload)}','ETag':'"v1"'}
-            return result
-        with tempfile.TemporaryDirectory() as tmp, patch.object(ibd.urllib.request,'urlopen',response), patch.object(ibd.time,'sleep'):
-            target=Path(tmp)/'mask.gz'
-            ibd.download('https://example.invalid/mask.gz',target,chunk_bytes=16)
-            self.assertEqual(requested[:2],[0,4])
-            self.assertEqual(target.read_bytes(),payload)
-            self.assertEqual(gzip.decompress(target.read_bytes()),b'archaic reference quality mask\n'*100)
-            self.assertFalse(list(Path(tmp).glob('*.part*')))
-
     def test_five_reference_masks_intersect_common_exclusions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
@@ -53,18 +34,21 @@ class LineageTests(unittest.TestCase):
             modern.write_text('##fileformat=VCFv4.2\n##contig=<ID=1,length=1000>\n'
                               '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n'
                               '1\t401\t.\tAA\tA\t.\tPASS\t.\n')
-            def download(url,path):
-                if 'strict_mask' in url:return strict
-                if 'genomicSuperDups' in url:return dups
-                return beds['Altai' if 'AltaiNea' in url else 'Denisova']
+            def local_reference(path, *args):
+                if 'strict_mask' in str(path):return strict
+                if 'genomicSuperDups' in str(path):return dups
+                return beds['Altai' if 'AltaiNea' in str(path) else 'Denisova']
             cpg=np.zeros(1000,dtype=bool);cpg[500]=True
             with ExitStack() as stack:
                 stack.enter_context(patch.dict(ibd.CHROM_LENGTHS,{'37':{'1':1000}},clear=True))
-                stack.enter_context(patch.object(ibd,'download',download))
+                stack.enter_context(patch.object(ibd,'check_mask_inputs'))
+                stack.enter_context(patch.object(ibd,'reference_mask_resource',local_reference))
                 stack.enter_context(patch.object(ibd,'published_reference_mask',lambda ref,*args:beds[ref]))
-                stack.enter_context(patch.object(ibd,'download_axt',lambda *args:axt))
+                stack.enter_context(patch.object(ibd,'local_axt',lambda *args:axt))
                 stack.enter_context(patch.object(ibd,'cached_cpg_sites',lambda *args:cpg.copy()))
                 ibd.prepare_masks(root/'resources','1',modern,fasta,root,root/'out',axt_root=root/'axt',refs=list(phy.REFS))
+            self.assertTrue((root/'resources/derived/combined/chr1').is_dir())
+            self.assertFalse((root/'axt/ibdmix-cache').exists())
             for i,ref in enumerate(phy.REFS):
                 excluded=np.zeros(1000,dtype=bool)
                 for lo,hi in ibd.bed_intervals(root/'out'/f'{ref}.exclude.bed','1',1000):excluded[lo:hi]=True

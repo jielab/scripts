@@ -484,7 +484,7 @@ mv -f -- "$done_tmp" "$DONE"
 echo "PGS merge done: $OUTPUT; allele counts: $ALLELE_OUTPUT (expected=$expected included=${#inputs[@]} empty=$empty)"
 PGS_STEP_BODY
   } > "$script"
-  chmod +x "$script"
+  # This merge command is invoked with bash, including on mounted drives.
   log "Wrote $label PGS merge command: $script"
 }
 
@@ -682,7 +682,7 @@ collect_gwas_names() {
 }
 
 run_cmds() {
-  local list="$1" n rc=0 base
+  local list="$1" n rc=0 base joblog
   [[ -s "$list" ]] || { log "No command files in $list"; return 0; }
   n=$(wc -l < "$list" | tr -d ' ')
 
@@ -730,11 +730,12 @@ run_cmds() {
   export category
   export step_key
   if command -v parallel >/dev/null 2>&1; then
-    rm -f "$list.joblog"
-    parallel --line-buffer -j "$jobs" --joblog "$list.joblog" run_one_cmd {} :::: "$list" || rc=$?
+    joblog=$(mktemp "$list.joblog.XXXXXXXX") || return 1
+    log "Parallel job log: $joblog"
+    parallel --line-buffer -j "$jobs" --joblog "$joblog" run_one_cmd {} :::: "$list" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
-      log "ERROR: [$step_key] one or more command files failed. First failed jobs from $list.joblog:"
-      awk -F '\t' 'NR>1 && $7 != 0 {print "  exit="$7" cmd="$9; n++; if(n>=10) exit}' "$list.joblog" >&2 || true
+      log "ERROR: [$step_key] one or more command files failed. First failed jobs from $joblog:"
+      awk -F '\t' 'NR>1 && $7 != 0 {print "  exit="$7" cmd="$9; n++; if(n>=10) exit}' "$joblog" >&2 || true
       return "$rc"
     fi
   else

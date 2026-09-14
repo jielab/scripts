@@ -7,7 +7,7 @@ PFI_ROOT="${PFI_ROOT:-$SCRIPT_DIR}"
 
 # Main roots.
 ANALYSIS_ROOT="${ANALYSIS_ROOT:-/mnt/d/analysis/pfi}"
-RAW_ROOT="${RAW_ROOT:-/mnt/i/pfi}"
+RAW_ROOT="${RAW_ROOT:-/mnt/e/pfi}"
 DAT_DIR="${DAT_DIR:-$ANALYSIS_ROOT/dat}"
 WORK_DIR="${WORK_DIR:-$ANALYSIS_ROOT/work}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ANALYSIS_ROOT/output}"
@@ -66,7 +66,7 @@ PFI_RSCRIPT_BIN="${PFI_RSCRIPT_BIN:-Rscript}"
 PFI_DUCKDB_THREADS="${PFI_DUCKDB_THREADS:-4}"
 
 # PubMedBERT/BiomedBERT.
-PFI_PUBMEDBERT_MODEL="${PFI_PUBMEDBERT_MODEL:-/mnt/i/AI_model/pubmedbert_abstract_fulltext}"
+PFI_PUBMEDBERT_MODEL="${PFI_PUBMEDBERT_MODEL:-/mnt/e/AI_model/pubmedbert_abstract_fulltext}"
 PFI_PUBMEDBERT_FALLBACK="${PFI_PUBMEDBERT_FALLBACK:-microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext}"
 PFI_BERT_EPOCHS="${PFI_BERT_EPOCHS:-5}"
 PFI_BERT_BATCH_SIZE="${PFI_BERT_BATCH_SIZE:-8}"

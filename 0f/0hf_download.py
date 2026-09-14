@@ -5,7 +5,7 @@ from huggingface_hub import snapshot_download
 
 # Configure a mirror for WSL or restricted network environments.
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-local_dir = "/mnt/i/AI_model/hfl"
+local_dir = "/mnt/e/AI_model/hfl"
 
 print("正在开始下载...")
 snapshot_download(

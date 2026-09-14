@@ -16,7 +16,7 @@ TRACE_DIR=${TRACE_RUNTIME:-$SOFT/trace}
 AS3_ENV_NAME=${AS3_ENV_NAME:-as3_mamba}
 AS3_PYTHON_VERSION=${AS3_PYTHON_VERSION:-3.9}
 DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
-REF_ROOT=${GU_REF_ROOT:-/mnt/i/refGen}
+REF_ROOT=${GU_REF_ROOT:-/mnt/e/refGen}
 AS3_MODEL_DIR=${AS3_MODEL_DIR:-$REF_ROOT/archaic/38/models}
 TARGET_ROOT=${GU_TARGET_ROOT:-$REF_ROOT/1kg/37}
 TARGET_VCF_DIR=${GU_TARGET_VCF_DIR:-$TARGET_ROOT/vcf}
@@ -94,7 +94,7 @@ while (( $# )); do
     --software-dir) need_value "$@"; SOFT=$2; STATE=$SOFT/.gu-install.state; IBDMIX_DIR=$SOFT/ibdmix; TRACE_DIR=$SOFT/trace; shift 2 ;;
     --ibdmix-dir) need_value "$@"; IBDMIX_DIR=$2; shift 2 ;;
     --trace-dir) need_value "$@"; TRACE_DIR=$2; shift 2 ;;
-    --data-root) need_value "$@"; DATA_ROOT=$2; REF_ROOT=/mnt/i/refGen; TARGET_ROOT=$REF_ROOT/1kg/37; TARGET_VCF_DIR=$TARGET_ROOT/vcf; SAMPLE_PANEL=$TARGET_ROOT/samples.txt; ARCHAIC_ROOT=$REF_ROOT/archaic/37/vcf; shift 2 ;;
+    --data-root) need_value "$@"; DATA_ROOT=$2; REF_ROOT=/mnt/e/refGen; TARGET_ROOT=$REF_ROOT/1kg/37; TARGET_VCF_DIR=$TARGET_ROOT/vcf; SAMPLE_PANEL=$TARGET_ROOT/samples.txt; ARCHAIC_ROOT=$REF_ROOT/archaic/37/vcf; shift 2 ;;
     --reference-root) need_value "$@"; REF_ROOT=$2; TARGET_ROOT=$REF_ROOT/1kg/37; TARGET_VCF_DIR=$TARGET_ROOT/vcf; SAMPLE_PANEL=$TARGET_ROOT/samples.txt; ARCHAIC_ROOT=$REF_ROOT/archaic/37/vcf; shift 2 ;;
     --target-root) need_value "$@"; TARGET_ROOT=$2; TARGET_VCF_DIR=$TARGET_ROOT/vcf; SAMPLE_PANEL=$TARGET_ROOT/samples.txt; shift 2 ;;
     --target-vcf-dir) need_value "$@"; TARGET_VCF_DIR=$2; shift 2 ;;

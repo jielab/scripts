@@ -22,14 +22,14 @@ GRID_JOBS=${GRID_JOBS:-4}
 GRID_THREADS=${GRID_THREADS:-8}
 GRID_REPLACE=${GRID_REPLACE:-FALSE}
 GRID_DRY_RUN=${GRID_DRY_RUN:-FALSE}
-GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/i/gwas/4grid}
+GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/d/data/gwas/4grid}
 if [[ -z ${GRID_TARGET_DIR+x} ]]; then
   GRID_TARGET_DIR=/mnt/d/data/ukb/gen/typ
-  if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s /mnt/i/ukbGen/37/hap/chr1.pgen ]]; then
-    GRID_TARGET_DIR=/mnt/i/ukbGen/37/hap
+  if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s /mnt/e/ukbGen/37/hap/chr1.pgen ]]; then
+    GRID_TARGET_DIR=/mnt/e/ukbGen/37/hap
   fi
 fi
-GRID_IMP_DIR=${GRID_IMP_DIR:-/mnt/i/ukbGen/37/imp}
+GRID_IMP_DIR=${GRID_IMP_DIR:-/mnt/e/ukbGen/37/imp}
 GRID_PHE_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/phe/Rdata/phe.rds}
 GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}
 GRID_KEEP=${GRID_KEEP:-}
@@ -37,7 +37,7 @@ GRID_REMOVE=${GRID_REMOVE:-}
 GRID_N_GWAS=${GRID_N_GWAS:-}
 
 # PRS-CSx.
-GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-/mnt/i/refLD/csx}
+GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-/mnt/e/refLD/csx}
 GRID_CSX_SNPINFO=${GRID_CSX_SNPINFO:-$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3}
 GRID_CSX_BIM_PREFIX=${GRID_CSX_BIM_PREFIX:-$GRID_TARGET_DIR/ukb_array}
 GRID_PHI=${GRID_PHI:-1e-2}
@@ -60,7 +60,7 @@ GRID_ANCHOR_MAX_PER_GROUP=${GRID_ANCHOR_MAX_PER_GROUP:-10000}
 
 # ARG-Needle. The phased BGENs are UKB Field 22438, GRCh37.
 GRID_ARG_ACTION=${GRID_ARG_ACTION:-check}
-GRID_ARG_HAP_DIR=${GRID_ARG_HAP_DIR:-/mnt/i/ukbGen/37/hap}
+GRID_ARG_HAP_DIR=${GRID_ARG_HAP_DIR:-/mnt/e/ukbGen/37/hap}
 GRID_ARG_MAP_DIR=${GRID_ARG_MAP_DIR:-}
 GRID_ARG_MAP_PATTERN=${GRID_ARG_MAP_PATTERN:-}
 if [[ -z ${GRID_ARG_OUT+x} ]]; then

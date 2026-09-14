@@ -10,7 +10,7 @@ bcftools() {
 }
 
 dir0=${dir0:-/mnt/d}
-dir_ref=${dir_ref:-/mnt/i/refGen}
+dir_ref=${dir_ref:-/mnt/e/refGen}
 reference_dir=${AS3_REFERENCE_PANEL_DIR:-$dir_ref/archaic/38/vcf}
 reference_map=${AS3_REFERENCE_MAP:-}
 out=${AS3_DATA_OUT:?AS3_DATA_OUT is required; run this internal helper through gu.sh}

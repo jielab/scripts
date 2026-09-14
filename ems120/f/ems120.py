@@ -64,7 +64,7 @@ def display_path(path):
     return text
 
 
-BASE_MODEL_DIR = Path("I:/AI_model/hfl" if os.name == "nt" else "/mnt/i/AI_model/hfl").as_posix()
+BASE_MODEL_DIR = Path("E:/AI_model/hfl" if os.name == "nt" else "/mnt/e/AI_model/hfl").as_posix()
 OUTPUT_MODEL_DIR = ANALYSIS_DIR.joinpath("ml", "hfl").as_posix()
 TRAIN_FILE = ANALYSIS_DIR.joinpath("dat", "2019.train_dx.xlsx").as_posix()
 

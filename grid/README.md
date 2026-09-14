@@ -109,7 +109,7 @@ done
 
 ## 数据及 ARG
 
-默认 GWAS：`/mnt/i/gwas/4grid/{trait}.{AFR,EAS,EUR,SAS}.gz`。
+默认 GWAS：`/mnt/d/data/gwas/4grid/{trait}.{AFR,EAS,EUR,SAS}.gz`。
 默认分析目录：`/mnt/d/analysis/grid`；可用 `--output-root` 覆盖。
 其他选项见 `./grid.sh -h`。`--replace FALSE` 复用缓存；更换输入/配置时明确重建。
 
@@ -117,10 +117,10 @@ ARG 建树属于共享数据准备，在 `refGen.sh` 中完成；GRID 只消费�
 
 ```bash
 bash /mnt/d/scripts/gu/arg.sh build --method needle \
-  --dir-gen /mnt/i/ukbGen/37 --dir-pfile /mnt/i/ukbGen/37/hap \
-  --map-dir /mnt/i/refGen/maps/GRCh37 --chr 22
+  --dir-gen /mnt/e/ukbGen/37 --dir-pfile /mnt/e/ukbGen/37/hap \
+  --map-dir /mnt/e/refGen/maps/GRCh37 --chr 22
 ```
 
-默认 ARG 位于 `/mnt/i/ukbGen/37/arg/{argn,trees}`，可用 `--arg-dir` 覆盖。
+默认 ARG 位于 `/mnt/e/ukbGen/37/arg/{argn,trees}`，可用 `--arg-dir` 覆盖。
 全队列建树的资源需求应先通过小规模实验评估；模型验证应使用多个染色体。
 用于性能评估的 GWAS 应排除 UKB，以避免样本重叠导致的乐观估计。

@@ -3,7 +3,7 @@
 These files keep the Shiny page's JavaScript, hg19 gene annotations, chromosome sizes,
 and cytobands available without a request to a third-party server on each page load.
 Reference bases use the existing indexed `GRCH37.fasta` / `GRCH38.fasta` under
-`$GU_REF_ROOT/fasta` (default `/mnt/i/refGen/fasta`) when available, with
+`$GU_REF_ROOT/fasta` (default `/mnt/e/refGen/fasta`) when available, with
 the chromosome 1 length checked against the requested assembly. Shiny serves
 byte ranges directly; no multi-GB files are copied. Otherwise the browser falls
 back to UCSC. GRCh38 and CHM13 annotations remain remote; an annotation failure

@@ -11,7 +11,7 @@ HELP
 }
 
 ANALYSIS_ROOT=/mnt/d/analysis/pfi
-RAW_ROOT=/mnt/i/pfi
+RAW_ROOT=/mnt/e/pfi
 PFI_PYTHON_BIN=python
 PFI_DOWNLOAD_TOOL=aria2
 ARIA2_MAX_CONCURRENT_DOWNLOADS=2

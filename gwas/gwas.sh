@@ -44,7 +44,7 @@ typed_dir=''
 imputed_dir='' phenotype_file=/mnt/d/data/ukb/phe/common/ukb.phe covariate_file=''
 phenotypes=height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu
 type=auto event_col='' covariates=age,sex,tdi,PC1,PC2,PC3,PC4 categorical_covariates=''
-output_dir=/mnt/i/gwas/self/common
+output_dir=/mnt/d/data/gwas/self/common
 chromosomes=''
 extract='' keep='' sparse_grm=TRUE run=TRUE replace=FALSE
 plink2=$(tool_path plink2); plink=$(tool_path plink); regenie=$(tool_path regenie); rscript=$(tool_path Rscript)
@@ -96,8 +96,8 @@ try:
 except (ValueError, AssertionError):
     sys.exit('ERROR: --global-maf must be > 0 and <= 0.5')
 PY
-typed_dir=${typed_dir:-/mnt/i/ukbGen/$grch/typ}
-imputed_dir=${imputed_dir:-/mnt/i/ukbGen/$grch/imp}
+typed_dir=${typed_dir:-/mnt/e/ukbGen/$grch/typ}
+imputed_dir=${imputed_dir:-/mnt/e/ukbGen/$grch/imp}
 selection_dir="$imputed_dir/.${module}"
 input_dir="$imputed_dir"
 if [[ "$module" == prep_gwas ]]; then

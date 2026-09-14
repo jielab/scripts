@@ -939,7 +939,7 @@ run_if("drug", {
 
 
 # 🚩 drug⭕
-prot <- fread(paste0('/mnt/i/gwas/prot/map_3k_v1.tsv'), sep = '\t', select = c(1,3,5), header = TRUE, fill = TRUE) %>% as.data.frame()
+prot <- fread(paste0('/mnt/d/data/gwas/prot/map_3k_v1.tsv'), sep = '\t', select = c(1,3,5), header = TRUE, fill = TRUE) %>% as.data.frame()
 	drug <- fread(paste0(dir0, '/files/prot-drug.txt'), sep = '\t', header = TRUE, fill = TRUE) %>% as.data.frame()
 	tmp <- merge_check(prot = prot, drug = drug, by.x = 'UniProt', by.y = 'UNIPROT_ACCESSION')
 	drug <- merge(tmp$prot, tmp$drug, by.x = 'UniProt', by.y = 'UNIPROT_ACCESSION') %>% 

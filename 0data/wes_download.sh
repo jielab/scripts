@@ -3,7 +3,7 @@ source /mnt/d/scripts/0f/console.sh
 set -Eeuo pipefail
 export LC_ALL=C
 
-WES_DIR_DEFAULT=/mnt/i/wes
+WES_DIR_DEFAULT=/mnt/e/wes
 SOURCE_MT_DEFAULT=gs://ukbb-exome-public/500k/results/results.mt
 SINGLE_SOURCE_MT_DEFAULT=gs://ukbb-exome-public/500k/results/variant_results.mt
 HAIL_VENV_DEFAULT="$HOME/venvs/hail"
@@ -18,7 +18,7 @@ cd /mnt/d/scripts/0data
 
 read -r -p 'Google Cloud billing project ID: ' gcp_project
 ./wes_download.sh --check --gcp-project "$gcp_project"
-./wes_download.sh --dir-wes /mnt/i/wes --gcp-project "$gcp_project" --batch-size 16 --spark-memory 16g --spark-cores 8
+./wes_download.sh --dir-wes /mnt/e/wes --gcp-project "$gcp_project" --batch-size 16 --spark-memory 16g --spark-cores 8
 HELP
 }
 

@@ -33,7 +33,7 @@ prep_py="${script_dir}/c2_mr_link2.py"
 jobs=""
 cad_gwas=""
 ref_bed="${MRLINK2_REF_BED:-}"
-ref_pfile_dir="${MRLINK2_REF_PFILE_DIR:-/mnt/i/refGen/1kg/${LE8_GRCH:-37}/pfile}"
+ref_pfile_dir="${MRLINK2_REF_PFILE_DIR:-/mnt/e/refGen/1kg/${LE8_GRCH:-37}/pfile}"
 ref_pfile_pop="${MRLINK2_REF_POP:-EUR}"
 ref_samples="${MRLINK2_REF_SAMPLES:-}"
 ref_id_dir="${MRLINK2_REF_ID_DIR:-}"
@@ -52,11 +52,11 @@ usage() {
 Usage:
   ./f/c2_mr_link2.sh \
     --jobs c2_cause/link2/c2.link2.jobs.tsv \
-    --cad-gwas /mnt/i/gwas/main/common/cvd_cad/gwas/cvd_cad.gz \
-    --reference-pfile-dir /mnt/i/refGen/1kg/38/pfile \
+    --cad-gwas /mnt/d/data/gwas/main/common/cvd_cad/gwas/cvd_cad.gz \
+    --reference-pfile-dir /mnt/e/refGen/1kg/38/pfile \
     --reference-pop EUR \
-    --reference-id-dir /mnt/i/refGen/1kg/38/id \
-    --reference-samples /mnt/i/refGen/1kg/38/samples.txt \
+    --reference-id-dir /mnt/e/refGen/1kg/38/id \
+    --reference-samples /mnt/e/refGen/1kg/38/samples.txt \
     --mrlink2 f/c2_mr_link2.py \
     --outdir c2_cause/link2
 

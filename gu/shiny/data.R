@@ -66,7 +66,7 @@ source(file.path(app_dir,"summary.R"),local=TRUE)
 .gu_summary_locations <- as.data.frame(data.table::fread(file.path(app_dir,"www","maps","1kg_populations.tsv")))
 shiny::addResourcePath("gu_assets",file.path(app_dir,"www"))
 # Use the existing indexed reference without copying multi-GB FASTA files.
-.gu_reference_dir <- file.path(Sys.getenv("GU_REF_ROOT","/mnt/i/refGen"),"fasta")
+.gu_reference_dir <- file.path(Sys.getenv("GU_REF_ROOT","/mnt/e/refGen"),"fasta")
 source(file.path(app_dir,"ref.R"),local=TRUE)
 .gu_reference_resources <- gu_local_igv_references(.gu_reference_dir)
 .gu_local_references <- .gu_reference_resources$references

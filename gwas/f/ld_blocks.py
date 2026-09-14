@@ -35,7 +35,7 @@ def read_bed(text, omitted=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output-dir', default='/mnt/i/refLD/block')
+    parser.add_argument('--output-dir', default='/mnt/e/refLD/block')
     args = parser.parse_args()
     root = Path(args.output_dir)
     root.mkdir(parents=True, exist_ok=True)

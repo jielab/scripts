@@ -11,18 +11,12 @@ import csv
 import fcntl
 import gzip
 import hashlib
-import http.client
 import json
 import os
 from pathlib import Path
 import re
-import ssl
 import subprocess
 import tempfile
-import time
-import urllib.error
-import urllib.request
-import zlib
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
@@ -47,151 +41,6 @@ def file_checksum(path, algorithm='sha256'):
 
 def sha256_file(path):
     return file_checksum(path)
-
-class IncompleteReferenceError(ValueError):
-    """A response did not contain the complete requested reference."""
-
-
-def download(url, path, attempts=5, chunk_bytes=4*1024*1024, expected_md5=None):
-    """Validate and atomically cache references, retrying interrupted transfers.
-
-    Fetch bounded ranges when supported so large AXT transfers do not depend
-    on one long-lived connection. Resume only with an ETag/Last-Modified
-    validator, a matching Content-Range and the original total size. A server
-    ignoring Range starts a fresh file. A publisher checksum also pins content
-    across mirror backends and allows partial files to survive interruptions.
-    Attempts count consecutive failures.
-    """
-    if attempts < 1:
-        raise ValueError('Reference download attempts must be positive')
-    if expected_md5 is not None and not re.fullmatch(r'[0-9a-f]{32}', expected_md5):
-        raise ValueError('Invalid publisher MD5 checksum')
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    with open(str(path)+'.lock', 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        provenance = Path(str(path)+'.source.json')
-        if path.exists() and path.stat().st_size:
-            if expected_md5 and file_checksum(path, 'md5') != expected_md5:
-                raise ValueError(f'Publisher checksum mismatch: {path}')
-            if provenance.exists() and sha256_file(path)!=json.loads(provenance.read_text())['sha256']:
-                raise ValueError(f'Reference checksum mismatch: {path}')
-            if not provenance.exists() and path.suffix in {'.gz', '.bgz'}:
-                with gzip.open(path, 'rb') as check:
-                    while check.read(1024*1024): pass
-            return path
-        part = Path(str(path)+('.part' if expected_md5 else f'.part.{os.getpid()}'))
-        meta_part = Path(str(provenance)+f'.part.{os.getpid()}')
-        total = validator = None
-        def publish():
-            if path.suffix in {'.gz', '.bgz'}:
-                try:
-                    with gzip.open(part, 'rb') as check:
-                        while check.read(1024*1024): pass
-                except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
-                    part.unlink(missing_ok=True)
-                    raise IncompleteReferenceError(f'Invalid gzip: {exc}') from exc
-            if expected_md5 and file_checksum(part, 'md5') != expected_md5:
-                part.unlink(missing_ok=True)
-                raise IncompleteReferenceError('Downloaded file does not match publisher MD5')
-            meta = {'url':url,'sha256':sha256_file(part),'size_bytes':part.stat().st_size}
-            if expected_md5:
-                meta['publisher_md5'] = expected_md5
-            meta_part.write_text(json.dumps(meta,indent=2))
-            os.replace(part, path)
-            os.replace(meta_part, provenance)
-            return path
-        try:
-            # Interruption can occur after the last byte, before publication.
-            # A complete retained part needs validation, not an invalid Range.
-            if expected_md5 and part.exists() and file_checksum(part, 'md5') == expected_md5:
-                return publish()
-            attempt = 1
-            while attempt <= attempts:
-                offset = part.stat().st_size if part.exists() and (validator or expected_md5) else 0
-                headers = {'Accept-Encoding': 'identity'}
-                if chunk_bytes:
-                    headers['Range'] = f'bytes={offset}-{offset+chunk_bytes-1}'
-                elif offset:
-                    headers['Range'] = f'bytes={offset}-'
-                if offset and not expected_md5:
-                    headers['If-Range'] = validator
-                print(f'IBDMIX reference download: attempt={attempt}/{attempts} offset={offset} {url}', flush=True)
-                try:
-                    request = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(request, timeout=120) as response:
-                        status = response.status
-                        response_length = response.headers.get('Content-Length')
-                        response_length = int(response_length) if response_length is not None else None
-                        if status == 206:
-                            match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
-                            if not match:
-                                raise IncompleteReferenceError('Missing or invalid Content-Range')
-                            start, end, size = map(int, match.groups())
-                            if start != offset or not start <= end < size or (offset and total is not None and total != size):
-                                raise IncompleteReferenceError('Content-Range does not match the requested reference')
-                            if response_length is not None and response_length != end-start+1:
-                                raise IncompleteReferenceError('Content-Length does not match Content-Range')
-                            total = size
-                        elif status == 200:
-                            # Range may be unsupported, or If-Range may detect a
-                            # new resource. Never append a complete HTTP 200 body.
-                            offset = 0
-                            total = response_length
-                        else:
-                            raise IncompleteReferenceError(f'Unexpected HTTP status: {status}')
-                        etag = response.headers.get('ETag')
-                        current_validator = etag if etag and not etag.startswith('W/') else response.headers.get('Last-Modified')
-                        if offset and not expected_md5 and current_validator and current_validator != validator:
-                            part.unlink(missing_ok=True)
-                            total = validator = None
-                            raise IncompleteReferenceError('Reference changed during resumed download')
-                        validator = current_validator or (validator if offset else None)
-                        with part.open('ab' if offset else 'wb') as out:
-                            while True:
-                                try:
-                                    block = response.read(64*1024)
-                                except http.client.IncompleteRead as exc:
-                                    out.write(exc.partial)
-                                    raise
-                                if not block:
-                                    break
-                                out.write(block)
-                    received = part.stat().st_size
-                    if status == 206 and received == end+1 and received < total:
-                        if not validator and not expected_md5:
-                            # Without a validator the next range might belong
-                            # to a different version; request a full body.
-                            part.unlink(missing_ok=True)
-                            chunk_bytes = total = None
-                        attempt = 1
-                        continue
-                    if not received or (total is not None and received != total):
-                        if total is not None and received > total:
-                            part.unlink(missing_ok=True)
-                            validator = None
-                        raise IncompleteReferenceError(f'Incomplete body: received={received} expected={total} bytes')
-                    return publish()
-                except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError, IncompleteReferenceError) as exc:
-                    if isinstance(exc, urllib.error.HTTPError):
-                        if exc.code == 416 and expected_md5:
-                            # An oversized/stale retained part must restart.
-                            part.unlink(missing_ok=True)
-                            total = validator = None
-                        elif exc.code not in {408, 429, 500, 502, 503, 504}:
-                            raise
-                    if isinstance(getattr(exc, 'reason', None), ssl.SSLCertVerificationError):
-                        raise
-                    if attempt == attempts:
-                        raise RuntimeError(f'Reference download failed after {attempts} consecutive attempts: {url}; {exc}. No incomplete file was published; rerun to retry.') from exc
-                    delay = min(2**attempt, 30)
-                    print(f'IBDMIX reference retry: {exc}; waiting {delay}s', flush=True)
-                    time.sleep(delay)
-                    attempt += 1
-        finally:
-            if not expected_md5:
-                part.unlink(missing_ok=True)
-            meta_part.unlink(missing_ok=True)
-    return path
 
 def samples(panel, actual, output, background_required=True):
     metadata = {}
@@ -281,7 +130,7 @@ def cpg_sites(reference, variants, alignments, chrom):
     return result
 
 def axt_directory():
-    annot = Path(os.environ.get('GU_ANNOT_ROOT', '/mnt/i/annot'))
+    annot = Path(os.environ.get('GU_ANNOT_ROOT', '/mnt/e/annot'))
     return Path(os.environ.get('IBDMIX_AXT_DIR', str(annot/'axt/37')))
 
 
@@ -367,41 +216,122 @@ def axt_reference(chrom, species, root=None):
     return url, directory/filename
 
 
-def download_axt(chrom, species, root=None):
-    url, path = axt_reference(chrom, species, root)
+def local_axt(chrom, species, root=None):
+    """Use only a completed local AXT matching its publisher MD5."""
+    _, path = axt_reference(chrom, species, root)
     checksums = path.parent/'md5sum.txt'
-    if not checksums.is_file():
-        checksums = download(url.rsplit('/', 1)[0]+'/md5sum.txt', path.parent/'checksums'/f'{species}.md5sum.txt')
+    if not local_mask_ready(checksums):
+        checksums = path.parent/'checksums'/f'{species}.md5sum.txt'
+    for required in [path, checksums]:
+        if not local_mask_ready(required):
+            raise FileNotFoundError(f'Missing, empty or unfinished AXT resource: {required}; '
+                                    'automatic reference downloads are disabled. Download it manually.')
     expected = {}
     for line in checksums.read_text().splitlines():
+        if not line.strip():
+            continue
         digest, name = line.split()
         expected[Path(name.lstrip('*')).name] = digest
     if path.name not in expected:
         raise ValueError(f'AXT absent from publisher checksum list: {path.name}')
-    return download(url, path, expected_md5=expected[path.name])
+    if file_checksum(path, 'md5') != expected[path.name]:
+        raise ValueError(f'Publisher checksum mismatch: {path}')
+    return path
 
 
-def published_reference_mask(ref, chrom, assets, archaic_root=None):
-    """Resolve this individual's published included-base mask, never a proxy."""
+def published_mask_name(ref, chrom):
+    """The publisher's included-base mask for this individual and chromosome."""
     if ref=='Chagyr':
-        url=f'https://ftp.eva.mpg.de/neandertal/Chagyrskaya/FilterBed/chr{chrom}_mask.bed.gz'
-        local_name=f'Chagyr/chr{chrom}_mask.bed.gz'
+        return f'Chagyr/chr{chrom}_mask.bed.gz'
     elif ref=='Vindija':
-        url=f'https://ftp.eva.mpg.de/neandertal/Vindija/FilterBed/Vindija33.19/chr{chrom}_mask.bed.gz'
-        local_name=f'Vindija33.19/chr{chrom}_mask.bed.gz'
+        return f'Vindija33.19/chr{chrom}_mask.bed.gz'
     elif ref=='Denisova25':
         suffix='' if chrom=='X' else '.min10x'
         filename=f'Denisova25.chr{chrom}.hg19.L35MQ25.map35_100.GCcov.noSimpleRepeat.noIndel{suffix}.bed.gz'
-        url='https://ftp.eva.mpg.de/denisova/Den25/FilterBed/'+filename
-        local_name='Denisova25/'+filename
+        return 'Denisova25/'+filename
     else:
         raise ValueError(f'No published mask configured for {ref}')
+
+
+MINIMAL_MASK_NAMES = {
+    'Altai': 'Altai/AltaiNea.map35_50.MQ30.Cov.indels.TRF.bed.bgz',
+    'Denisova': 'Denisova/DenisovaPinky.map35_50.MQ30.Cov.indels.TRF.bed.bgz',
+}
+
+
+def local_mask_candidates(local_name, assets, archaic_root=None):
+    candidates = [Path(assets)/local_name]
     if archaic_root:
-        local=Path(archaic_root).parent/'mask'/local_name
-        if local.is_file() and local.stat().st_size:return local
-    # Small ranges finish reliably on the publisher's slower FTP-over-HTTPS
-    # endpoint; partial transfers still use the normal ETag resume checks.
-    return download(url,Path(assets)/local_name,chunk_bytes=512*1024)
+        candidates.append(Path(archaic_root).parent/'mask'/local_name)
+    return list(dict.fromkeys(candidates))
+
+
+def local_mask_ready(path, allow_empty=False):
+    path = Path(path)
+    # aria2 preallocates its final filename before the transfer is complete.
+    return (path.is_file() and (allow_empty or path.stat().st_size > 0)
+            and not Path(str(path)+'.aria2').exists())
+
+
+def require_local_mask(candidates, allow_empty=False):
+    for path in candidates:
+        if local_mask_ready(path, allow_empty):
+            return Path(path)
+    raise FileNotFoundError('Missing, empty or unfinished mask; automatic mask downloads are disabled. '
+                            'Expected one of: '+', '.join(map(str, candidates)))
+
+
+def local_reference(path):
+    """Read an existing mask resource without any network fallback."""
+    path = require_local_mask([Path(path)])
+    provenance = Path(str(path)+'.source.json')
+    if provenance.exists() and sha256_file(path) != json.loads(provenance.read_text())['sha256']:
+        raise ValueError(f'Reference checksum mismatch: {path}')
+    return path
+
+
+def published_reference_mask(ref, chrom, assets, archaic_root=None):
+    return reference_mask_resource(published_mask_name(ref, chrom), assets, archaic_root)
+
+
+def reference_mask_resource(relative_name, root, archaic_root=None):
+    path = require_local_mask(local_mask_candidates(relative_name, root, archaic_root))
+    return local_reference(path)
+
+
+def check_mask_inputs(root, chroms, refs, archaic_root=None, custom_masks=None):
+    """List every missing mask before target export or reference downloads."""
+    aliases = {'altai':'Altai', 'chagyr':'Chagyr', 'chagyrskaya':'Chagyr',
+               'vindija':'Vindija', 'denisova':'Denisova', 'denisovan':'Denisova',
+               'denisova25':'Denisova25', 'den25':'Denisova25'}
+    refs = list(dict.fromkeys(aliases[ref.lower()] for ref in refs))
+    chroms = list(dict.fromkeys('X' if str(c).removeprefix('chr') == '23'
+                               else str(c).removeprefix('chr') for c in chroms))
+    if not chroms or any(c not in CHROM_LENGTHS['37'] for c in chroms):
+        raise ValueError('Mask checks require supported chromosomes')
+    assets = Path(root)
+    required = []
+    if custom_masks:
+        required = [[Path(custom_masks)/ref/f'chr{chrom}.bed'] for chrom in chroms for ref in refs]
+    else:
+        if any(c != 'X' for c in chroms):
+            required.append(local_mask_candidates('common/1kg.strict_mask.autosomes.bed', assets, archaic_root))
+        required.append(local_mask_candidates('common/genomicSuperDups.txt.gz', assets, archaic_root))
+        required.extend(local_mask_candidates(MINIMAL_MASK_NAMES[ref], assets, archaic_root)
+                        for ref in refs if ref in MINIMAL_MASK_NAMES)
+        required.extend(local_mask_candidates(published_mask_name(ref, chrom), assets, archaic_root)
+                        for chrom in chroms for ref in refs if ref not in MINIMAL_MASK_NAMES)
+    missing = []
+    for candidates in required:
+        try:
+            require_local_mask(candidates, allow_empty=bool(custom_masks))
+        except FileNotFoundError:
+            missing.append('  '+ ' OR '.join(map(str, candidates)))
+    if missing:
+        raise FileNotFoundError('Required IBDmix mask files are missing, empty or unfinished (.aria2):\n'
+                                +'\n'.join(missing)+'\nAutomatic mask downloads are disabled; '
+                                'finish manual downloads before rerunning.')
+    return len(required)
 
 
 def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, refs=None, archaic_root=None):
@@ -412,27 +342,26 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
     """
     length=CHROM_LENGTHS['37'][chrom]
     root=Path(root); output=Path(output);output.mkdir(parents=True,exist_ok=True)
-    assets=root/'raw'
+    assets=root
+    refs=refs or ['Altai','Denisova']
+    check_mask_inputs(root, [chrom], refs, archaic_root)
     # This published accessibility BED contains autosomes only. Applying its
     # empty X subset would exclude all of X, independently of the AXT issue.
-    strict = None if chrom == 'X' else download('https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/accessible_genome_masks/20140520.strict_mask.autosomes.bed',assets/'1kg.strict_mask.autosomes.bed')
-    dups=download('https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/genomicSuperDups.txt.gz',assets/'genomicSuperDups.txt.gz')
+    strict = None if chrom == 'X' else reference_mask_resource('common/1kg.strict_mask.autosomes.bed', assets, archaic_root)
+    dups=reference_mask_resource('common/genomicSuperDups.txt.gz', assets, archaic_root)
     minimal={}
-    refs=refs or ['Altai','Denisova']
-    for ref,name in [('Altai','AltaiNea'),('Denisova','DenisovaPinky')]:
+    for ref,filename in MINIMAL_MASK_NAMES.items():
         if ref not in refs:continue
-        filename=f'{name}.map35_50.MQ30.Cov.indels.TRF.bed.bgz'
-        minimal[ref]=download('https://bioinf.eva.mpg.de/altai_minimal_filters/'+filename,assets/filename)
+        minimal[ref]=reference_mask_resource(filename, assets, archaic_root)
     extra={ref:published_reference_mask(ref,chrom,assets,archaic_root) for ref in refs if ref not in minimal}
     alignments=[]
     species_list = ['panTro2','ponAbe2','rheMac2']
     missing_axt = [axt_reference(chrom, species, axt_root)[1] for species in species_list
-                   if not axt_reference(chrom, species, axt_root)[1].is_file()
-                   or not axt_reference(chrom, species, axt_root)[1].stat().st_size]
+                   if not local_mask_ready(axt_reference(chrom, species, axt_root)[1])]
     cpg_enabled = chrom != 'X' or not missing_axt
     if cpg_enabled:
         for species in species_list:
-            alignments.append(download_axt(chrom, species, axt_root))
+            alignments.append(local_axt(chrom, species, axt_root))
         print(f'IBDMIX chr{chrom}: CpG filter enabled; verified AXT: '+', '.join(map(str,alignments)), flush=True)
     else:
         print('IBDMIX chrX: CpG filter SKIPPED (X AXT unavailable); continuing X analysis with archaic minimal, segmental-duplication and modern-indel masks.', flush=True)
@@ -447,10 +376,10 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
     # Final masks also depend on modern indels; do not share them by chromosome alone.
     signature['cache_schema'] = 1
     signature['code'] = sha256_file(__file__)
-    cache_root = Path(axt_root or axt_directory())/'ibdmix-cache'
+    cache_root = root/'derived'
     analysis_output = output
     names = [f'{ref}.exclude.bed' for ref in refs]+['manifest.json']
-    with cached_mask_artifacts(cache_root/'masks'/f'chr{chrom}', signature, names) as (cache, staging):
+    with cached_mask_artifacts(cache_root/'combined'/f'chr{chrom}', signature, names) as (cache, staging):
         if staging is not None:
             output = staging
             marker = output/'manifest.json'
@@ -572,6 +501,9 @@ def main():
     for flag in ['root','chrom','modern','fasta','upstream','output']:p.add_argument('--'+flag,required=True)
     p.add_argument('--axt-root')
     p.add_argument('--refs',nargs='+');p.add_argument('--archaic-root')
+    p=subs.add_parser('check-masks')
+    p.add_argument('--root',required=True);p.add_argument('--chroms',nargs='+',required=True)
+    p.add_argument('--refs',nargs='+',required=True);p.add_argument('--archaic-root');p.add_argument('--custom-masks')
     p=subs.add_parser('finalize')
     for flag in ['raw-dir','populations','output','chrom','build','locus']:p.add_argument('--'+flag,required=True)
     p.add_argument('--refs',nargs='+',required=True);p.add_argument('--core-start',type=int,default=0);p.add_argument('--core-end',type=int,default=0)
@@ -583,6 +515,12 @@ def main():
     args=vars(parser.parse_args());action=args.pop('action')
     if action=='samples':args['background_required']=not args.pop('no_background');samples(**args)
     elif action=='mask':prepare_masks(**args)
+    elif action=='check-masks':
+        try:
+            count=check_mask_inputs(**args)
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            parser.exit(1, f'ERROR: {exc}\n')
+        print(f'IBDMIX mask preflight passed: {count} local resources; automatic mask downloads disabled')
     elif action=='validate-mask':
         length=CHROM_LENGTHS[args['build'].removeprefix('GRCh').removeprefix('b')][args['chrom']]
         previous=0

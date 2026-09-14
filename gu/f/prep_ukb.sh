@@ -6,8 +6,8 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 F=$ROOT/f
 ACTION=${1:-help}; shift || true
 
-HAP=${UKB_HAP_ROOT:-/mnt/i/ukbGen/37/hap}
-TYPED=${UKB_TYPED_ROOT:-/mnt/i/ukbGen/37/typ}
+HAP=${UKB_HAP_ROOT:-/mnt/e/ukbGen/37/hap}
+TYPED=${UKB_TYPED_ROOT:-/mnt/e/ukbGen/37/typ}
 OUT=${UKB_WORK:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu}/ukb}
 CHRS=${GU_CHRS:-22}
 THREADS=${UKB_THREADS:-8}
@@ -84,10 +84,10 @@ Actions:
 Options are parsed by gu.sh. Run ./gu.sh --help for the complete list.
 
 Minimal chr22 preparation:
-  ./gu.sh ukb inspect-hap --chr 22 --grch 37 --ukb-hap-root /mnt/i/ukbGen/37/hap
-  ./gu.sh ukb make-panel --chr 22 --grch 37 --ukb-hap-root /mnt/i/ukbGen/37/hap
+  ./gu.sh ukb inspect-hap --chr 22 --grch 37 --ukb-hap-root /mnt/e/ukbGen/37/hap
+  ./gu.sh ukb make-panel --chr 22 --grch 37 --ukb-hap-root /mnt/e/ukbGen/37/hap
   ./gu.sh ukb batches --chr 22 --grch 37 --sample-panel /mnt/d/analysis/gu/ukb/ukb.sample_panel.tsv --ukb-batch-size 1000 --ukb-anchors-per-group 1000
-  ./gu.sh ukb hap-arg-vcf --chr 22 --grch 37 --ukb-hap-root /mnt/i/ukbGen/37/hap --ukb-ref-fasta /path/to/human_g1k_v37.fasta --ukb-keep /mnt/d/analysis/gu/ukb/batches/ALL.b0001.joint.txt --ukb-1kg-vcf-dir /mnt/i/refGen/1kg/37/vcf --ukb-vcf-out /mnt/d/analysis/gu/ukb/work/ALL.b0001/vcf --ukb-arg-vcf-out /mnt/d/analysis/gu/ukb/work/ALL.b0001/vcf.aa
+  ./gu.sh ukb hap-arg-vcf --chr 22 --grch 37 --ukb-hap-root /mnt/e/ukbGen/37/hap --ukb-ref-fasta /path/to/human_g1k_v37.fasta --ukb-keep /mnt/d/analysis/gu/ukb/batches/ALL.b0001.joint.txt --ukb-1kg-vcf-dir /mnt/e/refGen/1kg/37/vcf --ukb-vcf-out /mnt/d/analysis/gu/ukb/work/ALL.b0001/vcf --ukb-arg-vcf-out /mnt/d/analysis/gu/ukb/work/ALL.b0001/vcf.aa
 HELP
 }
 
@@ -229,7 +229,7 @@ PY
       rm -f -- "$RAW/chr$c.vcf.gz" "$RAW/chr$c.vcf.gz.tbi"
     done
     echo "AA-tagged phased VCFs are ready under: $AAOUT"
-    echo "Next: bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-/mnt/i/ukbGen/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
+    echo "Next: bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-/mnt/e/ukbGen/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
     ;;
 
   inspect-typed)

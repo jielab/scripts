@@ -3,7 +3,7 @@
 This directory contains the minimal runtime source copied from the official
 `Shuhua-Group/ArchaicSeeker3.0` GitHub `main` archive downloaded on 2026-08-27.
 GU intentionally keeps the model checkpoints outside the scripts tree under
-`/mnt/i/refGen/archaic/38/models`.
+`/mnt/e/refGen/archaic/38/models`.
 
 Two runtime-only compatibility edits are applied locally:
 

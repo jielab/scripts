@@ -16,9 +16,9 @@ from contextlib import contextmanager
 import sys
 from collections import Counter
 
-DEFAULT_REF='/mnt/i/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.'
-DEFAULT_WEIGHTS='/mnt/i/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.'
-DEFAULT_ALLELES='/mnt/i/refLD/ldsc/hm3/w_hm3.snplist'
+DEFAULT_REF='/mnt/e/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.'
+DEFAULT_WEIGHTS='/mnt/e/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.'
+DEFAULT_ALLELES='/mnt/e/refLD/ldsc/hm3/w_hm3.snplist'
 AUTOSOMES={str(c) for c in range(1,23)}
 
 def validate_references(ref, weights):

@@ -159,7 +159,7 @@ This avoids the weak argument that the labels are arbitrary while still being fe
 /mnt/d/analysis/pfi/ml             trained model files
 /mnt/d/analysis/pfi/output         figures and reports
 /mnt/d/analysis/pfi/log            logs
-/mnt/i/pfi                         raw PubMed/PMC archives and large parquet archive
+/mnt/e/pfi                         raw PubMed/PMC archives and large parquet archive
 ```
 
 Shared paths and defaults are defined in:

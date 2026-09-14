@@ -59,7 +59,7 @@ def parse():
     p.add_argument('--method',choices=['singer'],default='singer')
     p.add_argument('--action',choices=['all','build','prepare','check'],default='build')
     p.add_argument('--format',choices=['native','trace'],default='native')
-    p.add_argument('--dir-gen',default='/mnt/i/refGen/1kg/37')
+    p.add_argument('--dir-gen',default='/mnt/e/refGen/1kg/37')
     p.add_argument('--dir-vcf','--target-vcf-dir',dest='dir_vcf')
     p.add_argument('--arg-dir');p.add_argument('--gen4arg-dir');p.add_argument('--sample-file','--sample-panel',dest='sample_file')
     p.add_argument('--keep');p.add_argument('--chr','--chrs',dest='chr',default='1-22,X')

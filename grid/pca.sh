@@ -7,7 +7,7 @@ set -euo pipefail
 usage(){ cat <<'HELP'
 cd /mnt/d/scripts/grid
 
-./pca.sh --dir-imp /mnt/i/ukbGen/37/imp --jobs 4 --threads 8
+./pca.sh --dir-imp /mnt/e/ukbGen/37/imp --jobs 4 --threads 8
 HELP
 }
 case "${1:-}" in -h|--help|help) usage; exit 0;; esac

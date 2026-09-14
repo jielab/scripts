@@ -17,7 +17,7 @@ Combine modules with commas, for example: format,liftover.
 
 Project and execution:
   --dir-raw DIR --raw-file FILE --gwas NAME[,NAME] --label LABEL
-  --dir-out DIR                Default: /mnt/i/gwas/<label>
+  --dir-out DIR                Default: /mnt/d/data/gwas/<label>
   --category common           Output: <project>/<category>/<trait>/{gwas,magma,pgs,qc}
   --dir-clean DIR             Restrict to one trait's gwas folder
   --grch auto|37|38           Detect the build per GWAS by default
@@ -33,7 +33,7 @@ Key analysis settings (all defaults are editable below in this script):
       HM3 or P < 1e-3 -> thinP0 on P > 1e-3 -> strict per-chromosome cap.
     With --hm3 TRUE --thin TRUE, --p-hm3 must be at least 1e-3.
     If P<=1e-3 alone exceeds the cap, retain the strongest signals and record counts.
-    Thin outputs only [gwas].thin.gz and its .tbi index; each thin run regenerates them.
+    Thin writes [gwas].thin.gz, .tbi and .done; --replace FALSE reuses valid results.
     The standalone thin module processes existing standardized GWAS, without raw files.
   --hm3-file FILE --hm3-pos FILE   HM3 rsID list and build-specific positions
   --liftover FALSE --chain FILE --liftover-bin liftOver
@@ -51,25 +51,25 @@ Examples:
 cd /mnt/d/scripts/gwas
 
 # Main GWAS: raw downloads -> standardized tables -> MAGMA/lead SNPs -> plots/PGS.
-./gwas_format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/i/gwas/main \
+./gwas_format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data/gwas/main \
   --grch auto --hm3 FALSE --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh magma --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh lead --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh mplot --label main --grch auto --add-panel magma --write-sig TRUE --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh pgs --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
-bash /mnt/i/gwas/main/pgs/pgs.step2.cmd
+bash /mnt/d/data/gwas/main/pgs/pgs.step2.cmd
 
 # Optional protein cis extraction after formatting the prot project.
 ./gwas_format.sh cis --label prot --grch 38 --cis-bed /mnt/d/files/ppp_3k.38.bed --run-cmd TRUE --foreground TRUE --jobs 4
 
-# 为已有 GWAS 生成 .thin.gz，并用它重画 mplot；不重新 format 原始 .gz。
+# 为已有 GWAS 仅生成 .thin.gz；跳过有效结果，8 个 GWAS 并发。
 # 在同一个 Bash / WSL 终端复制运行完整一段。
 cd /mnt/d/scripts/gwas
 for project in 4grid main met prot; do
-  ./gwas_format.sh thin,mplot \
-    --dir-out "/mnt/i/gwas/$project" --label "$project" --category common \
+  ./gwas_format.sh thin \
+    --dir-out "/mnt/d/data/gwas/$project" --label "$project" --category common \
     --grch auto --hm3 FALSE --thin TRUE --thin-chr-max 10000 \
-    --add-panel none --replace FALSE --run-cmd TRUE --foreground TRUE --jobs 4 || break
+    --replace FALSE --run-cmd TRUE --foreground TRUE --jobs 8 || break
 done
 HELP
 }
@@ -81,9 +81,9 @@ dir_raw_arg=""
 raw_file_arg=""
 n_total=""
 h2_sex=unknown
-h2_ref_ld="/mnt/i/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore."
-h2_w_ld="/mnt/i/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC."
-h2_merge_alleles="/mnt/i/refLD/ldsc/hm3/w_hm3.snplist"
+h2_ref_ld="/mnt/e/refLD/ldsc/1000G/1000G_Phase3_ldscores/LDscore."
+h2_w_ld="/mnt/e/refLD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC."
+h2_merge_alleles="/mnt/e/refLD/ldsc/hm3/w_hm3.snplist"
 h2_python=""
 h2_conda_env=ldsc
 dir_out_arg=""
@@ -259,15 +259,15 @@ perf_f="${SCRIPT_PATH%/*}/f/gwas_post_perf.f.sh"
 [[ -z "$plot_f" ]] && plot_f="$dir0/scripts/0f/mplot.f.R"
 [[ -z "$mplot_r" ]] && mplot_r="${SCRIPT_PATH%/*}/f/gwas_post_mplot.R"
 if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$dir0/files/glist.${grch}.bed"; fi
-[[ -z "$hm3_file" ]] && hm3_file="/mnt/i/refGen/hm3/hapmap3_r3.snp"
-[[ -z "$hm3_pos" ]] && hm3_pos="/mnt/i/refGen/hm3/hapmap3_r3_grch{grch}.snplist"
+[[ -z "$hm3_file" ]] && hm3_file="/mnt/e/refGen/hm3/hapmap3_r3.snp"
+[[ -z "$hm3_pos" ]] && hm3_pos="/mnt/e/refGen/hm3/hapmap3_r3_grch{grch}.snplist"
 [[ -z "$chain" ]] && chain="$dir0/files/liftOver/hg19ToHg38.over.chain.gz"
 if [[ "$grch" != auto ]]; then
-  [[ -z "$refGen_clump" ]] && refGen_clump="/mnt/i/refGen/1kg/${grch}/pfile/"
-  [[ -z "$refGen_cojo" ]] && refGen_cojo="/mnt/i/refGen/1kg/${grch}/pfile/${refGen_pop}/"
+  [[ -z "$refGen_clump" ]] && refGen_clump="/mnt/e/refGen/1kg/${grch}/pfile/"
+  [[ -z "$refGen_cojo" ]] && refGen_cojo="/mnt/e/refGen/1kg/${grch}/pfile/${refGen_pop}/"
 fi
-[[ -z "$magma_ref" ]] && magma_ref="/mnt/i/refLD/magma/g1000_eur"
-[[ -z "$synonyms" ]] && synonyms="/mnt/i/annot/dbsnp/dbsnp151.synonyms"
+[[ -z "$magma_ref" ]] && magma_ref="/mnt/e/refLD/magma/g1000_eur"
+[[ -z "$synonyms" ]] && synonyms="/mnt/e/annot/dbsnp/dbsnp151.synonyms"
 if [[ -z "$gene_loc" && "$grch" != auto ]]; then
   [[ "$grch" == 37 ]] && gene_loc="$dir0/files/NCBI.37.gene.loc" || gene_loc="$dir0/files/NCBI.38.gene.loc"
 fi
@@ -289,7 +289,7 @@ fi
 if [[ -n "$dir_out_arg" ]]; then
   dir_out="$dir_out_arg"
 else
-  dir_out="/mnt/i/gwas/$label"
+  dir_out="/mnt/d/data/gwas/$label"
 fi
 
 if [[ -n "$dir_raw_arg" ]]; then
@@ -340,6 +340,16 @@ fi
 
 gwas_format_maybe_background
 
+# Acquire before writing shared command lists. Use a local lock because project
+# directories can live on Windows drives with different file-lock semantics.
+command -v flock >/dev/null 2>&1 || { echo "ERROR: flock is required (util-linux)" >&2; exit 1; }
+run_lock_key=$(printf '%s\n' "$(realpath -m "$dir_cmd")" | sha256sum | cut -d ' ' -f 1)
+exec {run_lock_fd}>"${TMPDIR:-/tmp}/gwas-format-${UID}-${run_lock_key}.lock"
+flock -n "$run_lock_fd" || {
+  echo "ERROR: another $step run is active for $dir_out/$category; wait for it to finish or stop it before retrying." >&2
+  exit 1
+}
+
 
 # 🚩 Check resources, discover GWAS, generate commands and dispatch
 need_file "$phef"
@@ -348,7 +358,7 @@ source "$phef"
 gwas_format_check_resources
 
 log "label=$label step=$step hm3=$hm3_mode thin=$thin thin-chr-max=$thin_chr_max liftOver=$liftOver add-panel=$add_panel plot=${plot_width}x${plot_height}in@${plot_res}dpi write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
-log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:/mnt/i/ukbGen/GRCh/imp>}"
+log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:/mnt/e/ukbGen/GRCh/imp>}"
 if has_step pgs; then
   write_pgs_step2_cmd
 fi

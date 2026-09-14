@@ -120,5 +120,5 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     for arg in ('input', 'output', 'qc-prefix'):
         p.add_argument('--'+arg, required=True)
-    p.add_argument('--fasta', default='/mnt/i/refGen/fasta/GRCH37.fasta')
+    p.add_argument('--fasta', default='/mnt/e/refGen/fasta/GRCH37.fasta')
     run(p.parse_args())

@@ -83,6 +83,53 @@ write_gwas_cmd() {
     return 0
   fi
 
+  # Standalone thin does not need source indexing or any plotting setup.
+  # Resolve builds in workers so an uncached input cannot serialize planning.
+  if [[ "$step" == thin ]]; then
+    cat > "$cmd" <<THIN_CMD
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+FINAL=$(q "$final")
+THIN_OUT=$(q "${final%.gz}.thin.gz")
+GRCH=$(q "$grch")
+GRCH_CACHE=$(q "$gwas_grch_cache")
+HM3=$(q "$hm3_file")
+HM3_POS_TEMPLATE=$(q "$hm3_pos")
+THIN_R=$(q "$thin_r")
+PHE_R=$(q "$phe_r")
+THIN_CHR_MAX=$(q "$thin_chr_max")
+THIN_MODE=$(q "$thin")
+REPLACE=$(q "$replace")
+MH_META=$(q "$mh_meta")
+DO_STEP=thin
+source $(q "$phef")
+source $(q "$perf_f")
+gwas_post_log(){ printf '[thin] %s\n' "\$*" >&2; }
+[[ "\$THIN_MODE" == TRUE ]] || exit 0
+[[ -s "\$FINAL" ]] || { echo "ERROR: missing GWAS: \$FINAL" >&2; exit 1; }
+if [[ "\$GRCH" == auto ]]; then
+  cached=""
+  if [[ -s "\$GRCH_CACHE" && "\$GRCH_CACHE" -nt "\$FINAL" ]]; then
+    cached=\$(awk 'NR==1 && (\$1==37 || \$1==38){print \$1}' "\$GRCH_CACHE")
+  fi
+  if [[ -n "\$cached" ]]; then
+    GRCH="\$cached"
+  else
+    check_GRCH "\$FINAL" >&2
+    GRCH="\$CHECK_GRCH_RESULT"
+    printf '%s\n' "\$GRCH" > "\$GRCH_CACHE.tmp.\$\$"
+    mv -f "\$GRCH_CACHE.tmp.\$\$" "\$GRCH_CACHE"
+  fi
+fi
+HM3_POS=\${HM3_POS_TEMPLATE//\{grch\}/\$GRCH}
+gwas_post_thin
+THIN_CMD
+    # Workers run via bash; do not require chmod on mounted project drives.
+    printf '%s\n' "$cmd"
+    return 0
+  fi
+
   gwas_grch="$grch"
   # With no fixed build (omitted or --grch auto), resolve every GWAS independently
   # from the 39 sentinel rsIDs.  Use RAW before format, SMALL before a standalone
@@ -116,7 +163,7 @@ write_gwas_cmd() {
     fi
   fi
   gwas_hm3_pos=${hm3_pos//\{grch\}/$gwas_grch}
-  gwas_pgs_pfile_dir="${pgs_pfile_dir:-/mnt/i/ukbGen/${gwas_grch}/imp}"
+  gwas_pgs_pfile_dir="${pgs_pfile_dir:-/mnt/e/ukbGen/${gwas_grch}/imp}"
   if has_step pgs; then
     need_pgs_pfiles "$gwas_pgs_pfile_dir"
   fi
@@ -131,9 +178,9 @@ write_gwas_cmd() {
     echo "ERROR: --liftover TRUE uses the GRCh37-to-GRCh38 chain, but $gwas was detected/configured as GRCh$gwas_grch" >&2
     exit 1
   fi
-  gwas_refGen_clump="${refGen_clump:-/mnt/i/refGen/1kg/${gwas_grch}/pfile/}"
-  gwas_refGen_cojo="${refGen_cojo:-/mnt/i/refGen/1kg/${gwas_grch}/pfile/${refGen_pop}/}"
-  gwas_refGen_id_dir="${refGen_id_dir:-/mnt/i/refGen/1kg/${gwas_grch}/id}"
+  gwas_refGen_clump="${refGen_clump:-/mnt/e/refGen/1kg/${gwas_grch}/pfile/}"
+  gwas_refGen_cojo="${refGen_cojo:-/mnt/e/refGen/1kg/${gwas_grch}/pfile/${refGen_pop}/}"
+  gwas_refGen_id_dir="${refGen_id_dir:-/mnt/e/refGen/1kg/${gwas_grch}/id}"
   gwas_refGen_keep=""
   if has_step lead || wants_magma || { has_step format && [[ "$fill_eaf" == TRUE ]]; }; then
     if [[ "$refGen_pop" != ALL ]]; then
@@ -1186,6 +1233,6 @@ fi
 
 CMD_TOP
 
-  chmod +x "$cmd"
+  # Workers run via bash; do not require chmod on mounted project drives.
   echo "$cmd"
 }

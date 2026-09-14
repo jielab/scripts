@@ -71,7 +71,7 @@ def run(a):
     for option, build in (('source_fasta', a.source_build), ('target_fasta', a.target_build)):
         path = getattr(a, option, None)
         if not path:
-            candidate = Path(f'/mnt/i/refGen/fasta/GRCH{build}.fasta')
+            candidate = Path(f'/mnt/e/refGen/fasta/GRCH{build}.fasta')
             path = str(candidate) if candidate.is_file() and Path(str(candidate)+'.fai').is_file() else None
         fasta_paths.append(path)
     signature = dict(version=5, source=identity(src), chain=identity(a.chain),

@@ -257,10 +257,10 @@ and `magma.done`, and the target-gene/annotation checks above must pass. The
 current project has 2,940 PROT protein directories, so first check:
 
 ```bash
-find /mnt/i/gwas/prot/common -mindepth 1 -maxdepth 1 -type d | wc -l
-find /mnt/i/gwas/prot/common -mindepth 3 -maxdepth 3 \
+find /mnt/d/data/gwas/prot/common -mindepth 1 -maxdepth 1 -type d | wc -l
+find /mnt/d/data/gwas/prot/common -mindepth 3 -maxdepth 3 \
   -type f -name '*.genes.out' | wc -l
-find /mnt/i/gwas/prot/common -mindepth 3 -maxdepth 3 \
+find /mnt/d/data/gwas/prot/common -mindepth 3 -maxdepth 3 \
   -type f -name 'magma.done' | wc -l
 ```
 
@@ -268,11 +268,11 @@ For the planned complete random cold-start run, use:
 
 ```bash
 /mnt/d/scripts/phole/phole.sh all \
-  --gwas-root /mnt/i/gwas/prot \
+  --gwas-root /mnt/d/data/gwas/prot \
   --category common \
   --protein-bed /mnt/d/files/ppp_3k.38.bed \
   --protein-map /mnt/d/files/ppp_3k.38.tsv \
-  --out /mnt/i/gwas/prot/phole \
+  --out /mnt/d/data/gwas/prot/phole \
   --protein-filter target-bonf \
   --protein-alpha 0.05 \
   --train-frac 0.80 \
@@ -285,8 +285,8 @@ Harder chromosome holdout:
 
 ```bash
 /mnt/d/scripts/phole/phole.sh all \
-  --out /mnt/i/gwas/prot/phole.chr \
-  --gwas-root /mnt/i/gwas/prot \
+  --out /mnt/d/data/gwas/prot/phole.chr \
+  --gwas-root /mnt/d/data/gwas/prot \
   --category common \
   --protein-bed /mnt/d/files/ppp_3k.38.bed \
   --protein-map /mnt/d/files/ppp_3k.38.tsv \

@@ -9,9 +9,9 @@ PY="$SCRIPT_DIR/f/ppp_download.py"
 PYTHON_BIN=""
 
 TOKEN_FILE_DEFAULT="/mnt/d/data/ukb/prot/authToken.txt"
-OUT_DEFAULT="/mnt/i/gwas/prot/.project/download"
-LOG_DEFAULT="/mnt/i/gwas/prot/.project/log"
-PROT_DIR_DEFAULT="/mnt/i/gwas/prot"
+OUT_DEFAULT="/mnt/d/data/gwas/prot/.project/download"
+LOG_DEFAULT="/mnt/d/data/gwas/prot/.project/log"
+PROT_DIR_DEFAULT="/mnt/d/data/gwas/prot"
 PROT_TSV_DEFAULT="/mnt/d/files/ppp_3k.38.tsv"
 PROT_BED_DEFAULT="/mnt/d/files/ppp_3k.38.bed"
 FOLDER_DEFAULT="syn51365303"                    # UKB proteomics European discovery folder
@@ -863,7 +863,7 @@ parse_rsid_map_args() {
   RSID_MAP_JOBS=4
   RSID_MAP_THREADS=4
   # Keep external-sort scratch data on WSL's native ext4 filesystem. DrvFS
-  # mounts such as /mnt/d and /mnt/i are much slower for this workload.
+  # mounts such as /mnt/d and /mnt/e are much slower for this workload.
   RSID_MAP_TMPDIR=/tmp/ppp_rsid_map
   RSID_MAP_SORT_MEM=2G
   while [[ $# -gt 0 ]]; do

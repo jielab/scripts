@@ -37,7 +37,7 @@ command_name=$1
 shift
 
 analysis_root=/mnt/d/analysis/pfi
-raw_root=/mnt/i/pfi
+raw_root=/mnt/e/pfi
 python_bin=python
 rscript_bin=Rscript
 test_mode=0

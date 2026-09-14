@@ -12,7 +12,7 @@ cd /mnt/d/scripts/grid
 ./disco.sh --trait height
 
 # GRID needs native Needle trees and four-population features (reuses prepared UKB inputs).
-/mnt/d/scripts/gu/arg.sh build --dir-gen /mnt/i/ukbGen/37 --dir-pfile /mnt/i/ukbGen/37/hap \
+/mnt/d/scripts/gu/arg.sh build --dir-gen /mnt/e/ukbGen/37 --dir-pfile /mnt/e/ukbGen/37/hap \
   --method needle --format native --features TRUE --chr 1-22 --threads 8 --jobs 1
 ./grid.sh grid --trait height --chrs 1-22 --jobs 4 --threads 8
 ./grid.sh eval --trait height

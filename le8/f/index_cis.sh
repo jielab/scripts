@@ -5,7 +5,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-DATA_ROOT="${CIS_INDEX_DATA_ROOT:-/mnt/i/gwas}"
+DATA_ROOT="${CIS_INDEX_DATA_ROOT:-/mnt/d/data/gwas}"
 PROJECTS="${CIS_INDEX_PROJECTS:-main,prot,met}"
 JOBS="${CIS_INDEX_JOBS:-6}"
 THREADS="${CIS_INDEX_THREADS:-2}"
@@ -24,7 +24,7 @@ Convert existing canonical cis files
 to coordinate-sorted BGZF and create <trait>.cis.gz.tbi (or .csi when needed).
 
 Options:
-  --data-root PATH       GWAS parent directory [/mnt/i/gwas]
+  --data-root PATH       GWAS parent directory [/mnt/d/data/gwas]
   --projects CSV         Projects to scan [main,prot,met]
   --jobs N               Files processed concurrently [6]
   --threads N            bgzip threads per file [2]

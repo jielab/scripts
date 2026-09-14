@@ -12,19 +12,19 @@ usage(){ cat <<'HELP'
 cd /mnt/d/scripts/0data
 
 # 1KG: phased VCF -> PGEN/BED; also split non-PAR X by sex for GU.
-./refGen.sh make-pfile --dir-input /mnt/i/refGen/1kg/37/vcf \
-  --dir-pfile /mnt/i/refGen/1kg/37/pfile --grch 37 --out-files pgen,bed --split-sex TRUE
-./refGen.sh make-pfile --dir-input /mnt/i/refGen/1kg/38/vcf \
-  --dir-pfile /mnt/i/refGen/1kg/38/pfile --grch 38 --out-files pgen,bed --split-sex TRUE
+./refGen.sh make-pfile --dir-input /mnt/e/refGen/1kg/37/vcf \
+  --dir-pfile /mnt/e/refGen/1kg/37/pfile --grch 37 --out-files pgen,bed --split-sex TRUE
+./refGen.sh make-pfile --dir-input /mnt/e/refGen/1kg/38/vcf \
+  --dir-pfile /mnt/e/refGen/1kg/38/pfile --grch 38 --out-files pgen,bed --split-sex TRUE
 
 # UKB: phased BGEN or typed BED -> PGEN.
-./refGen.sh make-pfile --input-format bgen --dir-input /mnt/i/ukbGen/37/hap/raw --dir-pfile /mnt/i/ukbGen/37/hap --grch 37
-./refGen.sh make-pfile --input-format bed --dir-input /mnt/i/ukbGen/37/typ/raw \
-  --dir-pfile /mnt/i/ukbGen/37/typ --grch 37 --split-sex TRUE
+./refGen.sh make-pfile --input-format bgen --dir-input /mnt/e/ukbGen/37/hap/raw --dir-pfile /mnt/e/ukbGen/37/hap --grch 37
+./refGen.sh make-pfile --input-format bed --dir-input /mnt/e/ukbGen/37/typ/raw \
+  --dir-pfile /mnt/e/ukbGen/37/typ --grch 37 --split-sex TRUE
 
-./refGen.sh download_archaic --root /mnt/i/refGen/archaic --jobs 8
-./refGen.sh lift-bed --dir-in /mnt/i/refGen/archaic/37/bed \
-  --dir-out /mnt/i/refGen/archaic/38/bed --chain-file /mnt/d/files/liftOver/hg19ToHg38.over.chain.gz
+./refGen.sh download_archaic --root /mnt/e/refGen/archaic --jobs 8
+./refGen.sh lift-bed --dir-in /mnt/e/refGen/archaic/37/bed \
+  --dir-out /mnt/e/refGen/archaic/38/bed --chain-file /mnt/d/files/liftOver/hg19ToHg38.over.chain.gz
 HELP
 }
 
@@ -1003,8 +1003,8 @@ if [[ $module == make-pfile ]]; then
     fi
     if [[ -z $dir_input && -z $dir_pfile ]]; then
         default_build=${grch:-37}
-        dir_input=/mnt/i/refGen/1kg/$default_build/vcf
-        dir_pfile=/mnt/i/refGen/1kg/$default_build/pfile
+        dir_input=/mnt/e/refGen/1kg/$default_build/vcf
+        dir_pfile=/mnt/e/refGen/1kg/$default_build/pfile
         input_format=vcf
     elif [[ -z $dir_input ]]; then
         dir_input=$(dirname -- "${dir_pfile%/}")/vcf
@@ -1027,7 +1027,7 @@ else
     [[ -z $grch ]] || die "download_archaic does not accept --grch"
     [[ -z $dir_input && -z $dir_vcf && -z $dir_pfile && -z $sample_file ]] ||
         die "download_archaic does not accept VCF, pfile, or sample-file options"
-    archaic_root=${root:-/mnt/i/refGen/archaic}
+    archaic_root=${root:-/mnt/e/refGen/archaic}
     selected_chrs=()
     run_download_archaic_module
     exit 0

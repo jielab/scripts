@@ -20,7 +20,7 @@ fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 action=${GU_ACTION:-as3_run}
 runtime=${AS3_RUNTIME:-$script_dir/as3}
-model_dir=${AS3_MODEL_DIR:-${dir_ref:-/mnt/i/refGen}/archaic/38/models}
+model_dir=${AS3_MODEL_DIR:-${dir_ref:-/mnt/e/refGen}/archaic/38/models}
 data=${AS3_DATA_IN:?AS3_DATA_IN is required; run this internal helper through gu.sh}
 out=${AS3_OUT:-/mnt/d/analysis/gu/as3}
 runtime_work=${AS3_RUNTIME_WORK_DIR:?AS3_RUNTIME_WORK_DIR is required; run this internal helper through gu.sh}

@@ -24,26 +24,28 @@ cd /mnt/d/scripts/gu
 # Reference data are on I:; TRACE symlinks are on D: because I: is exFAT.
 # 1. PhyML
 PHYML_TREE_CPUS=4 PHYML_TREE_TIMEOUT=86400 ./gu.sh phyml \
-  --loci /mnt/i/gwas/main/common/bald0/gwas/bald0.jma.cojo \
+  --loci /mnt/d/data/gwas/main/common/bald0/gwas/bald0.jma.cojo \
   --loci-format cojo --grch 38 --target 1kg \
-  --target-dir /mnt/i/refGen/1kg/37/pfile/chr \
+  --target-dir /mnt/e/refGen/1kg/37/pfile/chr \
   --jobs 6 --memory-cap 24G --replace-phyml FALSE --foreground TRUE
 
-# 2. IBDmix: all five archaic references, including both Denisovans
-IBDMIX_PROFILE=multi_reference IBDMIX_REFS="Altai Chagyr Vindija Denisova Denisova25" \
+# 2. IBDmix: five references, chr1-22 and X, 8 parallel jobs
+# Local masks only; finish aria2 downloads before running. No automatic downloads.
+# Local AXT: /mnt/e/annot/axt/37/vsPanTro2, vsPonAbe2, vsRheMac2
+# Default masks: /mnt/e/refGen/archaic/37/mask; profile: multi_reference
 ./gu.sh ibdmix --grch 37 --target 1kg \
-  --target-dir /mnt/i/refGen/1kg/37/pfile/chr \
+  --target-dir /mnt/e/refGen/1kg/37/pfile/chr \
   --jobs 8 --memory-cap 16G --replace-ibdmix FALSE --foreground TRUE
 
 # 3. TRACE (requires completed ARGs)
 TRACE_JOB_EXTRACT=2 TRACE_JOB_INFER=4 TRACE_JOB_SUMMARIZE=4 ./gu.sh trace \
   --chr 22,X --grch 37 --target 1kg \
-  --target-dir /mnt/i/refGen/1kg/37/pfile/chr \
-  --arg-dir /mnt/d/refGen-links/1kg/37/arg.threads/trace/threads \
+  --target-dir /mnt/e/refGen/1kg/37/pfile/chr \
+  --arg-dir /mnt/e/refGen/1kg/37/arg.threads/trace/threads \
   --jobs 2 --memory-cap 16G --replace-trace FALSE --foreground TRUE
 
 ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg \
-  --target-dir /mnt/i/refGen/1kg/38/pfile/chr --jobs 4 --foreground TRUE
+  --target-dir /mnt/e/refGen/1kg/38/pfile/chr --jobs 4 --foreground TRUE
 ./gu.sh final
 # Shiny application: shiny/app.R, shiny/ui.R, shiny/server.R and shiny/www/
 ./gu.sh shiny
@@ -302,7 +304,7 @@ if [[ ${CONDA_DEFAULT_ENV:-} != "$ENV_NAME" && ${GU_ENV_REEXEC:-0} != 1 ]]; then
 fi
 
 GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
-GU_REF_ROOT=${GU_REF_ROOT:-/mnt/i/refGen}
+GU_REF_ROOT=${GU_REF_ROOT:-/mnt/e/refGen}
 GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-$GU_DATA_ROOT/analysis/gu}
 GU_FINAL_DIR=${GU_FINAL_DIR:-$GU_ANALYSIS_ROOT/final}
 export GU_FINAL_DIR
@@ -458,6 +460,17 @@ if [[ $METHOD == ibdmix ]]; then
   if [[ $IBDMIX_PROFILE != custom ]]; then
     [[ $GU_BUILD == 37 ]] || { echo "ERROR: built-in IBDmix reference masks require GRCh37; other builds need IBDMIX_PROFILE=custom and excluded-site masks" >&2; exit 2; }
   fi
+  if [[ $IBDMIX_PROFILE == custom && -z ${IBDMIX_MASK_DIR:-} ]]; then
+    echo "ERROR: custom IBDmix requires IBDMIX_MASK_DIR" >&2; exit 2
+  fi
+  read -r -a ibdmix_precheck_chrs <<< "${GU_CHRS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X}"
+  read -r -a ibdmix_precheck_refs <<< "$IBDMIX_REFS"
+  [[ -z ${IBDMIX_MASK_CACHE:-} ]] || { echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT pointing to the unified mask directory" >&2; exit 2; }
+  ibdmix_mask_args=(--root "${IBDMIX_MASK_ROOT:-$(dirname -- "$GU_ARCHAIC_ROOT")/mask}"
+    --archaic-root "$GU_ARCHAIC_ROOT" --chroms "${ibdmix_precheck_chrs[@]}" --refs "${ibdmix_precheck_refs[@]}")
+  [[ -z ${IBDMIX_MASK_DIR:-} ]] || ibdmix_mask_args+=(--custom-masks "$IBDMIX_MASK_DIR")
+  # Check the whole request before spawning chromosome workers or exporting VCFs.
+  python3 "$F/ibdmix_workflow.py" check-masks "${ibdmix_mask_args[@]}" || exit $?
 fi
 if [[ $METHOD == as3 && " $GU_CHRS " == *" X "* ]]; then
   echo "ERROR: AS3 supports GRCh38 autosomes 1-22 only; chrX is unavailable" >&2

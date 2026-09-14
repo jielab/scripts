@@ -26,8 +26,17 @@ IBDmix 默认 `IBDMIX_PROFILE=multi_reference`，对五个参考分别在各人�
 Neanderthal 保留非洲 Denisova 对照过滤；两个 Denisovan 参考输出独立的原生匹配片段，
 不减去由 Denisova 自身产生的对照区间。Overview 按个体合并同谱系参考的重叠片段后计算覆盖率，
 不将两个参考的百分比相加。原生匹配本身不等于已确认的渗入来源。
-各参考使用其发布者的独立质量掩码；原始资源缓存统一放在 `I:/refGen/ibdmix/37/masks/raw`，供所有分析模式共用。
-`IBDMIX_MASK_CACHE` 可覆盖缓存根目录（其下使用 `raw` 保存原始资源）。
+各参考使用其发布者的独立质量掩码，统一放在 `E:/refGen/archaic/37/mask/<参考名>/`。
+Altai 和 Denisova 的 minimal filters 也在各自目录，保留原始长文件名，不能以 `chrN_mask.bed.gz` 替代。
+`mask/common/` 保存 1KG strict accessibility 和 genomicSuperDups 原始注释。
+`mask/derived/cpg/` 保存 CpG 计算结果；`mask/derived/combined/` 保存依赖现代样本、参考和参数的最终排除区域。
+原始 mask 表示可纳入区域，派生的 `*.exclude.bed` 表示排除区域，不能互换。
+分析目录使用单数 `mask/<分析单元>/`，链接到统一目录中的派生结果。
+`E:/annot/axt/37/vs*` 仅保存跨物种比对原始文件及其校验、下载文件。
+`IBDMIX_AXT_DIR`（默认 `${GU_ANNOT_ROOT:-/mnt/e/annot}/axt/37`）指定 AXT 根目录。
+`IBDMIX_MASK_ROOT` 可覆盖完整 mask 根目录，默认是古人类 VCF 目录同级的 `mask`；它也控制派生结果的位置。
+`IBDMIX_MASK_CACHE` 已停用，设置它会报错并提示更换。`IBDMIX_MASK_DIR` 仍专门用于 custom profile 的排除区域 BED。
+运行前统一检查本地 mask，缺失、空文件或带 `.aria2` 标记时退出，不自动下载 mask。
 显式设置 `IBDMIX_PROFILE=cell2020` 可保留原来的 Altai + Denisova 对照流程。
 
 质量掩码来源：[Chagyr](https://ftp.eva.mpg.de/neandertal/Chagyrskaya/FilterBed/)、
@@ -42,3 +51,5 @@ Neanderthal 保留非洲 Denisova 对照过滤；两个 Denisovan 参考输出�
 Rscript --vanilla shiny/app.R --review \
   --data /mnt/d/analysis/gu/final/review --port 3839 --host 127.0.0.1
 ```
+
+AXT 及其发布者 MD5 清单也只从本地读取，缺失或校验失败会报错；分析代码已移除自动下载实现。

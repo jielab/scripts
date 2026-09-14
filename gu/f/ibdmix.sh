@@ -14,7 +14,7 @@ case "$action" in ibdmix_run|ibdmix_check) ;; *) echo "ERROR: unsupported IBDmix
 for cmd in awk bcftools gzip python3 sort comm find stat cmp grep samtools sha256sum flock; do command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: missing command: $cmd" >&2; exit 1; }; done
 
 dir0=${dir0:-/mnt/d}
-dir_ref=${dir_ref:-/mnt/i/refGen}
+dir_ref=${dir_ref:-/mnt/e/refGen}
 dirmod=${dirmod:-${GU_TARGET_ROOT:-$dir_ref/1kg/${GRCH:-37}}}
 dirarch=${dirarch:-${GU_ARCHAIC_ROOT:-$dir_ref/archaic/${GRCH:-37}/vcf}}
 sample_file=${sample_file:-$dirmod/samples.txt}
@@ -55,7 +55,9 @@ generate_gt=$dirsoft/build/src/generate_gt
 ibdmix_bin=$dirsoft/build/src/ibdmix
 helper=$F/ibdmix_workflow.py
 pipeline_version=2026-09-14.1
-mask_root=${IBDMIX_MASK_CACHE:-$dir_ref/ibdmix/37/masks}
+# Published masks and derived exclusion masks share one root, separate from AXT.
+[[ -z ${IBDMIX_MASK_CACHE:-} ]] || { echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT" >&2; exit 2; }
+mask_root=${IBDMIX_MASK_ROOT:-$(dirname -- "$dirarch")/mask}
 custom_masks=${IBDMIX_MASK_DIR:-}
 ref_fasta=${IBDMIX_REFERENCE_FASTA:-$dir_ref/fasta/GRCH37.fasta}
 background_filter=${IBDMIX_AFR_DENISOVAN_FILTER:-1}
@@ -181,6 +183,11 @@ prepare_samples(){
 }
 validate_inputs(){
   local u chr ref vcf mask
+  local -a mask_chroms=() mask_args=()
+  for u in "${analysis_units[@]}"; do mask_chroms+=("${unit_chr[$u]}"); done
+  mask_args=(--root "$mask_root" --archaic-root "$dirarch" --chroms "${mask_chroms[@]}" --refs "${refs[@]}")
+  [[ -z $custom_masks ]] || mask_args+=(--custom-masks "$custom_masks")
+  python3 "$helper" check-masks "${mask_args[@]}" || return $?
   for u in "${analysis_units[@]}"; do
     chr=${unit_chr[$u]}; vcf=$(modern_vcf "$chr")
     [[ -s $vcf ]] || { echo "ERROR: missing modern VCF: $vcf" >&2; return 1; }
@@ -217,9 +224,9 @@ run_record(){
   [[ -z $loci_file ]] || stat -c 'loci_file\t%n:%s:%Y' "$loci_file"
   stat -c 'software\t%n:%s:%Y' "$generate_gt" "$ibdmix_bin" "$helper" "$F/vcf_gt_fix.py" "$F/ibdmix.sh"
   for u in "${analysis_units[@]}"; do
-    [[ ! -f $dirout/masks/$u/manifest.json ]] || printf 'mask_manifest_sha256\t%s\t%s\n' "$u" "$(sha256sum "$dirout/masks/$u/manifest.json" | cut -d' ' -f1)"
+    [[ ! -f $dirout/mask/$u/manifest.json ]] || printf 'mask_manifest_sha256\t%s\t%s\n' "$u" "$(sha256sum "$dirout/mask/$u/manifest.json" | cut -d' ' -f1)"
     for ref in "${refs[@]}"; do
-      printf 'excluded_mask_sha256\t%s\t%s\t%s\n' "$u" "$ref" "$(sha256sum "$dirout/masks/$u/$ref.exclude.bed" | cut -d' ' -f1)"
+      printf 'excluded_mask_sha256\t%s\t%s\t%s\n' "$u" "$ref" "$(sha256sum "$dirout/mask/$u/$ref.exclude.bed" | cut -d' ' -f1)"
     done
   done
   [[ ! -f $ref_fasta ]] || stat -Lc 'reference_fasta\t%n:%s:%Y' "$ref_fasta"
@@ -291,7 +298,7 @@ prepare_archaic(){
     if [[ $chr == X ]]; then python3 "$F/vcf_gt_fix.py" --chrom 23 --duplicate-haploid slash; else awk 'BEGIN{OFS="\t"} /^#/{print;next}{sub(/^chr/,"",$1);print}'; fi > "$out"
 }
 prepare_unit_masks(){
-  local u=$1 ref chr=${unit_chr[$1]} out=$dirout/masks/$1
+  local u=$1 ref chr=${unit_chr[$1]} out=$dirout/mask/$1
   mkdir -p "$out"
   if [[ -n $custom_masks ]]; then
     for ref in "${refs[@]}"; do
@@ -309,7 +316,7 @@ run_population(){
   if gzip_ok "$raw"; then return 0; fi
   log "CALL unit=$u ref=$ref population=$pop"
   "$ibdmix_bin" --genotype <(gzip -dc "$gt") --output "$tmp/$ref.$pop.raw.txt" --sample "$sample_list" \
-    --mask "$dirout/masks/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
+    --mask "$dirout/mask/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
     --minor-allele-count-threshold "$minor_allele_count" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
     --modern-error-proportion "$modern_error_proportion" --more-stats > "$dirout/log/$ref.$u.$pop.ibdmix.log" 2>&1 || return 1
   gzip -c "$tmp/$ref.$pop.raw.txt" > "$raw.part" && mv "$raw.part" "$raw" || return 1

@@ -78,7 +78,7 @@ references without overwriting different existing BEDs.
 
 ## LD reference
 
-`--ld-dir /mnt/i/refLD/csx` contains `ldblk_1kg_EUR`, `ldblk_1kg_AFR`,
+`--ld-dir /mnt/e/refLD/csx` contains `ldblk_1kg_EUR`, `ldblk_1kg_AFR`,
 `ldblk_1kg_EAS`, `ldblk_1kg_SAS`, `ldblk_1kg_AMR` and
 `snpinfo_mult_1kg_hm3`. The SNP information file provides GRCh37 coordinates.
 For GRCh38, reference SNP positions are actually mapped through hg19ToHg38;

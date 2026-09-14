@@ -10,8 +10,8 @@ usage(){ cat <<'HELP'
 cd /mnt/d/scripts/gu
 
 ./install.sh --arg
-./arg.sh build --dir-gen /mnt/i/refGen/1kg/37 --method threads --format trace --threads 8 --jobs 1
-./arg.sh check --dir-gen /mnt/i/refGen/1kg/37 --method threads --format trace
+./arg.sh build --dir-gen /mnt/e/refGen/1kg/37 --method threads --format trace --threads 8 --jobs 1
+./arg.sh check --dir-gen /mnt/e/refGen/1kg/37 --method threads --format trace
 HELP
 }
 

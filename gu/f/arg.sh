@@ -206,14 +206,14 @@ for pair in "threads:$threads" "jobs:$jobs" "max-individuals:$max_individuals" "
 done
 ((threads>0 && jobs>0 && seed_haplotypes>0)) || die "--threads, --jobs and --seed-haplotypes must be positive"
 
-dir_gen=${dir_gen:-/mnt/i/refGen/1kg/$grch}
+dir_gen=${dir_gen:-/mnt/e/refGen/1kg/$grch}
 [[ -d $dir_gen ]] || die "--dir-gen does not exist: $dir_gen"
 base=${dir_gen##*/}
 case "$base" in pfile|hap|typ|vcf|imp|gen) gen_root=$(dirname -- "$dir_gen");; *) gen_root=$dir_gen;; esac
 if [[ -z $arg_dir ]]; then
   arg_dir=$gen_root/arg.$method
 fi
-map_dir=${map_dir:-/mnt/i/refGen/maps/GRCh$grch}
+map_dir=${map_dir:-/mnt/e/refGen/maps/GRCh$grch}
 sample_file=${sample_file:-$gen_root/samples.txt}
 if [[ -z $ancestry_file ]]; then
   if [[ -s $gen_root/samples.txt ]]; then ancestry_file=$gen_root/samples.txt
@@ -1183,7 +1183,7 @@ for ((i=0; i<${#args[@]}; i++)); do
   esac
 done
 case "${grch,,}" in 38|b38|grch38|hg38) grch=38;; *) grch=37;; esac
-dir_gen=${dir_gen:-/mnt/i/refGen/1kg/$grch}
+dir_gen=${dir_gen:-/mnt/e/refGen/1kg/$grch}
 dir_gen=${dir_gen%/}
 case "${dir_gen##*/}" in pfile|hap|typ|vcf|imp|gen) gen_root=$(dirname -- "$dir_gen");; *) gen_root=$dir_gen;; esac
 method=${method,,}

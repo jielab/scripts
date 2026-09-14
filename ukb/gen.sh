@@ -12,19 +12,19 @@ usage(){ cat <<'HELP'
 cd /mnt/d/scripts/ukb
 
 # GRCh37 -> GRCh38 imputed pfiles; then score against GRCh38 inputs.
-./gen.sh liftGen --dir-in /mnt/i/ukbGen/37/imp --dir-out /mnt/i/ukbGen/38/imp \
+./gen.sh liftGen --dir-in /mnt/e/ukbGen/37/imp --dir-out /mnt/e/ukbGen/38/imp \
   --chain-file /mnt/d/files/liftOver/hg19ToHg38.over.chain.gz
-./gen.sh pgs --input /mnt/i/data/gwas/bmi.ref --label bmi \
-  --pgs-pfile-dir /mnt/i/ukbGen/38/imp --dir-out /mnt/i/analysis/pgs/bmi
+./gen.sh pgs --input /mnt/d/data/gwas/bmi.ref --label bmi \
+  --pgs-pfile-dir /mnt/e/ukbGen/38/imp --dir-out /mnt/e/analysis/pgs/bmi
 
 # Independent SNP extraction from typed data; BED coordinates must match its build.
-./gen.sh snp --dir-gen /mnt/i/ukbGen/37 --data typ --snp-file /mnt/d/files/Wang_MY.bed \
+./gen.sh snp --dir-gen /mnt/e/ukbGen/37 --data typ --snp-file /mnt/d/files/Wang_MY.bed \
   --snp-file-type bed --dir-out /mnt/d/analysis/ukb --label Wang
 HELP
 }
 
 init_mnt_g_env() {
-    dir0=${DIR0:-/mnt/i}
+    dir0=${DIR0:-/mnt/e}
     local phe_f="$SCRIPT_DIR/../0f/0phe.f.sh"
 
     if [[ -f "$phe_f" ]]; then
@@ -117,7 +117,7 @@ run_liftgen() {
         python3 "$SCRIPT_DIR/f/lift_bim.py" "$(to_wsl_path "$bim_file")" \
             "$(to_wsl_path "${dir_out:?ERROR: --dir-out required}")" \
             "$(to_wsl_path "${chain_file:?ERROR: --chain-file required}")" \
-            "$(to_wsl_path "${ref_fasta:-/mnt/i/refGen/fasta/GRCH38.fasta}")"
+            "$(to_wsl_path "${ref_fasta:-/mnt/e/refGen/fasta/GRCH38.fasta}")"
         return
     fi
     # Keep every PVAR row in its original position.  Only POS changes; rows that
@@ -130,7 +130,7 @@ run_liftgen() {
     dir_in=$(to_wsl_path "$dir_in")
     dir_out=$(to_wsl_path "$dir_out")
     chain_file=$(to_wsl_path "$chain_file")
-    ref_fasta=$(to_wsl_path "${ref_fasta:-/mnt/i/refGen/fasta/GRCH38.fasta}")
+    ref_fasta=$(to_wsl_path "${ref_fasta:-/mnt/e/refGen/fasta/GRCH38.fasta}")
 
     [[ -d "$dir_in" ]] || { echo "ERROR: input directory not found: $dir_in" >&2; exit 1; }
     [[ -f "$chain_file" ]] || { echo "ERROR: chain file not found: $chain_file" >&2; exit 1; }
@@ -340,7 +340,7 @@ run_pgs() {
     : "${pgs_input:?ERROR: pgs requires --input FILE}"
     : "${label:?ERROR: pgs requires --label LABEL}"
     pgs_input=$(to_wsl_path "$pgs_input")
-    pgs_pfile_dir=$(to_wsl_path "${pgs_pfile_dir:-/mnt/i/ukbGen/38/imp}")
+    pgs_pfile_dir=$(to_wsl_path "${pgs_pfile_dir:-/mnt/e/ukbGen/38/imp}")
     dir_out=$(to_wsl_path "${dir_out:-$dir0/analysis/pgs/$label}")
     pgs_threads=${pgs_threads:-1}
     [[ -s "$pgs_input" ]] || { echo "ERROR: PGS score input is missing/empty: $pgs_input" >&2; exit 1; }
