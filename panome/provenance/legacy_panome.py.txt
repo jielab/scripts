@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Panome orchestration. Stage outputs are local; UKB inputs are never modified."""
+import argparse
+import hashlib
+import importlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import platform
+
+HOME=Path(__file__).resolve().parents[1]
+STAGES=['s1_prepare','s2_preprocess','s3_representation','s4_graph','s5_predict','s6_report']
+
+
+def parser():
+    p=argparse.ArgumentParser(description='Panome: person → molecular state → incident disease. Defaults: UKB-PPP / cvd_cad.',formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument('-Y','--trait',default='cvd_cad')
+    p.add_argument('-b','--biom',default='prot',help='One numeric omics table per run, e.g. prot, met, transcriptome')
+    p.add_argument('--phe-file',default='/mnt/d/data/ukb/phe/Rdata/all.rds')
+    p.add_argument('--omics-file',help='Default prot: rap/raw/prot.tab.gz (pre-imputation); other layers: Rdata/<biom>.rds')
+    p.add_argument('--analysis-root',default='/mnt/d/analysis/panome')
+    p.add_argument('--run-name',default='main')
+    p.add_argument('--id-col',default='eid')
+    p.add_argument('--baseline-col',default='date_attend',help='Must be the baseline molecular sampling date')
+    p.add_argument('--diagnosis-col',help='Default: fod_icd10_<Y>')
+    p.add_argument('--disease-evidence-col',default='',help='Optional diagnosis-count indicator; exclude positive evidence with unknown date')
+    p.add_argument('--death-col',default='date_death');p.add_argument('--lost-col',default='date_lost')
+    p.add_argument('--end-date',default='2023-04-01')
+    p.add_argument('--healthy-date-cols',default='',help='Extra first-diagnosis date columns for baseline disease-free restriction; missing columns are errors')
+    p.add_argument('--covariates',default='age,sex,tdi,PC1,PC2,center')
+    p.add_argument('--residualize',default=None,help='Default: age,sex,<biom>.plate for prot/met; age,sex for other layers. Empty string disables.')
+    p.add_argument('--categorical',default=None,help='Default: sex,center,<biom>.plate; numeric plate IDs are categorical')
+    p.add_argument('--group-col',default='',help='Optional family / connected relatedness component ID to prevent split leakage')
+    p.add_argument('--feature-missing',type=float,default=.2);p.add_argument('--sample-missing',type=float,default=.2)
+    p.add_argument('--latent',type=int,default=20);p.add_argument('--hidden',type=int,default=512)
+    p.add_argument('--epochs',type=int,default=100);p.add_argument('--patience',type=int,default=12)
+    p.add_argument('--batch-size',type=int,default=256);p.add_argument('--corruption',type=float,default=.1)
+    p.add_argument('--device',choices=['cpu','cuda','auto'],default='auto')
+    p.add_argument('--neighbors',type=int,default=30);p.add_argument('--graph-dims',type=int,default=10)
+    p.add_argument('--resolutions',default='0.2,0.5,1.0,1.5')
+    p.add_argument('--max-states',type=int,default=30);p.add_argument('--min-state-fraction',type=float,default=.01)
+    p.add_argument('--stability-repeats',type=int,default=10)
+    p.add_argument('--pwas-top',type=int,default=30);p.add_argument('--coxnet-alphas',type=int,default=20)
+    p.add_argument('--horizons',default='5,10');p.add_argument('--lag-years',type=float,default=2.)
+    p.add_argument('--bootstrap',type=int,default=100);p.add_argument('--min-events',type=int,default=20)
+    p.add_argument('--max-samples',type=int,default=0,help='Seeded pilot subsample before cohort/QC; 0 uses all available rows')
+    p.add_argument('--attribution-samples',type=int,default=1000);p.add_argument('--ig-steps',type=int,default=32)
+    p.add_argument('--seed',type=int,default=2026);p.add_argument('--cores',type=int,default=2)
+    p.add_argument('--r-bin',default='Rscript')
+    p.add_argument('--from',dest='from_stage',choices=STAGES,default=STAGES[0]);p.add_argument('--to',dest='to_stage',choices=STAGES,default=STAGES[-1])
+    p.add_argument('--steps',help='Comma-separated stage names; completed prerequisites required')
+    p.add_argument('--replace',action='store_true',help='Replace this run and invalidate all downstream stages; inputs never changed')
+    p.add_argument('--preflight',action='store_true');p.add_argument('--dry-run',action='store_true')
+    p.add_argument('--demo',action='store_true',help='Synthetic software verification; never biological evidence')
+    return p
+
+
+def dump(path,value):path.write_text(json.dumps(value,indent=2,default=str,allow_nan=False))
+
+
+def columns(a):
+    from data import csv_list
+    return list(dict.fromkeys([a.id_col,a.baseline_col,a.diagnosis_col,a.death_col,a.lost_col]+csv_list(a.covariates)+
+                 csv_list(a.residualize)+csv_list(a.healthy_date_cols)+([a.group_col] if a.group_col else [])+
+                 ([a.disease_evidence_col] if a.disease_evidence_col else [])))
+
+
+def preflight(a):
+    modules=['numpy','pandas','scipy','sklearn','torch','sksurv','igraph','leidenalg','matplotlib','pynndescent','joblib']
+    versions={};errors=[]
+    for name in modules:
+        try:mod=importlib.import_module(name);versions[name]=getattr(mod,'__version__','available')
+        except Exception as exc:errors.append(f'{name}: {exc}')
+    if shutil.which(a.r_bin) is None:errors.append(f'Rscript unavailable: {a.r_bin}')
+    else:
+        r=subprocess.run([a.r_bin,'-e','stopifnot(requireNamespace("survival",quietly=TRUE))'],capture_output=True,text=True)
+        if r.returncode:errors.append(r.stderr)
+    if not a.demo:
+        for file in [a.phe_file,a.omics_file]:
+            if not Path(file).is_file():errors.append(f'Missing input: {file}')
+    print(json.dumps(dict(python=sys.executable,versions=versions,errors=errors,input_omics=a.omics_file,
+                         input_phenotype=a.phe_file,residualize=a.residualize),indent=2),flush=True)
+    if errors:raise RuntimeError('Preflight failed; install requirements / correct input paths')
+    return versions
+
+
+def prepare(a,out):
+    import numpy as np
+    import pandas as pd
+    if a.demo:
+        rng=np.random.default_rng(a.seed);n=a.max_samples or 1200;nf=80
+        state=rng.integers(0,3,n);latent=rng.normal(size=(n,6));latent[:,0]+=state*3
+        x=(latent@rng.normal(size=(6,nf))+rng.normal(size=(n,nf))*.5).astype('float32')
+        age=rng.integers(40,70,n);sex=rng.integers(0,2,n);plate=rng.integers(1,8,n)
+        x+=plate[:,None]*.04; x[rng.random(x.shape)<.02]=np.nan
+        base=pd.Timestamp('2010-01-01');event_time=rng.exponential(18/np.exp(.35*latent[:,0]+.025*(age-55)))
+        dates=base+pd.to_timedelta(np.minimum(event_time*365.25,50000),unit='D')
+        p=pd.DataFrame({a.id_col:[f'demo_{i}' for i in range(n)],a.baseline_col:'2010-01-01',a.diagnosis_col:dates.strftime('%Y-%m-%d'),
+                        a.death_col:None,a.lost_col:None,'age':age,'sex':sex,'tdi':rng.normal(size=n),
+                        'PC1':rng.normal(size=n),'PC2':rng.normal(size=n),'center':rng.choice(['A','B','C'],n),f'{a.biom}.plate':plate})
+        features=[f'feature_{i:03d}' for i in range(nf)]
+    elif a.phe_file.endswith('.rds'):
+        subprocess.run([a.r_bin,str(HOME/'f/s1_export.R'),a.phe_file,a.omics_file,str(out),','.join(columns(a)),
+                        str(a.max_samples),str(a.seed),a.id_col,a.biom],check=True)
+        return
+    elif '.csv' in a.phe_file and '.csv' in a.omics_file:
+        p=pd.read_csv(a.phe_file,dtype={a.id_col:str});omics=pd.read_csv(a.omics_file,dtype={a.id_col:str})
+        for frame in [p,omics]:
+            if a.id_col not in frame or frame[a.id_col].isna().any() or frame[a.id_col].duplicated().any():raise ValueError('Missing/duplicate IDs')
+        omics=omics[omics[a.id_col].isin(p[a.id_col])]
+        if a.max_samples and len(omics)>a.max_samples:omics=omics.sample(a.max_samples,random_state=a.seed)
+        p=p.set_index(a.id_col).loc[omics[a.id_col],:].reset_index()[columns(a)]
+        features=[c for c in omics if c!=a.id_col];x=omics[features].to_numpy(dtype='float32')
+    else:raise ValueError('Use two RDS files or two CSV files; mixed input formats unsupported')
+    p.to_csv(out/'phenotype.csv',index=False);x.astype('<f4').tofile(out/'omics.f32')
+    (out/'shape.txt').write_text(f'{len(x)}\n{x.shape[1]}\n');(out/'features.txt').write_text('\n'.join(features)+'\n')
+
+
+def preprocess(a,out,root):
+    import numpy as np
+    import pandas as pd
+    import joblib
+    from data import outcomes,splits,MolecularPreprocessor,csv_list
+    src=root/'s1_prepare';shape=tuple(map(int,(src/'shape.txt').read_text().split()))
+    x=np.memmap(src/'omics.f32',dtype='<f4',mode='r',shape=shape)
+    p=pd.read_csv(src/'phenotype.csv',dtype={a.id_col:str})
+    if len(p)!=shape[0] or p[a.id_col].duplicated().any() or p[a.id_col].isna().any():raise ValueError('Row alignment/ID validation failed')
+    missing=set(columns(a))-set(p.columns)
+    if missing:raise ValueError(f'Missing phenotype columns: {missing}')
+    p,audit=outcomes(p,a);keep=p.eligible.values
+    p=p.loc[keep].reset_index(drop=True);x=np.asarray(x[keep]);p['split']=splits(p,a)
+    train=p.split.values=='train'
+    initial_features=np.mean(~np.isfinite(x[train]),axis=0)<a.feature_missing
+    if initial_features.sum()<3:raise ValueError('Too few features pass missingness QC')
+    row_keep=np.mean(~np.isfinite(x[:,initial_features]),axis=1)<a.sample_missing
+    audit['excluded_sample_missing']=int((~row_keep).sum());p=p.loc[row_keep].reset_index(drop=True);x=x[row_keep]
+    # Keep original split after row QC; no rebalancing using test features.
+    train=p.split.values=='train'
+    for split in ['train','validation','test']:
+        sub=p[p.split==split]
+        if len(sub)<30 or sub.event.sum()<a.min_events:raise ValueError(f'{split}: too few participants/events ({len(sub)}/{sub.event.sum()}); increase pilot size')
+    if min(int(train.sum())-1,int(initial_features.sum()))<a.latent:raise ValueError('latent dimension exceeds matrix rank bound')
+    pre=MolecularPreprocessor(a.feature_missing,csv_list(a.residualize),csv_list(a.categorical)).fit(x[train],p.loc[train])
+    z,mask=pre.transform(x,p)
+    np.save(out/'x.npy',z);np.save(out/'observed.npy',mask);p.to_csv(out/'cohort.csv',index=False)
+    names=np.array((src/'features.txt').read_text().splitlines());features=names[pre.keep]
+    (out/'features.txt').write_text('\n'.join(features)+'\n')
+    pd.DataFrame(dict(feature=names,retained=np.isin(np.arange(len(names)),pre.keep))).to_csv(out/'feature_qc.csv',index=False)
+    audit['post_qc_n']=len(p);audit['retained_features']=len(features)
+    audit['split_summary']=p.groupby('split').event.agg(['size','sum']).to_dict('index')
+    dump(out/'cohort_audit.json',audit);joblib.dump(pre,out/'preprocessor.joblib')
+    print(json.dumps(audit,indent=2),flush=True)
+
+
+def load_data(root):
+    import numpy as np
+    import pandas as pd
+    d=root/'s2_preprocess'
+    id_col=pd.read_csv(d/'cohort.csv',nrows=0).columns[0]
+    return np.load(d/'x.npy',mmap_mode='r'),pd.read_csv(d/'cohort.csv',dtype={id_col:str}),(d/'features.txt').read_text().splitlines()
+
+
+def representation(a,out,root):
+    import numpy as np
+    import joblib
+    from sklearn.decomposition import PCA
+    from representation import fit_ae
+    x,p,_=load_data(root);mask=np.load(root/'s2_preprocess/observed.npy',mmap_mode='r')
+    ae,summary=fit_ae(x,mask,p.split.values,a,out)
+    pca=PCA(n_components=a.latent,svd_solver='randomized',random_state=a.seed).fit(x[p.split.values=='train'])
+    np.save(out/'ae.npy',ae);np.save(out/'pca.npy',pca.transform(x));joblib.dump(pca,out/'pca.joblib')
+    summary['pca_explained_variance']=float(pca.explained_variance_ratio_.sum());dump(out/'summary.json',summary)
+
+
+def graph_stage(a,out,root):
+    import numpy as np
+    from graph import build_graph
+    _,p,_=load_data(root)
+    z=np.load(root/'s3_representation/ae.npy')
+    summary=build_graph(z,p.split.values,a,out);dump(out/'summary.json',summary)
+    p.loc[p.split=='train',[a.id_col]].to_csv(out/'graph_node_ids.csv',index=False)
+
+
+def predict_stage(a,out,root):
+    import numpy as np
+    import joblib
+    from prediction import predict_all
+    x,p,features=load_data(root);z=np.load(root/'s3_representation/ae.npy');pca=np.load(root/'s3_representation/pca.npy')
+    g=np.load(root/'s4_graph/graph_coordinates.npz')
+    predict_all(x,p,z,pca,g,features,a,out)
+    cp=joblib.load(out/'clinical_preprocessor.joblib');c=cp['transformer'].transform(p)[:,cp['nonconstant']]
+    assoc=p[['time','event','split']].copy();assoc['state']=g['state']+1
+    for j in range(c.shape[1]):assoc[f'cov_{j}']=c[:,j]
+    assoc.to_csv(out/'state_association_input.csv',index=False)
+    subprocess.run([a.r_bin,str(HOME/'f/s5_state_cox.R'),str(out/'state_association_input.csv'),str(out)],check=True)
+
+
+def report_stage(a,out,root):
+    import numpy as np
+    from report import report
+    x,p,features=load_data(root);z=np.load(root/'s3_representation/ae.npy');g=np.load(root/'s4_graph/graph_coordinates.npz')
+    report(x,p,z,g,features,a,out,root)
+    from attribution import attribute
+    attribute(x,p,a,root,out)
+
+
+def main():
+    a=parser().parse_args()
+    if not all('/' not in v and '\\' not in v and v not in ['.','..',''] for v in [a.trait,a.biom,a.run_name]):raise ValueError('trait/biom/run-name must be simple directory names')
+    a.omics_file=a.omics_file or ('/mnt/d/data/ukb/phe/rap/raw/prot.tab.gz' if a.biom=='prot' else f'/mnt/d/data/ukb/phe/Rdata/{a.biom}.rds')
+    a.diagnosis_col=a.diagnosis_col or f'fod_icd10_{a.trait}'
+    a.residualize=a.residualize if a.residualize is not None else ('age,sex,'+a.biom+'.plate' if a.biom in ['prot','met'] else 'age,sex')
+    a.categorical=a.categorical if a.categorical is not None else 'sex,center,'+a.biom+'.plate'
+    a.resolutions=[float(x) for x in a.resolutions.split(',')];a.horizons=[float(x) for x in a.horizons.split(',')]
+    for name in ['latent','hidden','epochs','patience','batch_size','neighbors','graph_dims','stability_repeats','pwas_top','coxnet_alphas','min_events','cores','ig_steps']:
+        if getattr(a,name)<1:raise ValueError(f'{name} must be positive')
+    if a.latent<2 or a.max_samples<0 or a.bootstrap<0 or a.attribution_samples<0 or a.lag_years<0:raise ValueError('Invalid dimension/count/lag')
+    for name in ['feature_missing','sample_missing','min_state_fraction']:
+        if not 0<getattr(a,name)<1:raise ValueError(f'{name} must lie in (0,1)')
+    if not 0<=a.corruption<1 or min(a.resolutions)<=0 or min(a.horizons)<=0:raise ValueError('Invalid corruption, resolution or horizon')
+    stages=a.steps.split(',') if a.steps else STAGES[STAGES.index(a.from_stage):STAGES.index(a.to_stage)+1]
+    if not stages or len(set(stages))!=len(stages) or any(s not in STAGES for s in stages):raise ValueError('Invalid stage selection')
+    stages=sorted(stages,key=STAGES.index)
+    root=Path(a.analysis_root).resolve()/a.trait/a.biom/a.run_name
+    print(f'Output: {root}\nStages: {", ".join(stages)}',flush=True)
+    if a.dry_run:return
+    versions=preflight(a)
+    if a.preflight:return
+    config={k:v for k,v in vars(a).items() if k not in ['replace','from_stage','to_stage','steps','dry_run','preflight']}
+    inputs=[]
+    if not a.demo:
+        for path in [a.phe_file,a.omics_file]:
+            s=Path(path).stat();inputs.append(dict(path=str(Path(path).resolve()),size=s.st_size,mtime_ns=s.st_mtime_ns))
+    code={str(p.relative_to(HOME)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [HOME/'panome.sh']+sorted((HOME/'f').glob('*.py'))+sorted((HOME/'f').glob('*.R'))}
+    provenance=dict(config=config,inputs=inputs,code=code,versions=versions,python=platform.python_version())
+    signature=hashlib.sha256(json.dumps(provenance,sort_keys=True).encode()).hexdigest()
+    root.mkdir(parents=True,exist_ok=True)
+    # Exclusive lock prevents concurrent writers. Stale lock requires explicit investigation/removal.
+    lock=root/'.lock'
+    try:fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+    except FileExistsError:raise RuntimeError(f'Run locked: {lock}; check the recorded PID before removing a stale lock')
+    os.write(fd,str(os.getpid()).encode());os.close(fd)
+    try:
+        manifest=root/'manifest.json'
+        if manifest.exists() and json.loads(manifest.read_text())['signature']!=signature and not a.replace:
+            raise ValueError('Inputs/config/code/dependencies changed; use a new --run-name or --replace for a full rerun')
+        if a.replace:
+            if stages[0]!=STAGES[0]:raise ValueError('--replace requires starting from s1_prepare to avoid stale upstream results')
+            for stage in STAGES:
+                if (root/stage).exists():shutil.rmtree(root/stage)
+        dump(manifest,dict(signature=signature,**provenance))
+        funcs=[prepare,preprocess,representation,graph_stage,predict_stage,report_stage]
+        for stage in stages:
+            ix=STAGES.index(stage)
+            for prior in STAGES[:ix]:
+                if not (root/prior/'DONE.json').exists():raise ValueError(f'{stage} requires completed {prior}')
+            out=root/stage;done=out/'DONE.json'
+            if done.exists():print(f'{stage}: verified manifest, cached',flush=True);continue
+            out.mkdir(exist_ok=True)
+            print(f'>>> {stage}',flush=True);start=time.time()
+            if ix==0:funcs[ix](a,out)
+            else:funcs[ix](a,out,root)
+            dump(done,dict(signature=signature,seconds=time.time()-start))
+        print(f'Finished: {root}',flush=True)
+    finally:lock.unlink(missing_ok=True)
+
+if __name__=='__main__':
+    try:main()
+    except Exception as exc:
+        print(f'PANOME ERROR: {exc}',file=sys.stderr,flush=True)
+        raise

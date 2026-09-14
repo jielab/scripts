@@ -1,0 +1,1 @@
+Atlas polygons: ggseg v1.6.5, https://github.com/ggsegverse/ggseg/tree/v1.6.5/data . Desikan-Killiany and FreeSurfer aseg, MIT package licence. Region values are generated from the current LE8 analysis.

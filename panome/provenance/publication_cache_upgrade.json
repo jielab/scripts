@@ -1,0 +1,47 @@
+{
+  "reason": "Reviewed publication export integration and final module CLI rename; stage computations unchanged. Exact approved historical code maps only.",
+  "previous_analysis_code": {
+    "panome.sh": "1eacc338baff02b21afc3eac8769346ecf7e5404ee7700d4eb2b5e62fd50ee0e",
+    "f/attribution.py": "899c84051fd4c7ad3612557bbc461d606d5bcd8c0e078c45cbfb57b9499f3ed5",
+    "f/cache.py": "f4dee32677c5b02b5dc4064bdd488a4256ebe0ff994c29d3e0ecf0890aa2987d",
+    "f/data.py": "063bd189f8eaa6156806668672315a04d926cd94f8769ccafdb1f27c65a80e0b",
+    "f/graph.py": "294c12f61eb31352c986f8b8000987a29b46e4e97b41c26c22eeae3a1356a84a",
+    "f/panome.py": "e415ca54a06790bc47e8ec077fc40723ab52fb3d1791e5cbbbbb93bbb148ad0a",
+    "f/prediction.py": "7e47d9c9b4b6ce9c22c865130917f9d15a475c4c6ffb9e0eaea28281ae1711f8",
+    "f/project.py": "5b23e711b059ed23da9612e04bcd09e26192fdbe7b28e12e4f8443a15cfa52bb",
+    "f/report.py": "6d030ad55ea499e55bb4956a6de2ecbe330a7ec31d4541602095885ed7cc44f8",
+    "f/representation.py": "76bb5378b5ec002ba00740c85b5825255f5139db2c1adfbf05807bca1c11eb48",
+    "f/s1_export.R": "fcf99bdd41bdf2c22f9cfc8ed53fda9c06ee549b1615ec73d0c7188799a1c6cc",
+    "f/s5_state_cox.R": "0d9f96a2c5745ec990bafc6e5b3fffbf1d417528f29667070d1b300e93dce104"
+  },
+  "approved_analysis_code": {
+    "panome.sh": "1eacc338baff02b21afc3eac8769346ecf7e5404ee7700d4eb2b5e62fd50ee0e",
+    "f/attribution.py": "899c84051fd4c7ad3612557bbc461d606d5bcd8c0e078c45cbfb57b9499f3ed5",
+    "f/cache.py": "19f9fca17958e29634b8e4f5943efde20bdad76e20258eac2eee0ea2a25d6b87",
+    "f/data.py": "063bd189f8eaa6156806668672315a04d926cd94f8769ccafdb1f27c65a80e0b",
+    "f/graph.py": "294c12f61eb31352c986f8b8000987a29b46e4e97b41c26c22eeae3a1356a84a",
+    "f/panome.py": "5e02207afd83d284bac47f54451d7b2d83e2fa4075a969eb03d5a632b8ba92cd",
+    "f/prediction.py": "7e47d9c9b4b6ce9c22c865130917f9d15a475c4c6ffb9e0eaea28281ae1711f8",
+    "f/project.py": "5b23e711b059ed23da9612e04bcd09e26192fdbe7b28e12e4f8443a15cfa52bb",
+    "f/report.py": "6d030ad55ea499e55bb4956a6de2ecbe330a7ec31d4541602095885ed7cc44f8",
+    "f/representation.py": "76bb5378b5ec002ba00740c85b5825255f5139db2c1adfbf05807bca1c11eb48",
+    "f/s1_export.R": "fcf99bdd41bdf2c22f9cfc8ed53fda9c06ee549b1615ec73d0c7188799a1c6cc",
+    "f/s5_state_cox.R": "0d9f96a2c5745ec990bafc6e5b3fffbf1d417528f29667070d1b300e93dce104"
+  },
+  "compatible_previous_analysis_codes": [
+    {
+      "panome.sh": "1eacc338baff02b21afc3eac8769346ecf7e5404ee7700d4eb2b5e62fd50ee0e",
+      "f/attribution.py": "899c84051fd4c7ad3612557bbc461d606d5bcd8c0e078c45cbfb57b9499f3ed5",
+      "f/cache.py": "67bb963ae7778dbf40d6a29a5b374a7255f779c942fa9036b3180258a4482761",
+      "f/data.py": "063bd189f8eaa6156806668672315a04d926cd94f8769ccafdb1f27c65a80e0b",
+      "f/graph.py": "294c12f61eb31352c986f8b8000987a29b46e4e97b41c26c22eeae3a1356a84a",
+      "f/panome.py": "8c5f4651a498bc2cf3e5a63a731f35b07eeee58404afc2b416efec91a4df85e5",
+      "f/prediction.py": "7e47d9c9b4b6ce9c22c865130917f9d15a475c4c6ffb9e0eaea28281ae1711f8",
+      "f/project.py": "5b23e711b059ed23da9612e04bcd09e26192fdbe7b28e12e4f8443a15cfa52bb",
+      "f/report.py": "6d030ad55ea499e55bb4956a6de2ecbe330a7ec31d4541602095885ed7cc44f8",
+      "f/representation.py": "76bb5378b5ec002ba00740c85b5825255f5139db2c1adfbf05807bca1c11eb48",
+      "f/s1_export.R": "fcf99bdd41bdf2c22f9cfc8ed53fda9c06ee549b1615ec73d0c7188799a1c6cc",
+      "f/s5_state_cox.R": "0d9f96a2c5745ec990bafc6e5b3fffbf1d417528f29667070d1b300e93dce104"
+    }
+  ]
+}

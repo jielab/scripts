@@ -1,0 +1,1 @@
+Generic GO term-name dictionary, copied from the existing local ontology cache on 2026-09-12. This is the full term dictionary, not the article protein list or statistical results. Used for labels only; enrichment estimates are unchanged. Gene Ontology: https://geneontology.org/docs/download-ontology/

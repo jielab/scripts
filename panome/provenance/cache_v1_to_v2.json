@@ -1,0 +1,30 @@
+{
+  "reason": "Audited help-only edits to original panome.py plus cache v2 guard implementation.",
+  "legacy_code": {
+    "panome.sh": "1eacc338baff02b21afc3eac8769346ecf7e5404ee7700d4eb2b5e62fd50ee0e",
+    "f/attribution.py": "4082fbeb019de8e6f804bb424fdc9465f287cfd5525a270faaa2820c8263b775",
+    "f/data.py": "7b01e973bccb0fe233b104afe26843fceadec01b591ed7dd6bdfb5645a4d452d",
+    "f/graph.py": "3811985e56bca0996bebf7c918ed3ce76a27eaaf3fbd771dfe0e015e2bd112fc",
+    "f/panome.py": "80b3ababe4963b4477bd663bf26e97cbd2790771ece2f0149c827f2d701e85a0",
+    "f/prediction.py": "937eb4c060bedf627fb3d359e068ed0ff7c2a971afec9d3dcc5484a36b3470c9",
+    "f/project.py": "7a5ab65cc07bf7c58d0af99be0a303fd66a541e831d1b662cdd44307ff13465f",
+    "f/report.py": "97f32d0beef5e79527feeb194f8b84af4348820078b4881b21be475fc84f3f1e",
+    "f/representation.py": "b02b42fc347e2916d9656d74e3ce3a1b8710a2fe59f20270b9a53b649e3658c4",
+    "f/s1_export.R": "fcf99bdd41bdf2c22f9cfc8ed53fda9c06ee549b1615ec73d0c7188799a1c6cc",
+    "f/s5_state_cox.R": "0d9f96a2c5745ec990bafc6e5b3fffbf1d417528f29667070d1b300e93dce104"
+  },
+  "approved_v2_analysis_code": {
+    "panome.sh": "1eacc338baff02b21afc3eac8769346ecf7e5404ee7700d4eb2b5e62fd50ee0e",
+    "f/attribution.py": "899c84051fd4c7ad3612557bbc461d606d5bcd8c0e078c45cbfb57b9499f3ed5",
+    "f/cache.py": "f4dee32677c5b02b5dc4064bdd488a4256ebe0ff994c29d3e0ecf0890aa2987d",
+    "f/data.py": "063bd189f8eaa6156806668672315a04d926cd94f8769ccafdb1f27c65a80e0b",
+    "f/graph.py": "294c12f61eb31352c986f8b8000987a29b46e4e97b41c26c22eeae3a1356a84a",
+    "f/panome.py": "e415ca54a06790bc47e8ec077fc40723ab52fb3d1791e5cbbbbb93bbb148ad0a",
+    "f/prediction.py": "7e47d9c9b4b6ce9c22c865130917f9d15a475c4c6ffb9e0eaea28281ae1711f8",
+    "f/project.py": "5b23e711b059ed23da9612e04bcd09e26192fdbe7b28e12e4f8443a15cfa52bb",
+    "f/report.py": "6d030ad55ea499e55bb4956a6de2ecbe330a7ec31d4541602095885ed7cc44f8",
+    "f/representation.py": "76bb5378b5ec002ba00740c85b5825255f5139db2c1adfbf05807bca1c11eb48",
+    "f/s1_export.R": "fcf99bdd41bdf2c22f9cfc8ed53fda9c06ee549b1615ec73d0c7188799a1c6cc",
+    "f/s5_state_cox.R": "0d9f96a2c5745ec990bafc6e5b3fffbf1d417528f29667070d1b300e93dce104"
+  }
+}
