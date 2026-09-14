@@ -29,10 +29,11 @@ PHYML_TREE_CPUS=4 PHYML_TREE_TIMEOUT=86400 ./gu.sh phyml \
   --target-dir /mnt/i/refGen/1kg/37/pfile/chr \
   --jobs 6 --memory-cap 24G --replace-phyml FALSE --foreground TRUE
 
-# 2. IBDmix
+# 2. IBDmix: all five archaic references, including both Denisovans
+IBDMIX_PROFILE=multi_reference IBDMIX_REFS="Altai Chagyr Vindija Denisova Denisova25" \
 ./gu.sh ibdmix --grch 37 --target 1kg \
   --target-dir /mnt/i/refGen/1kg/37/pfile/chr \
-  --jobs 4 --memory-cap 16G --replace-ibdmix FALSE --foreground TRUE
+  --jobs 8 --memory-cap 16G --replace-ibdmix FALSE --foreground TRUE
 
 # 3. TRACE (requires completed ARGs)
 TRACE_JOB_EXTRACT=2 TRACE_JOB_INFER=4 TRACE_JOB_SUMMARIZE=4 ./gu.sh trace \
@@ -447,8 +448,16 @@ else
   scope_key=$(gu_scope_id "" "$GU_CHRS")
   scope_label=$(gu_scope_label "" "$GU_CHRS")
 fi
-if [[ $METHOD == ibdmix && ${IBDMIX_PROFILE:-cell2020} == cell2020 ]]; then
-  [[ $GU_BUILD == 37 ]] || { echo "ERROR: default IBDmix Cell 2020 profile requires GRCh37; other builds need IBDMIX_PROFILE=custom and excluded-site masks" >&2; exit 2; }
+if [[ $METHOD == ibdmix ]]; then
+  IBDMIX_PROFILE=${IBDMIX_PROFILE:-multi_reference}
+  if [[ -z ${IBDMIX_REFS:-} ]]; then
+    if [[ $IBDMIX_PROFILE == multi_reference ]]; then IBDMIX_REFS="Altai Chagyr Vindija Denisova Denisova25"
+    else IBDMIX_REFS="Altai Denisova"; fi
+  fi
+  export IBDMIX_PROFILE IBDMIX_REFS
+  if [[ $IBDMIX_PROFILE != custom ]]; then
+    [[ $GU_BUILD == 37 ]] || { echo "ERROR: built-in IBDmix reference masks require GRCh37; other builds need IBDMIX_PROFILE=custom and excluded-site masks" >&2; exit 2; }
+  fi
 fi
 if [[ $METHOD == as3 && " $GU_CHRS " == *" X "* ]]; then
   echo "ERROR: AS3 supports GRCh38 autosomes 1-22 only; chrX is unavailable" >&2
@@ -595,6 +604,10 @@ gu_write_analysis_unit_cmd(){
     printf '#!/usr/bin/env bash\nset -euo pipefail\n'
     printf 'export GU_CMD_WORKER=1\n'
     [[ $METHOD != phyml ]] || printf 'export GU_PHYML_LEAD_TABLE=%q\n' "${GU_PHYML_LEAD_TABLE:?}"
+    if [[ $METHOD == ibdmix ]]; then
+      printf 'export IBDMIX_PROFILE=%q\nexport IBDMIX_REFS=%q\n' "$IBDMIX_PROFILE" "$IBDMIX_REFS"
+      printf 'export IBDMIX_AFR_DENISOVAN_FILTER=%q\nexport IBDMIX_MASK_DIR=%q\n' "${IBDMIX_AFR_DENISOVAN_FILTER:-1}" "${IBDMIX_MASK_DIR:-}"
+    fi
     printf 'export GU_ANALYSIS_ROOT=%q\n' "$GU_ANALYSIS_ROOT"
     [[ -z $output_var ]] || printf 'export %s=%q\n' "$output_var" "$out"
     printf 'exec'
@@ -1463,7 +1476,7 @@ run_ibdmix_one(){
   echo "[GU RUN] output=$IBDMIX_OUT"
   stage_loci_metadata "$IBDMIX_OUT"
   use_staged_loci_metadata "$IBDMIX_OUT"
-  env GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$GU_ARCHAIC_ROOT" dirarch="$GU_ARCHAIC_ROOT" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$GU_LOCI_FILE" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-Altai Denisova}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
+  env GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$GU_ARCHAIC_ROOT" dirarch="$GU_ARCHAIC_ROOT" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$GU_LOCI_FILE" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
 }
 
 run_trace_request(){

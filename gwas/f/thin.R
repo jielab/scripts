@@ -81,6 +81,9 @@ thin_main <- function(args) {
   if (!nrow(data)) stop("No valid thin candidates in ", opt$input)
   data[, POS := as.numeric(POS)]
   result <- thin_rows(data, limit, fun)
+  # tabix requires decimal integer coordinates. fwrite may serialize numeric
+  # positions such as 105000000 as 1.05e+08, which tabix reads as position 1.
+  result$data[, POS := sprintf("%.0f", POS)]
   tsv <- file.path(work, "thin.tsv")
   fwrite(result$data, tsv, sep = "\t", quote = FALSE, na = "NA")
   stage <- paste0(opt$output, ".", Sys.getpid(), ".tmp")

@@ -83,7 +83,7 @@ def clean(phy):
     for suffix in SUFFIXES:
         Path(str(phy)+suffix).unlink(missing_ok=True)
     # Only products for this exact input, never other loci/trees.
-    for p in phy.parent.glob(phy.name+'_phyml_tree.panelB*'):
+    for p in list(phy.parent.glob(phy.name+'_phyml_tree.panelB*'))+list(phy.parent.glob(phy.name+'_phyml_tree.*.panelB*')):
         if p.is_file():p.unlink()
 
 def reuse_identical_sibling(phy,req):

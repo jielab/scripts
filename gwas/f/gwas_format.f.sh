@@ -2,6 +2,8 @@
 # Sourced by gwas_format.sh: validation, completion checks, discovery and execution.
 # Configuration comes from the entry point; sourcing only defines functions.
 
+source "${BASH_SOURCE[0]%/*}/gwas_thin_state.f.sh"
+
 need_arg_value() {
   local opt="$1" val="${2-}"
   if [[ -z "$val" || "$val" == --* ]]; then
@@ -516,18 +518,25 @@ magma_output_complete() {
 
 mplot_output_complete() {
   local png="$1" final="$2" genes="$3" meta="$4" expected_grch="$5" flag="$6" aggregate="$7" sig="$8" cojo="$9"
-  local signal_input=none
+  local signal_input=none thin_output="${final%.gz}.thin.gz"
+  if [[ "${thin:-FALSE}" == TRUE ]]; then
+    gwas_thin_complete "$final" "$thin_output" "$expected_grch" "$thin_chr_max" "$hm3_file" "${hm3_pos//\{grch\}/$expected_grch}" "$thin_r" "$phe_r" "$meta" || return 1
+    [[ "$png" -nt "$thin_output" ]] || return 1
+  fi
   [[ -z "$add_signal" ]] || signal_input="$add_signal"
   [[ -s "$png" && -s "$meta" && -s "$flag" && -s "$aggregate" && "$png" -nt "$final" ]] || return 1
   awk -F '\t' -v panel="$add_panel" -v grch="$expected_grch" -v signal="$signal_input" \
     -v match_col="$signal_match_col" -v match_value="$signal_match_value" \
     -v locus_pos="$signal_locus_pos" -v display_col="$signal_display_col" -v write_sig="$write_sig" \
+    -v thin="${thin:-FALSE}" -v cap="${thin_chr_max:-10000}" \
     -v plot_width="$plot_width" -v plot_height="$plot_height" -v plot_res="$plot_res" '
+    $1=="plot_method"&&$2=="self"{m=1}
     $1=="add_panel"&&$2==panel{p=1}
     $1=="grch"&&$2==grch{g=1}
     $1=="magma_threshold"&&$2+0==2.5e-6{t=1}
     $1=="mplot_style"&&$2==9{s=1}
-    $1=="thin_mode"&&$2=="FALSE"{tn=1}
+    $1=="thin_mode"&&$2==thin{tn=1}
+    $1=="thin_chr_max"&&$2==cap{tc=1}
     $1=="plot_width"&&$2+0==plot_width+0{x=1}
     $1=="plot_height"&&$2==plot_height{y=1}
     $1=="plot_res"&&$2+0==plot_res+0{r=1}
@@ -537,7 +546,7 @@ mplot_output_complete() {
     $1=="signal_match_value"&&$2==match_value{c=1}
     $1=="signal_locus_pos"&&$2==locus_pos{d=1}
     $1=="signal_display_col"&&$2==display_col{e=1}
-    END{exit !(p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn)}' "$meta" || return 1
+    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn&&(thin!="TRUE"||tc))}' "$meta" || return 1
   if [[ "$add_panel" == magma ]]; then
     [[ -s "$genes" && "$png" -nt "$genes" ]] || return 1
   fi

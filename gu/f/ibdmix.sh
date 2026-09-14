@@ -24,11 +24,14 @@ dirout=${dirout:-${GU_ANALYSIS_ROOT:-$dir0/analysis/gu}/ibdmix/${GU_SCOPE_ID:-ge
 genome_build=${genome_build:-b${GRCH:-37}}
 loci_file=${GU_LOCI_FILE:-}
 chrs_arg=${chrs:-${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}}
-refs_arg=${refs:-"Altai Denisova"}
+profile=${IBDMIX_PROFILE:-multi_reference}
+default_refs="Altai Chagyr Vindija Denisova Denisova25"
+[[ $profile == multi_reference ]] || default_refs="Altai Denisova"
+refs_arg=${refs:-$default_refs}
 read -r -a refs <<< "$refs_arg"
 for i in "${!refs[@]}"; do
   case "${refs[$i],,}" in
-    altai) refs[$i]=Altai;; denisova|denisovan) refs[$i]=Denisova;;
+    altai) refs[$i]=Altai;; denisova|denisovan) refs[$i]=Denisova;; denisova25|den25) refs[$i]=Denisova25;;
     vindija) refs[$i]=Vindija;; chagyr|chagyrskaya) refs[$i]=Chagyr;;
     *) echo "ERROR: unknown IBDmix reference: ${refs[$i]}" >&2; exit 2;;
   esac
@@ -51,9 +54,8 @@ GU_CHRX_PAR_DIPLOID=${GU_CHRX_PAR_DIPLOID:-0}
 generate_gt=$dirsoft/build/src/generate_gt
 ibdmix_bin=$dirsoft/build/src/ibdmix
 helper=$F/ibdmix_workflow.py
-pipeline_version=2026-09-12.2
-profile=${IBDMIX_PROFILE:-cell2020}
-mask_root=${IBDMIX_MASK_CACHE:-$dir_ref/ibdmix/37/cell2020}
+pipeline_version=2026-09-14.1
+mask_root=${IBDMIX_MASK_CACHE:-$dir_ref/ibdmix/37/masks}
 custom_masks=${IBDMIX_MASK_DIR:-}
 ref_fasta=${IBDMIX_REFERENCE_FASTA:-$dir_ref/fasta/GRCH37.fasta}
 background_filter=${IBDMIX_AFR_DENISOVAN_FILTER:-1}
@@ -66,8 +68,14 @@ case "$profile" in
   custom)
     [[ -n $custom_masks ]] || { echo "ERROR: custom IBDmix requires IBDMIX_MASK_DIR with excluded-site BED files <ref>/chrN.bed" >&2; exit 2; }
     ;;
-  *) echo "ERROR: IBDMIX_PROFILE must be cell2020 or custom" >&2; exit 2;;
+  multi_reference)
+    [[ $genome_build == b37 ]] || { echo "ERROR: multi_reference masks require GRCh37" >&2; exit 2; }
+    ;;
+  *) echo "ERROR: IBDMIX_PROFILE must be cell2020, multi_reference or custom" >&2; exit 2;;
 esac
+export_denisovan=0
+[[ $profile != multi_reference ]] || export_denisovan=1
+denisovan_args=(); [[ $export_denisovan == 0 ]] || denisovan_args=(--export-denisovan)
 if [[ $background_filter == 1 && " $refs_arg " != *' Denisova '* ]]; then echo "ERROR: background filtering requires Denisova calls" >&2; exit 2; fi
 background_args=(); [[ $background_filter == 1 ]] || background_args=(--no-background)
 [[ $genome_build == b37 || $genome_build == b38 ]] || { echo "ERROR: genome_build must be b37 or b38" >&2; exit 1; }
@@ -86,6 +94,7 @@ flock -n 9 || { echo "ERROR: another IBDmix run is using $dirout" >&2; exit 1; }
 
 exec > >(tee "$dirout/ibdmix.log") 2>&1
 log(){ printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
+log "CONFIG profile=$profile refs=$refs_arg export_denisovan=$export_denisovan background_filter=$background_filter"
 gzip_ok(){ [[ -s $1 ]] && gzip -t "$1" >/dev/null 2>&1; }
 
 declare -a analysis_units=()
@@ -186,7 +195,7 @@ validate_inputs(){
       fi
     done
   done
-  if [[ $profile == cell2020 && -z $custom_masks ]]; then
+  if [[ -z $custom_masks ]]; then
     for u in "${analysis_units[@]}"; do
       [[ ${unit_chr[$u]} == X ]] && continue
       [[ -s $ref_fasta && -s $ref_fasta.fai ]] || { echo "ERROR: indexed GRCh37 FASTA required: $ref_fasta" >&2; return 1; }
@@ -201,6 +210,7 @@ run_record(){
     [[ ${unit_chr[$u]} != X ]] || x_mode=$([[ ${unit_sex[$u]} == male ]] && printf male_haploid_nonpar || printf par_diploid_chrxy)
   done
   printf 'pipeline_version\t%s\nprofile\t%s\ncoordinate_system\t0-based-half-open\npopulation_mode\tpopulation\nbackground_filter\t%s\nmask_root\t%s\ncustom_masks\t%s\n' "$pipeline_version" "$profile" "$background_filter" "$mask_root" "$custom_masks"
+  printf 'export_denisovan\t%s\ndenisovan_call_definition\tnative_reference_matching_no_African_Denisova_subtraction\n' "$export_denisovan"
   printf 'genome_build\t%s\nx_mode\t%s\nloci_flank_bp\t%s\nrefs\t%s\nlod_cut\t%s\nlen_cut\t%s\nemit_lod_cut\t%s\nminor_allele_count\t%s\narchaic_error\t%s\nmodern_error_max\t%s\nmodern_error_proportion\t%s\n' \
     "$genome_build" "$x_mode" "$IBDMIX_LOCUS_FLANK_BP" "$refs_arg" "$lod_cut" "$len_cut" "$emit_lod_cut" "$minor_allele_count" "$archaic_error" "$modern_error_max" "$modern_error_proportion"
   stat -c 'sample_file\t%n:%s:%Y' "$sample_file"
@@ -289,7 +299,7 @@ prepare_unit_masks(){
       else cp "$custom_masks/$ref/chr$chr.bed" "$out/$ref.exclude.bed"; fi
     done
   else
-    python3 "$helper" mask --root "$mask_root" --chrom "$chr" --modern "$(modern_vcf "$chr")" --fasta "$ref_fasta" --upstream "$dirsoft" --output "$out"
+    python3 "$helper" mask --root "$mask_root" --chrom "$chr" --modern "$(modern_vcf "$chr")" --fasta "$ref_fasta" --upstream "$dirsoft" --output "$out" --archaic-root "$dirarch" --refs "${refs[@]}"
   fi
 }
 
@@ -342,8 +352,7 @@ run_ref_unit(){
   mkdir -p "$dirout/raw/$u"
   while IFS=$'\t' read -r pop _super _n sample_list; do
     [[ $pop != population ]] || continue
-    # Denisova is a negative control, not a second introgression signal to add.
-    [[ $background_filter == 0 || $ref != Denisova || $pop =~ ^(ESN|GWD|LWK|MSL|YRI)$ ]] || continue
+    [[ $export_denisovan == 1 || $background_filter == 0 || $ref != Denisova* || $pop =~ ^(ESN|GWD|LWK|MSL|YRI)$ ]] || continue
     run_population "$u" "$ref" "$pop" "$sample_list" "$gt" "$tmp" & pids+=("$!")
     if (( ${#pids[@]} >= job_in_chr )); then wait "${pids[0]}" || status=1; pids=("${pids[@]:1}"); fi
   done < "$dirout/samples/$u/populations.tsv"
@@ -356,7 +365,7 @@ ref_calls_complete(){
   local u=$1 ref=$2 pop _super _n sample_list count=0
   while IFS=$'\t' read -r pop _super _n sample_list; do
     [[ $pop != population ]] || continue
-    [[ $background_filter == 0 || $ref != Denisova || $pop =~ ^(ESN|GWD|LWK|MSL|YRI)$ ]] || continue
+    [[ $export_denisovan == 1 || $background_filter == 0 || $ref != Denisova* || $pop =~ ^(ESN|GWD|LWK|MSL|YRI)$ ]] || continue
     gzip_ok "$dirout/raw/$u/$ref.$pop.raw.txt.gz" || return 1
     count=$((count+1))
   done < "$dirout/samples/$u/populations.tsv"
@@ -387,7 +396,7 @@ run_unit(){
   if (( unit_core_end[$u] > 0 )); then core_args=(--core-start "$((unit_core_start[$u]-1))" --core-end "${unit_core_end[$u]}"); fi
   python3 "$helper" finalize --raw-dir "$dirout/raw/$u" --populations "$dirout/samples/$u/populations.tsv" \
     --output "$dirout/segments/$u.segments.tsv.gz" --chrom "${unit_chr[$u]}" --build "$genome_build" --locus "${unit_locus[$u]}" \
-    --min-bp "$len_cut" --lod "$lod_cut" "${core_args[@]}" "${background_args[@]}" --refs "${refs[@]}"
+    --min-bp "$len_cut" --lod "$lod_cut" "${core_args[@]}" "${background_args[@]}" "${denisovan_args[@]}" --refs "${refs[@]}"
   cleanup_unit
   trap - ERR EXIT HUP INT TERM
 }

@@ -13,7 +13,13 @@ from phyml_core import (BASES, SkipLocus, modern_data, query_rows, vcf_path, vcf
 from phyml_tree_summary import parse_newick, bootstrap_values
 from phyml_thresholds import ils_probability
 
-REFS = ('Altai', 'Chagyr', 'Vindija')
+LINEAGE_REFS = {'Neanderthal': ('Altai', 'Chagyr', 'Vindija'),
+                'Denisovan': ('Denisova', 'Denisova25')}
+REFS = tuple(ref for refs in LINEAGE_REFS.values() for ref in refs)
+
+
+def reference_lineage(ref):
+    return next(lineage for lineage, refs in LINEAGE_REFS.items() if ref in refs)
 
 
 def risk_from_effect(ref, alt, effect, beta):
@@ -68,14 +74,14 @@ def define_core(sites, lead, indexes):
     return [s for s in sites if start<s['pos']<=end],ld,start,end
 
 
-def risk_clade(newick, risk_tips, modern_tips):
-    """Test the prespecified all-risk + three-Neanderthal split, either orientation."""
+def risk_clade(newick, risk_tips, modern_tips, refs=LINEAGE_REFS['Neanderthal']):
+    """Test all risk tips + the specified lineage, excluding other archaics."""
     root=parse_newick(newick); edges=[]
     def visit(node):
         tips={node.label} if not node.children else set().union(*(visit(c) for c in node.children))
         edges.append((node,tips)); return tips
     all_tips=visit(root)
-    required=set(risk_tips)|set(REFS)
+    required=set(risk_tips)|set(refs)
     if not risk_tips or not required<=all_tips or 'Ancestral' not in all_tips or not (set(modern_tips)-set(risk_tips)):
         return None
     matches=[]
@@ -88,7 +94,8 @@ def risk_clade(newick, risk_tips, modern_tips):
 
 
 def prepare_sequences(sites, calls, samples, lead, haploid):
-    # Positions must be callable in all three Neanderthals. Missing ancestry
+    # Use the same sites and modern tips for both lineage tests. All five
+    # archaic references must be callable. Missing ancestry
     # remains N (never substitute REF); constant columns are retained after
     # singleton removal, as required for HKY+I parameter estimation.
     sites=[s for s in sites if all(calls[r].get(s['pos'],'N') in BASES for r in REFS)]
@@ -175,11 +182,11 @@ def run_locus(a, row):
                      n_candidate_haplotypes=sum(h['role']=='risk' for h in haps),
                      n_candidate_copies=sum(h['n'] for h in haps if h['role']=='risk'),
                      n_nonrisk_haplotypes=sum(h['role']=='nonrisk' for h in haps))
-        if len(sites)<2: raise SkipLocus('insufficient Neanderthal-callable core sites', 'insufficient_tree_sites')
+        if len(sites)<2: raise SkipLocus('insufficient five-reference callable core sites', 'insufficient_tree_sites')
         arch={r:''.join(calls[r][s['pos']] for s in sites) for r in REFS}
         ancestor=''.join(s['ancestral'] for s in sites)
         write(loc/'sites.tsv',[dict(chr=ch,pos=s['pos'],id=s['vid'],ref=s['ref'],alt=s['alt']) for s in sites])
-        write(loc/'archaic.tsv',[dict(archaic=r,lineage='Neanderthal',seq=arch[r]) for r in REFS])
+        write(loc/'archaic.tsv',[dict(archaic=r,lineage=reference_lineage(r),seq=arch[r]) for r in REFS])
         write(loc/'ancestral.tsv',[dict(reference='Ancestral',n_callable=ident['n_ancestral_sites'],seq=ancestor)])
         for h in haps:
             h['copies']=';'.join(f'{samples[i//2]}:{i%2+1}' for i in h['indices'])
@@ -199,7 +206,7 @@ def run_locus(a, row):
                         candidate_start=start,candidate_end=end,role=h['role'])
                 allcopies.append(cp)
                 if h['role']=='risk': copyrows.append(cp)
-            h.update(locus_id=lid,genome_build='GRCh37',best_archaic=ref,best_lineage='Neanderthal',n_compared=nc,n_match=nm,prop_match=prop,direct_match_pass=0)
+            h.update(locus_id=lid,genome_build='GRCh37',best_archaic=ref,best_lineage=reference_lineage(ref),n_compared=nc,n_match=nm,prop_match=prop,direct_match_pass=0)
         write(loc/'haplotypes.tsv',[{k:v for k,v in h.items() if k!='indices'} for h in haps])
         if any(h['role']=='mixed' for h in haps):
             ident.update(n_candidate_haplotypes=None,n_candidate_copies=None)
@@ -264,22 +271,27 @@ def run_locus(a, row):
     if ident.get('core_kb'):
         ident['ils_probability']=ils_probability(ident['core_end']-ident['core_start'])
         ident['ils_model']='assumed_0.53cM/Mb_29yr_550k_split_50k_archaic_age;not_local_map;uncorrected'
-    for d in detail:
-        d.update(tree_bootstrap=ident['tree_bootstrap'],tree_pass=int(ident['tree_pass'] and d['role']=='risk'),
-                 call=ident['status'] if d['role']=='risk' else 'nonrisk_control' if d['role']=='nonrisk' else 'risk_nonrisk_sequence_unresolved')
-    write(final/'gwas_loci.tsv',[ident]); write(final/'gwas_haplotypes.tsv',detail)
-    write(final/'gwas_copies.tsv',copyrows)
-    write(final/'loci.tsv',[ident]); write(final/'trees.tsv',[tree]); write(final/'evidence_trees.tsv',[tree])
+    summaries, lineage_trees, lineage_details = lineage_results(ident, tree, detail, haps,
+                                                               arch if detail else {})
+    write(final/'gwas_loci.tsv',summaries); write(final/'gwas_haplotypes.tsv',lineage_details)
+    write(final/'gwas_copies.tsv',[dict(c,lineage=lineage) for lineage in LINEAGE_REFS for c in copyrows])
+    # Keep one locus row for database/browser identity; retain both tests in
+    # the evidence/report tables. Prefer a supported lineage as representative.
+    representative=max(range(len(summaries)),key=lambda i:summaries[i]['tree_pass'])
+    write(final/'loci.tsv',[summaries[representative]])
+    write(final/'trees.tsv',[lineage_trees[representative]])
+    write(final/'evidence_trees.tsv',lineage_trees)
     completed_haps=[{k:v for k,v in h.items() if k!='indices'} for h in haps if 'copies' in h]
     write(final/'haplotypes.tsv',completed_haps, list(completed_haps[0]) if completed_haps else ['locus_id','hap_id','copies'])
     write(final/'haplotype_samples.tsv',allcopies,['locus_id','hap_id','sample','sample_id','haplotype','candidate_start','candidate_end','role'])
     write(final/'skipped_loci.tsv',[] if ident['status'].startswith('tree_') else [ident])
     write(final/'gwas_lead.tsv',[row])
-    parameters=dict(workflow='gwas_lead_ld_core_v1',ld_population='1KG EUR',ld_rule='phased_r2 > 0.98',
+    parameters=dict(workflow='gwas_lead_ld_core_archaic5_v2',ld_population='1KG EUR',ld_rule='phased_r2 > 0.98',
         lead=row,tree_populations='all target 1KG samples',minimum_haplotype_copies=2,minimum_minor_allele_copies=2,
         ancestral_source='target VCF INFO/AA; unknown remains N; not verified as Ensembl release 100',
         references=list(REFS),heterozygous_archaic_policy='mask_as_N',bootstrap=100,model='HKY85+G4+I;estimated',
-        tree_rule='all recurrent risk + three Neanderthals, no other modern tips or ancestor; reporting BS >=70',
+        lineage_references=LINEAGE_REFS,
+        tree_rule='one five-reference tree; separately test all recurrent risk + each lineage, excluding other archaics, nonrisk and ancestor; BS >=70',
         method_source='https://www.nature.com/articles/s41586-020-2818-3')
     (final/'gwas_parameters.json').write_text(json.dumps(parameters,indent=2)+'\n')
     if tree['tree_status']=='complete':
@@ -287,8 +299,54 @@ def run_locus(a, row):
         if plot.returncode:
             print('[GU PHYML] WARNING: tree completed but plot export failed',flush=True)
             failed=True
-    print(f"[GU PHYML] {lid}: {ident['status']}; {ident['reason']}",flush=True)
+    print(f"[GU PHYML] {lid}: "+'; '.join(f"{s['lineage']}={s['status']} ({s['reason']})" for s in summaries),flush=True)
     return 1 if failed else 0
+
+
+def lineage_results(ident, tree, details, haps, arch):
+    """Report both prespecified lineage tests from the same inferred tree."""
+    summaries, trees, rows = [], [], []
+    risk={h['hap_id'] for h in haps if h['role']=='risk'}
+    modern={h['hap_id'] for h in haps}
+    sequences={h['hap_id']:h['seq'] for h in haps}
+    for lineage, refs in LINEAGE_REFS.items():
+        s=dict(ident,lineage=lineage)
+        t=dict(tree,candidate_lineage=lineage,expected_lineage=lineage)
+        if tree['tree_status']=='complete':
+            match=risk_clade(tree['tree_newick'],risk,modern,refs)
+            bs=match['bootstrap'] if match else None
+            passed=bool(bs is not None and bs>=70)
+            reason=f'risk_{lineage}_split' if match else f'no_exclusive_risk_{lineage}_split'
+            s.update(status='tree_supported' if passed else 'tree_not_supported',
+                     reason=reason,tree_pass=int(passed),tree_bootstrap=bs)
+            t.update(candidate_clade_pass=int(passed),candidate_clade_bootstrap=bs,
+                     candidate_clade_rule='all_recurrent_risk_plus_lineage_no_other_archaics_nonrisk_or_ancestor',
+                     tree_call_reason=reason,candidate_clade_tips=match['tips'] if match else '',
+                     candidate_tips_in_clade=','.join(sorted(risk)) if match else '',
+                     expected_archaic_tips_in_clade=','.join(refs) if match else '',
+                     n_candidate_tips_in_clade=len(risk) if match else 0,
+                     n_expected_archaic_tips_in_clade=len(refs) if match else 0,
+                     candidate_clade_n_tips=len(risk)+len(refs) if match else 0,
+                     candidate_clade_modern_tips=len(risk) if match else 0,
+                     candidate_clade_archaic_tips=len(refs) if match else 0,
+                     candidate_clade_specificity=1 if match else None)
+        s['call']=s['status']
+        if lineage=='Denisovan':
+            s.update(ils_probability=None,ils_model='not_parameterized_for_Denisovan')
+        summaries.append(s); trees.append(t)
+        for detail in details:
+            d=dict(detail,lineage=lineage,tree_bootstrap=s['tree_bootstrap'],
+                   tree_pass=int(s['tree_pass'] and detail['role']=='risk'),
+                   call=s['status'] if detail['role']=='risk' else detail['call'])
+            comparisons=[]
+            for ref in refs:
+                pairs=[(x,y) for x,y in zip(sequences[d['hap_id']],arch[ref]) if x in BASES and y in BASES]
+                nc=len(pairs); nm=sum(x==y for x,y in pairs)
+                comparisons.append((nm/nc if nc else 0,nc,nm,ref))
+            prop,nc,nm,ref=max(comparisons)
+            d.update(archaic=ref,n_compared=nc,n_match=nm,prop_match=prop)
+            rows.append(d)
+    return summaries, trees, rows
 
 
 def main():

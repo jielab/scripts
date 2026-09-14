@@ -34,6 +34,12 @@ def validate(copies,con,threshold=.8):
                     fields=line.split()
                     if len(fields)>=3 and dl.chrom(fields[0])==unit[2]:run['_scope'].append((int(fields[1]),int(fields[2])))
         if unit[3]=='ibdmix':
+            meta=dict(line.split('\t',1) for line in text.splitlines() if '\t' in line)
+            refs=meta.get('refs','').split()
+            run['_tested_lineages']=set()
+            if set(refs)&{'Altai','Vindija','Chagyr','Chagyrskaya'}:run['_tested_lineages'].add('Neanderthal')
+            if any('denis' in ref.lower() for ref in refs) and (meta.get('background_filter')=='0' or meta.get('export_denisovan')=='1'):
+                run['_tested_lineages'].add('Denisovan')
             chrom=unit[2]
             scope=('X_MALE' if 'male_haploid_nonpar' in text else 'X_PAR') if chrom=='X' else 'C'+chrom
             for roster in (path.parent/'samples'/scope/'ALL.txt',path.parent/'samples'/'ALL.txt'):
@@ -64,7 +70,8 @@ def validate(copies,con,threshold=.8):
             run=runs.get((*unit,method),{});complete=run.get('status')=='complete'
             in_scope=('_scope' not in run or coverage(interval,run['_scope'])['union_fraction']>=1-1e-9)
             in_panel=(('_tested_copies' not in run or c['sample_id']+':'+str(c['haplotype']) in run['_tested_copies'])
-                      and ('_tested_samples' not in run or c['sample_id'] in run['_tested_samples']))
+                      and ('_tested_samples' not in run or c['sample_id'] in run['_tested_samples'])
+                      and (method!='ibdmix' or c['lineage'] in run.get('_tested_lineages',set())))
             compared=complete and in_scope and in_panel
             eligible=compared and dl.truth(run.get('evidence_eligible'))
             pool=segments.get((*unit,c['sample_id'],method),[])
@@ -111,21 +118,24 @@ def gwas_rows(path):
     summaries=[s for s in summaries if s.get('locus_id')]
     result=[]; all_details=[]; all_copies=[]
     for s in summaries:
+        s=dict(s)
+        lineage=s.get('lineage') or 'Neanderthal'
+        if lineage=='Denisova': lineage='Denisovan'
         for key in ('core_start','core_end','lead_pos','tree_pass','n_candidate_haplotypes','n_candidate_copies','n_sites','n_ld_sites'):
             if s.get(key) not in (None,''): s[key]=int(s[key])
         key=hashlib.sha256('|'.join(str(s.get(k,'')) for k in ('dataset_id','genome_build','locus_id','core_start','core_end')).encode()).hexdigest()[:20]
-        s.update(locus_key=key,lineage='Neanderthal',core_interval=f"{s['core_start']+1}–{s['core_end']}" if s.get('core_kb') else '未定义',
+        s.update(locus_key=key,lineage=lineage,core_interval=f"{s['core_start']+1}–{s['core_end']}" if s.get('core_kb') else '未定义',
                  ld_rule='> 0.98 (EUR)',risk_haplotypes=f"{s['n_candidate_haplotypes']} / {s['n_candidate_copies']}" if s.get('n_candidate_haplotypes') not in (None,'') else None)
         result.append(s)
         for d in details:
-            if d.get('locus_id')!=s['locus_id']: continue
-            d.update(locus_key=key,candidate_id=f"{key}|Neanderthal|{d['hap_id']}")
+            if d.get('locus_id')!=s['locus_id'] or d.get('lineage','Neanderthal')!=lineage: continue
+            d=dict(d,lineage=lineage,locus_key=key,candidate_id=f"{key}|{lineage}|{d['hap_id']}")
             all_details.append(d)
             if d['role']=='risk':
                 for c in copies:
-                    if c.get('locus_id')!=s['locus_id'] or c.get('hap_id')!=d['hap_id']: continue
+                    if c.get('locus_id')!=s['locus_id'] or c.get('hap_id')!=d['hap_id'] or c.get('lineage','Neanderthal')!=lineage: continue
                     all_copies.append(dict(c,dataset_id=s['dataset_id'],genome_build=s['genome_build'],chr=s['chr'],
-                        locus_key=key,lineage='Neanderthal',candidate_id=d['candidate_id'],
+                        locus_key=key,lineage=lineage,candidate_id=d['candidate_id'],
                         candidate_start=s['core_start'],candidate_end=s['core_end']))
     return result,all_details,all_copies
 
@@ -148,12 +158,12 @@ def main():
     # This generated report no longer has two competing lead roles.
     (out/'phyml_lead_report.tsv').unlink(missing_ok=True)
     atomic_text(out/'phyml_report_manifest.json',json.dumps(dict(created_utc=datetime.now(timezone.utc).isoformat(),
-        workflow='gwas_lead_ld_core',n_loci=len(summary),n_haplotype_rows=len(details),ld_population='1KG EUR',ld_rule='r2 > 0.98',
+        workflow='gwas_lead_ld_core',n_loci=len({r['locus_key'] for r in summary}),n_lineage_tests=len(summary),n_haplotype_rows=len(details),ld_population='1KG EUR',ld_rule='r2 > 0.98',
         risk_definition='COJO refA and bJ; original lead retained',coverage_threshold=.8,
         validation_denominator='all recurrent risk-haplotype carriers, regardless of tree support; individuals counted once',
-        tree_support_note='predefined risk+three-Neanderthal split, bootstrap >=70; not a high-confidence introgression classification',
+        tree_support_note='per-lineage predefined risk+archaic split, bootstrap >=70; not a high-confidence introgression classification',
         input_files=[dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(set(files))]),indent=2))
-    print(f"PhyML GWAS report ready: {len(summary)} original leads, {len(details)} recurrent haplotypes",flush=True)
+    print(f"PhyML GWAS report ready: {len({r['locus_key'] for r in summary})} original leads, {len(summary)} lineage tests, {len(details)} recurrent haplotype rows",flush=True)
 
 
 if __name__=='__main__':main()

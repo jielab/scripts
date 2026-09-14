@@ -26,9 +26,11 @@ import zlib
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
-VERSION = '2026-09-12.2'
+VERSION = '2026-09-14.1'
 AFRICAN_CONTROLS = {'ESN', 'GWD', 'LWK', 'MSL', 'YRI'}
 NEANDERTHALS = {'Altai', 'Chagyr', 'Chagyrskaya', 'Vindija'}
+DENISOVANS = {'Denisova', 'Denisova25'}
+
 
 def opener(path):
     return gzip.open(path, 'rt') if str(path).endswith(('.gz', '.bgz')) else open(path)
@@ -379,7 +381,30 @@ def download_axt(chrom, species, root=None):
     return download(url, path, expected_md5=expected[path.name])
 
 
-def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None):
+def published_reference_mask(ref, chrom, assets, archaic_root=None):
+    """Resolve this individual's published included-base mask, never a proxy."""
+    if ref=='Chagyr':
+        url=f'https://ftp.eva.mpg.de/neandertal/Chagyrskaya/FilterBed/chr{chrom}_mask.bed.gz'
+        local_name=f'Chagyr/chr{chrom}_mask.bed.gz'
+    elif ref=='Vindija':
+        url=f'https://ftp.eva.mpg.de/neandertal/Vindija/FilterBed/Vindija33.19/chr{chrom}_mask.bed.gz'
+        local_name=f'Vindija33.19/chr{chrom}_mask.bed.gz'
+    elif ref=='Denisova25':
+        suffix='' if chrom=='X' else '.min10x'
+        filename=f'Denisova25.chr{chrom}.hg19.L35MQ25.map35_100.GCcov.noSimpleRepeat.noIndel{suffix}.bed.gz'
+        url='https://ftp.eva.mpg.de/denisova/Den25/FilterBed/'+filename
+        local_name='Denisova25/'+filename
+    else:
+        raise ValueError(f'No published mask configured for {ref}')
+    if archaic_root:
+        local=Path(archaic_root).parent/'mask'/local_name
+        if local.is_file() and local.stat().st_size:return local
+    # Small ranges finish reliably on the publisher's slower FTP-over-HTTPS
+    # endpoint; partial transfers still use the normal ETag resume checks.
+    return download(url,Path(assets)/local_name,chunk_bytes=512*1024)
+
+
+def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, refs=None, archaic_root=None):
     """Build hg19/GRCh37 masks, with an explicit non-blocking X extension.
 
     map35_50 mappability is already present in the published minimal masks;
@@ -387,15 +412,18 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None):
     """
     length=CHROM_LENGTHS['37'][chrom]
     root=Path(root); output=Path(output);output.mkdir(parents=True,exist_ok=True)
-    assets=root/'sources'
+    assets=root/'raw'
     # This published accessibility BED contains autosomes only. Applying its
     # empty X subset would exclude all of X, independently of the AXT issue.
     strict = None if chrom == 'X' else download('https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/accessible_genome_masks/20140520.strict_mask.autosomes.bed',assets/'1kg.strict_mask.autosomes.bed')
     dups=download('https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/genomicSuperDups.txt.gz',assets/'genomicSuperDups.txt.gz')
     minimal={}
+    refs=refs or ['Altai','Denisova']
     for ref,name in [('Altai','AltaiNea'),('Denisova','DenisovaPinky')]:
+        if ref not in refs:continue
         filename=f'{name}.map35_50.MQ30.Cov.indels.TRF.bed.bgz'
         minimal[ref]=download('https://bioinf.eva.mpg.de/altai_minimal_filters/'+filename,assets/filename)
+    extra={ref:published_reference_mask(ref,chrom,assets,archaic_root) for ref in refs if ref not in minimal}
     alignments=[]
     species_list = ['panTro2','ponAbe2','rheMac2']
     missing_axt = [axt_reference(chrom, species, axt_root)[1] for species in species_list
@@ -412,16 +440,16 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None):
     if cpg_enabled and not variants.exists():raise ValueError(f'Upstream CpG variant resource missing: {variants}')
     source_meta=Path(os.environ.get('GU_TARGET_TMP_DIR','/nonexistent'))/f'chr{chrom}'/'source.tsv'
     modern_signature=sha256_file(source_meta) if source_meta.exists() else fingerprint(modern)
-    inputs = [dups,*minimal.values()]
+    inputs = [dups,*minimal.values(),*extra.values()]
     if strict is not None:inputs.append(strict)
     if cpg_enabled:inputs.extend([*alignments,variants,fasta])
-    signature=dict(version=VERSION,chrom=chrom,modern=modern_signature,cpg_enabled=cpg_enabled,inputs=[fingerprint(p) for p in inputs])
+    signature=dict(version=VERSION,chrom=chrom,modern=modern_signature,refs=refs,cpg_enabled=cpg_enabled,inputs=[fingerprint(p) for p in inputs])
     # Final masks also depend on modern indels; do not share them by chromosome alone.
     signature['cache_schema'] = 1
     signature['code'] = sha256_file(__file__)
     cache_root = Path(axt_root or axt_directory())/'ibdmix-cache'
     analysis_output = output
-    names = [f'{ref}.exclude.bed' for ref in minimal]+['manifest.json']
+    names = [f'{ref}.exclude.bed' for ref in refs]+['manifest.json']
     with cached_mask_artifacts(cache_root/'masks'/f'chr{chrom}', signature, names) as (cache, staging):
         if staging is not None:
             output = staging
@@ -443,17 +471,19 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None):
                 for lo,hi in bed_intervals(strict,chrom,length):accessible[lo:hi]=True
             accessible &= ~exclude
             totals={}
-            for ref,path in minimal.items():
+            for ref in refs:
                 allowed=np.zeros(length,dtype=bool)
-                for lo,hi in bed_intervals(path,chrom,length):allowed[lo:hi]=True
+                for lo,hi in bed_intervals(minimal.get(ref,extra.get(ref)),chrom,length):allowed[lo:hi]=True
                 allowed &= accessible
                 totals[ref]=int(allowed.sum())
                 if not totals[ref]:raise ValueError(f'No callable bases after masking: {ref} chr{chrom}')
                 write_boolean_bed(output/f'{ref}.exclude.bed','23' if chrom=='X' else chrom,~allowed)
-            components=['archaic map35_50/MQ30/coverage/indel/TRF','segmental duplications','modern indels +/-5bp']
+            components=['reference-specific published quality/callability masks','segmental duplications','modern indels +/-5bp']
             if strict is not None:components.append('1KG strict accessibility')
             if cpg_enabled:components.append('CpG: hg19 + upstream modern variants + panTro2/ponAbe2/rheMac2')
-            marker.write_text(json.dumps(dict(signature=signature,profile='cell2020_chrX_extension' if chrom=='X' else 'cell2020',callable_bp=totals,cpg_filter='applied' if cpg_enabled else 'skipped_missing_chrX_axt',strict_accessibility='applied' if strict is not None else 'unavailable_for_chrX',mask_semantics='excluded; BED0; native X contig=23',components=components),indent=2))
+            marker.write_text(json.dumps(dict(signature=signature,profile='multi_reference' if extra else 'cell2020_chrX_extension' if chrom=='X' else 'cell2020',
+                reference_callability={ref:'published_minimal_mask' if ref in minimal else 'published_individual_FilterBed' for ref in refs},
+                callable_bp=totals,cpg_filter='applied' if cpg_enabled else 'skipped_missing_chrX_axt',strict_accessibility='applied' if strict is not None else 'unavailable_for_chrX',mask_semantics='excluded; BED0; native X contig=23',components=components),indent=2))
     link_cached_masks(cache, analysis_output, names)
     print(f'IBDMIX chr{chrom}: permanent masks {cache}', flush=True)
 
@@ -478,12 +508,12 @@ def subtract(lo,hi,mask):
     if lo<hi:yield lo,hi
 
 FIELDS=['ID','chrom','start','end','length','slod','sites','positive_lods','negative_lods','sample_set','super_pop','anc','locus_id','genome_build','parent_start','parent_end','score_scope']
-def finalize(raw_dir, populations, refs, output, chrom, build, locus, core_start=0, core_end=0, min_bp=50000, lod=4, background=True):
+def finalize(raw_dir, populations, refs, output, chrom, build, locus, core_start=0, core_end=0, min_bp=50000, lod=4, background=True, export_denisovan=False):
     with open(populations) as handle:groups=list(csv.DictReader(handle,delimiter='\t'))
     calls=[];control=[]
     for ref in refs:
         for pop in groups:
-            if background and ref=='Denisova' and pop['population'] not in AFRICAN_CONTROLS:continue
+            if background and not export_denisovan and ref in DENISOVANS and pop['population'] not in AFRICAN_CONTROLS:continue
             path=Path(raw_dir)/f'{ref}.{pop["population"]}.raw.txt.gz'
             members=set(Path(pop['sample_file']).read_text().split())
             with opener(path) as handle:
@@ -496,13 +526,16 @@ def finalize(raw_dir, populations, refs, output, chrom, build, locus, core_start
                     if not np.isfinite(score):raise ValueError(f'Invalid LOD score in {path}')
                     if score<lod or end-start<min_bp:continue
                     if ref=='Denisova' and pop['population'] in AFRICAN_CONTROLS:control.append((start,end))
-                    if ref in NEANDERTHALS or (ref=='Denisova' and not background):calls.append((ref,pop,row,start,end,score))
+                    if ref in NEANDERTHALS or (ref in DENISOVANS and (not background or export_denisovan)):calls.append((ref,pop,row,start,end,score))
     mask=union(control) if background else []
     Path(output).parent.mkdir(parents=True,exist_ok=True)
     with gzip.open(output,'wt') as handle:
         writer=csv.DictWriter(handle,fieldnames=FIELDS,delimiter='\t',lineterminator='\n');writer.writeheader()
         for ref,pop,row,start,end,score in calls:
-            for lo,hi in subtract(start,end,mask):
+            # The African Denisova control mask belongs to the Neanderthal
+            # protocol. Applying it to Denisovan calls would erase the signal
+            # from the controls that generated the mask.
+            for lo,hi in subtract(start,end,mask if ref in NEANDERTHALS else []):
                 if hi-lo<min_bp:continue  # authors reapply length filter after subtraction
                 if core_end:
                     lo=max(lo,core_start);hi=min(hi,core_end)
@@ -538,10 +571,12 @@ def main():
     p=subs.add_parser('mask')
     for flag in ['root','chrom','modern','fasta','upstream','output']:p.add_argument('--'+flag,required=True)
     p.add_argument('--axt-root')
+    p.add_argument('--refs',nargs='+');p.add_argument('--archaic-root')
     p=subs.add_parser('finalize')
     for flag in ['raw-dir','populations','output','chrom','build','locus']:p.add_argument('--'+flag,required=True)
     p.add_argument('--refs',nargs='+',required=True);p.add_argument('--core-start',type=int,default=0);p.add_argument('--core-end',type=int,default=0)
     p.add_argument('--min-bp',type=int,default=50000);p.add_argument('--lod',type=float,default=4);p.add_argument('--no-background',action='store_true')
+    p.add_argument('--export-denisovan',action='store_true')
     p=subs.add_parser('validate-mask')
     for flag in ['path','chrom','build']:p.add_argument('--'+flag,required=True)
     p=subs.add_parser('validate-genotypes');p.add_argument('--path',required=True);p.add_argument('--output',required=True)

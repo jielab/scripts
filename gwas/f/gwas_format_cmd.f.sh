@@ -151,8 +151,8 @@ write_gwas_cmd() {
 
   if [[ "$replace" != "TRUE" ]]; then
     case "$step" in
-      mplot)
-        if [[ "$thin" != TRUE ]] && mplot_output_complete "$mh_png" "$final" "$magma_prefix.genes.out" "$mh_meta" "$gwas_grch" "$mh_flag" "$mplot_flag_file" "$mh_sig" "${merged_prefix}.jma.cojo"; then
+      mplot|thin,mplot|mplot,thin)
+        if mplot_output_complete "$mh_png" "$final" "$magma_prefix.genes.out" "$mh_meta" "$gwas_grch" "$mh_flag" "$mplot_flag_file" "$mh_sig" "${merged_prefix}.jma.cojo"; then
           log "SKIP completed Manhattan plot: $gwas panel=$add_panel"
           rm -f "$cmd"
           return 0

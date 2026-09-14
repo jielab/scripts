@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 7
+SCHEMA = 8
 
 
 def whole_chromosome_run(text, chrom):
@@ -144,7 +144,8 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
             if neand_refs:neanderthal_tested.add(chrom)
             # Background-only Denisova runs export no Denisovan ancestry calls.
             # Their absence in segments is unmeasured, not zero coverage.
-            background_only=any(line.split('\t')[:2]==['background_filter','1'] for line in text.splitlines())
+            background_only=(any(line.split('\t')[:2]==['background_filter','1'] for line in text.splitlines())
+                             and not any(line.split('\t')[:2]==['export_denisovan','1'] for line in text.splitlines()))
             for lineage, has_refs in [('Neanderthal',bool(neand_refs)),('Denisovan',not background_only and any('denis' in ref.lower() for ref in refs))]:
                 if has_refs and whole and run_targets:
                     lineage_targets[lineage].setdefault(chrom,set()).update(run_targets)

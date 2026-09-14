@@ -92,6 +92,7 @@ CORE_FILE_PATTERNS={
         '**/loci/**/ancestral.tsv',
         '**/loci/**/haplotypes.tsv','**/loci/**/haplotypes.phy','**/loci/**/haplotypes.phy.meta.tsv',
         '**/loci/**/*_phyml_tree.txt','**/loci/**/*_phyml_tree.png','**/loci/**/*_phyml_tree.panelB*.png','**/loci/**/*_phyml_tree.panelB*.pdf','**/loci/**/*_phyml_stats.txt',
+        '**/loci/**/*_phyml_tree.*.panelB*.png','**/loci/**/*_phyml_tree.*.panelB*.pdf',
         '**/run.meta.tsv','**/request.loci.analysis.bed','**/request.loci.core.bed','**/request.loci.map.tsv',
     ),
 }

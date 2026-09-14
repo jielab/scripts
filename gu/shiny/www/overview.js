@@ -7,6 +7,16 @@ window.guDensityBind = function (el, region) {
   }
   clearTimeout(el._guClickTimer);
   clearTimeout(el._guRangeTimer);
+  // Plotly also emits relayout while initializing and resizing subplots.
+  // Only a user gesture may change the shared genome viewport.
+  if (el._guDensityGesture) {
+    ['pointerdown', 'wheel', 'keydown'].forEach(name =>
+      el.removeEventListener(name, el._guDensityGesture, true));
+  }
+  let userNavigation = false;
+  el._guDensityGesture = function () { userNavigation = true; };
+  ['pointerdown', 'wheel', 'keydown'].forEach(name =>
+    el.addEventListener(name, el._guDensityGesture, true));
   let pending = null, openedAt = 0;
   function open() {
     if (!pending || Date.now() - openedAt < 450) return;
@@ -15,6 +25,7 @@ window.guDensityBind = function (el, region) {
     pending = null; openedAt = Date.now();
   }
   const handlers = {plotly_click: function (e) {
+    userNavigation = false;
     const p = e.points && e.points[0];
     if (!p || p.customdata == null || Date.now() - openedAt < 450) return;
     const key = p.customdata, now = Date.now();
@@ -26,6 +37,8 @@ window.guDensityBind = function (el, region) {
       Shiny.setInputValue('density_bin_click', key, {priority: 'event'});
     }, 450);
   }, plotly_doubleclick: open, plotly_relayout: function (e) {
+    if (!userNavigation) return;
+    userNavigation = false;
     if (Object.keys(e).some(k => /^xaxis\d*\.autorange$/.test(k) && e[k])) {
       Shiny.setInputValue('density_range', {reset: true}, {priority: 'event'}); return;
     }

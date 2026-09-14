@@ -138,7 +138,7 @@ phe_check_grch_tabix_rows() {
       for(i=1;i<=NF;i++){
         x=toupper($i);gsub(/^#/,"",x);gsub(/\r/,"",x)
         p=0;if(x=="SNP")p=1;else if(x=="RSID")p=2;else if(x=="ID")p=3;else if(x=="VARIANT_ID")p=4;else if(x=="VARIANT_IDS")p=5;if(p&&(!idp||p<idp)){id=i;idp=p}
-        p=0;if(x=="CHR")p=1;else if(x=="CHROM")p=2;else if(x=="CHROMOSOME")p=3;else if(x=="CHR_NAME")p=4;else if(x=="CHROMSOME")p=5;if(p&&(!chrp||p<chrp)){chr=i;chrp=p}
+        p=0;if(x=="CHR")p=1;else if(x=="CHROM")p=2;else if(x=="CHROMOSOME")p=3;else if(x=="CHR_NAME")p=4;if(p&&(!chrp||p<chrp)){chr=i;chrp=p}
         p=0;if(x=="POS")p=1;else if(x=="BP")p=2;else if(x=="BASE_PAIR")p=3;else if(x=="BASE_PAIR_LOCATION")p=4;else if(x=="POSITION")p=5;else if(x=="GENPOS")p=6;else if(x=="HM_POS")p=7;if(p&&(!posp||p<posp)){pos=i;posp=p}
       }
       if(!id||!chr||!pos)exit 2
@@ -163,23 +163,18 @@ phe_header_names() {
   local file="$1" header_line header_fields matches match_count column value i pattern
   local -a names=(SNP CHR POS EA NEA EAF N BETA SE P LOG10P)
   local -a preferred_patterns=()
-  # Ordered aliases: keep established columns (especially RSID) ahead of fallbacks.
-  # GIANT uses EFFECT_ALLELE_FREQ; GLGC uses ALT/REF, POOLED_ALT_AF and POS_b37;
-  # T2DGGI uses the literal typo Chromsome, Position and EffectAllele/NonEffectAllele.
-  # Neff is already recognized as N. Ncases/Ncontrols alone are not total sample size,
-  # and an absent SNP/rsID column must remain missing rather than use coordinates as IDs.
   local -a patterns=(
-    '^snp$|^rsid$|^id$|^variant_id$|^variant_ids$|^snpid$'
-    '^chr$|^chrom$|^chromosome$|^chr_name$|^chromsome$'
-    '^pos$|^bp$|^base_pair$|^base_pair_location$|^genpos$|^hm_pos$|^position$|^pos_b37$'
-    '^a1$|^ea$|^eff.allele$|^effect_allele$|^allele1$|^effectallele$|^alt$'
-    '^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$|^noneffectallele$'
-    '^eaf$|^a1freq$|^a1_freq$|^effect_allele_frequency|^effect_allele_freq$|^pooled_alt_af$'
+    '^snp$|^rsid$|^id$|^variant_id$|^variant_ids$'
+    '^chr$|^chrom$|^chromosome$|^chr_name$'
+    '^pos$|^bp$|^base_pair$|^base_pair_location$|^genpos$|^hm_pos$'
+    '^a1$|^ea$|^eff.allele$|^effect_allele$|^allele1$'
+    '^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$'
+    '^eaf$|^a1freq$|^a1_freq$|^effect_allele_frequency'
     '^n$|^obs_ct$|^Neff$'
-    '^beta$|^effect_weight$|^effect_size$'
+    '^beta$|^effect_weight$'
     '^se$|^standard_error'
-    '^p$|^pval$|^p_value$|^p_bolt_lmm$|^pvalue$'
-    '^log10p$|^neg.log.10.p.value$|^neg.log10.p.value$|^negative.log.10.p.value$|^negative.log10.p.value$|^minus.log10.p$|^mlog10p$|^pvalue_neg_log10$'
+    '^p$|^pval$|^p_value$|^p_bolt_lmm$'
+    '^log10p$|^neg.log.10.p.value$|^neg.log10.p.value$|^negative.log.10.p.value$|^negative.log10.p.value$|^minus.log10.p$|^mlog10p$'
   )
 
   header_line=$(set +o pipefail; phe_zcat "$file" | head -n 1 | tr '\t' ' ' | sed 's/\r$//')
@@ -483,7 +478,7 @@ check_GRCH() {
             for(i=1;i<=NF;i++){
               x=toupper($i);gsub(/^#/,"",x);gsub(/\r/,"",x)
               p=0;if(x=="SNP")p=1;else if(x=="RSID")p=2;else if(x=="ID")p=3;else if(x=="VARIANT_ID")p=4;else if(x=="VARIANT_IDS")p=5;if(p&&(!idp||p<idp)){id=i;idp=p}
-              p=0;if(x=="CHR")p=1;else if(x=="CHROM")p=2;else if(x=="CHROMOSOME")p=3;else if(x=="CHR_NAME")p=4;else if(x=="CHROMSOME")p=5;if(p&&(!chrp||p<chrp)){chr=i;chrp=p}
+              p=0;if(x=="CHR")p=1;else if(x=="CHROM")p=2;else if(x=="CHROMOSOME")p=3;else if(x=="CHR_NAME")p=4;if(p&&(!chrp||p<chrp)){chr=i;chrp=p}
               p=0;if(x=="POS")p=1;else if(x=="BP")p=2;else if(x=="BASE_PAIR")p=3;else if(x=="BASE_PAIR_LOCATION")p=4;else if(x=="POSITION")p=5;else if(x=="GENPOS")p=6;else if(x=="HM_POS")p=7;if(p&&(!posp||p<posp)){pos=i;posp=p}
             }
             next

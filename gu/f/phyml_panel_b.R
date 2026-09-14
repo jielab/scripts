@@ -167,7 +167,8 @@ gu_export_panel_b <- function(out) {
     if(!file.exists(file.path(local_dir,'sites.tsv')))local_dir<-file.path(local_dir,row$locus_id[[1]])
     if(!dir.exists(local_dir))stop('Missing locus output directory: ',local_dir)
     phy<-file.path(local_dir,basename(phy))
-    stem<-paste0(phy,'_phyml_tree.panelB');bundle<-gu_b_bundle(row,final,row$locus_id[[1]])
+    bundle<-gu_b_bundle(row,final,row$locus_id[[1]])
+    stem<-paste0(phy,'_phyml_tree.',gsub('[^A-Za-z0-9_-]','_',bundle$lineage),'.panelB')
     for(min_copies in c(11L,2L)) {
       variant<-if(min_copies==11L)'' else '.full'
       for(ext in c('png','pdf')) {

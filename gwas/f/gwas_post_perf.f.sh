@@ -2,6 +2,8 @@
 # Performance overrides for format_gwas.sh at multi-thousand-GWAS scale.
 # This file is sourced by each generated per-GWAS command after 0data.f.sh.
 
+source "${BASH_SOURCE[0]%/*}/gwas_thin_state.f.sh"
+
 # Preserve the original fill function so integrated format-time N filling can
 # skip only its redundant rewrite while retaining match_EAF behavior.
 if declare -F gwas_post_fill_missing_fields >/dev/null 2>&1 &&
@@ -353,9 +355,22 @@ gwas_clean_make_cis() {
 gwas_post_thin() {
   [[ "${THIN_MODE:-FALSE}" == TRUE ]] || return 0
   [[ "$DO_STEP" == all || ",$DO_STEP," =~ ,(format|thin|mplot|liftover), ]] || return 0
+  local signature marker="${THIN_OUT}.done" before after
+  if [[ "$REPLACE" != TRUE ]] && gwas_thin_complete "$FINAL" "$THIN_OUT" "$GRCH" "$THIN_CHR_MAX" "$HM3" "${HM3_POS:-}" "$THIN_R" "$PHE_R" "${MH_META:-}"; then
+    gwas_post_log "SKIP completed thin GWAS: $THIN_OUT"
+    return 0
+  fi
+  # Invalidate legacy plot completion before regenerating the thin data.
+  rm -f -- "$marker" "${MH_META}"
+  before=$(stat -Lc '%s|%y' -- "$FINAL") || return 1
   Rscript --vanilla "$THIN_R" --input "$FINAL" --output "$THIN_OUT" \
     --grch "$GRCH" --chr-max "$THIN_CHR_MAX" --hm3-file "$HM3" --hm3-pos "${HM3_POS:-}" \
-    --phe-r "$PHE_R" --replace "$REPLACE"
+    --phe-r "$PHE_R" --replace "$REPLACE" || return $?
+  after=$(stat -Lc '%s|%y' -- "$FINAL") || return 1
+  [[ "$before" == "$after" ]] || { echo "ERROR: source changed while thinning: $FINAL" >&2; return 1; }
+  signature=$(gwas_thin_signature "$FINAL" "$THIN_OUT" "$GRCH" "$THIN_CHR_MAX" "$HM3" "${HM3_POS:-}" "$THIN_R" "$PHE_R") || return 1
+  printf '%s\n' "$signature" > "$marker.tmp.$$"
+  mv -f -- "$marker.tmp.$$" "$marker"
 }
 
 gwas_post_prepare_views() {

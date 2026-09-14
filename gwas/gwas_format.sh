@@ -387,10 +387,15 @@ while read -r gwas; do
 done < "$names_tmp"
 rm -f "$names_tmp"
 
-log "Created $(wc -l < "$cmd_list") per-GWAS command files."
-if [[ "$run_cmd" == "TRUE" ]]; then
-  run_cmds "$cmd_list"
-else
-  log "run-cmd=FALSE; generated command files only: $cmd_list"
-fi
-log "DONE [$step_key]"
+# Parse dispatch and exit together before waiting for long-running workers.
+# In-place edits while workers run must not make Bash resume at a stale offset.
+{
+  log "Created $(wc -l < "$cmd_list") per-GWAS command files."
+  if [[ "$run_cmd" == "TRUE" ]]; then
+    run_cmds "$cmd_list"
+  else
+    log "run-cmd=FALSE; generated command files only: $cmd_list"
+  fi
+  log "DONE [$step_key]"
+  exit 0
+}
