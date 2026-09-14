@@ -9,7 +9,7 @@ bplot_plot <- function(views, build, chr, region, threshold, page = "overview", 
   n <- length(views)
   height <- max(350L, n * 175L + 65L)
   fig <- plotly::plot_ly(height = height)
-  axes <- list(); annotations <- list(); shapes <- list()
+  axes <- list(); annotations <- list(); shapes <- list(); point_data <- list()
   colors <- c("#2563a6", "#0f8a83")
   for (i in seq_len(n)) {
     view <- views[[i]]; data <- view$data
@@ -28,12 +28,12 @@ bplot_plot <- function(views, build, chr, region, threshold, page = "overview", 
         hoverinfo = "skip", showlegend = FALSE, name = paste0(view$track$race, " boundaries"))
     }
     if (nrow(data)) {
+      point_data[[length(point_data) + 1L]] <- as.matrix(data[, .(SNP, CHR, POS, P, BLOCK, ID)])
       # Explicit arrays avoid R formula/data inheritance across the stacked traces.
       fig <- plotly::add_trace(fig, x = data$X, y = data$LOGP, type = "scattergl", mode = "markers",
         xaxis = "x", yaxis = axis, name = view$track$label, showlegend = FALSE,
         marker = list(size = 3, opacity = 0.72,
           color = if (chr == "All") colors[(match(data$CHR, c(as.character(1:22), "X")) %% 2) + 1L] else colors[1]),
-        customdata = as.matrix(data[, .(SNP, CHR, POS, P, BLOCK, ID)]),
         hovertemplate = "%{customdata[0]}<br>chr%{customdata[1]}:%{customdata[2]}<br>P = %{customdata[3]}<br>%{customdata[4]}<extra>%{fullData.name}</extra>")
     } else {
       fig <- plotly::add_trace(fig, x = numeric(), y = numeric(), type = "scatter", mode = "markers",
@@ -69,6 +69,12 @@ bplot_plot <- function(views, build, chr, region, threshold, page = "overview", 
   fig <- plotly::config(fig, scrollZoom = TRUE, displaylogo = FALSE, doubleClick = FALSE,
     modeBarButtonsToRemove = c("select2d", "lasso2d", "autoScale2d", "resetScale2d"),
     toImageButtonOptions = list(format = "png", filename = paste0("bplot.GRCh", build, ".", chr), height = height, width = 1600))
+  # Attach the matrix after building: add_trace drops matrix-valued customdata,
+  # while nested lists make Plotly's recursive processing expensive at GWAS scale.
+  fig <- plotly::plotly_build(fig)
+  marker_traces <- which(vapply(fig$x$data, function(trace) identical(trace$type, "scattergl"), logical(1)))
+  stopifnot(length(marker_traces) == length(point_data))
+  for (j in seq_along(marker_traces)) fig$x$data[[marker_traces[j]]]$customdata <- point_data[[j]]
   htmlwidgets::onRender(fig, "function(el, x, data) { window.bplot.bind(el, data); }",
     data = list(build = build, chr = chr, page = page,
       offsets = as.list(stats::setNames(offsets, names(lengths))),

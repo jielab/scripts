@@ -54,8 +54,10 @@ GU_CHRX_PAR_DIPLOID=${GU_CHRX_PAR_DIPLOID:-0}
 generate_gt=$dirsoft/build/src/generate_gt
 ibdmix_bin=$dirsoft/build/src/ibdmix
 helper=$F/ibdmix_workflow.py
+# Semantic reuse contract: bump for changes to genotype preparation, calling,
+# filtering or output meaning; path/log/comment edits do not change it.
 pipeline_version=2026-09-14.1
-# Published masks and derived exclusion masks share one root, separate from AXT.
+# Published resources only; generated masks live under $dirout/mask/derived.
 [[ -z ${IBDMIX_MASK_CACHE:-} ]] || { echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT" >&2; exit 2; }
 mask_root=${IBDMIX_MASK_ROOT:-$(dirname -- "$dirarch")/mask}
 custom_masks=${IBDMIX_MASK_DIR:-}
@@ -88,7 +90,7 @@ background_args=(); [[ $background_filter == 1 ]] || background_args=(--no-backg
 
 final_output=$dirout/final/all_archaic_refs.lod${lod_cut}.len${len_cut}.segments.tsv.gz
 
-for file in "$generate_gt" "$ibdmix_bin" "$helper" "$F/vcf_gt_fix.py" "$sample_file"; do [[ -s $file ]] || { echo "ERROR: missing required file: $file" >&2; exit 1; }; done
+for file in "$generate_gt" "$ibdmix_bin" "$helper" "$F/ibdmix_provenance.py" "$F/vcf_gt_fix.py" "$sample_file"; do [[ -s $file ]] || { echo "ERROR: missing required file: $file" >&2; exit 1; }; done
 [[ -d $target_vcf_dir ]] || { echo "ERROR: missing target VCF directory: $target_vcf_dir" >&2; exit 1; }
 mkdir -p "$dirout"/{samples,genotype,raw,segments,final,log,tmp}
 exec 9> "$dirout/.run.lock"
@@ -252,7 +254,7 @@ run_record(){
 check_run_provenance(){
   local current=$dirout/run.meta.tsv candidate=$dirout/tmp/run.meta.current.tsv
   run_record > "$candidate"
-  if [[ -s $current ]] && ! cmp -s "$current" "$candidate"; then
+  if [[ -s $current ]] && ! python3 "$F/ibdmix_provenance.py" "$current" "$candidate"; then
     if [[ $IBDMIX_REPLACE != 1 ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f ! -name '*.part*' -print -quit) ]]; then
       echo "ERROR: IBDmix inputs, profile or implementation changed; old results cannot be reused. Rerun with --replace-ibdmix TRUE." >&2
       return 1
@@ -261,7 +263,7 @@ check_run_provenance(){
   if [[ $IBDMIX_REPLACE == 1 ]]; then
     rm -f "$dirout/.complete"
     rm -rf -- "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final"
-    mkdir -p "$dirout"/{genotype,raw,segments,final,masks}
+    mkdir -p "$dirout"/{genotype,raw,segments,final,mask}
   elif [[ ! -s $current ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f -print -quit) ]]; then
     echo "ERROR: cached IBDmix files have no provenance; rerun with --replace-ibdmix TRUE" >&2; return 1
   fi
@@ -411,9 +413,9 @@ run_scan(){
   local status=0 u final pid
   local -a pids=()
   validate_inputs
-  # Resolve/download/validate all masks before replacing any old calls.
+  # Resolve and validate local masks before replacing any old calls.
   # Their contents participate in provenance, so changed masks invalidate raw
-  # calls as well as genotypes. A download failure leaves prior results intact.
+  # calls as well as genotypes. A missing input leaves prior results intact.
   for u in "${analysis_units[@]}"; do prepare_unit_masks "$u"; done
   check_run_provenance
   final=$dirout/final/all_archaic_refs.lod${lod_cut}.len${len_cut}.segments.tsv.gz

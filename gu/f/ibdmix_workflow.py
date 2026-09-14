@@ -166,7 +166,7 @@ def cached_mask_artifacts(root, signature, names):
 
 
 def cached_cpg_sites(fasta, variants, alignments, chrom, length, root):
-    """Persist the cohort-independent CpG bitmap in compact packed-bit form."""
+    """Cache the CpG bitmap under the analysis output, in packed-bit form."""
     signature = dict(schema=1, chrom=chrom, length=length,
                      code=sha256_file(__file__),
                      inputs=[fingerprint(p) for p in [fasta, str(fasta)+'.fai', variants, *alignments]])
@@ -176,7 +176,7 @@ def cached_cpg_sites(fasta, variants, alignments, chrom, length, root):
             packed = np.load(cache/'cpg.exclude.packed.npy', allow_pickle=False)
             if packed.dtype != np.uint8 or packed.shape != ((length+7)//8,):
                 raise ValueError(f'Invalid cached CpG bitmap: {cache}')
-            print(f'IBDMIX chr{chrom}: reusing permanent CpG cache {cache}', flush=True)
+            print(f'IBDMIX chr{chrom}: reusing analysis CpG cache {cache}', flush=True)
             return np.unpackbits(packed, count=length).astype(bool)
         with open(str(fasta)+'.fai') as handle:
             contigs = {line.split()[0]:int(line.split()[1]) for line in handle}
@@ -190,12 +190,12 @@ def cached_cpg_sites(fasta, variants, alignments, chrom, length, root):
             raise ValueError('Incomplete FASTA sequence')
         mask = cpg_sites(sequence, variants, alignments, chrom)
         np.save(staging/'cpg.exclude.packed.npy', np.packbits(mask), allow_pickle=False)
-        print(f'IBDMIX chr{chrom}: built permanent CpG cache {cache}', flush=True)
+        print(f'IBDMIX chr{chrom}: built analysis CpG cache {cache}', flush=True)
     return mask
 
 
 def link_cached_masks(cache, output, names):
-    """Analysis directories contain disposable links, never the only BED copy."""
+    """Link each analysis unit to generated masks within the analysis tree."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.mask-links.', dir=output) as temporary:
@@ -376,7 +376,9 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
     # Final masks also depend on modern indels; do not share them by chromosome alone.
     signature['cache_schema'] = 1
     signature['code'] = sha256_file(__file__)
-    cache_root = root/'derived'
+    # Reference resources are read-only inputs. Generated masks belong beside
+    # the analysis units, including when the caller overrides --root.
+    cache_root = output.parent/'derived'
     analysis_output = output
     names = [f'{ref}.exclude.bed' for ref in refs]+['manifest.json']
     with cached_mask_artifacts(cache_root/'combined'/f'chr{chrom}', signature, names) as (cache, staging):
@@ -414,7 +416,7 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
                 reference_callability={ref:'published_minimal_mask' if ref in minimal else 'published_individual_FilterBed' for ref in refs},
                 callable_bp=totals,cpg_filter='applied' if cpg_enabled else 'skipped_missing_chrX_axt',strict_accessibility='applied' if strict is not None else 'unavailable_for_chrX',mask_semantics='excluded; BED0; native X contig=23',components=components),indent=2))
     link_cached_masks(cache, analysis_output, names)
-    print(f'IBDMIX chr{chrom}: permanent masks {cache}', flush=True)
+    print(f'IBDMIX chr{chrom}: analysis masks {cache}', flush=True)
 
 
 def union(intervals):

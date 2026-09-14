@@ -520,7 +520,11 @@ mplot_output_complete() {
   local png="$1" final="$2" genes="$3" meta="$4" expected_grch="$5" flag="$6" aggregate="$7" sig="$8" cojo="$9"
   local signal_input=none thin_output="${final%.gz}.thin.gz"
   if [[ "${thin:-FALSE}" == TRUE ]]; then
-    gwas_thin_complete "$final" "$thin_output" "$expected_grch" "$thin_chr_max" "$hm3_file" "${hm3_pos//\{grch\}/$expected_grch}" "$thin_r" "$phe_r" "$meta" || return 1
+    if gwas_thin_plot_only "$step"; then
+      gwas_thin_plot_ready "$final" "$thin_output" || return 1
+    else
+      gwas_thin_complete "$final" "$thin_output" "$expected_grch" "$thin_chr_max" "$hm3_file" "${hm3_pos//\{grch\}/$expected_grch}" "$thin_r" "$phe_r" "$meta" || return 1
+    fi
     [[ "$png" -nt "$thin_output" ]] || return 1
   fi
   [[ -z "$add_signal" ]] || signal_input="$add_signal"

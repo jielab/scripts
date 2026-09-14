@@ -356,6 +356,15 @@ gwas_post_thin() {
   [[ "${THIN_MODE:-FALSE}" == TRUE ]] || return 0
   [[ "$DO_STEP" == all || ",$DO_STEP," =~ ,(format|thin|mplot|liftover), ]] || return 0
   local signature marker="${THIN_OUT}.done" before after
+  if gwas_thin_plot_only "$DO_STEP"; then
+    if ! gwas_thin_plot_ready "$FINAL" "$THIN_OUT"; then
+      echo "ERROR: mplot requires an existing thin GWAS with a valid, current index: $THIN_OUT" >&2
+      echo "ERROR: run thin first (or thin,mplot); mplot does not regenerate thin data." >&2
+      return 1
+    fi
+    gwas_post_log "Reuse existing thin GWAS for plotting: $THIN_OUT"
+    return 0
+  fi
   if [[ "$REPLACE" != TRUE ]] && gwas_thin_complete "$FINAL" "$THIN_OUT" "$GRCH" "$THIN_CHR_MAX" "$HM3" "${HM3_POS:-}" "$THIN_R" "$PHE_R" "${MH_META:-}"; then
     gwas_post_log "SKIP completed thin GWAS: $THIN_OUT"
     return 0

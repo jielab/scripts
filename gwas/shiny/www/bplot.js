@@ -63,7 +63,7 @@
           });
           if (cfg.genes) {
             try { await instance.loadTrack({name: "Genes", url: cfg.genes, format: "bed", type: "annotation",
-              indexed: false, displayMode: "COLLAPSED", height: 55, color: "#356a91"}); }
+              indexed: false, displayMode: "EXPANDED", height: 110, color: "#356a91"}); }
             catch (error) { status("GRCh" + build + " · 基因注释载入失败"); console.warn(error); }
           }
         } else {

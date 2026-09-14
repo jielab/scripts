@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Shared thin completion checks for the coordinator and workers.
 # Fingerprints use paths, sizes and nanosecond mtimes; no full GWAS scan.
+
+# Plot-only runs consume an existing artifact, independently of the producer's
+# path-sensitive cache marker. Never regenerate data as a plotting side effect.
+gwas_thin_plot_only() {
+  [[ ",$1," == *,mplot,* && "$1" != all && ! ",$1," =~ ,(format|thin|liftover), ]]
+}
+
+gwas_thin_plot_ready() {
+  local input="$1" output="$2"
+  [[ -s "$input" && -s "$output" && -s "$output.tbi" && ! "$input" -nt "$output" && ! "$output" -nt "$output.tbi" ]] || return 1
+  tabix -l "$output" >/dev/null 2>&1
+}
+
 gwas_thin_signature() {
   local input="$1" output="$2" grch="$3" cap="$4" hm3="$5" pos="$6" script="$7" phe="$8" f
   local facts

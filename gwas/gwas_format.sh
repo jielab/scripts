@@ -35,6 +35,8 @@ Key analysis settings (all defaults are editable below in this script):
     If P<=1e-3 alone exceeds the cap, retain the strongest signals and record counts.
     Thin writes [gwas].thin.gz, .tbi and .done; --replace FALSE reuses valid results.
     The standalone thin module processes existing standardized GWAS, without raw files.
+    mplot reuses existing thin data regardless of .done paths, even with --replace TRUE.
+    Missing/stale thin data or index is an error; run thin or thin,mplot to regenerate.
   --hm3-file FILE --hm3-pos FILE   HM3 rsID list and build-specific positions
   --liftover FALSE --chain FILE --liftover-bin liftOver
   --cis-bed FILE --cis-flank 100000
@@ -55,7 +57,7 @@ cd /mnt/d/scripts/gwas
   --grch auto --hm3 FALSE --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh magma --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh lead --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
-./gwas_format.sh mplot --label main --grch auto --add-panel magma --write-sig TRUE --run-cmd TRUE --foreground TRUE --jobs 4
+./gwas_format.sh mplot --label met --grch 38 --add-panel magma --write-sig TRUE --run-cmd TRUE --foreground TRUE --jobs 8
 ./gwas_format.sh pgs --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 bash /mnt/d/data/gwas/main/pgs/pgs.step2.cmd
 
