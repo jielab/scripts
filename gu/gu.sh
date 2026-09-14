@@ -563,6 +563,10 @@ gu_write_analysis_unit_cmd(){
   local -a cmd_args
   out=$(gu_command_output "$unit_label" "$request_units")
   mkdir -p "$out"
+  # Adopt historical completion before replacing the old command or BED.
+  if [[ $METHOD == phyml && -s $out/$unit_label.cmd ]]; then
+    python3 "$F/phyml_locus_cache.py" adopt "$out/$unit_label.cmd" --archaic-root "$GU_ARCHAIC_ROOT" || true
+  fi
 
   worker_action=$(gu_command_action)
   cmd_args=("$ROOT/gu.sh" "$METHOD")
@@ -633,8 +637,13 @@ gu_write_analysis_unit_cmd(){
 }
 
 gu_completed_analysis_cmd_output(){
-  local out=$1 final
+  local out=$1 cmd=${2:-} final
   case "$METHOD" in
+    phyml)
+      [[ $REPLACE_PHYML_INPUT == FALSE ]] || return 1
+      python3 "$F/phyml_locus_cache.py" check "$cmd" --archaic-root "$GU_ARCHAIC_ROOT" || return 1
+      printf '%s\n' "$out/final/gwas_loci.tsv"
+      ;;
     ibdmix)
       # The module validates its complete input/parameter provenance. File
       # presence alone previously bypassed every correction to the caller.
@@ -651,12 +660,17 @@ gu_run_one_analysis_cmd(){
   log=$out/$base.log
   err=$out/$base.err
   rm -f "$err"
-  if completed_output=$(gu_completed_analysis_cmd_output "$out"); then
+  if completed_output=$(gu_completed_analysis_cmd_output "$out" "$cmd"); then
     printf '[GU CMD] SKIP unit=%s reason=output_complete final=%s\n' "$base" "$completed_output" >&2
     return 0
   fi
+  [[ $METHOD != phyml ]] || rm -f "$out/.phyml.locus.complete.json"
   printf '[GU CMD] START unit=%s cmd=%s\n' "$base" "$cmd" >&2
   if bash "$cmd" 2>&1 | tee "$log"; then
+    if [[ $METHOD == phyml ]]; then
+      python3 "$F/phyml_locus_cache.py" seal "$cmd" --archaic-root "$GU_ARCHAIC_ROOT" || \
+        printf '[GU CMD] WARNING unit=%s completion receipt unavailable; next run will recheck\n' "$base" >&2
+    fi
     printf '[GU CMD] DONE unit=%s log=%s\n' "$base" "$log" >&2
     return 0
   else
