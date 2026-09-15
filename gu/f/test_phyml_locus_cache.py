@@ -81,6 +81,27 @@ class LocusCacheTests(unittest.TestCase):
         with patch.dict(os.environ, PHYML_TREE_CPUS='8', PHYML_TREE_TIMEOUT='123'):
             self.assertTrue(self.run_cache('check'))
 
+    def test_receipt_records_current_scientific_workflow(self):
+        self.run_cache('seal')
+        data = json.loads((self.out/'.phyml.locus.complete.json').read_text())
+        self.assertEqual(data['request']['workflow'], cache.WORKFLOW)
+        self.assertTrue(self.run_cache('check'))
+
+    def test_fresh_directory_is_scheduled(self):
+        fresh = self.root/'fresh'
+        fresh.mkdir()
+        cmd = fresh/'fresh.cmd'
+        cmd.write_text(self.cmd.read_text())
+        listing = self.root/'commands.list'
+        listing.write_text(str(cmd)+'\n')
+        pending = self.root/'pending.list'
+        result = subprocess.run(['python3', str(Path(cache.__file__)), 'partition', str(listing),
+                                 '--pending', str(pending), '--archaic-root', str(self.arch)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pending.read_text(), str(cmd)+'\n')
+        self.assertIn('reused=0 pending=1', result.stdout)
+
     def test_force_or_changed_analysis_invalidates(self):
         self.run_cache('seal')
         original = self.cmd.read_text()

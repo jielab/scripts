@@ -659,11 +659,11 @@ gu_run_one_analysis_cmd(){
   base=$(basename -- "$cmd" .cmd)
   log=$out/$base.log
   err=$out/$base.err
-  rm -f "$err"
   if completed_output=$(gu_completed_analysis_cmd_output "$out" "$cmd"); then
     printf '[GU CMD] SKIP unit=%s reason=output_complete final=%s\n' "$base" "$completed_output" >&2
     return 0
   fi
+  rm -f "$err"
   [[ $METHOD != phyml ]] || rm -f "$out/.phyml.locus.complete.json"
   printf '[GU CMD] START unit=%s cmd=%s\n' "$base" "$cmd" >&2
   if bash "$cmd" 2>&1 | tee "$log"; then

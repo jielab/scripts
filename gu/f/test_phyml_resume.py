@@ -101,6 +101,27 @@ class TreeResumeTests(unittest.TestCase):
             self.assertEqual(self.run_main(),0)
             run.assert_not_called()
 
+    def test_fresh_run_then_resume_without_recomputing(self):
+        products = {suffix:Path(str(self.phy)+suffix).read_text()
+                    for suffix in runner.SUFFIXES
+                    if Path(str(self.phy)+suffix).is_file()
+                    and suffix != '.phyml.complete.json'}
+        for path in self.phy.parent.glob('haplotypes*'):
+            path.unlink()
+        runner.prepare_input(self.phy, self.text)
+        def complete(phy, command, deadline):
+            for suffix, text in products.items():
+                Path(str(phy)+suffix).write_text(text)
+            return 0
+        with patch.object(runner, 'run_attempt', side_effect=complete) as run:
+            self.assertEqual(self.run_main(), 0)
+            self.assertIsNone(runner.completion_error(self.phy, 100))
+            receipt = Path(str(self.phy)+'.phyml.complete.json').read_bytes()
+            runner.prepare_input(self.phy, self.text)
+            self.assertEqual(self.run_main(), 0)
+            run.assert_called_once()
+            self.assertEqual(receipt, Path(str(self.phy)+'.phyml.complete.json').read_bytes())
+
     def test_changed_binary_does_not_destroy_complete_tree(self):
         self.binary.write_text('changed binary')
         before=self.snapshot()

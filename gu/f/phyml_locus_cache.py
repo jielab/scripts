@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+from phyml_contract import WORKFLOW
 
 
 def digest(path):
@@ -79,8 +80,8 @@ def request(cmd, archaic_root):
             stamps[str(p.resolve())] = [s.st_size, s.st_mtime_ns]
     ignored = {'--memory-cap', '--foreground', '--auto-final', '--replace-phyml', '--phyml-jobs', '--loci', '--sample-panel'}
     code = {name: digest(Path(__file__).with_name(name)) for name in
-            ('phyml_gwas.py', 'phyml_core.py', 'phyml_thresholds.py', 'phyml_tree_summary.py', 'phyml_panel_b.R', 'phyml_run.py')}
-    return dict(schema=1, lead=lead[0], bed=bed, options={k:v for k,v in opts.items() if k not in ignored},
+            ('phyml_contract.py', 'phyml_gwas.py', 'phyml_core.py', 'phyml_thresholds.py', 'phyml_tree_summary.py', 'phyml_panel_b.R', 'phyml_run.py')}
+    return dict(schema=1, workflow=WORKFLOW, lead=lead[0], bed=bed, options={k:v for k,v in opts.items() if k not in ignored},
                 sources=stamps, sample_panel=str(Path(panel).resolve()), archaic_root=str(root.resolve()), code=code,
                 environment={k:os.environ.get(k, '') for k in ('GU_CHRX_MALE_ONLY', 'GU_CHRX_PAR_DIPLOID')})
 
@@ -110,7 +111,7 @@ def successful(cmd, req):
     if rows(out/'final/gwas_lead.tsv') != [req['lead']]:
         raise ValueError('lead changed')
     params = json.loads((out/'final/gwas_parameters.json').read_text())
-    if params['workflow'] != 'gwas_lead_ld_core_archaic5_v2':
+    if params['workflow'] != WORKFLOW:
         raise ValueError('historical workflow changed')
     summaries = rows(out/'final/gwas_loci.tsv')
     if len(summaries) != 2 or any(r['status'] in ('tree_failed', 'not_evaluable') for r in summaries):

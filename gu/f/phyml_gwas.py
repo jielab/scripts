@@ -13,9 +13,7 @@ from phyml_core import (BASES, SkipLocus, modern_data, query_rows, vcf_path, vcf
 from phyml_tree_summary import parse_newick, bootstrap_values
 from phyml_thresholds import ils_probability
 
-LINEAGE_REFS = {'Neanderthal': ('Altai', 'Chagyr', 'Vindija'),
-                'Denisovan': ('Denisova', 'Denisova25')}
-REFS = tuple(ref for refs in LINEAGE_REFS.values() for ref in refs)
+from phyml_contract import WORKFLOW, LINEAGE_REFS, REFS
 
 
 def reference_lineage(ref):
@@ -288,7 +286,7 @@ def run_locus(a, row):
     write(final/'haplotype_samples.tsv',allcopies,['locus_id','hap_id','sample','sample_id','haplotype','candidate_start','candidate_end','role'])
     write(final/'skipped_loci.tsv',[] if ident['status'].startswith('tree_') else [ident])
     write(final/'gwas_lead.tsv',[row])
-    parameters=dict(workflow='gwas_lead_ld_core_archaic5_v2',ld_population='1KG EUR',ld_rule='phased_r2 > 0.98',
+    parameters=dict(workflow=WORKFLOW,ld_population='1KG EUR',ld_rule='phased_r2 > 0.98',
         lead=row,tree_populations='all target 1KG samples',minimum_haplotype_copies=2,minimum_minor_allele_copies=2,
         ancestral_source='target VCF INFO/AA; unknown remains N; not verified as Ensembl release 100',
         references=list(REFS),heterozygous_archaic_policy='mask_as_N',bootstrap=100,model='HKY85+G4+I;estimated',
@@ -369,4 +367,8 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX)
         raise SystemExit(run_locus(a,rows[0]))
 
-if __name__=='__main__': main()
+if __name__=='__main__':
+    try: main()
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(1)

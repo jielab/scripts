@@ -188,7 +188,12 @@ def main():
     if a.bootstrap<0 or a.timeout<0 or a.cpus<1:p.error('bootstrap/timeout must be nonnegative and cpus positive')
     serial=shutil.which('phyml');mpi=shutil.which('phyml-mpi');mpirun=shutil.which('mpirun')
     if not serial:raise RuntimeError('phyml executable unavailable')
-    lock=Path(str(phy)+'.phyml.lock').open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with Path(str(phy)+'.phyml.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        return run_locked(a, phy, serial, mpi, mpirun)
+
+
+def run_locked(a, phy, serial, mpi, mpirun):
     force = os.environ.get('PHYML_REPLACE') == 'TRUE' and not a.verify_only
     # Changing the execution CPU count alone must not replace a complete tree.
     for binary in dict.fromkeys(x for x in (serial,mpi) if x):

@@ -174,9 +174,10 @@ def run(script, args):
                     failed += 1
                 recent.append(line)
                 if quiet_gu:
-                    if event == 'FAIL' or (event == 'DONE' and
-                            (args[:1] == ['ibdmix'] or (done-skipped_units) % 10 == 0)):
+                    if event in ('FAIL', 'DONE'):
                         progress(f'{event} {unit}')
+                    elif event == 'SKIP' and args[:1] == ['phyml']:
+                        progress(f'DONE {unit} (reused)')
                 elif event != 'SKIP' or skipped_units % 50 == 0:
                     progress(f'{event} {unit}' if event != 'SKIP' else '复用检查')
                 if event == 'FAIL':
@@ -202,7 +203,7 @@ def run(script, args):
             if error or continuation:
                 print(console_text(original), flush=True)
                 diagnostic = True
-            elif major and not (quiet_gu and re.match(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\] (?:START|DONE)\b', line)):
+            elif major and not (label == 'gu' and args[:1] == ['phyml']) and not (quiet_gu and re.match(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\] (?:START|DONE)\b', line)):
                 if line != stage:
                     print(console_text(line), flush=True)
                     stage = line
