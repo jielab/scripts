@@ -87,6 +87,7 @@ def run(script, args):
     script = Path(script).resolve()
     label = console_label(script, args)
     completion_only_gu = label == 'gu' and args[:1] in (['phyml'], ['ibdmix'])
+    quiet_gu = completion_only_gu
     default_log_dir = Path('/mnt/d/analysis') / script.parent.name / 'logs'
     directory = Path(os.environ.get('SCRIPT_LOG_DIR', default_log_dir))
     directory.mkdir(parents=True, exist_ok=True)
@@ -110,18 +111,76 @@ def run(script, args):
         diagnostic = False
         recent = deque(maxlen=8)
         pending = b''
+        active_units = set()
+        skipped_units = 0
+        unit_stages = {}
+        total_units = '?'
+        def progress(event):
+            if quiet_gu:
+                print(f'[{label}] {event} | 完成={done}/{total_units}（复用={skipped_units}）'
+                      f' 失败={failed} | 运行={len(active_units)}', flush=True)
+                return
+            active = ', '.join(unit + (':' + unit_stages[unit] if unit in unit_stages else '')
+                               for unit in sorted(active_units)) or '无'
+            print(f'[{label}] {event} | 完成={done}/{total_units}（复用={skipped_units}）'
+                  f' 失败={failed} | 运行({len(active_units)})：{active}', flush=True)
         def console_text(text):
             if completion_only_gu:
                 return text.removeprefix('[GU CMD] ')
             return text
 
         def show_line(raw):
-            nonlocal done, failed, stage, diagnostic
+            nonlocal done, failed, stage, diagnostic, skipped_units, total_units
             original = raw.decode(errors='replace')
             line = original.strip()
             if not line:
                 return
-            if completion_only_gu and re.match(r'^(?:\[[^\]]+\]\s+)?START\b', line):
+            if completion_only_gu:
+                created = re.match(r'^\[GU CMD\] created=(\d+)', line)
+                if created:
+                    total_units = created.group(1)
+                    print(f'[{label}] 任务总数={total_units}', flush=True)
+                    return
+                if re.match(r'^\[GU CMD\] (CHECK|RESUME)\b', line):
+                    if not quiet_gu or line.startswith('[GU CMD] RESUME'):
+                        print(console_text(line), flush=True)
+                    return
+                detail = re.search(r'\b(GENOTYPE|CALL|REUSE) unit=C(\d+|X) ref=(\S+)(.*)', line)
+                if detail:
+                    action, chrom, ref, rest = detail.groups()
+                    unit_stages['chr'+chrom] = ref + ':' + ('基因型' if action == 'GENOTYPE' else '复用' if action == 'REUSE' else '群体分析')
+                    return
+                tree = re.match(r'^\[GU PHYML\] tree=(\S+) (.*?) input=(.*)$', line)
+                if tree:
+                    action, reason, path = tree.groups()
+                    unit = Path(path).parent.parent.name
+                    unit_stages[unit] = '建树' if action == 'REPLACE' else '复用树/整理输出'
+                    if action == 'REPLACE' and not quiet_gu:
+                        print(f'[{label}] 建树 {unit} {reason}', flush=True)
+                    return
+            unit_event = re.match(r'^\[GU CMD\] (START|DONE|SKIP|FAIL) unit=(\S+)', line)
+            if completion_only_gu and unit_event:
+                event, unit = unit_event.groups()
+                if event == 'START':
+                    active_units.add(unit)
+                else:
+                    active_units.discard(unit)
+                    unit_stages.pop(unit, None)
+                if event in ('DONE', 'SKIP'):
+                    done += 1
+                    if event == 'SKIP':
+                        skipped_units += 1
+                elif event == 'FAIL':
+                    failed += 1
+                recent.append(line)
+                if quiet_gu:
+                    if event == 'FAIL' or (event == 'DONE' and
+                            (args[:1] == ['ibdmix'] or (done-skipped_units) % 10 == 0)):
+                        progress(f'{event} {unit}')
+                elif event != 'SKIP' or skipped_units % 50 == 0:
+                    progress(f'{event} {unit}' if event != 'SKIP' else '复用检查')
+                if event == 'FAIL':
+                    print(console_text(line), flush=True)
                 diagnostic = False
                 return
             recent.append(line)
@@ -143,7 +202,7 @@ def run(script, args):
             if error or continuation:
                 print(console_text(original), flush=True)
                 diagnostic = True
-            elif major:
+            elif major and not (quiet_gu and re.match(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\] (?:START|DONE)\b', line)):
                 if line != stage:
                     print(console_text(line), flush=True)
                     stage = line

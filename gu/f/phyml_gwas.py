@@ -124,9 +124,10 @@ def run_verified_tree(command):
 def run_locus(a, row):
     out=a.out; final=out/'final'; loc=out/'loci'; final.mkdir(parents=True,exist_ok=True); loc.mkdir(parents=True,exist_ok=True)
     row=dict(row); lid=row['locus_id']; ch=row['chr']; pos=int(row['lead_pos'])
-    # A rerun that becomes unassessable must not display earlier sequences.
-    for name in ('sites.tsv','archaic.tsv','ancestral.tsv','haplotypes.tsv','ld.tsv'):
-        (loc/name).unlink(missing_ok=True)
+    # Defer intermediate writes until the existing completed tree is safe.
+    from phyml_run import prepare_input, protected_result, require_replace
+    preserve = os.environ.get('PHYML_REPLACE') != 'TRUE' and protected_result(loc/'haplotypes.phy')
+    pending_tables = {}
     haploid=ch=='X' and a.x_male_only
     ident=dict(locus_id=lid,index_snp=row['index_snp'],source_build=row['source_build'],source_pos=row['source_pos'],
         dataset_id=a.dataset,genome_build='GRCh37',chr=ch,lead_pos=pos,p_j=row['p_j'],beta_j=row['beta_j'],
@@ -160,7 +161,7 @@ def run_locus(a, row):
         # base unambiguously; exclude them rather than merge unrelated alleles.
         counts=Counter(s['pos'] for s in sites); sites=[s for s in sites if counts[s['pos']]==1]
         core,ld,start,end=define_core(sites,lead,indexes)
-        write(loc/'ld.tsv',ld)
+        pending_tables['ld.tsv']=ld
         ident.update(core_start=start,core_end=end,core_kb=(end-start)/1000,n_ld_sites=sum(r['core_marker'] for r in ld),
                      n_search_sites=len(sites),anchor_pos=pos,selected_start=start,selected_end=end)
         high=[r for r in ld if r['core_marker']]
@@ -185,9 +186,9 @@ def run_locus(a, row):
         if len(sites)<2: raise SkipLocus('insufficient five-reference callable core sites', 'insufficient_tree_sites')
         arch={r:''.join(calls[r][s['pos']] for s in sites) for r in REFS}
         ancestor=''.join(s['ancestral'] for s in sites)
-        write(loc/'sites.tsv',[dict(chr=ch,pos=s['pos'],id=s['vid'],ref=s['ref'],alt=s['alt']) for s in sites])
-        write(loc/'archaic.tsv',[dict(archaic=r,lineage=reference_lineage(r),seq=arch[r]) for r in REFS])
-        write(loc/'ancestral.tsv',[dict(reference='Ancestral',n_callable=ident['n_ancestral_sites'],seq=ancestor)])
+        pending_tables['sites.tsv']=[dict(chr=ch,pos=s['pos'],id=s['vid'],ref=s['ref'],alt=s['alt']) for s in sites]
+        pending_tables['archaic.tsv']=[dict(archaic=r,lineage=reference_lineage(r),seq=arch[r]) for r in REFS]
+        pending_tables['ancestral.tsv']=[dict(reference='Ancestral',n_callable=ident['n_ancestral_sites'],seq=ancestor)]
         for h in haps:
             h['copies']=';'.join(f'{samples[i//2]}:{i%2+1}' for i in h['indices'])
             comp=[]
@@ -207,7 +208,7 @@ def run_locus(a, row):
                 allcopies.append(cp)
                 if h['role']=='risk': copyrows.append(cp)
             h.update(locus_id=lid,genome_build='GRCh37',best_archaic=ref,best_lineage=reference_lineage(ref),n_compared=nc,n_match=nm,prop_match=prop,direct_match_pass=0)
-        write(loc/'haplotypes.tsv',[{k:v for k,v in h.items() if k!='indices'} for h in haps])
+        pending_tables['haplotypes.tsv']=[{k:v for k,v in h.items() if k!='indices'} for h in haps]
         if any(h['role']=='mixed' for h in haps):
             ident.update(n_candidate_haplotypes=None,n_candidate_copies=None)
             raise SkipLocus('lead alleles share identical callable core sequences', 'risk_nonrisk_sequence_unresolved')
@@ -218,23 +219,18 @@ def run_locus(a, row):
         tree['phy_file']=str(phy)
         seqs=[(h['hap_id'],h['seq']) for h in haps]+list(arch.items())+[('Ancestral',ancestor)]
         phytext=f'{len(seqs)} {len(sites)}\n'+''.join(f'{label:<10} {seq}\n' for label,seq in seqs)
-        if not phy.exists() or phy.read_text()!=phytext:
-            from phyml_run import clean
-            clean(phy)
-            phy.write_text(phytext)
-        write(loc/'haplotypes.phy.meta.tsv',[dict(phy_label=label,label=label,role=next((h['role'] for h in haps if h['hap_id']==label),'ancestral' if label=='Ancestral' else 'archaic')) for label,seq in seqs])
+        prepare_input(phy, phytext, replace=os.environ.get('PHYML_REPLACE')=='TRUE')
+        pending_tables['haplotypes.phy.meta.tsv']=[dict(phy_label=label,label=label,role=next((h['role'] for h in haps if h['hap_id']==label),'ancestral' if label=='Ancestral' else 'archaic')) for label,seq in seqs]
         ident.update(status='tree_not_requested',reason='sequence_prepared')
         if a.action=='run' and a.plot_phy=='TRUE':
             print(f"[GU PHYML] {lid}: EUR={len(eur)}; core={ch}:{start+1}-{end}; LD markers={ident['n_ld_sites']}; tree sites={len(sites)}; recurrent haplotypes={len(haps)}; bootstrap=100",flush=True)
             cmd=[sys.executable,str(Path(__file__).with_name('phyml_run.py')),'--phy',str(phy),'--scope','gwas_risk_core',
                  '--bootstrap','100','--timeout',str(a.timeout),'--cpus',str(a.cpus),'--mpi-fallback','serial']
-            if os.environ.get('PHYML_REPLACE')=='TRUE':
-                # Removing the completion receipt makes the runner recompute,
-                # while its own lock continues to protect tree output files.
-                Path(str(phy)+'.phyml.complete.json').unlink(missing_ok=True)
             proc=run_verified_tree(cmd)
             treepath=Path(str(phy)+'_phyml_tree.txt'); statpath=Path(str(phy)+'_phyml_stats.txt')
             if proc.returncode:
+                if preserve:
+                    require_replace(phy, 'existing tree could not be verified; see runner diagnostic')
                 failed=True
                 logpath=Path(str(phy)+'.phyml.log')
                 failure_log=logpath.read_text(errors='replace') if logpath.exists() else ''
@@ -260,12 +256,18 @@ def run_locus(a, row):
                     candidate_clade_archaic_tips=3 if match else 0,candidate_clade_specificity=1 if match else None)
         tree['tree_call_reason']=ident['reason']
     except SkipLocus as e:
+        if preserve:
+            require_replace(loc/'haplotypes.phy', f'new analysis would skip completed locus: {e.code}')
         ident.update(status=e.code,reason=str(e)); tree['tree_call_reason']=str(e)
         if e.code=='risk_nonrisk_sequence_unresolved': copyrows=[]
         if e.details and 'ld' in e.details:
-            write(loc/'ld.tsv',e.details['ld'])
+            pending_tables['ld.tsv']=e.details['ld']
             ident.update(n_ld_sites=sum(r['core_marker'] for r in e.details['ld']),n_search_sites=len(e.details['ld']))
         print(f'[GU PHYML] SKIP {lid}: {e.code}: {e}',flush=True)
+    for name in ('sites.tsv','archaic.tsv','ancestral.tsv','haplotypes.tsv','ld.tsv'):
+        (loc/name).unlink(missing_ok=True)
+    for name, table in pending_tables.items():
+        write(loc/name, table)
     ident['call']=ident['status']
     # A length-model sensitivity statistic, not a calibrated locus-specific P.
     if ident.get('core_kb'):

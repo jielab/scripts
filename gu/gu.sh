@@ -683,6 +683,16 @@ gu_run_one_analysis_cmd(){
 
 gu_run_analysis_cmds_local(){
   local list=$1 jobs=$2 cmd running=0 status=0
+  local pending_list=""
+  if [[ $METHOD == phyml && $REPLACE_PHYML_INPUT == FALSE ]]; then
+    pending_list=$(mktemp)
+    echo "[GU CMD] CHECK scanning completed loci before scheduling"
+    if ! python3 "$F/phyml_locus_cache.py" partition "$list" --pending "$pending_list" --archaic-root "$GU_ARCHAIC_ROOT"; then
+      rm -f "$pending_list"
+      return 1
+    fi
+    list=$pending_list
+  fi
   while IFS= read -r cmd; do
     [[ -s $cmd ]] || continue
     gu_run_one_analysis_cmd "$cmd" &
@@ -696,6 +706,7 @@ gu_run_analysis_cmds_local(){
     if ! wait -n; then status=1; fi
     running=$((running-1))
   done
+  [[ -z $pending_list ]] || rm -f "$pending_list"
   (( status == 0 )) || { echo "ERROR: one or more $METHOD command files failed; see per-unit .err/.log files" >&2; return 1; }
 }
 
@@ -723,6 +734,7 @@ gu_orchestrate_analysis_cmds(){
   list=$cmd_root/${scope_label}.cmd.list
   list_tmp=$list.tmp.$$
   : > "$list_tmp"
+  echo "[GU CMD] CHECK preparing $request_units units and checking historical completion"
   if [[ $unit_kind == locus ]]; then
     while IFS=$'\t' read -r chr core_start core_end analysis_start analysis_end locus flank; do
       unit_label=$(gu_locus_unit_label "$GU_LOCI_MAP_FILE" "$chr" "$core_start" "$core_end" "$locus")

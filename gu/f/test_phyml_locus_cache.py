@@ -62,6 +62,19 @@ class LocusCacheTests(unittest.TestCase):
         self.assertTrue(self.run_cache('seal'))
         self.assertTrue(self.run_cache('check'))
 
+    def test_code_only_change_does_not_schedule_completed_analysis(self):
+        self.run_cache('seal')
+        receipt = self.out/'.phyml.locus.complete.json'
+        data = json.loads(receipt.read_text())
+        data['request']['code'] = {'phyml_gwas.py':'historical-version'}
+        receipt.write_text(json.dumps(data))
+        self.assertTrue(self.run_cache('check'))
+
+    def test_check_adopts_unsealed_success_without_overwriting_log(self):
+        before = self.log.read_bytes()
+        self.assertTrue(self.run_cache('check'))
+        self.assertEqual(before, self.log.read_bytes())
+
     def test_runtime_settings_do_not_invalidate(self):
         self.run_cache('seal')
         self.cmd.write_text(self.cmd.read_text().replace('24G', '16G'))
@@ -113,6 +126,23 @@ class LocusCacheTests(unittest.TestCase):
                                  'test', str(self.cmd)], env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('SKIP unit=unit reason=output_complete', result.stderr)
+        self.assertEqual(before, self.log.read_bytes())
+
+    def test_partition_finds_completed_locus_after_pending_locus(self):
+        self.run_cache('seal')
+        pending_cmd = self.root/'unfinished'/'unfinished.cmd'
+        pending_cmd.parent.mkdir()
+        pending_cmd.write_text('unused')
+        listing = self.root/'commands.list'
+        listing.write_text(f'{pending_cmd}\n{self.cmd}\n')
+        pending = self.root/'pending.list'
+        before = self.log.read_bytes()
+        result = subprocess.run(['python3', str(Path(cache.__file__)), 'partition', str(listing),
+                                 '--pending', str(pending), '--archaic-root', str(self.arch)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pending.read_text(), f'{pending_cmd}\n')
+        self.assertIn('RESUME total=2 reused=1 pending=1', result.stdout)
         self.assertEqual(before, self.log.read_bytes())
 
 

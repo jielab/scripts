@@ -136,12 +136,23 @@ def process(mode, cmd, archaic_root):
     receipt = cmd.parent/'.phyml.locus.complete.json'
     if mode == 'adopt' and receipt.exists():
         return False
+    if mode == 'adopt':
+        # Reject interrupted historical workers before scanning references.
+        log = cmd.with_suffix('.log').read_text()
+        if cmd.with_suffix('.err').exists() or f'analysis_unit={cmd.stem} status=complete' not in log:
+            raise ValueError('no successful worker completion')
     req = request(cmd, archaic_root)
     if mode == 'check':
         if command(cmd)[1].get('--replace-phyml', 'FALSE') == 'TRUE':
             return False
+        if not receipt.is_file():
+            return process('adopt', cmd, archaic_root)
         data = json.loads(receipt.read_text())
-        return data['request'] == req and data['outputs'] == outputs(cmd.parent)
+        # Code hashes record provenance, not permission to replace completed
+        # analyses. Actual inputs/options and output integrity still must match.
+        saved = {k:v for k,v in data['request'].items() if k != 'code'}
+        current = {k:v for k,v in req.items() if k != 'code'}
+        return saved == current and data['outputs'] == outputs(cmd.parent)
     successful(cmd, req)
     if mode == 'adopt':
         # Old runs have no source fingerprints. Only adopt sources older than
@@ -160,10 +171,32 @@ def process(mode, cmd, archaic_root):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=('check', 'seal', 'adopt'))
+    p.add_argument('mode', choices=('check', 'seal', 'adopt', 'partition'))
     p.add_argument('cmd', type=Path)
+    p.add_argument('--pending', type=Path)
     p.add_argument('--archaic-root', required=True)
     a = p.parse_args()
+    if a.mode == 'partition':
+        if a.pending is None:
+            p.error('partition requires --pending')
+        commands = [Path(line) for line in a.cmd.read_text().splitlines() if line]
+        pending = []
+        skipped = 0
+        for index, cmd in enumerate(commands, 1):
+            try:
+                ok = process('check', cmd, a.archaic_root)
+            except (OSError, ValueError, KeyError, TypeError):
+                ok = False
+            if ok:
+                skipped += 1
+                print(f'[GU CMD] SKIP unit={cmd.stem} reason=output_complete', flush=True)
+            else:
+                pending.append(str(cmd))
+            if index % 100 == 0:
+                print(f'[GU CMD] CHECK checked={index}/{len(commands)} reused={skipped}', flush=True)
+        a.pending.write_text(''.join(cmd+'\n' for cmd in pending))
+        print(f'[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)}', flush=True)
+        return
     try:
         ok = process(a.mode, a.cmd, a.archaic_root)
     except (OSError, ValueError, KeyError, TypeError):

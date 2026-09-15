@@ -79,6 +79,28 @@ def reusable(phy,req,adopt=True):
     if adopt:seal(phy,req)
     return True,'verified complete historical bootstrap'
 
+def protected_result(phy, boot=100):
+    # A receipt is also evidence of prior completion when a product was lost.
+    return Path(str(phy)+'.phyml.complete.json').is_file() or completion_error(phy, boot) is None
+
+
+def require_replace(phy, reason):
+    raise RuntimeError(f'completed PhyML result preserved: {reason}; input={phy}; '
+                       'use --replace-phyml TRUE only to explicitly replace it')
+
+
+def prepare_input(phy, text, replace=False):
+    old = phy.read_text() if phy.exists() else None
+    # Whitespace formatting alone is not a different alignment. Keep the exact
+    # original bytes and mtime so its completion hashes remain valid.
+    if old is not None and old.split() == text.split():
+        return
+    if not replace and protected_result(phy):
+        require_replace(phy, 'alignment changed or original input is missing')
+    clean(phy)
+    phy.write_text(text)
+
+
 def clean(phy):
     for suffix in SUFFIXES:
         Path(str(phy)+suffix).unlink(missing_ok=True)
@@ -167,17 +189,20 @@ def main():
     serial=shutil.which('phyml');mpi=shutil.which('phyml-mpi');mpirun=shutil.which('mpirun')
     if not serial:raise RuntimeError('phyml executable unavailable')
     lock=Path(str(phy)+'.phyml.lock').open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    force = os.environ.get('PHYML_REPLACE') == 'TRUE' and not a.verify_only
     # Changing the execution CPU count alone must not replace a complete tree.
     for binary in dict.fromkeys(x for x in (serial,mpi) if x):
         req=request(phy,a.bootstrap,Path(binary).resolve(),a.seed)
         ok,why=reusable(phy,req,adopt=not a.verify_only)
-        if ok:
+        if ok and not force:
             if not a.verify_only:state(phy,a.scope,'COMPLETE_VERIFIED',0)
             print(f'[GU PHYML] tree={"VERIFIED" if a.verify_only else "SKIP"} reason={why} input={phy}',flush=True)
             return 0
     if a.verify_only:
         print(f'ERROR: planned tree is not complete: {why}; input={phy}',file=sys.stderr)
         return 1
+    if not force and protected_result(phy, a.bootstrap):
+        require_replace(phy, why)
     binary=serial
     launcher=[]
     if a.cpus > 1 and a.bootstrap > 0:
@@ -188,10 +213,11 @@ def main():
             binary=mpi;launcher=[mpirun,'--bind-to','none','-np',str(a.cpus)]
         else: print('[GU PHYML] MPI unavailable; using one CPU',flush=True)
     req=request(phy,a.bootstrap,Path(binary).resolve(),a.seed)
-    reused=reuse_identical_sibling(phy,req)
+    reused=None if force else reuse_identical_sibling(phy,req)
     if reused:
         state(phy,a.scope,'COMPLETE_REUSED',0)
         print(f'[GU PHYML] tree=REUSE identical_input={reused} input={phy}',flush=True);return 0
+    if force: why='explicit --replace-phyml TRUE'
     print(f'[GU PHYML] tree=REPLACE reason={why} input={phy}',flush=True)
     clean(phy);state(phy,a.scope,'RUNNING','');start=time.monotonic()
     deadline=start+a.timeout if a.timeout else None
