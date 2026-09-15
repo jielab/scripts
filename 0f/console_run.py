@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run a CLI in the foreground with full file logs and event-driven console output (no periodic time reports)."""
 import argparse
+import csv
 from contextlib import contextmanager
 from collections import deque
 import datetime
@@ -83,6 +84,44 @@ def console_label(script, args):
     return f'{label}.all'
 
 
+def locus_message(event, unit, line):
+    """Describe a finished locus from its saved results, without guessing counts."""
+    match = re.search(r'\b(?:log|detail)=(.*)$', line)
+    if not match:
+        return f'{event} {unit}'
+    path = Path(match.group(1))
+    def rows(name):
+        with (path.parent / name).open() as f:
+            return list(csv.DictReader(f, delimiter='\t'))
+    if event == 'FAIL':
+        try:
+            for row in rows('final/gwas_loci.tsv'):
+                if row.get('status') == 'tree_failed':
+                    return f'FAIL {unit}: {row["reason"]}'
+        except (OSError, KeyError):
+            pass
+        try:
+            errors = [s.strip() for s in path.with_suffix('.log').read_text(errors='replace').splitlines()
+                      if re.search(r'(?i)\b(?:error|fatal)\b|\b\w+(?:Error|Exception):|plot export failed', s)]
+            if errors:
+                return f'FAIL {unit}: {errors[-1][:240]}'
+        except OSError:
+            pass
+        code = re.search(r'\bexit=(\d+)', line)
+        return f'FAIL {unit}: exit {code.group(1) if code else "unknown"}'
+    try:
+        skipped = rows('final/skipped_loci.tsv')
+        if skipped:
+            return f'SKIP {unit}: {skipped[0].get("reason") or skipped[0].get("status", "not evaluable")}'
+        sites = rows('loci/sites.tsv')
+        target = rows('final/haplotypes.tsv')
+        archaic = rows('loci/archaic.tsv')
+        return (f'DONE {unit}, {len(sites)} SNPs in haplotype, '
+                f'{len(target)} and {len(archaic)} haplotypes in target and archaic reference')
+    except OSError:
+        return f'DONE {unit}'
+
+
 def run(script, args):
     script = Path(script).resolve()
     label = console_label(script, args)
@@ -117,8 +156,7 @@ def run(script, args):
         total_units = '?'
         def progress(event):
             if quiet_gu:
-                print(f'[{label}] {event} | 完成={done}/{total_units}（复用={skipped_units}）'
-                      f' 失败={failed} | 运行={len(active_units)}', flush=True)
+                print(f'[{label}] {event}', flush=True)
                 return
             active = ', '.join(unit + (':' + unit_stages[unit] if unit in unit_stages else '')
                                for unit in sorted(active_units)) or '无'
@@ -142,8 +180,11 @@ def run(script, args):
                     print(f'[{label}] 任务总数={total_units}', flush=True)
                     return
                 if re.match(r'^\[GU CMD\] (CHECK|RESUME)\b', line):
-                    if not quiet_gu or line.startswith('[GU CMD] RESUME'):
-                        print(console_text(line), flush=True)
+                    if line.startswith('[GU CMD] RESUME'):
+                        counts = dict(re.findall(r'(\w+)=(\d+)', line))
+                        skip = int(counts.get('skipped', 0))
+                        reuse = int(counts.get('reused', 0)) - skip
+                        print(f'[{label}] Skip {skip}, reuse {reuse}', flush=True)
                     return
                 detail = re.search(r'\b(GENOTYPE|CALL|REUSE) unit=C(\d+|X) ref=(\S+)(.*)', line)
                 if detail:
@@ -175,12 +216,10 @@ def run(script, args):
                 recent.append(line)
                 if quiet_gu:
                     if event in ('FAIL', 'DONE'):
-                        progress(f'{event} {unit}')
-                    elif event == 'SKIP' and args[:1] == ['phyml']:
-                        progress(f'DONE {unit} (reused)')
+                        progress(locus_message(event, unit, line))
                 elif event != 'SKIP' or skipped_units % 50 == 0:
                     progress(f'{event} {unit}' if event != 'SKIP' else '复用检查')
-                if event == 'FAIL':
+                if event == 'FAIL' and not quiet_gu:
                     print(console_text(line), flush=True)
                 diagnostic = False
                 return
@@ -201,7 +240,8 @@ def run(script, args):
             continuation = diagnostic and (
                 original[:1].isspace() or re.match(r'^(In |[0-9]+:|Calls:|During handling|The above exception)',line))
             if error or continuation:
-                print(console_text(original), flush=True)
+                if not quiet_gu or not active_units:
+                    print(console_text(original), flush=True)
                 diagnostic = True
             elif major and not (label == 'gu' and args[:1] == ['phyml']) and not (quiet_gu and re.match(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\] (?:START|DONE)\b', line)):
                 if line != stage:
@@ -246,9 +286,9 @@ def run(script, args):
             send_remaining(cancelled[0][2], signal.SIGKILL)
             rc = 128 + cancelled[0][0]
         state = '已停止' if cancelled else '完成' if rc == 0 else f'失败（退出码 {rc}）'
-        counts = f'；完成 {done}，失败 {failed}' if done or failed else ''
+        counts = f'；完成 {done}，失败 {failed}' if (done or failed) and not quiet_gu else ''
         print(f'[{label}] {state}{counts}；日志：{log}', flush=True)
-        if rc and not cancelled:
+        if rc and not cancelled and not quiet_gu:
             print('\n'.join(console_text(line) for line in recent), file=sys.stderr, flush=True)
         return rc if rc >= 0 else 128-rc
 

@@ -692,6 +692,8 @@ gu_run_analysis_cmds_local(){
       return 1
     fi
     list=$pending_list
+  elif [[ $METHOD == phyml ]]; then
+    echo '[GU CMD] RESUME reused=0 skipped=0'
   fi
   while IFS= read -r cmd; do
     [[ -s $cmd ]] || continue

@@ -62,7 +62,7 @@ def prepare(a):
     provenance = dict(input=str(a.input.resolve()), input_sha256=hashlib.sha256(a.input.read_bytes()).hexdigest(),
         source_build=a.build, analysis_build='37', method='original_COJO_leads_no_distance_collapse', search_flank_bp=a.window)
     if a.build == '38' and leads:
-        binary = Path(os.environ.get('GU_LIFTOVER', '/mnt/d/software/gu/bin/liftOver'))
+        binary = Path(os.environ.get('GU_LIFTOVER', '/mnt/d/software/bin/liftOver'))
         print(f'[GU GWAS] liftOver={binary.resolve()} sha256={hashlib.sha256(binary.read_bytes()).hexdigest()}',flush=True)
         source = out/'leads.GRCh38.bed'
         source.write_text(''.join(f"chr{r['chr']}\t{r['lead_pos']-1}\t{r['lead_pos']-1+max(1,len(r['ref']))}\t{r['input_row']}\t0\t+\n" for r in leads))

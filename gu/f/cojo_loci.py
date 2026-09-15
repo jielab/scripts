@@ -53,7 +53,7 @@ def main():
     ap.add_argument('--helper',type=Path,default=Path('/mnt/d/scripts/0f/0phe.f.R'))
     ap.add_argument('--chain',type=Path,default=Path('/mnt/d/files/liftOver/hg38ToHg19.over.chain.gz'))
     # PATH may contain an older UCSC executable with different multi-map behavior.
-    ap.add_argument('--liftover',default=os.environ.get('GU_LIFTOVER','/mnt/d/software/gu/bin/liftOver'))
+    ap.add_argument('--liftover',default=os.environ.get('GU_LIFTOVER','/mnt/d/software/bin/liftOver'))
     a=ap.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     lines=[line.split() for line in a.input.read_text().splitlines() if line.strip()]
     required={'SNP',a.chr_column,a.pos_column,a.p_column}

@@ -183,6 +183,7 @@ def main():
         commands = [Path(line) for line in a.cmd.read_text().splitlines() if line]
         pending = []
         skipped = 0
+        skipped_results = 0
         for index, cmd in enumerate(commands, 1):
             try:
                 ok = process('check', cmd, a.archaic_root)
@@ -190,13 +191,11 @@ def main():
                 ok = False
             if ok:
                 skipped += 1
-                print(f'[GU CMD] SKIP unit={cmd.stem} reason=output_complete', flush=True)
+                skipped_results += bool(rows(cmd.parent/'final/skipped_loci.tsv'))
             else:
                 pending.append(str(cmd))
-            if index % 100 == 0:
-                print(f'[GU CMD] CHECK checked={index}/{len(commands)} reused={skipped}', flush=True)
         a.pending.write_text(''.join(cmd+'\n' for cmd in pending))
-        print(f'[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)}', flush=True)
+        print(f'[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)} skipped={skipped_results}', flush=True)
         return
     try:
         ok = process(a.mode, a.cmd, a.archaic_root)
