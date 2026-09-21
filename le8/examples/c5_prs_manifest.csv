@@ -1,3 +1,0 @@
-Y,file,column,source,build,ancestry,sample_overlap
-cvd_cad,/absolute/path/to/independent_disease_prs.rds,CAD_PRS,REPLACE_WITH_DISCOVERY_GWAS_AND_SCORING_VERSION,GRCh37,European,none
-ra,/absolute/path/to/independent_disease_prs.rds,RA_PRS,REPLACE_WITH_DISCOVERY_GWAS_AND_SCORING_VERSION,GRCh37,European,none
