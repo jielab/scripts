@@ -1,13 +1,51 @@
 #!/usr/bin/env bash
+# Official DiscoDivas: population PRS + reference-projected PCs -> individual PRS.
+if [[ -z ${GRID_COMMAND_FILE:-} ]]; then
+  exec bash "$(dirname -- "${BASH_SOURCE[0]}")/pipeline.sh" disco "$@"
+fi
 set -euo pipefail
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-source "$ROOT/f/common.sh" "$@"; grid_parse_args "$@"
-trait=${GRID_TRAIT,,}; out="$GRID_OUTPUT_ROOT/$trait"; csx="$out/scores/csx.tsv.gz"; [[ -s $csx ]] || _grid_die "Run ./csx.sh --trait $trait first"
-# Locate the PCA projection produced by the PCA preparation script.
-pca=''
-for f in "$GRID_PCA_FILE" "$GRID_OUTPUT_ROOT/reference/pca/ukb.projected.tsv.gz" /mnt/d/data/ukb/phe/pca/ukb.pca.projected.tsv.gz /mnt/d/data/ukb/phe/pca/ukb_pca_projected.tsv.gz /mnt/d/data/ukb/phe/pca/ukb.pca.tsv.gz /mnt/d/data/ukb/phe/pca/ukb.pca.rds; do [[ -s $f ]] && { pca=$f; break; }; done
-mkdir -p "$out/scores" "$out/log"
-cmd=(Rscript "$ROOT/f/disco_zero.R" --csx "$csx" --out "$out/scores/disco_zero.tsv.gz" --centers "$GRID_MED_FILE" --ancestry "$GRID_ANCESTRY_FILE" --n-pcs "$GRID_DISTANCE_PCS")
-[[ -z $pca ]] || cmd+=(--pca "$pca")
-grid_run_logged "$out/log/disco.log" "${cmd[@]}"
-echo "DiscoDivas zero-shot comparator completed: $out/scores/disco_zero.tsv.gz"
+trait=$GRID_TRAIT
+score_home="$GRID_SCORE_DIR/$trait${suffix:+/${suffix#.}}"
+io="$ROOT/f/pipeline_io.py"
+need "$GRID_PCA_FILE"; need "$GRID_MED_FILE"
+echo "input PCA: $GRID_PCA_FILE"
+echo "input reference centers: $GRID_MED_FILE"
+inputs=("$score_home/csx.pgs.gz")
+need "${inputs[0]}"
+[[ -z $GRID_REMOVE ]] || need "$GRID_REMOVE"
+echo "input score file: ${inputs[0]}"
+echo "output score files: $score_home/disco.pgs.gz; $score_home/disco.coef.tsv.gz"
+[[ ! -s $GRID_REMOVE ]] || inputs+=("$GRID_REMOVE")
+python3 - "$GRID_DISCO_A" "$GRID_DISTANCE_PCS" <<'PY'
+import math,sys
+x=list(map(float,sys.argv[1].split(',')))
+assert len(x)==4 and all(math.isfinite(v) and v>=0 for v in x) and any(x), '--a-list requires four nonnegative values, at least one positive'
+assert 5<=int(sys.argv[2])<=20, '--distance-pcs must be 5..20'
+PY
+rcheck='p<-c("data.table","dplyr","stringr","rio","optparse"); m<-p[!vapply(p,requireNamespace,logical(1),quietly=TRUE)]; if(length(m))stop("Missing R packages: ",paste(m,collapse=","))'
+disco_r=(Rscript)
+if ! "${disco_r[@]}" -e "$rcheck" >/dev/null 2>&1; then
+  disco_r=(env -u R_ENVIRON_USER -u R_LIBS_USER /usr/bin/Rscript)
+  "${disco_r[@]}" -e "$rcheck" || _grid_die 'No R installation has the required DiscoDivas packages'
+fi
+echo "Disco R runtime: ${disco_r[*]}"
+[[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]] || { echo 'CHECK/PLAN complete; no Disco calculation executed'; return 0; }
+sig=$(python3 "$io" signature "$GRID_DISCO_A" "$GRID_REGRESS_PCA" "$GRID_DISTANCE_PCS" --files "${inputs[@]}" "$GRID_PCA_FILE" "$GRID_MED_FILE" "$io" "$ROOT/f/disco.sh" "$ROOT/f/disco/DiscoDivas.R" "$ROOT/f/score_output.py")
+run="$work/$trait/$sig"; mkdir -p "$run" "$work/log/$trait"
+cache_sig="$work/$trait/disco.signature"
+exec {lock}>"$work/$trait/run.lock"; flock -n "$lock" || _grid_die "Another Disco run is active for $trait"
+if [[ -s $score_home/disco.pgs.gz && -s $score_home/disco.coef.tsv.gz && -s $cache_sig && $(cat "$cache_sig") == "$sig" && $GRID_REPLACE == FALSE ]]; then
+  echo "SKIP $trait: matching permanent Disco results"; return 0
+fi
+grid_run_logged "$work/log/$trait/prepare.log" python3 "$io" disco-inputs "$GRID_PCA_FILE" "$GRID_MED_FILE" "$score_home" "$run" "$GRID_DISTANCE_PCS" "$GRID_REMOVE"
+grep '^Disco ' "$work/log/$trait/prepare.log"
+prs=(); for p in "${POPS[@]}"; do prs+=("$run/$p.tsv"); done
+grid_run_logged "$work/log/$trait/disco.log" "${disco_r[@]}" "$ROOT/f/disco/DiscoDivas.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
+grid_run_logged "$work/log/$trait/validate.log" python3 "$io" disco-output "$run/disco.tsv.gz" "$run"
+grid_run python3 "$ROOT/f/score_output.py" disco "$run/disco.tsv.gz" "$score_home/disco.pgs.gz" --remove "$GRID_REMOVE"
+publish "$run/disco.coef.tsv.gz" "$score_home/disco.coef.tsv.gz"
+printf '%s\n' "$sig" > "$run/signature"; publish "$run/signature" "$cache_sig"
+# Permanent provenance stays usable even after deleting the scratch directory.
+{ printf 'key\tvalue\n'; printf 'PCA\t%s\ncenters\t%s\nPCs\t%s\nA\t%s\nregress_PCA\t%s\n' "$GRID_PCA_FILE" "$GRID_MED_FILE" "$GRID_DISTANCE_PCS" "$GRID_DISCO_A" "$GRID_REGRESS_PCA"; for p in "${POPS[@]}"; do printf '%s\t%s\n' "$p" "$score_home/csx.pgs.gz"; done; } > "$run/manifest.tsv"
+publish "$run/manifest.tsv" "$score_home/disco.manifest.tsv"
+echo "DONE $trait: $score_home/disco.pgs.gz"

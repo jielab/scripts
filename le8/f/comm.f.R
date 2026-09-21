@@ -86,7 +86,7 @@ gwas_magma_dir_from_clean_file <- function(file) {
 }
 prot_bed_file <- find_first_existing(c(Sys.getenv("LE8_PROT_BED", unset = ""),
                                       file.path(dir.X, "ppp_3k.b38.bed"),
-                                      file.path(dir0, "files", "ppp_3k.38.bed")),
+                                      "/mnt/e/gwas/prot/ppp_3k.38.bed"),
                                     file.path(dir.X, "ppp_3k.b38.bed"))
 met_list_file <- find_first_existing(c(Sys.getenv("LE8_MET_LIST", unset = ""), file.path(common_dir, "met.lst"),
                                        "D:/data/ukb/phe/common/met.lst"), file.path(common_dir, "met.lst"))
@@ -126,6 +126,7 @@ required_file <- function(path, label = "file") {
 read_all <- function(select_vars = NULL) {
   x <- readRDS(required_file(file.path(indir, "Rdata/all.rds"), "UKB phenotype all.rds"))
   x <- le8_select_phenotypes(x)
+  x <- le8_rebuild_baseline(x, out.base)
   if (!is.null(select_vars)) x <- x[, intersect(unique(c(select_vars,le8_custom_covars)), names(x)), drop = FALSE]
   x
 }
@@ -220,6 +221,32 @@ write_stage_cache <- function(data, path) {
 cache_message <- function(label, path) {
   message(label, " already exists, skip ", label, " step: ", path,
           ". Delete this existing file (or its step folder) to re-run.")
+}
+# Emit only major stage boundaries; routine package output stays in the file log.
+le8_stage_start <- function(label, detail = "") {
+  message("[LE8] START ", label, if (nzchar(detail)) paste0(" ", detail) else "")
+  proc.time()[["elapsed"]]
+}
+le8_stage_done <- function(label, started, detail = "") {
+  message("[LE8] DONE ", label, " elapsed=", sprintf("%.1f", (proc.time()[["elapsed"]]-started)/60),
+    " min", if (nzchar(detail)) paste0(" ", detail) else "")
+  invisible(NULL)
+}
+le8_stage <- function(label, expr, detail = "") {
+  started <- le8_stage_start(label, detail)
+  value <- tryCatch(withVisible(force(expr)), error = function(e) {
+    message("[LE8] FAIL ", label, ": ", conditionMessage(e))
+    stop(e)
+  })
+  status <- ""
+  if (is.list(value$value) && is.character(value$value$status) && length(value$value$status) == 1L)
+    status <- paste0("status=", value$value$status)
+  if (is.numeric(value$value) && length(value$value) == 1L && is.finite(value$value))
+    status <- paste0("exit=", value$value)
+  failed <- (is.numeric(value$value) && length(value$value)==1L && is.finite(value$value) && value$value!=0) ||
+    (nzchar(status) && grepl("status=failed",status,fixed=TRUE))
+  if (failed) message("[LE8] FAIL ",label," ",status) else le8_stage_done(label, started, status)
+  if (value$visible) value$value else invisible(value$value)
 }
 parallel_map <- function(x, fun) {
   # Release unreachable model frames before forking so children inherit a
@@ -599,9 +626,14 @@ read_sumstat <- function(file, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N",
   if (is.na(file) || !file.exists(file) || file.size(file) == 0) return(tibble())
   standardize_sumstat(read_table_auto(file), N_default, joint = joint, source_file = file)
 }
+read_sumstat_header <- function(path) {
+  con <- if (grepl("\\.gz$", path)) gzfile(path, "rt") else base::file(path, "rt")
+  on.exit(close(con), add = TRUE)
+  readLines(con, n = 1, warn = FALSE)
+}
 read_sumstat_region <- function(file, chr, start, end, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000"))) {
   if (is.na(file) || !file.exists(file) || file.size(file) == 0) return(tibble())
-  hdr <- tryCatch(readLines(if (grepl("\\.gz$", file)) gzfile(file, "rt") else base::file(file, "rt"), n = 1), error = function(e) "")
+  hdr <- tryCatch(read_sumstat_header(file), error = function(e) "")
   d <- NULL
   nms <- if (nzchar(hdr)) strsplit(hdr, "\t", fixed = TRUE)[[1]] else character()
 
@@ -651,7 +683,7 @@ read_sumstat_region <- function(file, chr, start, end, N_default = as.numeric(Sy
 read_sumstat_snps <- function(file, snps, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000"))) {
   snps <- unique(as.character(snps)); snps <- snps[!is.na(snps) & nzchar(snps)]
   if (!length(snps) || is.na(file) || !file.exists(file)) return(tibble())
-  hdr <- tryCatch(readLines(if (grepl("\\.gz$", file)) gzfile(file, "rt") else base::file(file, "rt"), n = 1), error = function(e) "")
+  hdr <- tryCatch(read_sumstat_header(file), error = function(e) "")
   d <- NULL
   if (nzchar(hdr) && Sys.info()[["sysname"]] != "Windows" && nzchar(Sys.which("awk"))) {
     nms <- strsplit(hdr, "\t", fixed = TRUE)[[1]]
@@ -968,6 +1000,7 @@ if (!nzchar(.le8_patch_fdir)) {
 Sys.setenv(LE8_FDIR = .le8_patch_fdir)
 sys.source(file.path(.le8_patch_fdir,"c1_met_circle.R"), envir = .GlobalEnv)
 sys.source(file.path(.le8_patch_fdir,"analysis_options.R"), envir = .GlobalEnv)
+sys.source(file.path(.le8_patch_fdir,"c0_baseline.R"), envir = .GlobalEnv)
 sys.source(file.path(.le8_patch_fdir,"mock_figures.R"), envir = .GlobalEnv)
 sys.source(file.path(.le8_patch_fdir,"c0_revision_core.R"), envir = .GlobalEnv)
 sys.source(file.path(.le8_patch_fdir,"c2_revision_mr.R"), envir = .GlobalEnv)

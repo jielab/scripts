@@ -24,7 +24,7 @@ cd /mnt/d/scripts/gu
 # Reference data are on I:; TRACE symlinks are on D: because I: is exFAT.
 # 1. PhyML
 PHYML_TREE_CPUS=4 PHYML_TREE_TIMEOUT=86400 ./gu.sh phyml \
-  --loci /mnt/d/data/gwas/main/common/bald0/gwas/bald0.jma.cojo \
+  --loci /mnt/e/gwas/main/common/bald0/gwas/bald0.jma.cojo \
   --loci-format cojo --grch 38 --target 1kg \
   --target-dir /mnt/e/refGen/1kg/37/pfile/chr \
   --jobs 6 --memory-cap 24G --replace-phyml FALSE --foreground TRUE

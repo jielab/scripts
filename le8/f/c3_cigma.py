@@ -29,7 +29,8 @@ def matrix(path):
     if d.shape[1] < 2:
         raise ValueError(f"Expected labelled matrix: {path}")
     d = d.set_index(d.columns[0])
-    if d.index.has_duplicates or d.columns.has_duplicates or d.index.isna().any():
+    if (d.index.has_duplicates or d.columns.has_duplicates or d.index.isna().any()
+            or any(not str(v).strip() for v in d.index)):
         raise ValueError(f"Missing/duplicate identifiers: {path}")
     d = d.apply(pd.to_numeric, errors="raise")
     if not np.isfinite(d.to_numpy()).all():
@@ -49,6 +50,9 @@ def aligned(path, donors, columns=None):
 
 
 def read_inputs(row, base):
+    if row.get("ctnu_definition") != "variance_of_pseudobulk_mean":
+        raise ValueError("ctnu_definition must be variance_of_pseudobulk_mean: "
+                         "upstream preprocess.pseudobulk returns SEM squared, not cell variance or SD")
     paths = {k: (base / row[k]).resolve() for k in ("ctp", "ctnu", "P", "K")}
     y = matrix(paths["ctp"])
     if len(y) < 20 or y.shape[1] < 2:
@@ -66,6 +70,8 @@ def read_inputs(row, base):
     k = kin.to_numpy()
     if not np.allclose(k, k.T, atol=1e-7) or np.linalg.eigvalsh(k).min() < -1e-6:
         raise ValueError("Kinship is not symmetric positive semidefinite")
+    if np.allclose(k, np.eye(len(k)) * np.trace(k) / len(k)):
+        raise ValueError("Identity kinship cannot separate genetic and environmental covariance")
     if np.diag(k).min() <= 0 or np.var(y.to_numpy(), axis=0).min() <= 0:
         raise ValueError("Degenerate kinship or unexpressed/constant cell type")
     args = dict(Y=y.to_numpy(), K=k, ctnu=nu.to_numpy(), P=prop.to_numpy())
@@ -80,6 +86,8 @@ def read_inputs(row, base):
 
 def bh(values):
     p = np.asarray(values, dtype=float)
+    if ((p[np.isfinite(p)] < 0) | (p[np.isfinite(p)] > 1)).any():
+        raise ValueError("P values must lie in [0,1]")
     result = np.full(len(p), np.nan)
     ok = np.flatnonzero(np.isfinite(p))
     ix = ok[np.argsort(p[ok])]
@@ -93,8 +101,8 @@ def run(manifest, outdir, validate_only=False, seed=2026):
     outdir.mkdir(parents=True, exist_ok=True)
     with manifest.open() as stream:
         rows = list(csv.DictReader(stream, delimiter="\t"))
-    if not rows or not {"gene", "ctp", "ctnu", "P", "K", "tissue", "build", "kinship_scope"} <= rows[0].keys():
-        raise ValueError("Manifest requires gene, ctp, ctnu, P, K, tissue, build, kinship_scope")
+    if not rows or not {"gene", "ctp", "ctnu", "P", "K", "tissue", "build", "kinship_scope", "ctnu_definition"} <= rows[0].keys():
+        raise ValueError("Manifest requires gene, ctp, ctnu, P, K, tissue, build, kinship_scope, ctnu_definition")
     keys = [(r["gene"], r["tissue"]) for r in rows]
     if any(not r[k].strip() for r in rows for k in ("gene", "tissue", "build", "kinship_scope")):
         raise ValueError("Manifest provenance fields must not be blank")
@@ -106,7 +114,7 @@ def run(manifest, outdir, validate_only=False, seed=2026):
         version = importlib.metadata.version("cigma")
     status, results, cells_out, provenance = [], [], [], []
     for row in rows:
-        base = {k: row[k] for k in ("gene", "tissue", "build", "kinship_scope")}
+        base = {k: row[k] for k in ("gene", "tissue", "build", "kinship_scope", "ctnu_definition")}
         try:
             args, cells, paths = read_inputs(row, manifest.parent)
             for role, path in paths.items():

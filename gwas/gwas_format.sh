@@ -17,11 +17,12 @@ Combine modules with commas, for example: format,liftover.
 
 Project and execution:
   --dir-raw DIR --raw-file FILE --gwas NAME[,NAME] --label LABEL
-  --dir-out DIR                Default: /mnt/d/data/gwas/<label>
+  --dir-out DIR                Default: /mnt/e/gwas/<label>
   --category common           Output: <project>/<category>/<trait>/{gwas,magma,pgs,qc}
   --dir-clean DIR             Restrict to one trait's gwas folder
   --grch auto|37|38           Detect the build per GWAS by default
   --jobs 4 --replace FALSE --run-cmd FALSE --foreground TRUE --submit-bsub FALSE
+  --delete-raw FALSE          Delete raw only after all requested modules succeed
   Explicit magma requests run by default unless --run-cmd is supplied.
 
 Key analysis settings (all defaults are editable below in this script):
@@ -41,6 +42,8 @@ Key analysis settings (all defaults are editable below in this script):
   --liftover FALSE --chain FILE --liftover-bin liftOver
   --cis-bed FILE --cis-flank 100000
   --p-lead 5e-8 --lead-window 1000000 --chr all --refgen-pop EUR
+    A successful COJO run selecting no SNPs completes with no_snps_selected;
+    PGS then writes a header-only result and a completion marker.
   --refgen-id-dir DIR --refgen-clump PREFIX --refgen-cojo PREFIX
   --magma-ref PREFIX --gene-loc FILE --synonyms FILE --window 0,0 --sample-size NUMBER
   --add-panel none|magma --plot-width 13.333333 --plot-height auto --plot-res 180
@@ -53,23 +56,23 @@ Examples:
 cd /mnt/d/scripts/gwas
 
 # Main GWAS: raw downloads -> standardized tables -> MAGMA/lead SNPs -> plots/PGS.
-./gwas_format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/d/data/gwas/main \
+./gwas_format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/e/gwas/main \
   --grch auto --hm3 FALSE --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh magma --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh lead --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
 ./gwas_format.sh mplot --label met --grch 38 --add-panel magma --write-sig TRUE --run-cmd TRUE --foreground TRUE --jobs 8
 ./gwas_format.sh pgs --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
-bash /mnt/d/data/gwas/main/pgs/pgs.step2.cmd
+bash /mnt/e/gwas/main/pgs/pgs.step2.cmd
 
 # Optional protein cis extraction after formatting the prot project.
-./gwas_format.sh cis --label prot --grch 38 --cis-bed /mnt/d/files/ppp_3k.38.bed --run-cmd TRUE --foreground TRUE --jobs 4
+./gwas_format.sh cis --label prot --grch 38 --cis-bed /mnt/e/gwas/prot/ppp_3k.38.bed --run-cmd TRUE --foreground TRUE --jobs 4
 
 # 为已有 GWAS 仅生成 .thin.gz；跳过有效结果，8 个 GWAS 并发。
 # 在同一个 Bash / WSL 终端复制运行完整一段。
 cd /mnt/d/scripts/gwas
 for project in 4grid main met prot; do
   ./gwas_format.sh thin \
-    --dir-out "/mnt/d/data/gwas/$project" --label "$project" --category common \
+    --dir-out "/mnt/e/gwas/$project" --label "$project" --category common \
     --grch auto --hm3 FALSE --thin TRUE --thin-chr-max 10000 \
     --replace FALSE --run-cmd TRUE --foreground TRUE --jobs 8 || break
 done
@@ -286,12 +289,12 @@ if [[ -z "$label" ]]; then
     label=met
   fi
 fi
-[[ -z "$cis_bed" && "$label" == prot ]] && cis_bed="$dir0/files/ppp_3k.38.bed"
+[[ -z "$cis_bed" && "$label" == prot ]] && cis_bed="/mnt/e/gwas/prot/ppp_3k.38.bed"
 
 if [[ -n "$dir_out_arg" ]]; then
   dir_out="$dir_out_arg"
 else
-  dir_out="/mnt/d/data/gwas/$label"
+  dir_out="/mnt/e/gwas/$label"
 fi
 
 if [[ -n "$dir_raw_arg" ]]; then

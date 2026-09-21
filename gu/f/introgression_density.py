@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 8
+SCHEMA = 9
 
 
 def whole_chromosome_run(text, chrom):
@@ -29,14 +29,14 @@ def whole_chromosome_run(text, chrom):
     return any(row[:2]==['format','vcf'] for row in source)
 
 def neanderthal_summary(con, dataset, build, samples, lengths, targets):
-    """Exact autosomal union per individual; targets certify whole-chromosome runs.
+    """Exact Altai autosomal union; targets certify whole-chromosome runs.
 
     Untested individuals remain missing, including when provenance is unavailable.
     Do not infer a denominator from positive calls or extrapolate partial genomes.
     """
     burden = dict.fromkeys(samples, 0)
     autosomes=set(map(str,range(1,23)))
-    rows = con.execute("SELECT sample_id,chr,start,end FROM segments WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND source_class='Neanderthal' ORDER BY sample_id,chr,start,end", (dataset, build))
+    rows = con.execute("SELECT sample_id,chr,start,end FROM segments WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND source='Altai' ORDER BY sample_id,chr,start,end", (dataset, build))
     for sample, chrom, left, right in merged_intervals(rows):
         if chrom in autosomes and sample in burden and sample in targets.get(chrom, set()):
             burden[sample] += max(0, min(lengths[chrom], right) - max(0, left))
@@ -149,9 +149,9 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
             for lineage, has_refs in [('Neanderthal',bool(neand_refs)),('Denisovan',not background_only and any('denis' in ref.lower() for ref in refs))]:
                 if has_refs and whole and run_targets:
                     lineage_targets[lineage].setdefault(chrom,set()).update(run_targets)
-            if chrom in map(str,range(1,23)) and whole and neand_refs and run_targets:
+            if chrom in map(str,range(1,23)) and whole and 'Altai' in neand_refs and run_targets:
                 summary_targets.setdefault(chrom,set()).update(run_targets)
-                summary_refs.update(neand_refs)
+                summary_refs.add('Altai')
         tested &= neanderthal_tested  # a Denisova-only run did not test Neanderthal ancestry
         # Use the actual caller target, not the larger annotation panel.
         samples=sorted(called|set().union(*targets.values()),key=lambda s:(metadata.get(s,('UNKNOWN','UNKNOWN'))[1],metadata.get(s,('UNKNOWN','UNKNOWN'))[0],s))
@@ -187,10 +187,13 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
         print(f'DENSITY summarizing Neanderthal autosomes: {len(summary_targets)}/22 chromosomes',flush=True)
         write_tsv_rows(stage/'neanderthal_summary.tsv', ['sample_id','chromosomes','n_chromosomes','tested_bp','haploid_bp','neanderthal_bp','coverage_pct'],
                        neanderthal_summary(con,dataset,build,samples,lengths,summary_targets))
+        filters=[]
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name='ibdmix_filter_runs'").fetchone():
+            filters=[dict(chrom=c,status=s,daf_status=d) for c,s,d in con.execute('SELECT chr,status,daf_status FROM ibdmix_filter_runs WHERE dataset_id=? AND genome_build=?',(dataset,build))]
         (stage/'manifest.json').write_text(json.dumps(dict(signature,dataset=dataset,build=build,n_samples=len(samples),n_bins=len(bins),union_intervals=unions,x_male_only=x_male,
             legacy_chromosomes=legacy_chromosomes,profiles=profiles,diploid_autosome_bp=2*sum(lengths.get(str(ch),0) for ch in range(1,23)),
             lineages=['Neanderthal','Denisovan'],definition='Per-lineage union bp / diploid bin span (male non-PAR X: haploid); percent; untested entries are missing',
-            summary_definition='Neanderthal union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage',summary_references=sorted(summary_refs)),indent=2))
+            summary_definition='Altai-only union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage',summary_references=sorted(summary_refs),ibdmix_filters=filters),indent=2))
         os.replace(stage,dest)
         write_tsv_rows(pointer,['directory'],[{'directory':version}])
         print(f'DENSITY ready {dest}',flush=True)

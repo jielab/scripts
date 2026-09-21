@@ -9,7 +9,7 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c4_pgs_bridge.R"))
 })
 LE8_JOB <- "c4_connect"
-C4_CODE_VERSION <- "2026-09-05.5c-audit-v1"
+C4_CODE_VERSION <- "2026-09-15.measured-cohort-first"
 MAX_N <- as.integer(Sys.getenv("C4_MAX_N", unset = "60000"))
 BLOCK <- as.integer(Sys.getenv("C4_BLOCK", unset = "80"))
 FDR_CUT <- as.numeric(Sys.getenv("C4_FDR", unset = "0.05"))
@@ -116,7 +116,10 @@ mediation_one <- function(dat, component_var, feature, covars, tvar, evar, B=100
   }
   boot<-boot[is.finite(boot)];blo<-if(length(boot)>=20)as.numeric(quantile(boot,.025,names=FALSE))else NA_real_;bhi<-if(length(boot)>=20)as.numeric(quantile(boot,.975,names=FALSE))else NA_real_
   tibble(component=sub("\\.pts$","",component_var),component_var,feature,n=nrow(d),events=sum(d[[evar]]==1),a_beta=a,b_beta=b,total_beta=total,direct_beta=direct,indirect_beta=ind,indirect_se=seind,indirect_p=p,
-         indirect_lo=blo,indirect_hi=bhi,bootstrap_valid=length(boot),prop_mediated=ifelse(total!=0,ind/total,NA_real_))
+         indirect_lo=blo,indirect_hi=bhi,bootstrap_valid=length(boot),prop_mediated=ifelse(total!=0,ind/total,NA_real_),
+         estimator="Baseline linear-by-Cox coefficient product; associational decomposition",
+         causal_identified=FALSE,
+         interpretation="prop_mediated is a descriptive coefficient ratio, not an identified natural indirect-effect fraction")
 }
 
 make_genetic_edges <- function(disc,rep,disease,membership){
@@ -375,8 +378,17 @@ run_c4_layer <- function(layer=c("protein","metabolite")) {
   dat0<-all0[,intersect(need,names(all0)),drop=FALSE]|>filter_analysis_cohort()|>make_outcome(Y);rm(all0);invisible(gc())
   tvar<-paste0(Y,".t2e");evar<-paste0(Y,".Yt2e");bvar<-paste0(Y,".b2e")
   comps<-intersect(vars.le8,names(dat0));covs<-intersect(if(le8_custom_adjustment())le8_custom_covars else vars.basic,names(dat0))
-  dat0<-dat0[complete.cases(dat0[,comps,drop=FALSE]),,drop=FALSE]|>stratified_sample(evar,MAX_N)
-  # Sample participants before joining the wide omics matrix; this materially reduces C4 peak memory.
+  dat0$eid<-as.character(dat0$eid);biom$eid<-as.character(biom$eid)
+  if(anyDuplicated(dat0$eid)||anyDuplicated(biom$eid))stop("Duplicate phenotype/omic eid")
+  # Restrict to measured donors BEFORE the cap. Sampling all UKB first discards
+  # most proteomic donors because only a subset has the assay panel.
+  cohort_audit<-tibble(stage="eligible phenotype",N=nrow(dat0))
+  dat0<-dat0[dat0$eid%in%biom$eid&complete.cases(dat0[,comps,drop=FALSE]),,drop=FALSE]
+  cohort_audit<-bind_rows(cohort_audit,tibble(stage="measured omics and complete LE8",N=nrow(dat0)))
+  set.seed(SEED);dat0<-stratified_sample(dat0,evar,MAX_N)
+  cohort_audit<-bind_rows(cohort_audit,tibble(stage="after cap within measured cohort",N=nrow(dat0)))
+  write_raw_csv(cohort_audit,"c4.cohort_sampling_audit.csv",rawdir)
+  # Join the wide matrix only after eligibility/capping to keep peak memory low.
   dat<-inner_join(dat0,biom|>filter(eid%in%dat0$eid),by="eid")
   rm(biom,dat0);invisible(gc())
   fold<-stratified_split(dat,evar)
@@ -459,5 +471,5 @@ run_c4_layer <- function(layer=c("protein","metabolite")) {
   saveRDS(out,cache,compress="xz");finalize_outputs(LE8_JOB,outdir);out
 }
 
-if(prot_DO){invisible(run_c4_layer("protein"));gc(full=TRUE)}
-if(met_DO){invisible(run_c4_layer("metabolite"));gc(full=TRUE)}
+if(prot_DO){invisible(le8_stage("C4/connect/protein", run_c4_layer("protein")));gc(full=TRUE)}
+if(met_DO){invisible(le8_stage("C4/connect/metabolite", run_c4_layer("metabolite")));gc(full=TRUE)}

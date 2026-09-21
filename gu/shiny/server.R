@@ -448,7 +448,7 @@ function(input, output, session) {
     version <- data.table::fread(pointer)$directory[[1]]
     path <- file.path(root,version)
     manifest <- jsonlite::fromJSON(file.path(path,"manifest.json"))
-    validate(need(!is.null(manifest$schema) && manifest$schema>=7,"请运行 gu.sh shiny 更新双谱系密度缓存。"))
+    validate(need(!is.null(manifest$schema) && manifest$schema>=9,"请运行 gu.sh final 更新过滤结果和 Altai 常染色体统计。"))
     info<-file.info(db_path)
     validate(need(!is.null(manifest$mtime_ns) && !is.null(manifest$size) &&
       abs(as.numeric(info$mtime)*1e9-manifest$mtime_ns)<1e6 && info$size==manifest$size,

@@ -58,9 +58,21 @@ def file_identity(path):
     return [str(path),st.st_size,st.st_mtime_ns]
 
 
+def validate_sumstats(cache):
+    if not cache.is_file():
+        raise ValueError('Missing pre-generated sumstats: '+str(cache))
+    with gzip.open(cache,'rt') as handle:
+        if not {'SNP','A1','A2','Z','N'}.issubset(handle.readline().split()) or not handle.readline().strip():
+            raise ValueError('Empty/invalid pre-generated sumstats: '+str(cache))
+
+
 def prepare(source, merge_alleles, software, interpreter, fallback_n=None, allow_build='True'):
     source=Path(source).resolve()
     cache,meta,auditfile=cache_paths(source)
+    if allow_build != 'True':
+        validate_sumstats(cache)
+        print('Reuse pre-generated sumstats: '+str(cache),flush=True)
+        return
     meta.parent.mkdir(parents=True,exist_ok=True)
     # Lock the directory inode, avoiding persistent per-trait lock files.
     with directory_lock(source.parent):
@@ -73,7 +85,6 @@ def prepare(source, merge_alleles, software, interpreter, fallback_n=None, allow
         if (cache.is_file() and auditfile.is_file() and prior.get('signature')==signature
                 and prior.get('output')==str(file_identity(cache))):
             print('Reuse munged GWAS: '+str(cache),flush=True); return
-        if allow_build!='True': raise ValueError('Missing or stale sumstats cache: '+str(cache))
         print('Prepare munged GWAS: '+str(cache),flush=True)
         with tempfile.TemporaryDirectory(prefix='.ldsc-',dir=source.parent) as work:
             prefix=Path(work)/source.name.removesuffix('.gz'); fixed=str(prefix)+'.input.gz'
@@ -135,7 +146,7 @@ def main():
     files=[Path(x.strip()).resolve() for x in a.gwas_files.split(',')]
     if any(not f.is_file() for f in files): p.error('Input file missing')
     if a.N is not None and a.N<=0: p.error('--N must be positive')
-    if not Path(a.merge_alleles).is_file(): p.error('Missing --merge-alleles file')
+    if a.run_munge and not Path(a.merge_alleles).is_file(): p.error('Missing --merge-alleles file')
     validate_references(a.ref_ld_chr,a.w_ld_chr)
     out=Path(a.output_dir).resolve(); out.mkdir(parents=True,exist_ok=True)
     python=[a.python] if a.python else [a.conda,'run','--no-capture-output','-n',a.conda_env,'python']
@@ -148,6 +159,12 @@ def main():
     for folder in ('h2.log','rg.log'):
         (out/folder).mkdir(exist_ok=True)
     for f,trait in zip(files,labels):
+        cache,_,_=cache_paths(f)
+        if not a.run_munge:
+            validate_sumstats(cache)
+            names.append((trait,str(cache)))
+            statuses.append((str(f),'SCHEDULED','Pre-generated adjacent sumstats; standard LDSC/reference covers 1-22 only'))
+            continue
         with (gzip.open(f,'rt') if f.suffix=='.gz' else f.open()) as handle:
             header=handle.readline().strip().split()
         if 'N' not in header and a.N is None:

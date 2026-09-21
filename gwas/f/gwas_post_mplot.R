@@ -129,10 +129,13 @@ render_self <- function(path) {
   }
 
   read_gwas <- function(x) {
-    if (requireNamespace("data.table", quietly = TRUE)) {
+    compressed <- grepl("\\.(gz|bgz)$", x, ignore.case = TRUE)
+    # fread needs the optional R.utils package for compressed inputs.
+    if (requireNamespace("data.table", quietly = TRUE) &&
+        (!compressed || requireNamespace("R.utils", quietly = TRUE))) {
       data.table::fread(x, showProgress = FALSE, data.table = FALSE)
     } else {
-      con <- if (grepl("\\.gz$", x, ignore.case = TRUE)) gzfile(x) else x
+      con <- if (compressed) gzfile(x, open = "rt") else file(x, open = "rt")
       on.exit(close(con), add = TRUE)
       utils::read.table(con, header = TRUE, sep = "\t", quote = "", comment.char = "",
                         check.names = FALSE)

@@ -209,7 +209,7 @@ plot_volcano <- function(label, dat, X, BETA, P, sig, label_x, label_y, topN = N
 		      legend.position = "none", plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
 }
 
-plot_pwas <- function(res, bed = "/mnt/d/files/ppp_3k.38.bed", protein = "term", beta = "statistic", p = "p.value",
+plot_pwas <- function(res, bed = "/mnt/e/gwas/prot/ppp_3k.38.bed", protein = "term", beta = "statistic", p = "p.value",
 	sig = NULL, topN = 30, title = NULL, label_top = TRUE) {
 	pacman::p_load(data.table, dplyr, ggplot2, ggrepel)
 	bed0 <- fread(bed, col.names = c("chr", "start", "end", "protein0")) %>%

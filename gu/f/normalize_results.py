@@ -7,7 +7,7 @@ clustering. This gives each participant 0-N stable-ish tract codes analogous to 
 ICD event table, while preserving the original calls for sensitivity analyses.
 """
 from __future__ import annotations
-import argparse, bisect, fcntl, gzip, hashlib, math, os, re, shutil, sqlite3, tempfile
+import argparse, bisect, fcntl, gzip, hashlib, json, math, os, re, shutil, sqlite3, tempfile
 from contextlib import contextmanager
 from pathlib import Path
 import pandas as pd
@@ -215,7 +215,8 @@ def batch_from_path(f, method):
     return ''
 
 
-def iter_ibdmix(root,build,completed_runs=None):
+def iter_ibdmix(root,build,completed_runs=None,filter_output=None,daf_mask=None,audits=None):
+    from ibdmix_final_filter import prepare
     files=find_first(root,[
         "ibdmix/**/final/all_archaic_refs*.segments.tsv.gz",
         "ukb/ibdmix/**/final/all_archaic_refs*.segments.tsv.gz",
@@ -230,7 +231,13 @@ def iter_ibdmix(root,build,completed_runs=None):
         if meta.get('pipeline_version') and not (f.parent.parent/'.complete').exists():
             continue  # never integrate an interrupted or partially replaced run
         batch=batch_from_path(f,'ibdmix')
-        for d in pd.read_csv(f,sep='\t',compression='infer',chunksize=200000):
+        filtered,audit=prepare(f,filter_output or root/'final/ibdmix_filters',meta,daf_mask)
+        if audits is not None:
+            audits.append((dataset_from_path(f,'ibdmix'),build_norm(meta.get('genome_build'),build),
+                           audit.get('chrom','X' if 'chrX' in str(f) else ''),str(f),str(filtered),
+                           audit['status'],audit['daf']['status'],json.dumps(audit)))
+        print(f'[GU FINAL] IBDmix {f.parent.parent.name}: {audit["status"]}; DAF={audit["daf"]["status"]}',flush=True)
+        for d in pd.read_csv(filtered,sep='\t',compression='infer',chunksize=200000):
             ren={}
             for a,b in [('ID','sample_id'),('chrom','chr'),('length','length_bp'),('slod','score'),('anc','source')]:
                 if a in d: ren[a]=b
@@ -243,7 +250,7 @@ def iter_ibdmix(root,build,completed_runs=None):
             d['haplotype']=pd.NA; d['posterior']=pd.NA; d['trait']=pd.NA
             if 'locus_id' not in d:d['locus_id']=pd.NA
             if 'source' not in d:d['source']='IBDmix_archaic'
-            yield finish(d,'ibdmix',build,f,batch=batch,dataset=dataset_from_path(f,'ibdmix'))
+            yield finish(d,'ibdmix',build,filtered,batch=batch,dataset=dataset_from_path(f,'ibdmix'))
 
 
 def iter_trace(root,build):
@@ -1280,6 +1287,7 @@ def main():
     ap.add_argument('--reference-cache',type=Path,help='Prepared persistent published-callset SQLite cache')
     ap.add_argument('--reference-dataset-id',default='AS3_1KG')
     ap.add_argument('--sample-panel',type=Path,help='1KG sample metadata with sample/pop/super_pop columns')
+    ap.add_argument('--ibdmix-daf-mask',type=Path,default=os.environ.get('GU_IBDMIX_DAF_MASK'),help='Altai GRCh37 top-0.1%% DAF exclusion BED with .json provenance sidecar')
     args=ap.parse_args()
     if args.trajectory_bins<20 or args.trajectory_bins>1000:ap.error('--trajectory-bins must be between 20 and 1000')
     if args.reference_callsets and args.reference_cache:ap.error('use --reference-cache or --reference-callsets, not both')
@@ -1321,11 +1329,17 @@ def main():
         if not args.reference_cache:collapse_reference_callsets(con)
         counts['external_reference']=con.execute('SELECT COUNT(*) FROM reference_callsets').fetchone()[0]
         completed_ibdmix={Path(row[7]).parent for row in method_runs if row[3]=='ibdmix' and row[4]=='complete'}
-        for name,it in [('ibdmix',iter_ibdmix(args.analysis_root,args.build,completed_ibdmix)),('trace',iter_trace(args.analysis_root,args.build)),('as3',iter_as3(args.analysis_root,args.build))]:
+        ibdmix_audits=[]
+        if completed_ibdmix and args.ibdmix_daf_mask is None:
+            print('[GU FINAL] WARNING: Altai DAF filter NOT applied: author exclusion BED unavailable; set GU_IBDMIX_DAF_MASK. Denisovan filters remain enabled.',flush=True)
+        for name,it in [('ibdmix',iter_ibdmix(args.analysis_root,args.build,completed_ibdmix,args.output_dir/'ibdmix_filters',args.ibdmix_daf_mask,ibdmix_audits)),('trace',iter_trace(args.analysis_root,args.build)),('as3',iter_as3(args.analysis_root,args.build))]:
             n=0
             if it is not None:
                 for d in it:n+=insert_df(con,'segments_raw',portable_paths(d,db.parent,['raw_file']))
             counts[name]=n; con.commit()
+        con.execute('CREATE TABLE ibdmix_filter_runs(dataset_id TEXT,genome_build TEXT,chr TEXT,native_file TEXT,filtered_file TEXT,status TEXT,daf_status TEXT,audit_json TEXT)')
+        con.executemany('INSERT INTO ibdmix_filter_runs VALUES(?,?,?,?,?,?,?,?)',ibdmix_audits)
+        con.commit()
         loci=list(loci_tables(parse_root,args.build))
         if loci: insert_df(con,'loci',portable_paths(pd.DataFrame(loci),db.parent,['raw_file','tree_file','stats_file','plot_file']))
         n_phyml_carriers=0
@@ -1356,6 +1370,7 @@ def main():
         export_query(con,'SELECT * FROM reference_callset_overlaps ORDER BY genome_build,reference_population,chr,segment_start,sample_id',summary/'reference_callset_overlaps.tsv.gz')
         export_query(con,'SELECT * FROM sample_populations ORDER BY dataset_id,population,sample_id',summary/'sample_populations.tsv.gz')
         export_query(con,'SELECT * FROM sample_burden ORDER BY dataset_id,genome_build,burden_type,sample_id,method,source_class',summary/'sample_burden.tsv.gz')
+        export_query(con,'SELECT dataset_id,genome_build,chr,native_file,filtered_file,status,daf_status FROM ibdmix_filter_runs',summary/'ibdmix_filters.tsv')
         for method in ('as3','trace','ibdmix'):
             export_query(con,f"SELECT * FROM segments WHERE method='{method}' ORDER BY dataset_id,genome_build,chr,start,end,sample_id",args.output_dir/method/'segments.tsv.gz')
         export_query(con,"SELECT * FROM loci WHERE method='phyml' ORDER BY dataset_id,genome_build,chr,start,end",args.output_dir/'phyml/loci.tsv.gz')

@@ -6,7 +6,9 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c3_cigma.R"))
 })
 LE8_JOB <- "c3_coloc"
-C3_CODE_VERSION <- "2026-09-05.5c-audit-v1"
+C3_CODE_VERSION <- "2026-09-19.mr-fdr-v1"
+source(file.path(fdir, "c3_mr_selection.R"))
+C3_MR_FDR <- as.numeric(Sys.getenv("C3_MR_FDR", unset="0.05"))
 if(!LE8_REUSE_RESULTS)suppressPackageStartupMessages(pacman::p_load(coloc))
 MAX_FEATURES <- as.integer(Sys.getenv("C3_MAX_FEATURES", unset = "200"))
 MAX_LOCI_PER_FEATURE <- as.integer(Sys.getenv("C3_MAX_LOCI_PER_FEATURE", unset = "3"))
@@ -15,8 +17,7 @@ MIN_SNPS <- as.integer(Sys.getenv("C3_MIN_NSNP", unset = "50"))
 H4_STRONG <- as.numeric(Sys.getenv("C3_H4", unset = "0.70"))
 C3_P12 <- c(conservative=1e-6,default=1e-5,liberal=1e-4)
 
-run_gpu_coloc_step <- function(layer, rawdir, manifest, ygfile, outtype) {
-  gpudir <- file.path(rawdir, "gpu_coloc")
+run_gpu_coloc_step <- function(layer, rawdir, manifest, ygfile, outtype, gpudir = file.path(rawdir, "gpu_coloc")) {
   dir.create(gpudir, recursive = TRUE, showWarnings = FALSE)
   result_file <- file.path(gpudir, "gpu_coloc.results.tsv")
   if (!truthy(Sys.getenv("RUN_GPU_COLOC", unset = "TRUE"))) return(invisible(0L))
@@ -34,8 +35,8 @@ run_gpu_coloc_step <- function(layer, rawdir, manifest, ygfile, outtype) {
   invisible(status)
 }
 
-read_gpu_coloc_results <- function(rawdir){
-  gpudir<-file.path(rawdir,"gpu_coloc");rf<-file.path(gpudir,"gpu_coloc.results.tsv");sf<-file.path(gpudir,"signal_preparation_status.tsv")
+read_gpu_coloc_results <- function(rawdir,gpudir=file.path(rawdir,"gpu_coloc")){
+  rf<-file.path(gpudir,"gpu_coloc.results.tsv");sf<-file.path(gpudir,"signal_preparation_status.tsv")
   ans<-list(results=tibble(),status=tibble())
   if(!truthy(Sys.getenv("RUN_GPU_COLOC",unset="TRUE")))return(ans)
   if(file.exists(rf)&&file.size(rf)>0)ans$results<-tryCatch(as_tibble(data.table::fread(rf,showProgress=FALSE,check.names=FALSE)),error=function(e)tibble())
@@ -320,12 +321,35 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
   on.exit(le8_finish_revision(layer, "c3_coloc", .le8_review_env), add=TRUE)
 
   layer<-match.arg(layer);outdir<-if(layer=="protein")out.prot else out.met;setwd2(outdir);rawdir<-le8_job_dir(outdir,LE8_JOB);dir.create(rawdir,recursive=TRUE,showWarnings=FALSE);cache<-file.path(rawdir,"c3.res.rds")
+  if(!is.finite(C3_MR_FDR)||C3_MR_FDR<=0||C3_MR_FDR>=1||
+     !is.finite(MAX_FEATURES)||MAX_FEATURES<1||!is.finite(MAX_LOCI_PER_FEATURE)||MAX_LOCI_PER_FEATURE<1)
+    stop("Invalid C3 MR FDR / feature / locus limits",call.=FALSE)
+  c2f<-file.path(le8_job_dir(outdir,"c2_cause"),"c2.res.rds")
+  if(!file.exists(c2f))stop("C3 requires completed C2 MR results; run C2 first.",call.=FALSE)
+  c2<-readRDS(c2f);mr<-c2$MR %||% tibble()
+  selected_mr<-c3_select_mr(mr,layer,C3_MR_FDR,MAX_FEATURES)
+  candidates<-unique(selected_mr$exposure)
+  message("C3/",layer,": FDR_all < ",C3_MR_FDR,"; ",nrow(selected_mr),
+    " significant MR analyses, ",length(candidates)," features; up to ",MAX_LOCI_PER_FEATURE," loci per feature")
+  base<-if(layer=="protein")dir.X else dir.met.gwas
+  ygfile<-get_y_gwas_file(Y,TRUE)
+  qfiles<-setNames(lapply(candidates,function(feature)find_qtl_files(feature,base,layer)),candidates)
+  input_files<-c(ygfile,unlist(lapply(qfiles,function(fs)fs$full)))
+  selection_signature<-le8_hash_object(list(version=C3_SELECTION_VERSION,
+    mr=as.data.frame(selected_mr[,c("exposure","analysis","pval","FDR_all","instrument_snps","instrument_positions")]),
+    settings=c3_locus_settings(),files=c3_file_stamp(input_files),max_loci=MAX_LOCI_PER_FEATURE,
+    fdr=C3_MR_FDR,H4=H4_STRONG,case_frac=Sys.getenv("COLOC_CASE_FRAC","NA"),
+    gpu=Sys.getenv("RUN_GPU_COLOC","TRUE"),gpu_p12=Sys.getenv("GPU_COLOC_P12","1e-5")))
+  gpudir<-file.path(rawdir,"gpu_coloc","runs",selection_signature)
+  qtl_cache_root<-Sys.getenv("C3_QTL_CACHE_DIR",unset=file.path(dirname(dirname(outdir)),".c3_qtl_cache"))
+  write_raw_csv(selected_mr,"c3.selected_mr.csv",rawdir)
   if(cache_valid(cache)){
     old<-tryCatch(readRDS(cache),error=function(e)NULL)
-    if(!is.null(old)&&all(c("summary","regional","variants")%in%names(old))){
+    if(!is.null(old)&&identical(old$meta$selection_signature,selection_signature)&&
+       all(c("summary","regional","variants")%in%names(old))){
       message("C3/",layer,": reuse locus results and regenerate ",C3_CODE_VERSION," figures")
       plot_coloc_results(old$summary,old$regional,old$variants,layer,outdir)
-      gpu<-old$GPU_coloc%||%read_gpu_coloc_results(rawdir);plot_gpu_coloc_validation(gpu,old$summary,outdir)
+      gpu<-old$GPU_coloc%||%read_gpu_coloc_results(rawdir,gpudir);plot_gpu_coloc_validation(gpu,old$summary,outdir)
       aud<-credible_set_audit(old$summary,old$variants)
       tri<-read_c3_pgs_integration(layer,outdir,old$summary);plot_c3_pgs_integration(tri,outdir)
       write_raw_csv(aud$overall,"c3.credible_set_audit.csv",rawdir);write_raw_csv(aud$by_locus,"c3.credible_set_by_locus.csv",rawdir)
@@ -339,45 +363,51 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
       saveRDS(old,cache,compress="xz");finalize_outputs(LE8_JOB,outdir);return(old)
     }
   }
-  base0<-if(layer=="protein")dir.X else dir.met.gwas;ygfile0<-get_y_gwas_file(Y,TRUE)
-  c1f<-file.path(le8_job_dir(outdir,"c1_correlate"),"c1.res.rds");c2f<-file.path(le8_job_dir(outdir,"c2_cause"),"c2.res.rds")
-  if(!file.exists(c1f))stop("Run C1 first.",call.=FALSE);c1<-readRDS(c1f);assoc<-(c1$association%||%c1$pwas_incident%||%c1$MWAS)|>as_tibble()
-  c2<-if(file.exists(c2f))tryCatch(readRDS(c2f),error=function(e)e) else list()
-  if(inherits(c2,"condition")){
-    warning("C3/",layer,": optional C2 result is unreadable; candidates will be ranked from C1 only: ",
-      conditionMessage(c2),call.=FALSE);c2<-list()
-  }
-  mr<-c2$MR%||%tibble()
-  mr_ranked<-if(nrow(mr)&&all(c("exposure","pval")%in%names(mr)))mr|>
-    filter(is.finite(pval))|>arrange(pval)|>pull(exposure)else character()
-  assoc_ranked<-if(nrow(assoc)&&all(c("term","p.value")%in%names(assoc)))assoc|>
-    filter(is.finite(p.value))|>arrange(p.value)|>pull(term)else character()
-  candidates<-head(unique(c(intersect(le8_csv_env("C1_DIRECTION_ANCHORS","PCSK9,LPA,GDF15,NTPROBNP,MMP12"),assoc$term),mr_ranked,assoc_ranked)),MAX_FEATURES)
-  base<-base0;ann<-layer_annotation(layer,candidates);ygfile<-ygfile0
   outtype<-infer_outcome_type(Y);sfrac<-if(outtype=="cc")get_case_fraction(Y) else NA_real_
   if(outtype=="cc"&&(!is.finite(sfrac)||sfrac<=0||sfrac>=1))message("C3: discovery case fraction not supplied; beta/varbeta cc ABF omits s, rather than substituting cohort prevalence")
+  coloc_started<-le8_stage_start(paste0("C3/",layer," coloc"))
   rows<-list();vrows<-list();rrows<-list();manifest<-list();k<-0L;reused_loci<-0L
-  locus_cache_dir<-file.path(rawdir,"locus_cache");dir.create(locus_cache_dir,recursive=TRUE,showWarnings=FALSE)
+  legacy_files<-list.files(file.path(rawdir,"locus_cache"),pattern="[.]rds$",full.names=TRUE)
+  locus_cache_dir<-file.path(rawdir,"locus_cache","mr_selected_v1")
+  dir.create(locus_cache_dir,recursive=TRUE,showWarnings=FALSE)
+  selection_audit<-list()
+  write_raw_csv(tibble(SNP=character(),analysis=character(),mr_position=character(),
+    feature=character(),selected_lead=logical()),"c3.mr_locus_selection.csv",rawdir)
   for(feature in candidates){
-    q<-read_qtl_instruments(feature,base,layer,ann);iv<-q$instruments;qf<-if(!is.na(q$files$full)) q$files$full else q$files$cis
-    if(!nrow(iv)||is.na(qf)||!file.exists(qf))next
+    feature_started<-Sys.time()
+    message("C3/",layer,": feature ",match(feature,candidates),"/",length(candidates)," ",feature,
+      "; completed loci=",k,", reused=",reused_loci)
+    qf<-qfiles[[feature]]$full
+    if(length(qf)!=1L||is.na(qf)||!file.exists(qf))stop("Missing full QTL for MR-selected feature: ",feature,call.=FALSE)
+    fm<-selected_mr |> filter(exposure==feature)
+    iv<-c3_read_mr_qtl(fm,qf,qtl_cache_root)
     leads<-select_nonoverlapping_leads(iv,MAX_LOCI_PER_FEATURE,WINDOW_BP)
+    selection_audit[[feature]]<-iv |> mutate(feature=feature,selected_lead=SNP %in% leads$SNP)
+    write_raw_csv(bind_rows(selection_audit),"c3.mr_locus_selection.csv",rawdir)
     for(i in seq_len(nrow(leads))){
       k<-k+1
-      cache_name<-sprintf("%04d_%s_chr%s_%s.rds",k,gsub("[^A-Za-z0-9._-]","_",feature),leads$CHR[i],format(leads$POS[i],scientific=FALSE,trim=TRUE))
-      locus_cache<-file.path(locus_cache_dir,cache_name);z<-read_stage_cache(locus_cache)
-      if(!is.list(z)||!all(c("summary","variants","regional")%in%names(z))){
-        z<-coloc_one_locus(feature,layer,qf,leads$CHR[i],leads$POS[i],ygfile,outtype,sfrac)
+      locus_key<-le8_hash_object(list(version=C3_SELECTION_VERSION,feature=feature,layer=layer,
+        chr=leads$CHR[i],pos=leads$POS[i],class=leads$analysis[i],
+        files=c3_file_stamp(c(qf,ygfile)),settings=c3_locus_settings(),outtype=outtype,sfrac=sfrac))
+      locus_cache<-file.path(locus_cache_dir,paste0(locus_key,".rds"))
+      z<-c3_cached_locus(locus_cache,legacy_files,feature,layer,leads$CHR[i],leads$POS[i],
+        leads$analysis[i],qf,ygfile,outtype,sfrac)
+      reused<-is.list(z)&&all(c("summary","variants","regional")%in%names(z))
+      message("  locus ",i,"/",nrow(leads)," chr",leads$CHR[i],":",leads$POS[i],
+        " [",leads$analysis[i],"] ",if(reused)"cache hit"else"computing")
+      if(!reused){
+        z<-coloc_one_locus(feature,layer,qf,leads$CHR[i],leads$POS[i],ygfile,outtype,sfrac,
+          locus_class=leads$analysis[i])
         write_stage_cache(z,locus_cache)
-      } else {
-        reused_loci<-reused_loci+1L
-        if(reused_loci==1L||reused_loci%%25L==0L)
-          message("C3/",layer,": reused ",reused_loci," completed locus caches")
-      }
+      } else reused_loci<-reused_loci+1L
       rows[[k]]<-z$summary;vrows[[k]]<-z$variants;rrows[[k]]<-z$regional
-      manifest[[k]]<-tibble(omics=layer,trait=feature,file=qf,type="quant",region=z$summary$locus)}
+      manifest[[k]]<-tibble(omics=layer,trait=feature,file=qf,type="quant",region=z$summary$locus)
+    }
+    message("C3/",layer,": ",feature," done in ",round(as.numeric(difftime(Sys.time(),feature_started,units="secs")),1),
+      " s; loci=",k,", reused=",reused_loci)
   }
   res<-bind_rows(rows);variants<-bind_rows(vrows);regional<-bind_rows(rrows);mani<-bind_rows(manifest)
+  le8_stage_done(paste0("C3/",layer," coloc"),coloc_started,paste0("loci=",nrow(res)))
   if(!nrow(res)){
     message("C3/",layer,": no QTL locus could be constructed; write auditable empty outputs and blank panels")
     res<-tibble(layer=character(),feature=character(),locus=character(),chr=character(),
@@ -395,8 +425,9 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
     tri<-read_c3_pgs_integration(layer,outdir,res);plot_c3_pgs_integration(tri,outdir)
     write_raw_csv(tri,"c3.pgs_observed_coloc_triangulation.csv",rawdir)
     lists<-list(Causal_Tier1=character(),Causal_Tier2plus=character(),Causal_any=character())
+    saveRDS(lists,file.path(rawdir,paste0("c3.causal_",layer,"_lists.rds")),compress="xz")
     out<-list(meta=module_meta(layer,extra=list(outcome_type=outtype,case_fraction=sfrac,
-      code_version=C3_CODE_VERSION,status="no QTL locus constructed")),summary=res,variants=variants,
+      code_version=C3_CODE_VERSION,selection_signature=selection_signature,status="no QTL locus constructed")),summary=res,variants=variants,
       regional=regional,manifest=mani,GPU_coloc=gpu,causal_lists=lists,credible_set_audit=aud,
       pgs_triangulation=tri)
     saveRDS(out,cache,compress="xz")
@@ -410,15 +441,15 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
   aud<-credible_set_audit(res,variants)
   write_raw_csv(res,"c3.coloc_summary.csv",rawdir);write_raw_csv(variants,"c3.variant_posteriors.csv",rawdir);write_raw_csv(regional,"c3.regional_rows.csv",rawdir);write_raw_tsv(mani,"qtl_cad_manifest.tsv",rawdir)
   write_raw_csv(aud$overall,"c3.credible_set_audit.csv",rawdir);write_raw_csv(aud$by_locus,"c3.credible_set_by_locus.csv",rawdir)
-  run_gpu_coloc_step(layer,rawdir,mani,ygfile,outtype)
+  le8_stage(paste0("C3/",layer," GPU-coloc"), run_gpu_coloc_step(layer,rawdir,mani,ygfile,outtype,gpudir), paste0("loci=",nrow(mani)))
   plot_coloc_results(res,regional,variants,layer,outdir)
-  gpu<-read_gpu_coloc_results(rawdir);plot_gpu_coloc_validation(gpu,res,outdir)
+  gpu<-read_gpu_coloc_results(rawdir,gpudir);plot_gpu_coloc_validation(gpu,res,outdir)
   tri<-read_c3_pgs_integration(layer,outdir,res);plot_c3_pgs_integration(tri,outdir)
   write_raw_csv(tri,"c3.pgs_observed_coloc_triangulation.csv",rawdir)
   lists<-le8_c3_sets(res,mr,layer)
   saveRDS(lists,file.path(rawdir,paste0("c3.causal_",layer,"_lists.rds")),compress="xz")
   if(layer=="protein")saveRDS(lists,file.path(rawdir,"c3.causal_protein_lists.rds"),compress="xz")
-  out<-list(meta=module_meta(layer,extra=list(outcome_type=outtype,case_fraction=sfrac,code_version=C3_CODE_VERSION)),
+  out<-list(meta=module_meta(layer,extra=list(outcome_type=outtype,case_fraction=sfrac,code_version=C3_CODE_VERSION,selection_signature=selection_signature)),
     summary=res,variants=variants,regional=regional,manifest=mani,GPU_coloc=gpu,causal_lists=lists,
     credible_set_audit=aud,pgs_triangulation=tri)
   saveRDS(out,cache,compress="xz");write_xlsx2(list(coloc_summary=res,credible_set_audit=aud$overall,
@@ -427,5 +458,5 @@ run_c3_layer <- function(layer=c("protein","metabolite")) {
     "c3.out.xlsx");finalize_outputs(LE8_JOB,outdir);out
 }
 
-if(prot_DO)run_c3_layer("protein")
-if(met_DO)run_c3_layer("metabolite")
+if(prot_DO)invisible(le8_stage("C3/protein",run_c3_layer("protein")))
+if(met_DO)invisible(le8_stage("C3/metabolite",run_c3_layer("metabolite")))

@@ -92,7 +92,8 @@ le8_mock_enrich<-function(a,enrich,outdir,enrich_prev=tibble()) {
   rawdir<-le8_job_dir(outdir,'c1_correlate');genes<-a$term[a$p.value<.05/nrow(a)&is.finite(a$p.value)]
   sf<-file.path(rawdir,'c1.mock_gene_universe.csv');write_raw_csv(a|>transmute(gene=term,selected=term%in%genes),'c1.mock_gene_universe.csv',rawdir)
   cached<-all(file.exists(file.path(rawdir,c('c1.mock_function_terms.csv','c1.mock_tf_edges.csv','c1.mock_ppi_edges.csv'))))
-  py<-Sys.which('python3');status<-if(LE8_REUSE_RESULTS&&cached)0L else if(nzchar(py))system2(py,shQuote(c(file.path(Sys.getenv('LE8_FDIR'),'mock_annotations.py'),sf,rawdir,file.path(common_dir,'le8_annotations'))),timeout=600)else 1L
+  # Keep public annotation downloads alongside this outcome's C1 outputs.
+  py<-Sys.which('python3');status<-if(LE8_REUSE_RESULTS&&cached)0L else if(nzchar(py))system2(py,shQuote(c(file.path(Sys.getenv('LE8_FDIR'),'mock_annotations.py'),sf,rawdir,file.path(rawdir,'le8_annotations'))),timeout=600)else 1L
   rd<-function(n){f<-file.path(rawdir,n);if(status==0L&&file.exists(f))as_tibble(data.table::fread(f))else tibble()}
   terms<-rd('c1.mock_function_terms.csv');tf<-rd('c1.mock_tf_edges.csv');ppi<-rd('c1.mock_ppi_edges.csv')
   if(!'source'%in%names(terms))terms<-tibble(source=character(),term_name=character(),adjusted_p=numeric())

@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/dingdaisy/cellage",
+  "commit": "a0de4a124e0a41986185a090fb142c6c8195399e",
+  "source_file": "preprocessing/cell_type_mapping_update.csv",
+  "sha256": "6644b5c4fedf6a22815703056aff30c3c186b5d4f9003965b626e3bb4175518b",
+  "paper": "https://doi.org/10.1038/s41591-026-04446-y",
+  "rule": "Authors' supplied Marker Genes, not their SomaScan-only Somamer list",
+  "interpretation": "Cell-enriched expression annotation, not secretion source or CIGMA inference",
+  "rows": 3539,
+  "genes": 3539,
+  "cell_types": 60
+}

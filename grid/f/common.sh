@@ -22,7 +22,7 @@ GRID_JOBS=${GRID_JOBS:-4}
 GRID_THREADS=${GRID_THREADS:-8}
 GRID_REPLACE=${GRID_REPLACE:-FALSE}
 GRID_DRY_RUN=${GRID_DRY_RUN:-FALSE}
-GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/d/data/gwas/4grid}
+GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/e/gwas/4grid/common}
 if [[ -z ${GRID_TARGET_DIR+x} ]]; then
   GRID_TARGET_DIR=/mnt/d/data/ukb/gen/typ
   if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s /mnt/e/ukbGen/37/hap/chr1.pgen ]]; then
@@ -33,7 +33,7 @@ GRID_IMP_DIR=${GRID_IMP_DIR:-/mnt/e/ukbGen/37/imp}
 GRID_PHE_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/phe/Rdata/phe.rds}
 GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}
 GRID_KEEP=${GRID_KEEP:-}
-GRID_REMOVE=${GRID_REMOVE:-}
+GRID_REMOVE=${GRID_REMOVE:-/mnt/d/files/ukb.exclude.id}
 GRID_N_GWAS=${GRID_N_GWAS:-}
 
 # PRS-CSx.
@@ -202,7 +202,7 @@ grid_parse_args(){
   done
   GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT%/}
   [[ -n $GRID_LDSCORE_DIR ]] || GRID_LDSCORE_DIR="$GRID_OUTPUT_ROOT/reference/ldscore"
-  [[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="$GRID_DATA_ROOT/data/ukb/phe/pca/ukb.discodivas.pca.tsv.gz"
+  [[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="$GRID_DATA_ROOT/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
   [[ -n $GRID_ANCESTRY_FILE ]] || GRID_ANCESTRY_FILE="$(dirname -- "$GRID_PCA_FILE")/ukb.ancestry.auto.tsv.gz"
   [[ $GRID_JOBS =~ ^[1-9][0-9]*$ ]] || _grid_die "--jobs must be a positive integer"
   [[ $GRID_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die "--threads must be a positive integer"
@@ -229,7 +229,16 @@ PY
 }
 
 grid_find_gwas(){
-  local trait=${1,,} pop=${2^^} f
+  local trait=${1,,} pop=${2^^} f tag
+  for tag in "$trait.$pop"; do
+    f="$GRID_GWAS_DIR/$tag/gwas/$tag.gz"
+    if [[ -s $f ]]; then printf '%s\n' "$f"; return; fi
+  done
+  # AFA is the source study's African-American label; use the AFR LD panel.
+  if [[ $trait == t2dm && $pop == AFR ]]; then
+    f="$GRID_GWAS_DIR/t2dm.AFA/gwas/t2dm.AFA.gz"
+    if [[ -s $f ]]; then printf '%s\n' "$f"; return; fi
+  fi
   f=$(find -L "$GRID_GWAS_DIR" -maxdepth 1 -type f -iname "${trait}.${pop}.gz" -print -quit 2>/dev/null || true)
   [[ -n $f ]] || return 1
   printf '%s\n' "$f"

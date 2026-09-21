@@ -166,15 +166,15 @@ phe_header_names() {
   local -a patterns=(
     '^snp$|^rsid$|^id$|^variant_id$|^variant_ids$'
     '^chr$|^chrom$|^chromosome$|^chr_name$'
-    '^pos$|^bp$|^base_pair$|^base_pair_location$|^genpos$|^hm_pos$'
-    '^a1$|^ea$|^eff.allele$|^effect_allele$|^allele1$'
-    '^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$'
-    '^eaf$|^a1freq$|^a1_freq$|^effect_allele_frequency'
+    '^pos$|^pos_b37$|^bp$|^base_pair$|^base_pair_location$|^genpos$|^hm_pos$'
+    '^a1$|^ea$|^eff.allele$|^effect_allele$|^allele1$|^alt$'
+    '^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$|^aa$'
+    '^eaf$|^a1freq$|^a1_freq$|^effect_allele_frequency|^ea_freq$|^pooled_alt_af$'
     '^n$|^obs_ct$|^Neff$'
-    '^beta$|^effect_weight$'
+    '^beta$|^effect_weight$|^effect_size$'
     '^se$|^standard_error'
-    '^p$|^pval$|^p_value$|^p_bolt_lmm$'
-    '^log10p$|^neg.log.10.p.value$|^neg.log10.p.value$|^negative.log.10.p.value$|^negative.log10.p.value$|^minus.log10.p$|^mlog10p$'
+    '^p$|^pval$|^p_value$|^p_bolt_lmm$|^pvalue$'
+    '^log10p$|^neg.log.10.p.value$|^neg.log10.p.value$|^negative.log.10.p.value$|^negative.log10.p.value$|^minus.log10.p$|^mlog10p$|^pvalue_neg_log10$'
   )
 
   header_line=$(set +o pipefail; phe_zcat "$file" | head -n 1 | tr '\t' ' ' | sed 's/\r$//')

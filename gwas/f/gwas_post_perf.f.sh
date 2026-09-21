@@ -3,6 +3,7 @@
 # This file is sourced by each generated per-GWAS command after 0data.f.sh.
 
 source "${BASH_SOURCE[0]%/*}/gwas_thin_state.f.sh"
+source "${BASH_SOURCE[0]%/*}/gwas_pgs_empty.f.sh"
 
 # Preserve the original fill function so integrated format-time N filling can
 # skip only its redundant rewrite while retaining match_EAF behavior.
@@ -132,7 +133,7 @@ std_format() {
     -v ea_col="$EA_col" -v nea_col="$NEA_col" -v eaf_col="$EAF_col" -v n_col="$N_col" \
     -v beta_col="$BETA_col" -v se_col="$SE_col" -v p_col="$P_col" -v logp_col="$LOG10P_col" \
     -v fill_n="$FILL_N" -v n_total="${N_TOTAL:-}" -v miss_col="$miss_col" -v audit="$audit" -v gwas="$GWAS" '
-    function get(c, x){x=(c>0 ? $c : "");gsub(/\r/,"",x);return x}
+    function get(c, x){x=(c>0 ? $c : "");gsub(/^[[:space:]]+|[[:space:]]+$/,"",x);return x}
     function val(c, x){x=get(c);return x=="" ? "NA" : x}
     function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
     function validn(x){return x ~ /^[0-9]+([.][0-9]+)?$/ && x+0>0}
@@ -228,7 +229,7 @@ std_hm3() {
     -v ea_col="$EA_col" -v nea_col="$NEA_col" -v eaf_col="$EAF_col" -v n_col="$N_col" \
     -v beta_col="$BETA_col" -v se_col="$SE_col" -v p_col="$P_col" -v logp_col="$LOG10P_col" \
     -v fill_n="$FILL_N" -v audit="$audit" -v gwas="$GWAS" '
-    function get(c,x){x=(c>0?$c:"");gsub(/\r/,"",x);return x}
+    function get(c,x){x=(c>0?$c:"");gsub(/^[[:space:]]+|[[:space:]]+$/,"",x);return x}
     function val(c,x){x=get(c);return x==""?"NA":x}
     function isnum(x){return x~/^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
     function validn(x){return x~/^[0-9]+([.][0-9]+)?$/&&x+0>0}
@@ -423,7 +424,7 @@ gwas_post_prepare_views() {
     }
     NR==1{
       for(i=1;i<=NF;i++){h=toupper($i);sub(/^#/,"",h);c[h]=i}
-      if(want_magma=="TRUE"&&(!("SNP" in c)||!("P" in c))){print "ERROR: MAGMA view requires SNP/P" > "/dev/stderr";exit 2}
+      if(want_magma=="TRUE"&&(!("SNP" in c)||!("P" in c)||!("CHR" in c)||!("POS" in c)||!("EA" in c)||!("NEA" in c))){print "ERROR: MAGMA view requires SNP/P/CHR/POS/EA/NEA" > "/dev/stderr";exit 2}
       if(want_mplot=="TRUE")print > plot_out
       if(want_lead=="TRUE")print > lead_out
       next
@@ -431,7 +432,7 @@ gwas_post_prepare_views() {
     {
       snp=("SNP" in c?$(c["SNP"]):"");p=("P" in c?$(c["P"]):"");n=("N" in c?$(c["N"]):"NA")
       chr=("CHR" in c?normchr($(c["CHR"])):"");pos=("POS" in c?$(c["POS"]):"")
-      if(want_magma=="TRUE"&&snp!=""&&snp!="NA"&&snp!="."&&isnum(p)&&p+0>0&&p+0<=1)print snp,p,n > magma_out
+      if(want_magma=="TRUE"&&snp!=""&&snp!="NA"&&snp!="."&&isnum(p)&&p+0>0&&p+0<=1)print snp,p,n,chr,pos,$(c["EA"]),$(c["NEA"]) > magma_out
       if(want_mplot=="TRUE"&&((snp in hm3)||((chr SUBSEP (pos+0)) in hm3pos)||(isnum(p)&&p+0<plot_p)))print > plot_out
       if(want_lead=="TRUE"&&isnum(p)&&p+0<=lead_p)print > lead_out
     }'
@@ -488,11 +489,31 @@ gwas_post_magma_annotation() {
   flock -u "$lock_fd"; exec {lock_fd}>&-
 }
 
+# Scan a shared reference once, using large reads across Windows mounts.
+gwas_post_magma_reference_chromosomes() {
+  local bim="$1" out="$2" key cache lock_fd
+  key=$( { printf '%s\n' "$bim"; stat -Lc '%s %y' -- "$bim"; } | sha256sum | cut -d ' ' -f 1)
+  cache="${GWAS_POST_TMP_BASE:-${TMPDIR:-/tmp}}/shared/magma/${key}.chromosomes"
+  mkdir -p "${cache%/*}"
+  exec {lock_fd}>"${cache}.lock"
+  flock "$lock_fd"
+  if [[ ! -s "$cache" ]]; then
+    if ! cat -- "$bim" | awk '{ch=$1;sub(/^chr/,"",ch);if(ch=="X")ch=23;if(ch=="Y")ch=24;if(ch=="MT"||ch=="M")ch=25;if(!seen[ch]++)print ch}' > "${cache}.tmp.$$"; then
+      rm -f -- "${cache}.tmp.$$"
+      flock -u "$lock_fd"; exec {lock_fd}>&-
+      return 1
+    fi
+    mv -f -- "${cache}.tmp.$$" "$cache"
+  fi
+  cp -- "$cache" "$out"
+  flock -u "$lock_fd"; exec {lock_fd}>&-
+}
+
 gwas_post_magma() {
   local pval header narg has_usable_n nloc npval meta_tmp
   [[ ",${DO_STEP}," == *,magma,* ]] || return 0
   local reference_chromosomes="$GWAS_POST_TMP/magma.reference.chromosomes"
-  awk '{ch=$1;sub(/^chr/,"",ch);if(ch=="X")ch=23;if(ch=="Y")ch=24;if(ch=="MT"||ch=="M")ch=25;if(!seen[ch]++)print ch}' "${MAGMA_REF}.bim" > "$reference_chromosomes"
+  gwas_post_magma_reference_chromosomes "${MAGMA_REF}.bim" "$reference_chromosomes" || return 1
   if ! gwas_post_check_chromosome_coverage magma "$reference_chromosomes"; then
     rm -f "$MAGMA_DIR/magma.done"
     return 1
@@ -503,6 +524,16 @@ gwas_post_magma() {
   command -v magma >/dev/null 2>&1 || { echo "ERROR: magma not found in PATH" >&2; return 1; }
   gwas_post_prepare_views
   mkdir -p "$MAGMA_DIR"; rm -f "$MAGMA_DIR/magma.done" "$MAGMA_DIR/magma.meta.tsv"
+  local mapped_rows="$GWAS_POST_TMP/$GWAS.magma.rsids.tsv"
+  local mapped_loc="$GWAS_POST_TMP/$GWAS.magma.rsids.loc"
+  gwas_post_log "Prepare compatible MAGMA rsIDs and GRCh$GRCH annotation coordinates"
+  python3 "${PERF_F%/*}/gwas_magma_ids.py" \
+    --rows "$GWAS_POST_MAGMA_ROWS" --output "$mapped_rows" --snploc "$mapped_loc.raw" \
+    --audit "${QC_PREFIX}.magma.ids.tsv" --bim "${MAGMA_REF}.bim" \
+    --dbsnp "/mnt/e/annot/dbsnp/rsids-v154-hg${GRCH/37/19}.tsv.gz" \
+    --cache "$MAGMA_ANNOT_CACHE/rsid-map-v1/GRCh$GRCH" || return 1
+  sort -T "$GWAS_POST_TMP" -S "$GWAS_POST_SORT_MEMORY" -k1,1 -k2,2n -k3,3n -u "$mapped_loc.raw" > "$mapped_loc"
+  GWAS_POST_MAGMA_ROWS="$mapped_rows"
   [[ -z "$MAGMA_N" || "$MAGMA_N" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid MAGMA N: $MAGMA_N" >&2; return 1; }
   if [[ -z "$MAGMA_N" && -s "$GWAS_DIR/$GWAS.magma.N" ]]; then MAGMA_N=$(awk 'NF{print $1;exit}' "$GWAS_DIR/$GWAS.magma.N"); fi
   pval="$GWAS_POST_TMP/$GWAS.pval"
@@ -521,7 +552,7 @@ gwas_post_magma() {
     fi
   fi
   npval=$(( $(wc -l < "$pval") - 1 )); (( npval > 1000 )) || { echo "ERROR: too few MAGMA SNPs: pval=$npval" >&2; return 1; }
-  gwas_post_magma_annotation
+  gwas_post_magma_annotation "$mapped_loc"
   nloc="$MAGMA_SNPLOC_N"
   magma --bfile "$MAGMA_REF" synonyms="$SYNONYMS" --pval "$pval" "$narg" --gene-annot "$MAGMA_ANNOT" --out "$MAGMA_PREFIX"
   [[ -s "$MAGMA_PREFIX.genes.out" && -s "$MAGMA_PREFIX.genes.raw" ]] || { echo "ERROR: MAGMA output missing: $MAGMA_PREFIX" >&2; return 1; }

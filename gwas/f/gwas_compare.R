@@ -5,7 +5,7 @@ args <- commandArgs(TRUE)
 if (!length(args) || any(args %in% c('-h', '--help'))) {
   cat('Usage: gwas_compare.sh compare --gwas-files A.gz,B.gz[,C.gz] [options]\n',
       '--output-dir DIR (default ./gwas_compare) --labels CSV --grch 37|38\n',
-      '--mplot TRUE --compare-beta TRUE --compare-EAF TRUE\n',
+      '--compare-beta TRUE --compare-EAF TRUE\n',
       '--p-threshold 5e-8 --significant first|either|both (default first)\n',
       'Input: SNP CHR POS EA NEA P; BETA/EAF required when compared. Same build required.\n',
       'First GWAS is compared with each follower. Palindromic SNPs and duplicate\n',
@@ -13,11 +13,11 @@ if (!length(args) || any(args %in% c('-h', '--help'))) {
       '\nExamples:\n',
       '  gwas_compare.sh compare --gwas-files A.gz,B.gz,C.gz --labels A,B,C --output-dir qc\n',
       '  gwas_compare.sh compare --gwas-files A.gz,B.gz --significant either --p-threshold 5e-8\n',
-      '  gwas_compare.sh compare --gwas-files A.gz,B.gz --mplot FALSE --compare-beta TRUE --compare-EAF TRUE\n',
+      '  gwas_compare.sh compare --gwas-files A.gz,B.gz --compare-beta TRUE --compare-EAF TRUE\n',
       'Use gwas_compare.sh -h for full paths and output descriptions.\n')
   quit(status=0)
 }
-opt <- list('output-dir'='gwas_compare', mplot='TRUE', 'compare-beta'='TRUE',
+opt <- list('output-dir'='gwas_compare', 'compare-beta'='TRUE',
             'compare-eaf'='TRUE', 'p-threshold'='5e-8', significant='first')
 allowed <- c(names(opt), 'gwas-files', 'labels', 'grch')
 if (length(args) %% 2L) stop('Options require values')
@@ -27,7 +27,7 @@ for (i in seq(1, length(args), 2)) {
   opt[[k]] <- args[i+1]
 }
 flag <- function(x) { if (!toupper(x) %in% c('TRUE','FALSE')) stop('Expected TRUE/FALSE'); toupper(x)=='TRUE' }
-mp <- flag(opt$mplot); cb <- flag(opt[['compare-beta']]); ce <- flag(opt[['compare-eaf']])
+cb <- flag(opt[['compare-beta']]); ce <- flag(opt[['compare-eaf']])
 if (is.null(opt[['gwas-files']])) stop('--gwas-files required')
 files <- trimws(strsplit(opt[['gwas-files']], ',', fixed=TRUE)[[1]])
 if (length(files)<2 || any(!file.exists(files))) stop('Provide at least two existing GWAS files')
@@ -71,19 +71,10 @@ read_gwas <- function(f) {
 first <- read_gwas(files[1])
 base <- first[!duplicate & !pal]
 if(opt$significant %in% c('first','both')) base <- base[P<=threshold]
-audit <- list(); summary <- list(); tracks <- list(); maxima <- numeric(25)
-track <- function(d) {
-  # Deterministic 20kb / 0.1-logP bins keep all significant points and visible background.
-  x <- d[,.(CHR,POS,logP=-log10(pmax(P,1e-300)),P)]
-  x[, bin := paste(CHR,POS %/% 20000, floor(logP*10),sep=':')]
-  x <- x[P<=threshold | !duplicated(bin)]
-  x[,c('bin','P'):=NULL]; x
-}
+audit <- list(); summary <- list()
 for (i in seq_along(files)) {
   d <- if (i==1L) first else read_gwas(files[i])
   audit[[i]] <- data.table(file=files[i],label=labels[i],invalid_rows=attr(d,'invalid'),valid_rows=nrow(d),duplicate_rows=sum(d$duplicate),palindromic_rows=sum(d$pal))
-  if (mp) tracks[[i]] <- track(d)
-  z <- d[,.(end=max(POS)),by=CHR]; maxima[z$CHR] <- pmax(maxima[z$CHR],z$end)
   if (i==1L) { rm(first); gc(verbose=FALSE); next }
   if (!(cb || ce)) next
   if(opt$significant %in% c('first','both')) d <- d[key %in% base$key]
@@ -94,7 +85,15 @@ for (i in seq_along(files)) {
   if (cb) x[flip==TRUE,BETA.other := -BETA.other]
   if (ce) x[flip==TRUE,EAF.other := 1-EAF.other]
   tag <- sprintf('01_vs_%02d',i)
-  fwrite(x,file.path(out,paste0(tag,'.harmonized.tsv.gz')),sep='\t')
+  matched_file <- file.path(out,paste0(tag,'.harmonized.tsv.gz'))
+  if (nrow(x)) {
+    fwrite(x,matched_file,sep='\t')
+  } else {
+    # Some data.table versions omit the gzip trailer for zero-row tables.
+    handle <- gzfile(matched_file,'wt')
+    writeLines(paste(names(x),collapse='\t'),handle)
+    close(handle)
+  }
   for (v in c(if(cb) 'BETA',if(ce) 'EAF')) {
     a <- x[[paste0(v,'.first')]]; b <- x[[paste0(v,'.other')]]
     ok <- is.finite(a)&is.finite(b)
@@ -110,19 +109,6 @@ for (i in seq_along(files)) {
     } else { plot.new(); title(main=paste(v,': no eligible matched significant variants')) }
     dev.off()
   }
-}
-if (mp) {
-  ch <- which(maxima>0); offsets <- c(0,head(cumsum(maxima[ch]+1e6),-1)); names(offsets)<-ch
-  ymax <- max(1,-log10(threshold),unlist(lapply(tracks,function(x) x$logP)))
-  png(file.path(out,'manhattan.compare.png'),width=2600,height=max(1000,600*length(files)),res=180)
-  par(mfrow=c(length(files),1),mar=c(3,4,2,1))
-  for(i in seq_along(files)) {
-    x <- tracks[[i]]
-    plot(x$POS+offsets[as.character(x$CHR)],x$logP,pch=16,cex=.25,
-         col=c('#315780','#d49740')[1+x$CHR%%2],xlim=c(0,sum(maxima[ch]+1e6)),ylim=c(0,ymax),xaxt='n',xlab='',ylab='-log10(P)',main=labels[i])
-    axis(1,at=offsets+maxima[ch]/2,labels=ifelse(ch==23,'X',ifelse(ch==24,'Y',ifelse(ch==25,'MT',ch)))); abline(h=-log10(threshold),lty=2,col='firebrick')
-  }
-  dev.off()
 }
 fwrite(rbindlist(audit),file.path(out,'input_qc.tsv'),sep='\t')
 if(length(summary)) fwrite(rbindlist(summary),file.path(out,'comparison_qc.tsv'),sep='\t')

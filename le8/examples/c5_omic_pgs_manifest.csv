@@ -1,0 +1,3 @@
+layer,file,map_file,source,sample_overlap
+prot,/absolute/path/to/prot.pgs.rds,/absolute/path/to/prot_pgs_map.csv,REPLACE_WITH_INDEPENDENT_PQTL_GWAS_AND_SCORING_VERSION,none
+met,/absolute/path/to/met.pgs.rds,/absolute/path/to/met_pgs_map.csv,REPLACE_WITH_INDEPENDENT_MQTL_GWAS_AND_SCORING_VERSION,none

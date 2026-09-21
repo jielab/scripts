@@ -7,6 +7,6 @@ chrs={str(x) for x in a.chrs.replace(',',' ').split()}; Path(a.out_dir).mkdir(pa
 for d in pd.read_csv(a.input,sep='\t',compression='infer',dtype={'CHR':str},chunksize=200000):
  d['CHR']=d.CHR.str.replace('chr','',case=False,regex=False)
  for c,x in d[d.CHR.isin(chrs)].groupby('CHR'):
-  p=f'{a.out_dir}/{a.prefix}.chr{c}.tsv.gz'; x.to_csv(p,sep='\t',index=False,compression='gzip',mode='wt' if first[c] else 'at',header=first[c]); first[c]=False
+  p=f'{a.out_dir}/{a.prefix}.chr{c}.tsv'; x.to_csv(p,sep='\t',index=False,mode='wt' if first[c] else 'at',header=first[c]); first[c]=False
 for c in chrs:
  if first[c]: raise SystemExit(f'No variants for chromosome {c}')

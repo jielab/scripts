@@ -6,6 +6,7 @@ suppressPackageStartupMessages({
   source(file.path(fdir,"c5_revision_validation.R"))
   source(file.path(fdir,"c1_pgs.R"))
   source(file.path(fdir,"c4_pgs_bridge.R"))
+  source(file.path(fdir,"c4_focus_extensions.R"))
 })
 LE8_JOB<-"c4_focus"
 # Edit f/le8_budget_config.R; C4_FOCUS_BUDGETS=5,10,50 overrides one run.
@@ -20,6 +21,8 @@ focus_stage_signature <- function(name,layer,inputs) {
   le8_hash_object(list(stage=name,layer=layer,outcome=Y,inputs=inputs,size=fi$size,mtime=fi$mtime,
     options=le8_analysis_options(),clinical=covs_use,basic=vars.basic,components=vars.le8,
     follow_end=date_follow_end,seed=SEED,proxy_assignment="fixed Yin halves v1",
+    requested_components=Sys.getenv("C4_FOCUS_COMPONENTS",paste(vars.le8,collapse=",")),
+    clinical_default=unique(c(vars.basic,"smoke.pts","sbp","hba1c_ngsp","bmi","nonhdl")),
     algorithms=lapply(funcs,function(n)deparse(get(n,mode="function"))),
     cap=Sys.getenv("C5_CONNECTION_MAX_N",unset="60000")))
 }
@@ -48,7 +51,7 @@ focus_proxy_accuracy <- function(train,test,features,components,covars,model) {
     tibble(model,component=cmp,N=nrow(te),R2_omics=1-sum((y-only)^2)/den,
       R2_basic=1-sum((y-base)^2)/den,R2_basic_omics=1-sum((y-full)^2)/den,
       delta_R2=(sum((y-base)^2)-sum((y-full)^2))/den,
-      note="Held-out reconstruction of baseline LE8 score; not intervention response")
+      note="Common Yin-trained held-out LE8 reconstruction; not intervention response")
   })
 }
 
@@ -79,14 +82,18 @@ focus_panel <- function(ranked,ys,k,kind,ys_fraction=.8) {
 }
 
 focus_contrasts <- function(metrics,boot,budgets) {
+  empty<-tibble(stratum=character(),landmark=numeric(),horizon=numeric(),
+    AUC_a=numeric(),AUC_b=numeric(),model=character(),reference=character(),
+    contrast=character(),delta_AUC=numeric(),inference=character())
+  if(!nrow(metrics))return(empty)
   specs<-list()
   for(k in budgets) {
-    for(cohort in c("Yin","YinYang"))for(kind in c("YS","YSplus"))
+    for(cohort in c("Yin","YinYang"))for(kind in c("YS","YSplus","YSbalanced"))
       specs[[length(specs)+1L]]<-c(paste(kind,cohort,k,sep="_"),paste("NS",k,sep="_"),"Supervision vs NS")
-    for(kind in c("YS","YSplus"))specs[[length(specs)+1L]]<-c(paste(kind,"YinYang",k,sep="_"),paste(kind,"Yin",k,sep="_"),"Added Yang for proxy learning")
+    for(kind in c("YS","YSplus","YSbalanced"))specs[[length(specs)+1L]]<-c(paste(kind,"YinYang",k,sep="_"),paste(kind,"Yin",k,sep="_"),"Added Yang for proxy learning")
   }
   q<-function(x,p)if(sum(is.finite(x))>=20)as.numeric(quantile(x,p,na.rm=TRUE))else NA_real_
-  map_dfr(specs,function(s) {
+  result<-map_dfr(specs,function(s) {
     a<-metrics|>filter(model==s[1]);b<-metrics|>filter(model==s[2])
     if(!nrow(a)||!nrow(b))return(tibble())
     z<-inner_join(a|>select(stratum,landmark,horizon,AUC_a=AUC),b|>select(stratum,landmark,horizon,AUC_b=AUC),by=c("stratum","landmark","horizon"))
@@ -100,6 +107,7 @@ focus_contrasts <- function(metrics,boot,budgets) {
     z|>mutate(model=s[1],reference=s[2],contrast=s[3],delta_AUC=AUC_a-AUC_b,
       inference="Exploratory paired validation bootstrap; multiple budgets/strata, no external confirmation")
   })
+  bind_rows(empty,result)
 }
 
 focus_plot <- function(metrics,contrasts,proxy,pillars,rd) {
@@ -110,10 +118,16 @@ focus_plot <- function(metrics,contrasts,proxy,pillars,rd) {
   clinical_auc<-metrics$AUC[metrics$model=="Clinical"&metrics$stratum=="All"&metrics$landmark==0]
   if(length(clinical_auc))a<-a+geom_hline(yintercept=clinical_auc[1],linetype=2,color="grey45")+
     labs(subtitle=sprintf("Dashed line: clinical covariates alone (AUC %.3f)",clinical_auc[1]))
-  z<-contrasts|>filter(stratum=="All",landmark==0)
+  # Older saved results can contain a zero-column tibble when no pair exists.
+  z<-if(nrow(contrasts))contrasts|>filter(stratum=="All",landmark==0) else contrasts
+  if(nrow(z)) {
   b<-ggplot(z,aes(delta_AUC,reorder(model,delta_AUC),color=contrast))+geom_vline(xintercept=0,linetype=2)+
     geom_point()+labs(title="b. Paired comparison with NS and with Yin",x="Change in AUC",y=NULL,color=NULL)+theme_5c(9)
   if(all(c("delta_lo","delta_hi")%in%names(z)))b<-b+geom_errorbar(aes(xmin=delta_lo,xmax=delta_hi),orientation="y",width=.2)
+  } else {
+    b<-ggplot()+annotate("text",x=0,y=0,label="No eligible paired comparisons\nSee design_status and fit_diagnostics")+
+      labs(title="b. Paired comparison with NS and with Yin")+theme_void()
+  }
   c<-proxy|>ggplot(aes(component,model,fill=delta_R2))+geom_tile()+
     scale_fill_gradient2(low="#A64E59",mid="white",high="#24748A",midpoint=0)+
     labs(title="c. LE8 reconstruction in held-out participants",x=NULL,y=NULL,fill="Incremental R²")+
@@ -139,14 +153,16 @@ run_c4_focus <- function(layer) {
   budget_values<-suppressWarnings(as.numeric(le8_csv_env("C4_FOCUS_BUDGETS",paste(C4_FOCUS_BUDGETS,collapse=","))))
   if(any(!is.finite(budget_values))||any(budget_values!=floor(budget_values)))stop("Assay budgets must be whole numbers")
   budgets<-sort(unique(as.integer(budget_values)))
+  solver<-Sys.getenv("C4_FOCUS_SOLVER",unset="ridge")
+  if(!solver%in%c("cox","ridge"))stop("C4_FOCUS_SOLVER must be cox or ridge")
   B<-as.integer(le8_num_env("C4_FOCUS_BOOT",200));fraction<-le8_num_env("C4_FOCUS_YS_FRACTION",.8)
   if(anyNA(budgets)||!length(budgets)||any(budgets<1|budgets>500)||B<0||fraction<=0||fraction>1)stop("Invalid C4_FOCUS settings (budgets: 1..500)")
   biomfile<-file.path(indir,"Rdata",if(layer=="protein")"prot.rds"else"met.rds")
   inputs<-c(file.path(indir,"Rdata/all.rds"),biomfile)
   fi<-file.info(inputs)
   signature<-le8_hash_object(list(inputs=inputs,size=fi$size,mtime=fi$mtime,options=le8_analysis_options(),
-    code=tools::md5sum(file.path(fdir,c("c4_focus.R","c5_revision_validation.R","c4_pgs_bridge.R","c1_pgs.R","comm.f.R","c0_revision_core.R"))),
-    settings=Sys.getenv()[grepl("^(C4_FOCUS|C5_CONNECTION|C4_PGS|C1_PGS|DATE_FOLLOW_END)",names(Sys.getenv()))],budgets=budgets,B=B,seed=SEED))
+    code=tools::md5sum(file.path(fdir,c("c4_focus.R","c4_focus_extensions.R","c5_revision_validation.R","c4_pgs_bridge.R","c1_pgs.R","comm.f.R","c0_revision_core.R"))),
+    settings=Sys.getenv()[grepl("^(C4_FOCUS|C5_CONNECTION|C4_PGS|C1_PGS|DATE_FOLLOW_END)",names(Sys.getenv()))],budgets=budgets,B=B,seed=SEED,solver=solver))
   cache<-file.path(rd,"c4.res.rds")
   if(!LE8_REPLACE&&file.exists(cache)) {
     old<-readRDS(cache)
@@ -163,8 +179,10 @@ run_c4_focus <- function(layer) {
   }
   message("C4 focus: loading current phenotypes and ",layer)
   biom<-if(layer=="protein")read_prot()else read_met();features<-setdiff(names(biom),"eid")
-  clinical<-if(le8_custom_adjustment())le8_custom_covars else covs_use
-  need<-unique(c("eid","ethnic.c",clinical,vars.basic,vars.le8,"birth_date","date_attend","date_lost","date_death",le8_y_date()))
+  clinical<-if(le8_custom_adjustment())le8_custom_covars else unique(c(vars.basic,"smoke.pts","sbp","hba1c_ngsp","bmi","nonhdl"))
+  requested_components<-le8_csv_env("C4_FOCUS_COMPONENTS",paste(vars.le8,collapse=","))
+  if(length(requested_components)<1||length(requested_components)>8)stop("Request 1–8 candidate LE8 domains; unsupported domains need not contribute assays")
+  need<-unique(c("eid","ethnic.c",clinical,vars.basic,vars.le8,requested_components,"birth_date","date_attend","date_lost","date_death",le8_y_date()))
   ph<-read_all(need)|>filter_analysis_cohort()|>make_outcome(Y)
   ph$eid<-as.character(ph$eid);biom$eid<-as.character(biom$eid)
   if(anyDuplicated(ph$eid)||anyDuplicated(biom$eid))stop("Duplicate phenotype/omic eid")
@@ -182,7 +200,9 @@ run_c4_focus <- function(layer) {
   rm(dat,yin);invisible(gc())
   if(nrow(train)<1000||nrow(test)<100)stop("Insufficient omic participants")
   if(length(setdiff(clinical,names(train))))stop("Clinical covariates missing")
-  components<-intersect(vars.le8,names(train));basic<-intersect(vars.basic,names(train))
+  missing_domains<-setdiff(requested_components,names(train))
+  write_raw_csv(tibble(component=requested_components,status=ifelse(requested_components%in%missing_domains,"unavailable","candidate; support determined within training")),"c4.focus.domain_availability.csv",rd)
+  components<-intersect(requested_components,names(train));basic<-intersect(vars.basic,names(train))
   message("C4 focus: training=",nrow(train),", validation=",nrow(test),", Yang=",nrow(yang))
   data.table::fwrite(bind_rows(tibble(eid=train$eid,role="incident_training"),tibble(eid=test$eid,role="incident_validation"),tibble(eid=yang$eid,role="Yang_proxy_training")),file.path(rd,"c4.focus.roles.csv.gz"),compress="gzip")
   screen<-stage("training_screen",cox_scan(train,features,clinical,Y,time_var=tvar,event_var=evar))
@@ -197,6 +217,7 @@ run_c4_focus <- function(layer) {
     if(file.exists(f))memberships[[cohort]]<-as_tibble(fread(f))|>mutate(cohort=cohort)
   }
   membership<-bind_rows(memberships)
+  if(!ncol(membership))membership<-tibble(feature=character(),component=character(),cohort=character(),selected=logical(),r1=numeric(),r2=numeric(),FDR1=numeric(),FDR2=numeric(),specificity=numeric())
   pillars<-membership|>filter(selected)|>count(cohort,component)|>
     complete(cohort=c("Yin","YinYang"),component=components,fill=list(n=0L))
   designs<-list(list(name="Clinical",features=character(),budget=0,paradigm="Clinical",cohort="Yin"))
@@ -207,6 +228,17 @@ run_c4_focus <- function(layer) {
     design_status[[length(design_status)+1L]]<-tibble(model=nm,budget=k,available=length(fs),status=if(length(fs)==k)"ready"else"insufficient eligible assays")
     if(length(fs)==k)designs[[length(designs)+1L]]<-list(name=nm,features=fs,budget=k,paradigm=if(kind=="NS")kind else paste(kind,cohort),cohort=cohort)
   }
+  # A separate LE8-first arm: balance available pillars, rank by replicated
+  # proxy strength only. Do not force unvalidated sleep/activity proxies.
+  for(k in budgets)for(cohort in c("Yin","YinYang")) {
+    fs<-focus_balanced_panel(membership|>filter(.data$cohort==.env$cohort),k,components)
+    nm<-paste("YSbalanced",cohort,k,sep="_")
+    design_status[[length(design_status)+1L]]<-tibble(model=nm,budget=k,available=length(fs),
+      status=if(length(fs)==k)"ready"else"insufficient replicated proxies")
+    if(length(fs)==k)designs[[length(designs)+1L]]<-list(name=nm,features=fs,budget=k,
+      paradigm=paste("YSbalanced",cohort),cohort=cohort)
+  }
+  panel_audit<-focus_panel_audit(designs,membership,components)
   inflammatory<-focus_inflammation(train,test,features)
   stratum<-list(All=seq_len(nrow(test)))
   if(layer=="protein")for(g in c("Low baseline inflammation","High baseline inflammation"))stratum[[g]]<-which(inflammatory$group==g)
@@ -216,13 +248,21 @@ run_c4_focus <- function(layer) {
     message("C4 focus: reuse completed prediction checkpoint")
     tables<-checkpoint$tables;met<-tables$metrics;contrasts<-tables$contrasts;pr<-tables$proxy_accuracy
   } else {
-  metrics<-boot<-proxy<-members<-calibration<-decision<-list();mi<-0L
+  metrics<-boot<-proxy<-members<-calibration<-decision<-coefficients<-preprocessing<-diagnostics<-baseline_hazards<-list();mi<-0L
   for(ds in designs) {
     message("C4 focus: fit ",ds$name)
-    obj<-le8_fit_budget_model(train,test,clinical,ds$features,tvar,evar)
+    obj<-le8_fit_budget_model(train,test,clinical,ds$features,tvar,evar,solver=solver,seed=SEED+27)
+    diagnostics[[length(diagnostics)+1L]]<-tibble(model=ds$name,status=obj$status,
+      fit_method=obj$fit_method%||%solver,condition_number=obj$condition_number%||%NA_real_,
+      lambda=obj$lambda%||%NA_real_,warnings=obj$warnings%||%"")
     members[[length(members)+1L]]<-tibble(model=ds$name,feature=if(length(ds$features))ds$features else NA_character_,budget=ds$budget,status=obj$status)
     if(obj$status!="ok")next
-    proxy[[length(proxy)+1L]]<-focus_proxy_accuracy(if(ds$cohort=="YinYang")bind_rows(train,yang)else train,test,ds$features,components,basic,ds$name)
+    coefficients[[length(coefficients)+1L]]<-obj$coefficient|>mutate(model=ds$name,lp_center=obj$lp_center)
+    preprocessing[[length(preprocessing)+1L]]<-obj$preprocess|>mutate(model=ds$name)
+    baseline_hazards[[length(baseline_hazards)+1L]]<-as_tibble(obj$baseline_hazard)|>mutate(model=ds$name,lp_center=obj$lp_center)
+    # Common reconstruction training cohort isolates panel selection from the
+    # effect of fitting reconstruction coefficients in a different population.
+    proxy[[length(proxy)+1L]]<-focus_proxy_accuracy(train,test,ds$features,components,basic,ds$name)
     for(g in names(stratum))for(L in c(0,2,5)) {
       ii<-stratum[[g]];ii<-ii[test[[tvar]][ii]>L]
       if(length(ii)<100)next
@@ -231,7 +271,7 @@ run_c4_focus <- function(layer) {
       risk<--expm1(-max(0,H(10)-H(L))*exp(pmin(30,obj$lp[ii])))
       ev<-le8_evaluate_risk(test[[tvar]][ii]-L,test[[evar]][ii],risk,10-L,ds$name,ds$budget,ds$paradigm,
         B=B,seed=SEED+1000*match(g,names(stratum))+as.integer(L*10))
-      mi<-mi+1L;metrics[[mi]]<-ev$metrics|>mutate(stratum=g,landmark=L,actual_assays=obj$N_selected)
+      mi<-mi+1L;metrics[[mi]]<-ev$metrics|>mutate(stratum=g,landmark=L,actual_assays=obj$N_selected,fit_method=obj$fit_method)
       if(nrow(ev$bootstrap))boot[[mi]]<-ev$bootstrap|>mutate(stratum=g,landmark=L)
       if(nrow(ev$calibration))calibration[[mi]]<-ev$calibration|>mutate(stratum=g,landmark=L)
       if(nrow(ev$decision))decision[[mi]]<-ev$decision|>mutate(stratum=g,landmark=L)
@@ -239,10 +279,14 @@ run_c4_focus <- function(layer) {
   }
   met<-bind_rows(metrics);bo<-bind_rows(boot);pr<-bind_rows(proxy)
   contrasts<-focus_contrasts(met,bo,budgets)
-  tables<-list(metrics=met,contrasts=contrasts,proxy_accuracy=pr,panel_members=bind_rows(members),
+  heterogeneity<-focus_heterogeneity(contrasts,bo)
+  tables<-list(metrics=met,contrasts=contrasts,heterogeneity=heterogeneity,proxy_accuracy=pr,panel_members=bind_rows(members),
     pillar_counts=pillars,membership=membership,inflammation_definition=inflammatory$audit,
     design_status=bind_rows(design_status),training_screen=screen,
     calibration=bind_rows(calibration),decision=bind_rows(decision),
+    model_coefficients=bind_rows(coefficients),preprocessing=bind_rows(preprocessing),baseline_hazards=bind_rows(baseline_hazards),
+    fit_diagnostics=bind_rows(diagnostics),panel_overlap=panel_audit$panel_overlap,
+    panel_coverage=panel_audit$panel_coverage,
     design=tibble(item=c("training","YinYang","test","YSP allocation","inference"),value=c(
       paste(nrow(train),"incident participants"),paste(nrow(yang),"additional prevalent donors for proxy learning only"),
       paste(nrow(test),"incident participants; shared 80/20 split algorithm with C5"),
@@ -264,6 +308,6 @@ run_c4_focus <- function(layer) {
 }
 
 if(!truthy(Sys.getenv("LE8_FOCUS_FUNCTIONS_ONLY",unset="FALSE"))) {
-  if(prot_DO)run_c4_focus("protein")
-  if(met_DO)run_c4_focus("metabolite")
+  if(prot_DO)le8_stage("C4/focus/protein", run_c4_focus("protein"))
+  if(met_DO)le8_stage("C4/focus/metabolite", run_c4_focus("metabolite"))
 }

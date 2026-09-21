@@ -239,8 +239,8 @@ The BED build must match the MAGMA gene-location build; filenames containing
 The actual local files are:
 
 ```text
-/mnt/d/files/ppp_3k.38.bed   CHR START END Assay Panel
-/mnt/d/files/ppp_3k.38.tsv   PROT metadata, including Assay and HGNC.symbol
+/mnt/e/gwas/prot/ppp_3k.38.bed   CHR START END Assay Panel
+/mnt/e/gwas/prot/ppp_3k.38.tsv   PROT metadata, including Assay and HGNC.symbol
 ```
 
 The local BED's fifth column is an Olink panel label, not a gene symbol.
@@ -257,10 +257,10 @@ and `magma.done`, and the target-gene/annotation checks above must pass. The
 current project has 2,940 PROT protein directories, so first check:
 
 ```bash
-find /mnt/d/data/gwas/prot/common -mindepth 1 -maxdepth 1 -type d | wc -l
-find /mnt/d/data/gwas/prot/common -mindepth 3 -maxdepth 3 \
+find /mnt/e/gwas/prot/common -mindepth 1 -maxdepth 1 -type d | wc -l
+find /mnt/e/gwas/prot/common -mindepth 3 -maxdepth 3 \
   -type f -name '*.genes.out' | wc -l
-find /mnt/d/data/gwas/prot/common -mindepth 3 -maxdepth 3 \
+find /mnt/e/gwas/prot/common -mindepth 3 -maxdepth 3 \
   -type f -name 'magma.done' | wc -l
 ```
 
@@ -268,11 +268,11 @@ For the planned complete random cold-start run, use:
 
 ```bash
 /mnt/d/scripts/phole/phole.sh all \
-  --gwas-root /mnt/d/data/gwas/prot \
+  --gwas-root /mnt/e/gwas/prot \
   --category common \
-  --protein-bed /mnt/d/files/ppp_3k.38.bed \
-  --protein-map /mnt/d/files/ppp_3k.38.tsv \
-  --out /mnt/d/data/gwas/prot/phole \
+  --protein-bed /mnt/e/gwas/prot/ppp_3k.38.bed \
+  --protein-map /mnt/e/gwas/prot/ppp_3k.38.tsv \
+  --out /mnt/e/gwas/prot/phole \
   --protein-filter target-bonf \
   --protein-alpha 0.05 \
   --train-frac 0.80 \
@@ -285,11 +285,11 @@ Harder chromosome holdout:
 
 ```bash
 /mnt/d/scripts/phole/phole.sh all \
-  --out /mnt/d/data/gwas/prot/phole.chr \
-  --gwas-root /mnt/d/data/gwas/prot \
+  --out /mnt/e/gwas/prot/phole.chr \
+  --gwas-root /mnt/e/gwas/prot \
   --category common \
-  --protein-bed /mnt/d/files/ppp_3k.38.bed \
-  --protein-map /mnt/d/files/ppp_3k.38.tsv \
+  --protein-bed /mnt/e/gwas/prot/ppp_3k.38.bed \
+  --protein-map /mnt/e/gwas/prot/ppp_3k.38.tsv \
   --protein-filter target-bonf \
   --train-frac 0.80 --split chromosome
 ```

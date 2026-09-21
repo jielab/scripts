@@ -28,23 +28,72 @@ le8_prepare_prediction_matrix <- function(train,test,vars) {
   if(!length(a))return(list(train=matrix(nrow=nrow(train),ncol=0),test=matrix(nrow=nrow(test),ncol=0),audit=bind_rows(audit)))
   xx<-as.matrix(as.data.frame(a,check.names=FALSE));yy<-as.matrix(as.data.frame(b,check.names=FALSE))
   # Remove exactly redundant columns based on training predictors, not outcomes.
-  qr0<-qr(xx);keep<-sort(qr0$pivot[seq_len(qr0$rank)])
+  qr0<-qr(cbind(Intercept=1,xx));keep<-sort(setdiff(qr0$pivot[seq_len(qr0$rank)],1L)-1L)
   list(train=xx[,keep,drop=FALSE],test=yy[,keep,drop=FALSE],audit=bind_rows(audit))
 }
-le8_fit_budget_model <- function(train,test,clinical,features,tvar,evar) {
+le8_breslow_hazard <- function(time,event,lp) {
+  # lp must use the same training centering as subsequent predictions.
+  if(any(!is.finite(lp))||max(abs(lp))>700)stop("Unstable linear predictor")
+  z<-data.frame(time=time,event=event,risk=exp(lp))
+  a<-stats::aggregate(z[c("event","risk")],list(time=z$time),sum)
+  a<-a[order(a$time),,drop=FALSE]
+  denom<-rev(cumsum(rev(a$risk)))
+  data.frame(time=a$time,hazard=cumsum(a$event/denom))
+}
+
+le8_fit_budget_model <- function(train,test,clinical,features,tvar,evar,
+                                solver="cox",seed=2026) {
+  if(!solver%in%c("cox","ridge"))stop("solver must be cox or ridge")
   vars<-unique(c(clinical,features));xx<-le8_prepare_prediction_matrix(train,test,vars)
   if(!ncol(xx$train))return(list(status="no usable predictors"))
   orig<-colnames(xx$train);safe<-paste0("x",seq_len(ncol(xx$train)))
   tr<-as.data.frame(xx$train);te<-as.data.frame(xx$test);names(tr)<-names(te)<-safe
   tr$.time<-train[[tvar]];tr$.event<-train[[evar]]
-  f<-reformulate(safe,response="survival::Surv(.time,.event)")
-  fit<-tryCatch(survival::coxph(f,tr,ties="efron",x=TRUE,y=TRUE,model=TRUE,singular.ok=FALSE),error=function(e)e)
-  if(inherits(fit,"condition"))return(list(status=conditionMessage(fit)))
-  if(any(!is.finite(coef(fit))))return(list(status="non-finite Cox coefficient"))
-  lp<-drop(as.matrix(te)%*%coef(fit));bh<-survival::basehaz(fit,centered=FALSE)
+  if(any(!is.finite(tr$.time)|tr$.time<=0|!tr$.event%in%c(0,1)))
+    return(list(status="invalid incident training outcomes"))
+  condition<-kappa(scale(xx$train,center=TRUE,scale=FALSE),exact=TRUE)
+  warn<-character();capture<-function(w){warn<<-c(warn,conditionMessage(w));invokeRestart("muffleWarning")}
+  penalty<-as.numeric(vapply(orig,function(v)any(v==features|startsWith(v,paste0(features,"__"))),logical(1)))
+  fit_method<-if(solver=="ridge"&&any(penalty>0)&&ncol(xx$train)>1L)"ridge Cox, inner training CV"else"unpenalized Cox"
+  lambda<-NA_real_;lp_center<-0
+  if(fit_method=="unpenalized Cox") {
+    if(!is.finite(condition)||condition>1e6)
+      return(list(status="ill-conditioned training design; use prespecified ridge solver",condition_number=condition))
+    f<-reformulate(safe,response="survival::Surv(.time,.event)")
+    fit<-tryCatch(withCallingHandlers(survival::coxph(f,tr,ties="efron",x=TRUE,y=TRUE,
+      model=TRUE,singular.ok=FALSE),warning=capture),error=function(e)e)
+    if(inherits(fit,"condition"))return(list(status=conditionMessage(fit)))
+    beta<-as.numeric(coef(fit));lp<-drop(as.matrix(te)%*%beta)
+    bh<-survival::basehaz(fit,centered=FALSE)
+  } else {
+    if(!requireNamespace("glmnet",quietly=TRUE))stop("ridge requires glmnet")
+    if(min(table(factor(tr$.event,levels=0:1)))<5)return(list(status="insufficient events for inner CV"))
+    set.seed(seed);foldid<-integer(nrow(tr))
+    for(e in 0:1){ix<-which(tr$.event==e);foldid[ix]<-sample(rep(1:5,length.out=length(ix)))}
+    if(".group"%in%names(train)&&exists("c5_group_folds"))foldid<-c5_group_folds(train$.group,5,seed)
+    fit<-tryCatch(withCallingHandlers(glmnet::cv.glmnet(xx$train,
+      survival::Surv(tr$.time,tr$.event),family="cox",alpha=0,foldid=foldid,
+      type.measure="deviance",standardize=TRUE,penalty.factor=penalty),warning=capture),error=function(e)e)
+    if(inherits(fit,"condition"))return(list(status=conditionMessage(fit)))
+    lambda<-fit$lambda.1se;beta<-as.numeric(coef(fit,s="lambda.1se"))
+    lp_train<-drop(xx$train%*%beta);lp_center<-mean(lp_train)
+    lp<-drop(xx$test%*%beta)-lp_center
+    bh<-tryCatch(le8_breslow_hazard(tr$.time,tr$.event,lp_train-lp_center),error=function(e)e)
+    if(inherits(bh,"condition"))return(list(status=conditionMessage(bh)))
+  }
+  if(any(!is.finite(beta))||any(!is.finite(lp))||any(!is.finite(bh$hazard)))
+    return(list(status="non-finite fit/prediction"))
+  fatal_warning<-any(grepl("converg|infinite|overflow|numerical",warn,ignore.case=TRUE))
+  if(fatal_warning)return(list(status=paste("unstable fit:",paste(unique(warn),collapse="; ")),
+    condition_number=condition))
   count<-sum(vapply(features,function(v)any(orig==v|startsWith(orig,paste0(v,"__"))),logical(1)))
-  list(status="ok",fit=fit,lp=lp,baseline_hazard=bh,N_selected=count,
-    coefficient=tibble(variable=orig,beta=as.numeric(coef(fit))),preprocess=xx$audit)
+  # Downstream scoring uses coefficients, preprocessing and baseline hazard.
+  # A coxph fit's formula environment captures this entire call (including
+  # full train/test omics); serializing it can turn one small model into GBs.
+  list(status="ok",lp=lp,baseline_hazard=bh,N_selected=count,
+    coefficient=tibble(variable=orig,beta=beta),preprocess=xx$audit,
+    fit_method=fit_method,condition_number=condition,lambda=lambda,lp_center=lp_center,
+    warnings=paste(unique(warn),collapse="; "))
 }
 le8_risk_at <- function(obj,horizon) {
   bh<-obj$baseline_hazard;idx<-which(bh$time<=horizon)
@@ -83,7 +132,7 @@ le8_evaluate_risk <- function(time,event,p,horizon,model,budget,paradigm,ablatio
     censoring_survival=iw$G_horizon,estimand=iw$assumption)
   if(iw$status!="ok")return(list(metrics=base,calibration=tibble(),decision=tibble(),bootstrap=tibble()))
   y<-iw$y;w<-iw$w;n<-length(y);base$AUC<-le8_weighted_auc(p,y,w);base$Brier<-sum(w*(y-p)^2)/n
-  lp<-qlogis(p);ok<-w>0
+  lp<-qlogis(pmin(1-1e-8,pmax(1e-8,p)));ok<-w>0
   fit<-tryCatch(glm(y[ok]~lp[ok],family=quasibinomial(),weights=w[ok]),error=function(e)NULL)
   ic<-tryCatch(glm(y[ok]~1+offset(lp[ok]),family=quasibinomial(),weights=w[ok]),error=function(e)NULL)
   if(!is.null(fit))base$calibration_slope<-unname(coef(fit)[2])
@@ -210,7 +259,7 @@ le8_plot_c5_review <- function(met, ca, dc, horizons, budgets, outdir) {
 # No validation LE8 measurements or outcomes enter this procedure.
 le8_training_connection_set <- function(train,features,components,covars,rawdir) {
   components<-intersect(components,names(train));covars<-intersect(covars,names(train))
-  if(length(components)<2)return(character())
+  if(length(components)<1)return(character())
   d<-as.data.frame(train);d<-d[complete.cases(d[,unique(c(components,covars)),drop=FALSE]),,drop=FALSE]
   set.seed(SEED+411)
   cap<-as.integer(le8_num_env("C5_CONNECTION_MAX_N",60000))

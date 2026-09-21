@@ -9,11 +9,11 @@ PY="$SCRIPT_DIR/f/ppp_download.py"
 PYTHON_BIN=""
 
 TOKEN_FILE_DEFAULT="/mnt/d/data/ukb/prot/authToken.txt"
-OUT_DEFAULT="/mnt/d/data/gwas/prot/.project/download"
-LOG_DEFAULT="/mnt/d/data/gwas/prot/.project/log"
-PROT_DIR_DEFAULT="/mnt/d/data/gwas/prot"
-PROT_TSV_DEFAULT="/mnt/d/files/ppp_3k.38.tsv"
-PROT_BED_DEFAULT="/mnt/d/files/ppp_3k.38.bed"
+OUT_DEFAULT="/mnt/e/gwas/prot/.project/download"
+LOG_DEFAULT="/mnt/e/gwas/prot/.project/log"
+PROT_DIR_DEFAULT="/mnt/e/gwas/prot"
+PROT_TSV_DEFAULT="/mnt/e/gwas/prot/ppp_3k.38.tsv"
+PROT_BED_DEFAULT="/mnt/e/gwas/prot/ppp_3k.38.bed"
 FOLDER_DEFAULT="syn51365303"                    # UKB proteomics European discovery folder
 NAME_REGEX_DEFAULT='\.tar$'
 MANIFEST_DRYRUN="European_discovery.dryrun.tsv"

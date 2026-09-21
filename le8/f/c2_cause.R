@@ -1182,6 +1182,7 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
   if(!length(mr_candidates))stop("C2/",layer,": no QTL files mapped under ",base,call.=FALSE)
   input_table<-tibble(feature=audit_features,top_observational=feature%in%head(ranked,MAX_FEATURES),MR_candidate=feature%in%mr_candidates)
   write_raw_csv(input_table,"c2.input_features.csv",rawdir);message("C2/",layer,": auditing ",length(audit_features)," traits; ",length(mr_candidates)," have mapped QTL files")
+  stage_started<-le8_stage_start(paste0("C2/",layer," instruments"))
   iv_cache<-file.path(rawdir,paste0("c2.instruments.",C2_STAGE_VERSION,".rds"));iv_list<-read_stage_cache(iv_cache)
   if(is.null(iv_list)){
     message("C2/",layer,": build independent instrument stage")
@@ -1189,6 +1190,8 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
     write_stage_cache(iv_list,iv_cache)
   }else message("C2/",layer,": reuse independent instrument stage")
   ygfile<-get_y_gwas_file(Y,TRUE)
+  le8_stage_done(paste0("C2/",layer," instruments"),stage_started)
+  stage_started<-le8_stage_start(paste0("C2/",layer," MR"))
   mr_cache<-file.path(rawdir,paste0("c2.mr_stage.",C2_STAGE_VERSION,".rds"));mr_stage<-read_stage_cache(mr_cache)
   if(is.null(mr_stage)){
     all_snps<-unique(unlist(map(iv_list,~.$instruments$SNP)))
@@ -1200,11 +1203,14 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
     mr_stage<-list(MR=mr,availability=availability);write_stage_cache(mr_stage,mr_cache)
   }else{mr<-mr_stage$MR;availability<-mr_stage$availability;message("C2/",layer,": reuse harmonization/MR stage")}
   write_raw_csv(availability,"c2.instrument_availability.csv",rawdir);write_raw_csv(mr,"c2.MR_all.csv",rawdir)
+  le8_stage_done(paste0("C2/",layer," MR"),stage_started)
+  stage_started<-le8_stage_start(paste0("C2/",layer," reverse-MR"))
   reverse_cache<-file.path(rawdir,paste0("c2.reverse_mr_stage.",C2_STAGE_VERSION,".rds"));reverse_stage<-read_stage_cache(reverse_cache)
   if(is.null(reverse_stage)){
     message("C2/",layer,": disease-liability -> omic reverse MR")
     reverse_stage<-run_reverse_mr_stage(iv_list,ygfile,layer);write_stage_cache(reverse_stage,reverse_cache)
   }else message("C2/",layer,": reuse reverse-direction MR stage")
+  le8_stage_done(paste0("C2/",layer," reverse-MR"),stage_started)
   reverse_mr<-reverse_stage$MR%||%tibble();reverse_audit<-reverse_stage$audit%||%tibble()
   write_raw_csv(reverse_mr,"c2.reverse_MR_all.csv",rawdir);write_raw_csv(reverse_audit,"c2.reverse_MR_audit.csv",rawdir)
   top_candidates<-select_c2_top_candidates(layer,assoc,mr,names(iv_list))
@@ -1241,10 +1247,10 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
   dan_cache<-file.path(rawdir,paste0("c2.dandelion_stage.",str_to_lower(RUN_Dandelion),".",C2_STAGE_VERSION,".rds"));dandelion<-read_stage_cache(dan_cache)
   if(!is.null(dandelion) && grepl("^failed", dandelion$status %||% ""))dandelion<-NULL
   if(is.null(dandelion)){
-    dandelion<-run_dandelion_step(layer,assoc,ann,base,ygfile,rawdir,outdir,
-      top_candidates,RUN_Dandelion)
+    dandelion<-le8_stage(paste0("C2/",layer," Dandelion"), run_dandelion_step(layer,assoc,ann,base,ygfile,rawdir,outdir,
+      top_candidates,RUN_Dandelion), paste0("mode=",RUN_Dandelion))
     write_stage_cache(dandelion,dan_cache)
-  }else message("C2/",layer,": reuse DANDELION stage")
+  }else le8_stage(paste0("C2/",layer," Dandelion"), invisible(NULL), "cache=reused")
 
   if(layer=="protein"){
     plot_dandelion_results(dandelion$targets%||%tibble(),dandelion$pairs%||%tibble(),dandelion$gene_pairs%||%tibble(),outdir)
@@ -1287,7 +1293,7 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
     tibble(trait=character(),mode=character(),selected=logical(),selection_reason=character())
   write_raw_csv(jobs_audit,"c2.mrlink2_job_audit.csv",rawdir)
   jobs<-if(nrow(jobs_all))jobs_audit|>filter(selected)|>select(all_of(names(jobs_all)))else jobs_all
-  run_mrlink2_step(layer,rawdir,jobs,ygfile,RUN_MRlink2)
+  le8_stage(paste0("C2/",layer," MR-link-2"), run_mrlink2_step(layer,rawdir,jobs,ygfile,RUN_MRlink2), paste0("mode=",RUN_MRlink2," jobs=",nrow(jobs)))
   mrlink2<-read_mrlink2_results(rawdir,RUN_MRlink2);plot_mrlink2_results(mrlink2,outdir)
   # Older completed runs sometimes retained the combined estimates but not the
   # generated job manifest. Recover a minimal provenance audit instead of
@@ -1332,5 +1338,5 @@ run_c2_layer <- function(layer=c("protein","metabolite")){
   finalize_outputs(LE8_JOB,outdir);out
 }
 
-if(prot_DO)invisible(run_c2_layer("protein"))
-if(met_DO)invisible(run_c2_layer("metabolite"))
+if(prot_DO)invisible(le8_stage("C2/protein",run_c2_layer("protein")))
+if(met_DO)invisible(le8_stage("C2/metabolite",run_c2_layer("metabolite")))

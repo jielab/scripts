@@ -109,7 +109,7 @@ done
 
 ## 数据及 ARG
 
-默认 GWAS：`/mnt/d/data/gwas/4grid/{trait}.{AFR,EAS,EUR,SAS}.gz`。
+默认 GWAS：`/mnt/e/gwas/4grid/{trait}.{AFR,EAS,EUR,SAS}.gz`。
 默认分析目录：`/mnt/d/analysis/grid`；可用 `--output-root` 覆盖。
 其他选项见 `./grid.sh -h`。`--replace FALSE` 复用缓存；更换输入/配置时明确重建。
 
@@ -124,3 +124,47 @@ bash /mnt/d/scripts/gu/arg.sh build --method needle \
 默认 ARG 位于 `/mnt/e/ukbGen/37/arg/{argn,trees}`，可用 `--arg-dir` 覆盖。
 全队列建树的资源需求应先通过小规模实验评估；模型验证应使用多个染色体。
 用于性能评估的 GWAS 应排除 UKB，以避免样本重叠导致的乐观估计。
+
+## UKB 多方法预测评估（Yeval）
+
+```bash
+./Yeval.sh --trait height --type ct
+./Yeval.sh --trait ldl --type ct --covar-name age,sex,PC1,PC2,drug.lipid
+./Yeval.sh --trait t2dm --type dt --covar-name age,sex,PC1,PC2 --prevalence cohort
+./Yeval.sh --trait t2dm --type t2e --covar-name age,sex,PC1,PC2
+```
+
+输出统一为 `/mnt/d/analysis/grid/Yeval/<trait>/`，不再创建 `csx/ct` 等子目录。
+默认使用完整队列 `phe/Rdata/all.rds` 与 `ukb.ancestry.auto.tsv.gz`，避免 White-only
+`ukb.phe` 无法评估其他祖源的问题。四种主方法为同祖源 COJO 的 PT、`csx.auto`
+（按约定显示为 PRS-CS-multi）、训练折内组合四个祖源评分的 PRS-CSX、已保存的
+DiscoDivas。`csx.meta` 和各单独祖源评分也在同一批样本及相同折上评估。
+
+打开 `report.html` 查看四方法主图、auto/meta 比较、DiscoDivas 相对 PRS-CSX 的配对
+差异、PCA/遗传距离分布和沿距离变化的性能。目录只保留网页、5 张配套 PNG、网页
+链接的 `plots.pdf`（全部图）、`performance.tsv`、`cohort.tsv`、`methods.md`，以及
+记录命令与运行过程的 `eval.log`、防止并发运行的 `run.lock`。
+不再导出单图 PDF、逐人预测/折分/距离、折内系数及其他中间 TSV；输入配置、评分
+定义、跳过的项目和患病率假设直接放在网页中。成功运行后会清理旧版本留下的这些
+已知冗余文件，其他文件不受影响。`--check` 只把校验结果写入日志，不改已有报告。
+
+PT 默认使用完整 imputed 基因型 `/mnt/e/ukbGen/37/imp/chr*`，按 COJO 位点提取，
+使用 `SNP/refA/bJ` 和 `SCORE_SUM`；缓存为 `/mnt/d/data/ukb/pgs/<trait>/pt.pgs.gz`。
+按 rsID、`Chr/bp` 和 `refA` 匹配；重复 rsID 只有唯一兼容记录时才参与评分。
+`refA` 支持 SNP 和由 A/C/G/T 组成的完整插入/缺失序列（如 `CAA`、`TC`）；序列
+必须与基因型等位基因完全匹配，不截取首个碱基，也不把符号编码猜测成序列。
+临时 PVAR 使用逐记录唯一 ID，保留 PGEN 的记录顺序。无法区分的重复记录明确排除。
+评分缓存旁的 `pt.pgs.gz.variants.tsv` 记录每个祖源/染色体的请求、评分、缺失、
+坐标/等位基因不匹配、歧义排除及重复 ID 解析数量；`pt.pgs.gz.matches.tsv` 提供
+每个请求位点的候选与匹配明细。这些缓存文件不再复制到评估目录。
+
+`dt` 输出 Liability R²（Lee 转换）及 AUC/Brier；默认的 t2dm 二元表型是**基线已确诊
+ICD10 T2D**。`--prevalence cohort` 用评分和协变量筛选前的各祖源 UKB 队列比例作为
+工作假设，具体 K 和分母显示在报告的患病率表格中，不声称是普通人群患病率。可以指定
+`--phenotype-col` 和 `--prevalence EUR=...,AFR=...,EAS=...,SAS=...`。
+`t2e` 保留删失信息，报告 Harrell C，不把 incident event 指标转换为 Liability R²，
+因此不需要也不使用 `--prevalence`。
+
+缺少 `csx.auto/csx.meta` 时默认明确报错；仅在显式提供 `--allow-missing-scores` 时
+生成标明缺项的部分报告。所有误差线是固定 OOF 预测的配对个体 bootstrap 区间，
+不包括 GWAS 和模型估计的不确定性。

@@ -53,10 +53,10 @@ le8_dandelion_family <- function(evidence,universe,alpha=.1) {
   d<-evidence
   valid<-is.finite(d$DANDELION_p)&d$DANDELION_p>=0&d$DANDELION_p<=1
   d$global_pair_BH<-d$global_pair_BY<-NA_real_
-  d$global_pair_BH[valid]<-p.adjust(d$DANDELION_p[valid],"BH")
-  d$global_pair_BY[valid]<-p.adjust(d$DANDELION_p[valid],"BY")
+  d$global_pair_BH[valid]<-p.adjust(d$DANDELION_p[valid],"BH",n=nrow(d))
+  d$global_pair_BY[valid]<-p.adjust(d$DANDELION_p[valid],"BY",n=nrow(d))
   d$maxP<-pmax(d$trans_p,d$gene_level_p)
-  d$maxP_pair_BH<-NA_real_;ii<-is.finite(d$maxP);d$maxP_pair_BH[ii]<-p.adjust(d$maxP[ii],"BH")
+  d$maxP_pair_BH<-NA_real_;ii<-is.finite(d$maxP);d$maxP_pair_BH[ii]<-p.adjust(d$maxP[ii],"BH",n=nrow(d))
   rule<-toupper(Sys.getenv("C2_DANDELION_MULTIPLICITY",unset="BY"))
   if(!rule%in%c("BH","BY"))stop("C2_DANDELION_MULTIPLICITY must be BH or BY")
   qp<-if(rule=="BY")d$global_pair_BY else d$global_pair_BH
@@ -68,7 +68,7 @@ le8_dandelion_family <- function(evidence,universe,alpha=.1) {
     ps<-sort(z$DANDELION_p)
     tibble(gene2=g,n_tested_pairs=m,n_eligible_trans_pairs=nrow(all),
       DANDELION_p=if(m)min(1,min(ps)*nrow(all))else NA_real_,
-      loo_p=if(m>1)min(1,ps[2]*(m-1))else if(m==1)1 else NA_real_,
+      loo_p=if(m>1)min(1,ps[2]*(nrow(all)-1))else if(m==1)1 else NA_real_,
       n_selected_pairs=sum(z$significant),n_distal_loci=n_distinct(z$locus_id[z$significant]),
       gene_level_p=if(nrow(all))all$gene_level_p[1]else NA_real_,
       best_trans_p=if(nrow(all))min(all$trans_p)else NA_real_,
@@ -210,7 +210,7 @@ le8_dandelion_plot_bundle <- function(dan,outdir) {
   audit<-tibble(metric=c("mode","gene_file","gene_evidence","analysis_class","primary_eligible","disease_LD_verified",
     "DACT_package_status","target_universe","valid_trans_tests","selected_targets","target_fraction","multiplicity","scope_boundary"),
     value=as.character(c(mode,input$path,input$evidence_type,class,primary,ld_verified,package_status,nrow(alltg),nrow(ev),nrow(tg),fraction,
-      paste0("All finite DACT pairs; target Bonferroni-min then BH/BY over all targets; selection=",Sys.getenv("C2_DANDELION_MULTIPLICITY",unset="BY")),
+      paste0("All eligible DACT pairs, missing results retained in family; target Bonferroni-min then BH/BY over all targets; selection=",Sys.getenv("C2_DANDELION_MULTIPLICITY",unset="BY")),
       "trans-pQTL adaptation; neither causal direction nor protein mediation fraction is identified")))
   audit<-bind_rows(audit,tibble(metric=c("package_version","target_exposure_uncapped","QTL_unfiltered",
     "sample_overlap","native_selection","extension_selection"),value=c(

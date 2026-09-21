@@ -35,7 +35,7 @@ gwas_compare_validate_options() {
         compare_die '--p-threshold must be a number in (0,1]'
       ;;
     compare)
-      flags+=(mplot compare_beta compare_eaf)
+      flags+=(compare_beta compare_eaf)
       case "$significant" in first|either|both) ;; *) compare_die 'Invalid --significant: use first, either or both' ;; esac
       awk -v p="$p_threshold" 'BEGIN{exit !(p ~ /^[0-9]*[.]?[0-9]+([eE][-+]?[0-9]+)?$/ && p+0>0 && p+0<=1)}' ||
         compare_die '--p-threshold must be a number in (0,1]'

@@ -16,6 +16,41 @@ le8_figure_csv <- function(rawdir, file) {
     "table for output regeneration"), data.table = FALSE, check.names = FALSE))
 }
 
+# Older C1 results did not embed this table. Recover it from the same plotting
+# cohort and cached analysis metadata when the optional CSV has been removed.
+le8_figure_c1_cohort <- function(obj, dat, layer, rawdir) {
+  if (!is.null(obj$cohort)) return(obj$cohort)
+  path <- file.path(rawdir, "c1.cohort.csv")
+  if (file.exists(path)) return(le8_figure_csv(rawdir, "c1.cohort.csv"))
+  message("C1: rebuilding missing cohort summary from trajectory inputs and cached metadata")
+  meta <- obj$meta
+  outcome <- meta$trait
+  events <- sum(dat[[paste0(outcome, ".Yt2e")]] == 1, na.rm = TRUE)
+  if ((!is.null(meta$N) && nrow(dat) != meta$N) ||
+      (!is.null(meta$events) && events != meta$events))
+    stop("C1 cohort inputs no longer match the cached sample/event counts; rerun C1 with --replace TRUE", call. = FALSE)
+  dat <- add_attained_age_time(dat, outcome)
+  audit <- obj$input_feature_annotation_audit
+  removed <- meta$le8_covariates_removed %||% character()
+  cohort <- tibble(layer = layer, N_omics = nrow(dat), incident_events = events,
+    prevalent_cases = sum(make_prevalent_status(dat, outcome) == 1, na.rm = TRUE),
+    features = length(audit$feature %||% unique(obj$association_adj2$term)),
+    annotation_matched = if (is.null(audit$annotation_matched)) NA_integer_ else sum(audit$annotation_matched, na.rm = TRUE),
+    annotation_unmatched = if (is.null(audit$annotation_matched)) NA_integer_ else sum(!audit$annotation_matched, na.rm = TRUE),
+    attained_age_N = sum(is.finite(dat$.attained_entry) & is.finite(dat$.attained_exit)),
+    bi2e_available = sum(is.finite(dat[[paste0(outcome, ".bi2e")]])),
+    PGS_matched = meta$pgs_matched %||% NA_integer_,
+    PGS_file_signature = meta$pgs_signature %||% NA_character_,
+    LE8_components = length(intersect(vars.le8, names(dat))),
+    covs_use = meta$covs_use %||% NA_character_,
+    LE4_components = length(meta$le4_covariates),
+    le8_covariates_removed = paste(removed, collapse = ";"),
+    overlap_covariates_removed = paste(meta$overlap_covariates_removed %||% removed, collapse = ";"),
+    treatment_covariates = paste(meta$treatment_covariates, collapse = ";"))
+  write_raw_csv(cohort, "c1.cohort.csv", rawdir)
+  cohort
+}
+
 # Explicit workbook mappings retain the original sheet names and avoid exporting
 # fitted model objects or individual-level data that were never in the workbook.
 le8_figure_tables <- function(obj, mapping) {
@@ -93,10 +128,11 @@ le8_render_c1 <- function(obj, layer, outdir, rawdir) {
   missing <- setdiff(fig_features, names(biom))
   if(length(missing)) stop("C1 plotting inputs lack cached features: ",paste(missing,collapse=", "))
   biom <- biom[,unique(c("eid",fig_features)),drop=FALSE]; invisible(gc())
-  need <- unique(c("eid","ethnic.c",vars.basic,covs_adj2,"birth_date","date_attend","date_lost","date_death",paste0("fod_icd10_",Y)))
+  need <- unique(c("eid","ethnic.c",vars.basic,vars.le8,covs_adj2,"birth_date","date_attend","date_lost","date_death",paste0("fod_icd10_",Y)))
   dat <- read_all(need) |> filter_analysis_cohort() |> inner_join(biom,by="eid") |> make_outcome(Y)
   rm(biom); invisible(gc())
   if(length(setdiff(covs_adj2,names(dat)))) stop("C1 plotting inputs lack recorded covariates")
+  cohort <- le8_figure_c1_cohort(obj, dat, layer, rawdir)
   covs_basic <- intersect(vars.basic,names(dat))
   tvar<-paste0(Y,".t2e");evar<-paste0(Y,".Yt2e");bvar<-paste0(Y,".b2e")
   pgs<-list(status=obj$pgs_status)
@@ -192,7 +228,6 @@ le8_render_c1 <- function(obj, layer, outdir, rawdir) {
   if(layer=="metabolite")save_plot(vldl_deep$figure,
             "c1.Fig15.L_VLDL_TG_pct_deep_dive.png",19,26,outdir=outdir)
 
-  cohort<-le8_figure_csv(rawdir,"c1.cohort.csv")
   le8_mock_c1(dat,assoc_adj2,enrich,layer,covs_adj2,tvar,evar,outdir,enrich_prev)
   gradient_rank<-obj$gradient_top10_provenance;cl_members<-obj$clusters;cl_metrics<-obj$cluster_selection
   le8_figure_workbook(list(cohort=cohort,input_feature_audit=input_feature_audit,association=assoc,prevalent=assoc_prevalent,incident_basic=assoc_basic,incident_adj2=assoc_adj2,

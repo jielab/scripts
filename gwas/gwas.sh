@@ -44,7 +44,7 @@ typed_dir=''
 imputed_dir='' phenotype_file=/mnt/d/data/ukb/phe/common/ukb.phe covariate_file=''
 phenotypes=height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu
 type=auto event_col='' covariates=age,sex,tdi,PC1,PC2,PC3,PC4 categorical_covariates=''
-output_dir=/mnt/d/data/gwas/self/common
+output_dir=/mnt/e/gwas/self/common
 chromosomes=''
 extract='' keep='' sparse_grm=TRUE run=TRUE replace=FALSE
 plink2=$(tool_path plink2); plink=$(tool_path plink); regenie=$(tool_path regenie); rscript=$(tool_path Rscript)

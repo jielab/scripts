@@ -7,7 +7,7 @@ import numpy as np,pandas as pd
 from scipy.stats import norm
 ALIASES={
  "SNP":["SNP","RSID","RS_ID","MARKERNAME","VARIANT_ID","ID","RS_NUMBER"],
- "CHR":["CHR","CHROM","CHROMOSOME","CHROMSOME","CHR_ID"], "BP":["BP","POS","POSITION","BASE_PAIR_LOCATION"],
+ "CHR":["CHR","CHROM","CHROMOSOME","CHROMSOME","CHR_ID"], "BP":["BP","POS","POS_B37","POSITION","BASE_PAIR_LOCATION"],
  "A1":["A1","EA","EFFECT_ALLELE","EFFECTALLELE","ALT","ALLELE1","TESTED_ALLELE","CODED_ALLELE"],
  "A2":["A2","NEA","OTHER_ALLELE","NON_EFFECT_ALLELE","NONEFFECTALLELE","REF","ALLELE0","REFERENCE_ALLELE"],
  "BETA":["BETA","EFFECT","EFFECT_SIZE","ES","LOG_ODDS","B"], "OR":["OR","ODDS_RATIO","ODDSRATIO"],
@@ -64,9 +64,9 @@ def main():
     out=pd.DataFrame({"SNP":sid,"A1":a1,"A2":a2,"BETA":beta,"SE":se,"P":pv,"N":n,"EAF":eaf,"CHR":chrom,"BP":bp})
     valid=out.A1.isin(list("ACGT"))&out.A2.isin(list("ACGT"))&(out.A1!=out.A2); stats["bad_allele"]+=int((~valid).sum()); out=out[valid]
     amb=(out.A1+out.A2).isin(["AT","TA","CG","GC"]); stats["ambiguous"]+=int(amb.sum()); out=out[~amb]
-    eff=out.BETA.notna()&out.SE.notna()&(out.SE>0); stats["missing_effect"]+=int((~eff).sum()); out=out[eff]
+    eff=np.isfinite(out.BETA)&np.isfinite(out.SE)&(out.SE>0); stats["missing_effect"]+=int((~eff).sum()); out=out[eff]
     hm=out.SNP.isin(snps); stats["not_hm3"]+=int((~hm).sum()); out=out[hm]
-    dup=out.SNP.isin(seen); stats["duplicates"]+=int(dup.sum()); out=out[~dup]; seen.update(out.SNP.tolist())
+    dup=out.SNP.isin(seen)|out.SNP.duplicated(); stats["duplicates"]+=int(dup.sum()); out=out[~dup]; seen.update(out.SNP.tolist())
     if len(out):
       nvals.extend(out.N.dropna().to_numpy().tolist()); out.to_csv(a.output,sep="\t",index=False,mode="wt" if first else "at",header=first,compression="gzip",float_format="%.10g"); first=False; stats["kept_rows"]+=len(out)
   if first: raise SystemExit(f"No usable HapMap3 variants in {a.input}")

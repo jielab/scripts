@@ -11,6 +11,7 @@ dependencies:
   - numpy=2.3.5
   - scipy=1.16.3
   - pandas=2.2.3
+  - matplotlib
   - pyarrow=24.0.0
   # Required by the integrated MR-link-2 implementation in f/c2_mr_link2.py.
   - bitarray=3.8.0

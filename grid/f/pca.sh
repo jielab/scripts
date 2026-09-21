@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Cohort preparation: reference-PC projection -> distances/QC -> ancestry.
 set -euo pipefail
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-source "$ROOT/f/common.sh" "$@"; grid_parse_args "$@"
+if [[ -z ${GRID_COMMAND_FILE:-} ]]; then
+  exec bash "$(dirname -- "${BASH_SOURCE[0]}")/pipeline.sh" pca "$@"
+fi
 for n in "$GRID_COV_PCS" "$GRID_DISTANCE_PCS"; do
   [[ $n =~ ^[1-9][0-9]*$ ]] || _grid_die 'PC counts must be positive integers'
 done
@@ -10,7 +11,26 @@ done
 pca=$GRID_PCA_FILE
 qc=$(dirname -- "$pca")
 raw="$GRID_OUTPUT_ROOT/pca"
+echo "input genotype: $GRID_IMP_DIR/chr{1..22}"
+echo "input PCA weights: $GRID_PCA_WEIGHT"
+echo "output PCA files: $pca"
+echo "output distance/ancestry/QC: $qc"
+if [[ $GRID_CHECK == TRUE || $GRID_DRY_RUN == TRUE ]]; then
+  if python3 "$ROOT/f/pca_cache.py" "$pca" "$GRID_COV_PCS"; then
+    echo "CHECK PASS: existing PCA projection contains PC1-PC$GRID_COV_PCS"
+  else
+    need "$GRID_PCA_WEIGHT"
+    for c in {1..22}; do
+      need "$GRID_IMP_DIR/chr$c.pgen"; need "$GRID_IMP_DIR/chr$c.psam"
+      [[ -s $GRID_IMP_DIR/chr$c.pvar || -s $GRID_IMP_DIR/chr$c.pvar.zst ]] || _grid_die "Missing chr$c PVAR"
+    done
+    echo 'CHECK PASS: genotype inputs exist; projection is needed'
+  fi
+  return 0
+fi
 mkdir -p "$qc" "$raw/log"
+exec {pca_lock}>"$raw/run.lock"
+flock -n "$pca_lock" || _grid_die 'Another PCA run is active' 
 need(){ [[ -s $1 ]] || _grid_die "Missing/empty file: $1"; }
 log(){ echo "[PCA] $*" >&2; }
 # The projection cache is independent of distances and ancestry outputs.
@@ -30,6 +50,7 @@ else
       log "SKIP projection chr$c: cached chromosome scores"
       return
     fi
+    rm -f -- "$marker"
     need "$prefix.pgen"; need "$prefix.psam"
     local -a input=(--pfile "$prefix")
     if [[ ! -s $prefix.pvar && -s $prefix.pvar.zst ]]; then input+=(vzs); else need "$prefix.pvar"; fi
@@ -39,12 +60,16 @@ else
       --memory 4096 --threads 1 --out "$dest"
     if [[ $GRID_DRY_RUN == FALSE ]]; then need "$dest.sscore"; need "$dest.sscore.vars"; touch "$marker"; fi
   }
-  running=0; status=0
+  pids=(); status=0
   for c in {1..22}; do
-    project_chr "$c" & ((++running))
-    if ((running >= pca_jobs)); then wait -n || status=1; running=$((running-1)); fi
+    project_chr "$c" & pids+=("$!")
+    if ((${#pids[@]} >= pca_jobs)); then
+      for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+      pids=()
+      ((status == 0)) || _grid_die 'PCA chromosome projection failed'
+    fi
   done
-  while ((running)); do wait -n || status=1; running=$((running-1)); done
+  for pid in "${pids[@]}"; do wait "$pid" || status=1; done
   ((status == 0)) || _grid_die 'PCA projection failed'
   # Persist the projection before distance/QC work, so that either can resume alone.
   grid_run_logged "$raw/log/combine.log" Rscript "$ROOT/f/combine_disco_pca.R" \

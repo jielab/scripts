@@ -76,7 +76,8 @@ write_gwas_cmd() {
      gwas_lead_marker_matches "$cojo_done" "$gwas" cojo "$p_lead" "$lead_window" "$chrs" &&
      [[ -s "$awk_snp" && ! -d "$clump_dir" && ! -d "$cojo_dir" ]] &&
      { { [[ -s "$clump_done" && -s "${merged_prefix}.clumps" && -s "$cojo_done" ]] &&
-           [[ -s "${merged_prefix}.jma.cojo" || -s "${merged_prefix}.ldr.cojo" ]]; } ||
+           { [[ -s "${merged_prefix}.jma.cojo" || -s "${merged_prefix}.ldr.cojo" ]] ||
+             awk -F '\t' 'NR==2&&$6=="no_snps_selected"{ok=1}END{exit !ok}' "$cojo_done"; }; } ||
        { [[ -s "$clump_done" && -s "$cojo_done" ]] && awk 'NR>1{exit 1}' "$awk_snp"; }; }; then
     log "SKIP completed lead GWAS: $gwas"
     rm -f "$cmd"
@@ -245,7 +246,11 @@ gwas_post_has_data_rows(){
 
 GWAS=$(q "$gwas")
 GWAS_DIR=$(q "$gwas_dir")
-GWAS_POST_TMP_ROOT="\$GWAS_DIR/.tmp"
+if [[ -n "\${GWAS_POST_TMP_BASE:-}" ]]; then
+  GWAS_POST_TMP_ROOT="\${GWAS_POST_TMP_BASE%/}/\$GWAS"
+else
+  GWAS_POST_TMP_ROOT="\$GWAS_DIR/.tmp"
+fi
 mkdir -p "\$GWAS_POST_TMP_ROOT"
 # Isolate temporary files per process and remove them on exit.
 for stale_tmp in "\$GWAS_POST_TMP_ROOT"/run.*; do
@@ -319,7 +324,10 @@ MPLOT_FLAG_FILE=$(q "$mplot_flag_file")
 MAGMA_DIR=$(q "$magma_dir")
 MAGMA_PREFIX=$(q "$magma_prefix")
 MAGMA_ANNOT_CACHE=$(q "$magma_annot_cache")
-DELETE_RAW=$(q "$delete_raw")
+DELETE_RAW_AFTER_SUCCESS=$(q "$delete_raw")
+# The shared formatter can delete raw immediately after formatting. Defer it
+# until all requested modules in this worker have returned successfully.
+DELETE_RAW=FALSE
 
 DO_STEP=$(q "$step")
 REPLACE=$(q "$replace")
@@ -403,7 +411,7 @@ std_format(){
     -v snp_col="\$SNP_col" -v chr_col="\$CHR_col" -v pos_col="\$POS_col" \
     -v ea_col="\$EA_col" -v nea_col="\$NEA_col" -v eaf_col="\$EAF_col" -v n_col="\$N_col" \
     -v beta_col="\$BETA_col" -v se_col="\$SE_col" -v p_col="\$P_col" -v logp_col="\$LOG10P_col" '
-    function get(c, x){x=(c>0 ? \$c : "");gsub(/\r/,"",x);return x}
+    function get(c, x){x=(c>0 ? \$c : "");gsub(/^[[:space:]]+|[[:space:]]+\$/,"",x);return x}
     function val(c, x){x=get(c); return x=="" ? "NA" : x}
     function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?\$/}
     function normchr(x){gsub(/^chr/,"",x); if(x=="X")x="23"; if(x=="Y")x="24"; if(x=="MT"||x=="M")x="25"; return x}
@@ -471,14 +479,21 @@ gwas_post_prune_magma_dir(){
 }
 
 gwas_post_magma_annotation(){
-  local snploc="\${1:-}" cache_key window_tag resource_tag cache_dir annot meta
+  local snploc="\${1:-}" cache_key window_tag resource_tag cache_dir annot meta coordinate_tag
   local lock_file lock_fd tmp_prefix annot_tmp meta_tmp nloc snploc_hash
   command -v flock >/dev/null 2>&1 || { echo "ERROR: flock not found; required for the shared MAGMA annotation cache" >&2; exit 1; }
 
   window_tag=\$(printf '%s' "\$MAGMA_WINDOW" | tr -c 'A-Za-z0-9._-' '_')
   resource_tag=\$(printf '%s\n%s\n' "\$MAGMA_REF" "\$GENE_LOC" | sha256sum | awk '{print substr(\$1,1,16)}')
-  cache_key="v2.GRCh\${GRCH}.window_\${window_tag}.magma_\${resource_tag}"
-  cache_dir="\$MAGMA_ANNOT_CACHE/v2/GRCh\$GRCH/window_\$window_tag/magma_\$resource_tag"
+  # Include the actual annotation input: a project can contain different SNP
+  # sets, and v2 may contain coordinate IDs incompatible with the MAGMA BIM.
+  if [[ -n "\$snploc" ]]; then
+    coordinate_tag=\$(sha256sum "\$snploc" | awk '{print \$1}')
+  else
+    coordinate_tag=\$(stat -c '%n:%s:%y' "\$FINAL" | sha256sum | awk '{print \$1}')
+  fi
+  cache_key="v3.GRCh\${GRCH}.window_\${window_tag}.magma_\${resource_tag}.\${coordinate_tag}"
+  cache_dir="\$MAGMA_ANNOT_CACHE/v3/GRCh\$GRCH/window_\$window_tag/magma_\$resource_tag/\$coordinate_tag"
   annot="\$cache_dir/genes.annot"
   meta="\$cache_dir/annotation.meta.tsv"
   mkdir -p "\$(dirname "\$cache_dir")"
@@ -809,7 +824,7 @@ gwas_post_cojo_complete(){
   gwas_lead_marker_matches "\$COJO_DONE" "\$GWAS" cojo "\$P_LEAD" "\$LEAD_WINDOW" "\$CHRS" || return 1
   [[ -s "\$COJO_DONE" ]] && {
     [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]] || gwas_post_lead_awk_has_no_rows ||
-      awk -F '\t' 'NR==2&&\$2=="cojo"&&\$6=="no_reference_matched_variants"{ok=1}END{exit !ok}' "\$COJO_DONE"
+      awk -F '\t' 'NR==2&&\$2=="cojo"&&(\$6=="no_reference_matched_variants"||\$6=="no_snps_selected"){ok=1}END{exit !ok}' "\$COJO_DONE"
   }
 }
 
@@ -1078,6 +1093,7 @@ if run_lead; then
     cojo_skipped=FALSE
     clump_has_usable_input=FALSE
     cojo_has_matched_input=FALSE
+    cojo_has_empty_selection=FALSE
     if [[ "\$REPLACE" != "TRUE" ]]; then
       gwas_post_clump_complete && clump_was_done=TRUE
       gwas_post_cojo_complete && cojo_was_done=TRUE
@@ -1172,6 +1188,7 @@ if run_lead; then
       gwas_post_run_cojo "\$jp" "\${QC_PREFIX}.\${tag}.cojo_empty" gcta --bfile "\$GCTA_BFILE" "\${GCTA_CHR_ARGS[@]}" \
         --maf 1e-6 --cojo-file "\$ma" --cojo-slct --cojo-p "\$P_LEAD" --out "\$jp"
       if [[ "\$GCTA_COJO_HAS_MATCH" == TRUE ]]; then cojo_has_matched_input=TRUE; fi
+      if [[ "\$GCTA_COJO_NO_SNPS_SELECTED" == TRUE ]]; then cojo_has_empty_selection=TRUE; fi
     else
       gwas_post_log "skip gcta chr\$chr: no SNPs in \$ma"
     fi
@@ -1196,6 +1213,9 @@ if run_lead; then
         concat_chr_outputs "\$COJO" "\$MERGED" "\$labels" jma.cojo cma.cojo ldr.cojo
         if [[ -s "\${MERGED}.jma.cojo" || -s "\${MERGED}.ldr.cojo" ]]; then
           gwas_post_mark_phase_done cojo
+        elif [[ "\$cojo_has_empty_selection" == TRUE ]]; then
+          gwas_post_log "COJO complete with no SNPs selected"
+          gwas_post_mark_phase_done cojo no_snps_selected
         elif [[ "\$cojo_has_matched_input" != "TRUE" ]]; then
           gwas_post_log "COJO complete with no reference-matched significant variants"
           gwas_post_mark_phase_done cojo no_reference_matched_variants
@@ -1229,6 +1249,17 @@ if [[ ",\$H2_REQUESTED," == *,h2,* || "\$H2_REQUESTED" == all ]]; then
     --output-dir "\$(dirname "\$GWAS_DIR")/h2" --sex "\$H2_SEX" \
     --ref-ld-chr "\$H2_REF_LD" --w-ld-chr "\$H2_W_LD" --merge-alleles "\$H2_MERGE_ALLELES" \
     --conda-env "\$H2_CONDA_ENV" --replace "\$REPLACE" "\${h2_args[@]}"
+fi
+
+# Delete raw only after every requested module has succeeded.
+if [[ "\$DELETE_RAW_AFTER_SUCCESS" == TRUE && -n "\$RAW" && -f "\$RAW" ]]; then
+  if [[ "\$RAW" -ef "\$FINAL" ]]; then
+    echo "ERROR: raw and final GWAS are the same file; refusing to delete \$RAW" >&2
+    exit 1
+  fi
+  gzip -t -- "\$FINAL"
+  rm -- "\$RAW"
+  gwas_post_log "All requested modules succeeded; deleted raw: \$RAW"
 fi
 
 CMD_TOP

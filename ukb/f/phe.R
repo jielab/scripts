@@ -819,7 +819,7 @@ dat0 <- dat0 %>% mutate(
 ) %>% mutate(
 	le8.sco = rowMeans1(across(all_of(vars.le8)), 0.7), # 
 	le8r.sco = -le8.sco, le8r.3c = f3c(le8r.sco),	
-	cad.pgs = cad.6m.pgs, cad.pgs.3c = f3c(cad.pgs), # 
+	cvd_cad.pgs.3c = f3c(cvd_cad.pgs), # 
 	cvh.3c = cut(le8.sco, breaks = c(0, 50, 80, Inf), right = FALSE, labels = c("unhealthy", "average", "healthy")),
 	cvh.3c = factor(cvh.3c, levels = c("healthy", "average", "unhealthy"))
 )
@@ -939,7 +939,7 @@ run_if("drug", {
 
 
 # 🚩 drug⭕
-prot <- fread(paste0('/mnt/d/data/gwas/prot/map_3k_v1.tsv'), sep = '\t', select = c(1,3,5), header = TRUE, fill = TRUE) %>% as.data.frame()
+prot <- fread(paste0('/mnt/e/gwas/prot/map_3k_v1.tsv'), sep = '\t', select = c(1,3,5), header = TRUE, fill = TRUE) %>% as.data.frame()
 	drug <- fread(paste0(dir0, '/files/prot-drug.txt'), sep = '\t', header = TRUE, fill = TRUE) %>% as.data.frame()
 	tmp <- merge_check(prot = prot, drug = drug, by.x = 'UniProt', by.y = 'UNIPROT_ACCESSION')
 	drug <- merge(tmp$prot, tmp$drug, by.x = 'UniProt', by.y = 'UNIPROT_ACCESSION') %>% 
@@ -954,10 +954,22 @@ run_if("phe4gwas", {
 
 # 🚩 GWAS data
 dat <- read_rds("all")
-dat1 <- dat %>% filter(ethnic.c == "White") %>% rename(IID = eid) %>% mutate(FID = IID)
-for (Y in c("cvd_cad", "stroke", "cvd_stroke_i", "stroke_o")) {
-	dat1 <- t2e(dat1, "cvd", paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_follow_end, Y, "year")
+bbc_gwas <- read_rds("bbc")
+stopifnot(all(c("eid", "bb_LDL") %in% names(bbc_gwas)),
+          !anyNA(dat$eid), !anyDuplicated(dat$eid),
+          !anyNA(bbc_gwas$eid), !anyDuplicated(bbc_gwas$eid))
+# Match by ID without changing the full cohort's order or duplicating rows.
+dat$ldl <- bbc_gwas$bb_LDL[match(as.character(dat$eid), as.character(bbc_gwas$eid))]
+message("input LDL: ", file.path(indir, "Rdata", "bbc.rds"),
+        "; bb_LDL -> ldl; nonmissing=", sum(!is.na(dat$ldl)))
+rm(bbc_gwas)
+for (Y in c("cvd_cad", "t2dm", "stroke", "cvd_stroke_i", "stroke_o")) {
+	# Diabetes evidence must refer to diabetes, not cardiovascular disease.
+	domain <- if (Y == "t2dm") "cnt_icd10_t2dm" else "cvd"
+	stopifnot(paste0("fod_icd10_", Y) %in% names(dat))
+	dat <- t2e(dat, domain, paste0("fod_icd10_", Y), "birth_date", "date_attend", "date_lost", "date_death", date_follow_end, Y, "year")
 }
+dat1 <- dat %>% filter(ethnic.c == "White") %>% rename(IID = eid) %>% mutate(FID = IID)
 # ADuLT must use the original dates, before select() drops them. Existing
 # .t2e/.Yt2e are retained; ADuLT includes dated prevalent cases as well.
 # Enable with ADULT_ENABLE=TRUE; the default new phenotype is cvd_cad.adu.
@@ -971,7 +983,9 @@ if (adu_bool(Sys.getenv("ADULT_ENABLE", "FALSE")) &&
 dat1 <- ukb_add_adult(dat1, indir = indir, outdir = outdir,
                       end_date = date_follow_end, default_traits = "cvd_cad")
 dat1 <- dat1 %>% mutate(center = factor(center)) %>%
-	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, bald, matches("^bald1|^cvd_cad|^stroke_|^hap|t2e$|^PC[1-4]$"), ends_with(".adu"), -starts_with("happy_"))
+	dplyr::select(FID, IID, ethnic.c, center, tdi, edu.sco, age, sex, bmi, height, ldl,
+	              drug.lipid, drug.dm, drug.htn, bald,
+	              matches("^bald1|^cvd_cad|^t2dm|^stroke_|^hap|t2e$|^PC[1-4]$"), ends_with(".adu"), -starts_with("happy_"))
 
 # mm <- model.matrix(~ center - 1, data = dat1)
 # colnames(mm) <- paste0("CR", seq_len(ncol(mm)))
@@ -982,8 +996,20 @@ dir.create(file.path(indir, "common"), recursive = TRUE, showWarnings = FALSE)
 phe_destination <- file.path(indir, "common", "ukb.phe")
 phe_staged <- tempfile("ukb.phe.", tmpdir = dirname(phe_destination))
 write.table(dat1, phe_staged, na = "NA", append = FALSE, quote = FALSE, row.names = FALSE)
+all_destination <- file.path(indir, "Rdata", "all.rds")
+all_staged <- tempfile("all.rds.", tmpdir = dirname(all_destination))
+# Save the full cohort, not the White-only GWAS export.
+saveRDS(dat, all_staged)
+if (!file.rename(all_staged, all_destination)) {
+	unlink(c(all_staged, phe_staged))
+	stop("Could not replace ", all_destination)
+}
 if (!file.rename(phe_staged, phe_destination)) {
 	unlink(phe_staged)
 	stop("Could not replace ", phe_destination)
 }
+message("output full phenotype: ", all_destination, "; N=", nrow(dat))
+message("output GWAS phenotype: ", phe_destination, "; N=", nrow(dat1),
+        "; height=", sum(!is.na(dat1$height)), "; ldl=", sum(!is.na(dat1$ldl)),
+        "; t2dm events=", sum(dat1$t2dm.Yt2e == 1, na.rm = TRUE))
 })

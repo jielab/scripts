@@ -134,7 +134,7 @@ std_small(){
     -v cis_bed="${CIS_BED:-}" -v cis_name="$GWAS" -v flank="${CIS_FLANK:-0}" \
     -v snp_col="$SNP_col" -v chr_col="$CHR_col" -v pos_col="$POS_col" \
     -v p_col="$P_col" -v logp_col="$LOG10P_col" '
-    function get(c, x){x=(c>0 ? $c : "");gsub(/\r/,"",x);return x}
+    function get(c, x){x=(c>0 ? $c : "");gsub(/^[[:space:]]+|[[:space:]]+$/,"",x);return x}
     function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
     function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
     function keep_p(  p,lp){
@@ -186,7 +186,7 @@ std_small(){
     -v snp_col="$SNP_col" -v chr_col="$CHR_col" -v pos_col="$POS_col" \
     -v ea_col="$EA_col" -v nea_col="$NEA_col" -v eaf_col="$EAF_col" -v n_col="$N_col" \
     -v beta_col="$BETA_col" -v se_col="$SE_col" -v p_col="$P_col" -v logp_col="$LOG10P_col" '
-    function get(c, x){x=(c>0 ? $c : "");gsub(/\r/,"",x);return x}
+    function get(c, x){x=(c>0 ? $c : "");gsub(/^[[:space:]]+|[[:space:]]+$/,"",x);return x}
     function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?$/}
     function normchr(x){gsub(/^chr/,"",x); if(x=="X") x="23"; if(x=="Y") x="24"; if(x=="MT"||x=="M") x="25"; return x}
     function snpid(chr,pos,  s,ea,nea){s=get(snp_col); if(s==""||s=="NA"||s=="."){ea=get(ea_col); nea=get(nea_col); s=chr":"pos; if(ea!="") s=s":"ea; if(nea!="") s=s":"nea} return s}

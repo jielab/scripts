@@ -1,0 +1,7 @@
+canonical,column,unit
+bmi,bmi,kg/m2
+bb_TC,bb_TC,mmol/L
+bb_HDL,bb_HDL,mmol/L
+bb_HBA1C,bb_HBA1C,mmol/mol
+sbp,sbp,mmHg
+dbp,dbp,mmHg

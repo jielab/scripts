@@ -22,7 +22,6 @@ Shared options:
 
 compare options (first GWAS versus each follower):
   --labels A,B                 Optional labels matching input order
-  --mplot TRUE|FALSE           Manhattan comparison (TRUE)
   --compare-beta TRUE|FALSE    Effect-size comparison (TRUE)
   --compare-EAF TRUE|FALSE     Allele-frequency comparison (TRUE)
   --p-threshold 5e-8           Significant-variant threshold
@@ -37,7 +36,7 @@ ldsc options:
   --w-ld-chr PREFIX            Regression weights
   --N NUMBER                  Explicit fallback when input has no N column
   --missing-n error|skip       Missing sample-size policy (error)
-  --run-munge TRUE|FALSE       Prepare missing/stale sumstats caches (TRUE)
+  --run-munge TRUE|FALSE       TRUE: prepare caches; FALSE: use adjacent sumstats.gz (TRUE)
   --run-h2 TRUE|FALSE          Estimate heritability (TRUE)
   --run-rg TRUE|FALSE          Estimate genetic correlations (TRUE)
   --run TRUE|FALSE             Execute LDSC; FALSE writes commands only (TRUE)
@@ -58,46 +57,37 @@ shiny options (interactive Shiny Manhattan tracks and LD block boundaries):
   --reference-dir DIR          Indexed FASTA (default: /mnt/e/refGen/fasta)
   --gene-dir DIR               glist.37.bed / glist.38.bed (default: /mnt/d/files)
   shiny prefers adjacent .thin.gz files when available; compare/ldsc use full GWAS.
-  All inputs must share one source build. The GRCh selector converts cached
+  Shiny inputs must share one source build. The GRCh selector converts cached
   viewing copies together; source GWAS files are never rewritten.
 
 Examples:
 cd /mnt/d/scripts/gwas
+gwas_root=/mnt/e/gwas/4grid/common
 
+# 1. All 15 GWAS: height.EUR versus the other 14, using only SNPs with
+# P <= 5e-8 in height.EUR. Inputs must share a build for CHR/POS matching.
+# For mixed builds, add --grch 38 to align cached comparison copies.
+# Output: 14 *.BETA.png and 14 *.EAF.png, plus harmonized data and QC tables.
 ./gwas_compare.sh compare \
-  --project-dir /mnt/d/data/gwas/main --category common --anchor bald0 --require-grch 38 \
-  --mplot TRUE --compare-beta TRUE --compare-EAF TRUE \
-  --output-dir /mnt/d/analysis/gwas/compare
-
-./gwas_compare.sh ldsc --dir-gwas /mnt/d/data/gwas/main --category common --anchor bald0 --require-grch 38 --missing-n skip --dir-out /mnt/d/analysis/gwas/main/ldsc
-
-# 4grid: six formatted height GWAS, with EUR first for pairwise comparisons.
-# List the files explicitly so later LDL/T2DM outputs are not included.
-gwas_root=/mnt/d/data/gwas/4grid/common
-trait=height
-gwas_files=()
-for ancestry in EUR AFR EAS HIS SAS ALL; do
-  gwas_files+=("$gwas_root/$trait.$ancestry/gwas/$trait.$ancestry.gz")
-done
-gwas_csv=$(IFS=,; echo "${gwas_files[*]}")
-
-./gwas_compare.sh compare \
-  --gwas-files "$gwas_csv" --labels EUR,AFR,EAS,HIS,SAS,ALL \
-  --require-grch 37 \
-  --mplot TRUE --compare-beta TRUE --compare-EAF TRUE \
+  --project-dir "${gwas_root%/*}" --category "${gwas_root##*/}" --anchor height.EUR \
+  --compare-beta TRUE --compare-EAF TRUE \
   --p-threshold 5e-8 --significant first \
-  --output-dir "/mnt/d/analysis/gwas/4grid/compare/$trait"
+  --output-dir /mnt/d/analysis/gwas/4grid/compare
 
-# LDSC uses the configured LD-score reference for all six inputs; it does not
-# select ancestry-specific references from the filenames.
+# 2. All 15 GWAS: h2 and all 105 pairwise genetic correlations, with rg.png.
+# Reuse <trait>/gwas/<trait>.sumstats.gz beside each <trait>.gz; do not munge.
+# Every adjacent sumstats file must already exist and contain SNP A1 A2 Z N.
+# The configured LD-score reference is shared by all inputs; it is not
+# selected by ancestry. Override --ref-ld-chr/--w-ld-chr when appropriate.
 ./gwas_compare.sh ldsc \
-  --gwas-files "$gwas_csv" --require-grch 37 \
-  --missing-n error --run-munge TRUE --run-h2 TRUE --run-rg TRUE --run TRUE \
-  --output-dir "/mnt/d/analysis/gwas/4grid/ldsc/$trait"
+  --project-dir "${gwas_root%/*}" --category "${gwas_root##*/}" \
+  --run-munge FALSE --run-h2 TRUE --run-rg TRUE --run TRUE \
+  --output-dir /mnt/d/analysis/gwas/4grid/ldsc
 
-# R Shiny: generate .thin.gz first using gwas_format.sh thin (see its examples).
+# 3. R Shiny: the same six height tracks (EUR, AFR, EAS, HIS, SAS, ALL).
+# Generate .thin.gz first using gwas_format.sh thin (see its examples).
+# Hover over a plot and use the camera button to download a PNG.
 trait=height
-gwas_root=/mnt/d/data/gwas/4grid/common
 gwas_files=()
 for race in EUR AFR EAS HIS SAS ALL; do
   gwas_files+=("$gwas_root/$trait.$race/gwas/$trait.$race.thin.gz")
@@ -129,7 +119,7 @@ grch='' require_grch='' check_only=FALSE
 output_dir="/mnt/d/analysis/gwas/$module"
 
 # Comparison settings; these values are passed explicitly to the R helper.
-labels='' mplot=TRUE compare_beta=TRUE compare_eaf=TRUE
+labels='' compare_beta=TRUE compare_eaf=TRUE
 p_threshold=5e-8 significant=first
 
 # LDSC settings; no fallback sample size is assumed.
@@ -171,7 +161,6 @@ while (( $# )); do
     *)
       case "$module:$1" in
         compare:--labels|shiny:--labels) labels=$2 ;;
-        compare:--mplot) mplot=$2 ;;
         compare:--compare-beta) compare_beta=$2 ;;
         compare:--compare-EAF|compare:--compare-eaf) compare_eaf=$2 ;;
         compare:--p-threshold|shiny:--p-threshold) p_threshold=$2 ;;
@@ -225,7 +214,7 @@ fi
 
 case "$module" in
   compare)
-    cmd+=(--mplot "$mplot" --compare-beta "$compare_beta" --compare-EAF "$compare_eaf"
+    cmd+=(--compare-beta "$compare_beta" --compare-EAF "$compare_eaf"
           --p-threshold "$p_threshold" --significant "$significant")
     [[ -z "$labels" ]] || cmd+=(--labels "$labels")
     ;;

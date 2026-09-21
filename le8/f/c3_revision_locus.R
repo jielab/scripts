@@ -102,10 +102,10 @@ le8_run_susie <- function(dx,dy,d,feature,chr,start,end,locus) {
   },error=function(e)modifyList(no,list(status=conditionMessage(e))))
   ans
 }
-coloc_one_locus <- function(feature,layer,qtl_file,lead_chr,lead_pos,ygwas_file,outcome_type,case_frac) {
+coloc_one_locus <- function(feature,layer,qtl_file,lead_chr,lead_pos,ygwas_file,outcome_type,case_frac,locus_class=NULL) {
   start<-max(1,lead_pos-WINDOW_BP);end<-lead_pos+WINDOW_BP
   locus<-paste0("chr",lead_chr,":",floor(start),"-",ceiling(end))
-  cls<-le8_locus_class(feature,layer,lead_chr,lead_pos)
+  cls<-if(is.null(locus_class))le8_locus_class(feature,layer,lead_chr,lead_pos)else locus_class
   s<-tibble(layer,feature,locus,chr=as.character(lead_chr),start,end,lead_pos,locus_class=cls,
     status="failed",n_snps=0L,PP.H0=NA_real_,PP.H1=NA_real_,PP.H2=NA_real_,PP.H3=NA_real_,PP.H4=NA_real_,
     PP.H4_p12_conservative=NA_real_,PP.H4_p12_default=NA_real_,PP.H4_p12_liberal=NA_real_,PP.H4_robust_min=NA_real_,

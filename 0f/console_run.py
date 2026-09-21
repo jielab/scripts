@@ -234,6 +234,9 @@ def run(script, args):
                 r'LE8 .*preflight|MAHA pipeline:|\[MAHA(?: FINAL)?\]|'
                 r'\[[^\]]+\] (?:START|DONE|FAIL|ERROR)\b|'
                 r'(?:Starting|Finished|Running) (?:module|step|stage)\b)', line)
+            # LE8 console: stage boundaries only, plus diagnostics below.
+            if label == 'le8':
+                major = bool(re.match(r'^\[LE8\] (START|DONE|FAIL|ERROR)\b', line))
             error = re.search(
                 r'(?i)(?:^|[\] :])(?:error|fatal|warning|traceback|exception)\b|'
                 r'\b[A-Za-z]+(?:Error|Exception):|Execution halted|^Calls:|^停止执行', line)

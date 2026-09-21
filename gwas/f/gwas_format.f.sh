@@ -219,7 +219,8 @@ gwas_lead_marker_matches() {
     NR==1 {header=($0=="GWAS\tPHASE\tP_LEAD\tLEAD_WINDOW\tCHRS\tSTATUS")}
     NR==2 {ok=(header && NF==6 && $1==trait && $2==phase &&
       $3==p && $4==window && $5==chromosomes &&
-      ($6=="complete" || $6=="no_significant_variants" || $6=="no_reference_matched_variants"))}
+      ($6=="complete" || $6=="no_significant_variants" || $6=="no_reference_matched_variants" ||
+       (phase=="cojo" && $6=="no_snps_selected")))}
     END {exit !(NR==2 && ok)}
   ' "$marker"
 }
@@ -227,30 +228,58 @@ gwas_lead_marker_matches() {
 # Embedded in each worker. GCTA reports an empty reference-QC intersection as
 # exit 1; retain that evidence without treating an empty chromosome as a crash.
 gwas_post_run_cojo() {
-  local prefix="$1" audit="$2" rc ext
+  local prefix="$1" audit="$2" rc ext empty_reason=""
   shift 2
   GCTA_COJO_HAS_MATCH=FALSE
+  GCTA_COJO_NO_SNPS_SELECTED=FALSE
   mkdir -p "$(dirname "$audit")"
   rm -f -- "${audit}.tsv" "${audit}.log" "${audit}.freq.badsnps" "${audit}.badsnps"
   rm -f -- "${prefix}.freq.badsnps" "${prefix}.badsnps"
   if run_tool "$prefix" "$@"; then
     GCTA_COJO_HAS_MATCH=TRUE
+    # GCTA can finish selection successfully without producing a .jma.cojo.
+    # Require both the explicit empty result and normal completion; missing
+    # output alone must never turn a truncated or broken run into success.
+    if grep -Fxq 'No SNPs have been selected.' "${prefix}.log" &&
+       grep -Eq '^Analysis finished at ' "${prefix}.log"; then
+      cp -- "${prefix}.log" "${audit}.log"
+      printf 'STATUS\tREASON\tSELECTED_SNPS\nEMPTY\tno_snps_selected\t0\n' > "${audit}.tsv"
+      rm -f -- "${prefix}.jma.cojo" "${prefix}.cma.cojo" "${prefix}.ldr.cojo"
+      GCTA_COJO_NO_SNPS_SELECTED=TRUE
+      gwas_post_log "COJO completed with no SNPs selected: $prefix; evidence: ${audit}.tsv"
+    elif [[ ! -s "${prefix}.jma.cojo" && ! -s "${prefix}.ldr.cojo" ]]; then
+      echo "ERROR: COJO returned success without results or an explicit completed empty selection: ${prefix}.log" >&2
+      return 1
+    fi
     return 0
   else
     rc=$?
   fi
 
-  # Match only GCTA's explicit empty-intersection error after it has read the
-  # summary statistics and reached reference matching. Other failures propagate.
+  # Recognize only explicit empty results from known QC stages. In a small
+  # chromosome subset every candidate can be fixed in the reference, causing
+  # the MAF filter to stop before GCTA even reads the summary statistics.
   if [[ "$rc" == 1 ]] &&
      grep -Fxq 'Error: none of the SNPs in the GWAS summary data can be found in the genotype data.' "${prefix}.log" &&
      grep -Fxq 'Matching the GWAS meta-analysis results to the genotype data ...' "${prefix}.log" &&
      grep -Eq '^GWAS summary statistics of [1-9][0-9]* SNPs read from ' "${prefix}.log"; then
+    empty_reason=no_reference_matched_variants_after_gcta_qc
+  elif [[ "$rc" == 1 ]] && awk '
+    /^Genotype data for [1-9][0-9]* individuals and [1-9][0-9]* SNPs to be included from / {loaded=1}
+    /^Calculating allele frequencies \.\.\.$/ {frequencies=loaded}
+    $0=="Error: no SNP is retained for analysis." && frequencies &&
+      previous ~ /^Filtering SNPs with MAF > [0-9.eE+-]+ \.\.\.$/ {empty=1}
+    {previous=$0}
+    END {exit !empty}
+  ' "${prefix}.log"; then
+    empty_reason=no_reference_variants_after_gcta_maf_filter
+  fi
+  if [[ -n "$empty_reason" ]]; then
     cp -- "${prefix}.log" "${audit}.log"
     for ext in freq.badsnps badsnps; do
       if [[ -s "${prefix}.${ext}" ]]; then cp -- "${prefix}.${ext}" "${audit}.${ext}"; fi
     done
-    printf 'STATUS\tREASON\tUSABLE_SNPS\nEMPTY\tno_reference_matched_variants_after_gcta_qc\t0\n' > "${audit}.tsv"
+    printf 'STATUS\tREASON\tUSABLE_SNPS\nEMPTY\t%s\t0\n' "$empty_reason" > "${audit}.tsv"
     rm -f -- "${prefix}.err" "${prefix}.jma.cojo" "${prefix}.cma.cojo" "${prefix}.ldr.cojo"
     gwas_post_log "COJO has no usable reference SNPs after GCTA QC: $prefix; evidence: ${audit}.tsv"
     return 0

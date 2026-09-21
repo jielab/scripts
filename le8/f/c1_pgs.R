@@ -55,14 +55,14 @@ run_c1_pgs_scan <- function(layer, features, covars, outcome = Y, rawdir = NULL,
   overlap_eids = NULL) {
   score_file <- find_c1_pgs_file(layer)
   overlap_eids <- as.character(overlap_eids %||% character())
-  overlap_signature <- if (!length(overlap_eids)) "none" else paste(length(overlap_eids),
-    min(overlap_eids), max(overlap_eids), sep = "|")
+  overlap_signature <- if (!length(overlap_eids)) "none" else le8_hash_object(sort(unique(overlap_eids)))
   signature <- paste(C1_PGS_SCAN_VERSION,c1_pgs_signature(layer), "omic_overlap",
     overlap_signature, sep = "|")
   cache <- if (is.null(rawdir)) NA_character_ else file.path(rawdir, "c1.pgs_scan.rds")
   if (!is.na(cache) && cache_valid(cache)) {
     old <- tryCatch(readRDS(cache), error = function(e) NULL)
-    if (is.list(old) && all(c("status", "incident", "prevalent", "attained_age") %in% names(old))) {
+    if (is.list(old) && identical(old$signature,signature) &&
+        all(c("status", "incident", "prevalent", "attained_age") %in% names(old))) {
       message("C1/", layer, ": reuse inherited-omic PGS scans")
       return(old)
     }

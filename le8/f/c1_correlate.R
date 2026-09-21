@@ -6,8 +6,8 @@ suppressPackageStartupMessages({
   source(file.path(fdir, "c1_pgs.R"))
 })
 LE8_JOB <- "c1_correlate"
-C1_CODE_VERSION     <- "2026-09-05.5c-audit-v1"
-C1_SCAN_VERSION     <- "2026-09-05.5c-audit-v1"
+C1_CODE_VERSION     <- "2026-09-15.final-systematic"
+C1_SCAN_VERSION     <- "2026-09-15.final-systematic"
 
 TOP_N              <- as.integer(Sys.getenv("C1_TOP_N", unset = "30"))
 YY_TOP              <- as.integer(Sys.getenv("C1_YY_TOP", unset = "6"))
@@ -224,12 +224,13 @@ plot_risk_window_scan <- function(z,anchors=C1_DIRECTION_ANCHORS){
 
 build_directionality_table <- function(incident,prevalent,duration,landmark=tibble(),birthline=tibble(),reverse=tibble()) {
   slim<-function(z,prefix){
-    if(!nrow(z)||!all(c("term","beta","p.value","FDR")%in%names(z)))return(tibble(term=character()))
+    if(!nrow(z)||!all(c("term","beta","p.value","FDR")%in%names(z)))
+      z<-tibble(term=character(),beta=numeric(),p.value=numeric(),FDR=numeric())
     z|>select(term,beta,p.value,FDR)|>
       rename(!!paste0("beta_",prefix):=beta,!!paste0("p_",prefix):=p.value,!!paste0("FDR_",prefix):=FDR)
   }
-  landmark_target<-if(nrow(landmark)){z<-sort(unique(landmark$landmark_years[is.finite(landmark$landmark_years)]));
-    if(any(z<=5))max(z[z<=5])else if(length(z))min(z)else NA_real_}else NA_real_
+  # A 2-year result must never silently become the column labelled 5-year.
+  landmark_target<-if(nrow(landmark)&&any(landmark$landmark_years==5,na.rm=TRUE))5 else NA_real_
   lm5<-if(nrow(landmark)&&is.finite(landmark_target))landmark|>filter(landmark_years==landmark_target)|>
     select(term,beta_landmark5=beta,p_landmark5=p.value,FDR_landmark5=FDR) else
     tibble(term=character(),beta_landmark5=numeric(),p_landmark5=numeric(),FDR_landmark5=numeric())
@@ -241,12 +242,16 @@ build_directionality_table <- function(incident,prevalent,duration,landmark=tibb
            duration_support=is.finite(FDR_duration)&FDR_duration<.05,
            distal_support=is.finite(FDR_landmark5)&FDR_landmark5<.05,
            birthline_support=is.finite(FDR_birthline)&FDR_birthline<.05,
-           reactive_compatible=prevalent_support&(duration_support|(incident_support&!distal_support)),
+           landmark5_tested=is.finite(FDR_landmark5),
+           # Missing or nonsignificant distal tests do not establish attenuation.
+           # Duration association is a disease-state clue, not reverse causation.
+           reactive_compatible=prevalent_support&duration_support,
            direction_class=case_when(
              distal_support&prevalent_support~"distal + disease-state (mixed)",
              distal_support&!prevalent_support~"distal antecedent supported",
              reactive_compatible~"near-diagnosis / reactive-compatible",
              !incident_support&prevalent_support~"established-disease associated",
+             incident_support&!landmark5_tested~"incident association; distal test unavailable",
              incident_support~"incident association only",
              TRUE~"unresolved"),
            incident_score=sign(beta_incident)*pmin(12,-log10(pmax(p_incident,1e-300))),
@@ -1204,7 +1209,7 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   pgs_signature<-c1_pgs_signature(layer)
   if(cache_valid(selected_cache)){
     old<-tryCatch(readRDS(selected_cache),error=function(e)NULL)
-    if(is.list(old)&&
+    if(is.list(old)&&identical(old$meta$code_version,C1_CODE_VERSION)&&identical(old$meta$pgs_signature,pgs_signature)&&
        all(c("pgs_incident","pgs_prevalent","pgs_attained_age")%in%names(old))){
       cache_message(paste0("C1/",layer),selected_cache);return(le8_restore_outputs(layer,"c1_correlate"))
     }
@@ -1213,10 +1218,10 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
 
   biom0<-if(layer=="protein")read_prot() else read_met();features_all<-setdiff(names(biom0),"eid")
   scan<-if(cache_valid(scan_cache))tryCatch(readRDS(scan_cache),error=function(e)NULL) else NULL
-  scan_contract<-list(layer=layer,le4_covars=sort(C1_LE4_COVARS),
+  scan_contract<-list(version="final-landmark-family",landmark_all=Sys.getenv("C1_LANDMARK_ALL","TRUE"),endpoint_manifest=Sys.getenv("LE8_ENDPOINT_MANIFEST",""),layer=layer,le4_covars=sort(C1_LE4_COVARS),
     full_le8_sensitivity=C1_FULL_LE8_SENSITIVITY,
     treatment_vars=sort(C1_TREATMENT_VARS))
-  reuse<-is.list(scan)&&all(c("association_adj2","prevalent_adj2")%in%names(scan))
+  reuse<-is.list(scan)&&identical(scan$scan_contract,scan_contract)&&all(c("association_adj2","prevalent_adj2")%in%names(scan))
   if(!is.null(scan)&&!reuse)
     message("C1/",layer,": scan cache incomplete; recomputing association scans")
 
@@ -1255,6 +1260,8 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   vldl_measured_models<-if(layer=="metabolite")
     run_vldl_tg_measured_models(dat,covs_adj2,tvar,evar)else tibble()
 
+  scan_label<-paste0("C1/",layer,if(layer=="protein")" PWAS"else" MWAS")
+  scan_started<-le8_stage_start(scan_label,paste0("features=",length(features_all)," cache=",reuse))
   if(!reuse){
     message("C1/",layer,": incident Cox scans: basic + behavioral LE4")
     assoc_basic<-cox_scan(dat,features,covs_basic,Y,time_var=tvar,event_var=evar)
@@ -1288,7 +1295,9 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     landmark_features<-unique(c(C1_DIRECTION_ANCHORS,
       assoc_adj2|>filter(is.finite(p.value))|>slice_min(p.value,n=C1_LANDMARK_TOP,with_ties=FALSE)|>pull(term),
       prevalent_adj2|>filter(is.finite(p.value))|>slice_min(p.value,n=C1_LANDMARK_TOP,with_ties=FALSE)|>pull(term)))
+    if(truthy(Sys.getenv("C1_LANDMARK_ALL",unset="TRUE")))landmark_features<-features
     landmark_adj2<-landmark_incident_scan(dat,landmark_features,tvar,evar,covs_adj2,C1_LANDMARK_YEARS)
+    landmark_adj2$FDR_full_family<-p.adjust(landmark_adj2$p.value,"BH",n=length(features)*length(C1_LANDMARK_YEARS))
     risk_features<-unique(c(C1_DIRECTION_ANCHORS,
       assoc_adj2|>filter(is.finite(p.value))|>slice_min(p.value,n=C1_RISK_TOP,with_ties=FALSE)|>pull(term),
       prevalent_adj2|>filter(is.finite(p.value))|>slice_min(p.value,n=C1_RISK_TOP,with_ties=FALSE)|>pull(term)))
@@ -1326,9 +1335,13 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
     message("C1/",layer,": reuse association scans and regenerate figures")
   }
 
+  le8_stage_done(scan_label,scan_started)
+
+  source(file.path(fdir,"c1_endpoint_audit.R"))
+  endpoint_audit<-le8_endpoint_audit(dat,features,covs_adj2,Y,rawdir)
   assoc<-if(c1_covs_use_name=="basic")assoc_basic else assoc_adj2
   assoc_prevalent<-if(c1_covs_use_name=="basic")prevalent_basic else prevalent_adj2
-  pgs<-run_c1_pgs_scan(layer,features_all,covs_basic,Y,rawdir,overlap_eids=dat$eid)
+  pgs<-le8_stage(paste0("C1/",layer," PGS"), run_c1_pgs_scan(layer,features_all,covs_basic,Y,rawdir,overlap_eids=dat$eid), paste0("features=",length(features_all)))
   pgs_incident<-pgs$incident;pgs_prevalent<-pgs$prevalent;pgs_attained_age<-pgs$attained_age
   pgs_incident_same<-pgs$incident_same_omic;pgs_prevalent_same<-pgs$prevalent_same_omic
   pgs_attained_age_same<-pgs$attained_age_same_omic
@@ -1489,7 +1502,7 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
               code_version=C1_CODE_VERSION,pgs_signature=pgs_signature,
               pgs_scan_signature=pgs$signature,
               pgs_matched=length(pgs$score_map),pgs_interpretation="fixed-at-conception score; not a biomarker measured at birth")),
-            association=assoc,association_basic=assoc_basic,association_adj2=assoc_adj2,
+            cohort=cohort,association=assoc,association_basic=assoc_basic,association_adj2=assoc_adj2,
             association_LE4=assoc_adj2,association_LE8=assoc_adj2_full_le8,
             association_adj2_full_le8_sensitivity=assoc_adj2_full_le8,
             birthline_basic=birthline_basic,birthline_adj2=birthline_adj2,
@@ -1534,5 +1547,5 @@ run_c1_layer <- function(layer=c("protein","metabolite")) {
   finalize_outputs(LE8_JOB,outdir);saveRDS(out,selected_cache,compress="xz");out
 }
 
-if(prot_DO){invisible(run_c1_layer("protein"));gc(full=TRUE)}
-if(met_DO){invisible(run_c1_layer("metabolite"));gc(full=TRUE)}
+if(prot_DO){invisible(le8_stage("C1/protein",run_c1_layer("protein")));gc(full=TRUE)}
+if(met_DO){invisible(le8_stage("C1/metabolite",run_c1_layer("metabolite")));gc(full=TRUE)}

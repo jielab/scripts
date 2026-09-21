@@ -321,10 +321,14 @@ mh_plot <- function(smalled_gwas_file, col=c("gray", "darkgray"), cis_gene=NULL,
 		locus_size=1e6, genomewide_p=5e-8, main=NULL, mirror=NULL,
 		mirror.sig.level=2.5e-6, ...) {
 	if (!file.exists(smalled_gwas_file)) stop("GWAS file does not exist: ", smalled_gwas_file)
-	if (requireNamespace("data.table", quietly=TRUE)) {
+	compressed <- grepl("\\.(gz|bgz)$", smalled_gwas_file, ignore.case=TRUE)
+	# fread needs the optional R.utils package for compressed inputs.
+	if (requireNamespace("data.table", quietly=TRUE) &&
+		(!compressed || requireNamespace("R.utils", quietly=TRUE))) {
 		dat <- data.table::fread(smalled_gwas_file, showProgress=FALSE, data.table=FALSE)
 	} else {
-		con <- if (grepl("\\.gz$", smalled_gwas_file, ignore.case=TRUE)) gzfile(smalled_gwas_file) else smalled_gwas_file
+		con <- if (compressed) gzfile(smalled_gwas_file, open="rt") else file(smalled_gwas_file, open="rt")
+		on.exit(close(con), add=TRUE)
 		dat <- read.table(con, header=TRUE, sep="\t", quote="", comment.char="", check.names=FALSE)
 	}
 	need <- c("CHR", "POS", "P")

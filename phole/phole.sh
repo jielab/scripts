@@ -13,8 +13,8 @@ F_DIR="$SCRIPT_DIR/f"
 usage(){ cat <<'HELP'
 cd /mnt/d/scripts/phole
 
-./phole.sh all --gwas-root /mnt/d/data/gwas/prot --protein-bed /mnt/d/files/ppp_3k.38.bed \
-  --out /mnt/d/data/gwas/prot/phole --train-frac 0.80
+./phole.sh all --gwas-root /mnt/e/gwas/prot --protein-bed /mnt/e/gwas/prot/ppp_3k.38.bed \
+  --out /mnt/e/gwas/prot/phole --train-frac 0.80
 HELP
 }
 
@@ -127,8 +127,8 @@ require_magma_done=$(upper "$require_magma_done")
 awk -v x="$train_frac" 'BEGIN{exit !(x+0>0 && x+0<1)}' || { echo "ERROR: --train-frac must be in (0,1)" >&2; exit 2; }
 awk -v x="$protein_alpha" 'BEGIN{exit !(x+0>0 && x+0<1)}' || { echo "ERROR: --protein-alpha must be in (0,1)" >&2; exit 2; }
 
-[[ -z "$gwas_root" ]] && gwas_root="/mnt/d/data/gwas/prot"
-[[ -z "$protein_bed" ]] && protein_bed="$dir0/files/ppp_3k.38.bed"
+[[ -z "$gwas_root" ]] && gwas_root="/mnt/e/gwas/prot"
+[[ -z "$protein_bed" ]] && protein_bed="/mnt/e/gwas/prot/ppp_3k.38.bed"
 [[ -z "$out" ]] && out="$gwas_root/phole"
 
 log(){ echo "[$(date '+%F %T')] $*" >&2; }

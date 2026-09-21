@@ -30,7 +30,8 @@ Modules (executed in pipeline order):
   c3_coloc       Coloc, optional fine-mapping/GPU-coloc and CIGMA annotation
   c4_connect    LE8 proxy discovery, matched omic PGS and mediation
   c4_focus      Matched-budget Yin/Yang supervision and held-out proxy validation
-  c5_consolidate Evidence integration and prediction
+  c5_genetic    Alias for comprehensive C5 (joint analysis uses both modalities)
+  c5_consolidate Joint prot/met/biomarker PGS + automatic all.rds [Y].pgs; root outputs
   s1_interact   Interaction analysis
   s2_nonlin     Nonlinear analysis
   final         Assemble publication figures, tables and result summary
@@ -42,10 +43,14 @@ Examples:
   ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met
   ./le8.sh c1_correlate --Y cvd_cad --biom prot
   ./le8.sh c4_connect,c4_focus,c5_consolidate --Y cvd_cad --biom prot
+  # Disease PRS is read automatically from all.rds cvd_cad.pgs (or [Y].pgs).
+  ./le8.sh c5_consolidate --Y cvd_cad --biom prot,met --replace TRUE
   # Default budgets c(5,10,50) are editable in f/le8_budget_config.R.
   C4_FOCUS_BUDGETS=5,10,50 ./le8.sh c4_focus --Y cvd_cad --biom prot
   # Reassemble existing results without fitting models.
   ./le8.sh final --Y cvd_cad --biom prot,met
+  # Recover C5 after every joint fold is saved; also retry per-layer reference.
+  C5_JOINT_SUMMARY_ONLY=TRUE ./le8.sh c5_consolidate --Y cvd_cad --biom prot,met --cores 1
   # Inspect planned commands or check available inputs/dependencies.
   ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met --dry-run
   ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --preflight
@@ -54,7 +59,7 @@ Examples:
   # Optional methods: Top / All / None. MAGMA is a labelled sensitivity only.
   ./le8.sh c2_cause --Y cvd_cad --biom prot --run-mrlink2 Top --run-dandelion Top
   ./le8.sh c2_cause --Y cvd_cad --biom prot --run-dandelion None
-  # CIGMA needs donor-level expression/kinship input; see METHODS_20260913.md.
+  # CIGMA needs donor-level expression/kinship input; see README.md.
   C3_CIGMA_MANIFEST=/path/cigma_jobs.tsv ./le8.sh c3_coloc --Y cvd_cad --biom prot
 
 Common options:
@@ -64,7 +69,9 @@ Common options:
   --Y-date COLUMN     Disease date column in all.rds
   --vars.adj CSV      Explicit covariates; changes require a new output root or replacement
   --white-only BOOL   Restrict ancestry (default TRUE)
-  --cores N --memory-limit-gb N --seed N
+  --cores N            Worker count (default 1)
+  --memory-limit-gb N  Process-tree RAM cap in GiB (default 32)
+  --seed N
   --run-gpu-coloc BOOL --nested-cv BOOL
   --help
 
@@ -122,7 +129,7 @@ C1_FULL_LE8_SENSITIVITY="${C1_FULL_LE8_SENSITIVITY:-TRUE}"
 # fields because the model expects an analysis-ready treatment covariate.
 C1_TREATMENT_VARS="${C1_TREATMENT_VARS:-drug.lipid}"
 C2_HERITABILITY_FILE="${C2_HERITABILITY_FILE:-}"
-C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-/mnt/d/files/ppp.h2.csv}"
+C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-/mnt/e/gwas/prot/ppp.h2.csv}"
 C2_MET_HERITABILITY_FILE="${C2_MET_HERITABILITY_FILE:-}"
 C4_MODULE_BOOT="${C4_MODULE_BOOT:-100}"
 C4_MODULE_STABILITY="${C4_MODULE_STABILITY:-0.70}"
@@ -136,9 +143,9 @@ MATCH_SNP_MEMORY_MB="${MATCH_SNP_MEMORY_MB:-4096}"
 MATCH_SNP_SORT_MEMORY_MB="${MATCH_SNP_SORT_MEMORY_MB:-512}"
 MATCH_SNP_TMP_DIR="${MATCH_SNP_TMP_DIR:-/mnt/d/tmp}"
 LE8_ANALYSIS_ROOT=/mnt/d/analysis/le8
-LE8_GWAS_DIR=/mnt/d/data/gwas/main
-LE8_PQTL_IV_DIR=/mnt/d/data/gwas/prot
-LE8_MQTL_IV_DIR=/mnt/d/data/gwas/met
+LE8_GWAS_DIR=/mnt/e/gwas/main
+LE8_PQTL_IV_DIR=/mnt/e/gwas/prot
+LE8_MQTL_IV_DIR=/mnt/e/gwas/met
 LE8_PROT_BED=""
 LE8_REFGEN_ROOT=/mnt/e/refGen/1kg
 LE8_GRCH=auto
@@ -151,7 +158,7 @@ MRLINK2_REF_ID_DIR="${MRLINK2_REF_ID_DIR:-}"
 MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
 PHE_F=/mnt/d/scripts/0f/0phe.f.sh
 R_BIN=Rscript
-N_CORES=2
+N_CORES=1
 LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
 LE8_MEMORY_SWAP_GB="${LE8_MEMORY_SWAP_GB:-4}"
 SEED=2026
@@ -244,6 +251,14 @@ export LE8_FDIR="$fdir"
 # one unit.  This is the important distinction from ulimit, which can only cap
 # each process independently.  systemd-run --scope keeps the terminal itself
 # outside the capped cgroup and propagates the worker's exit status.
+C5_JOINT_SUMMARY_ONLY=$(bool_word "${C5_JOINT_SUMMARY_ONLY:-FALSE}") || {
+  echo "ERROR: C5_JOINT_SUMMARY_ONLY requires TRUE or FALSE." >&2; exit 2
+}
+export C5_JOINT_SUMMARY_ONLY
+if [[ "$C5_JOINT_SUMMARY_ONLY" == TRUE && "$replace" == TRUE ]]; then
+  echo "ERROR: C5_JOINT_SUMMARY_ONLY recovers frozen folds and cannot use --replace TRUE." >&2
+  exit 2
+fi
 memory_limit_mode=disabled
 if (( LE8_MEMORY_LIMIT_GB > 0 )); then
   if [[ "${LE8_MEMORY_SCOPE_ACTIVE:-0}" == 1 ]]; then
@@ -285,9 +300,8 @@ if (( LE8_MEMORY_LIMIT_GB > 0 )); then
 fi
 export LE8_MEMORY_LIMIT_GB LE8_MEMORY_SWAP_GB
 
-# Forked R workers can each materialize large model frames. Two workers reduce
-# peak memory for the 440k-participant metabolomics scans;
-# callers can still override this deliberately with N_CORES.
+# Forked R workers can each materialize large model frames. Default to one
+# worker for the 440k-participant metabolomics scans; --cores can override it.
 export N_CORES
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
@@ -305,7 +319,7 @@ export C2_DANDELION_GENE_P_FILE C2_DANDELION_GENE_ANNOTATION C2_DANDELION_SNP_FI
 export C2_DANDELION_ALLOW_MAGMA C2_DANDELION_MAX_TARGET_FRACTION
 export LE8_ANALYSIS_ROOT LE8_GWAS_DIR LE8_PQTL_IV_DIR LE8_MQTL_IV_DIR LE8_REFGEN_ROOT UKB_PHE
 if [[ -z "$LE8_PROT_BED" ]]; then
-  for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" /mnt/d/files/ppp_3k.38.bed; do
+  for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" /mnt/e/gwas/prot/ppp_3k.38.bed; do
     if [[ -s "$prot_bed_candidate" ]]; then LE8_PROT_BED="$prot_bed_candidate"; break; fi
   done
   LE8_PROT_BED=${LE8_PROT_BED:-$LE8_PQTL_IV_DIR/ppp_3k.b38.bed}
@@ -378,8 +392,8 @@ for x in "${biom_layers[@]}"; do
 done
 export BIOM="$(IFS=,; echo "${biom_layers[*]}")"
 
-jobs=(c1_correlate c2_cause c3_coloc c4_connect c4_focus c5_consolidate s1_interact s2_nonlin final)
-files=(c1_correlate.R c2_cause.R c3_coloc.R c4_connect.R c4_focus.R c5_consolidate.R s1_interact.R s2_nonlin.R final.R)
+jobs=(c1_correlate c2_cause c3_coloc c4_connect c4_focus c5_genetic c5_consolidate s1_interact s2_nonlin final)
+files=(c1_correlate.R c2_cause.R c3_coloc.R c4_connect.R c4_focus.R c5_genetic.R c5_consolidate.R s1_interact.R s2_nonlin.R final.R)
 
 job_index() {
   local q="$1" i
@@ -400,7 +414,9 @@ if [[ -n "$module_csv" ]]; then
     [[ " ${selected[*]} " == *" $j "* ]] || selected+=("$j")
   done
 else
-  selected=("${jobs[@]}")
+  # The explicit genetic benchmark requires a local frozen C4 split and score
+  # provenance. Keep it opt-in so a missing score cannot stop the old pipeline.
+  for j in "${jobs[@]}"; do [[ "$j" == c5_genetic ]] || selected+=("$j"); done
 fi
 (( ${#selected[@]} > 0 )) || { echo "ERROR: no jobs selected." >&2; exit 2; }
 
@@ -442,7 +458,8 @@ layer_complete() {
   local trait="$1" job="$2" layer="$3"
   [[ "$job" != final ]] || return 0
   [[ "$replace" != TRUE ]] || return 1
-  [[ "$job" != c4_focus ]] || return 1 # fingerprint checked by the focused runner
+  # R must validate the baseline contract before reusing numerical caches.
+  [[ "$job" != c[1-5]_* ]] || return 1
   local jobdir="$analysis_root/$trait/$layer/$job"
   # Failed DANDELION results and a newly available imaging module need R's
   # stage-level resume logic even when the parent result already exists.
@@ -485,9 +502,10 @@ plan_job() {
   job_actions[$key]=analysis
   local -a deps=()
   case "$job" in
-    c2_cause|c3_coloc|c4_connect|s1_interact) deps=(c1_correlate) ;;
-    c5_consolidate)
-      deps=(c1_correlate c4_connect) ;; # C2/C3 are optional evidence, not prediction prerequisites.
+    c3_coloc) deps=(c2_cause) ;;
+    c2_cause|c4_connect|s1_interact) deps=(c1_correlate) ;;
+    c5_consolidate|c5_genetic)
+      deps=() ;; # Joint C5 relearns predictive selection inside outer training.
   esac
   for dep in "${deps[@]}"; do
     if ! layer_complete "$trait" "$dep" "$layer"; then
@@ -580,6 +598,7 @@ preflight() {
   fi
   echo "  MR-link-2: $RUN_MRlink2; DANDELION: $RUN_Dandelion; GPU-coloc: $RUN_GPU_COLOC"
   echo "  C5 nested CV: $C5_NESTED_CV"
+  [[ "$C5_JOINT_SUMMARY_ONLY" != TRUE ]] || echo "  C5 joint: summarize completed frozen checkpoints (no retraining)"
   echo "  directionality anchors: $C1_DIRECTION_ANCHORS"
   echo "  selected outcome date: ${LE8_Y_DATE:-default fod_icd10_<trait>}"
   echo "  custom main adjustment: ${LE8_VARS_ADJ:-(original default)}"
@@ -615,9 +634,15 @@ preflight() {
     done
   fi
   command -v "$R_BIN" >/dev/null 2>&1 || { echo "  MISSING: Rscript ($R_BIN)"; bad=1; }
-  if [[ "$need_c5" == TRUE ]] && command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("lightgbm",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
-    echo "  MISSING: R package lightgbm (required by C5 Yu-fair; update environment.yml)."
-    bad=1
+  if [[ " ${pending_jobs[*]} " == *" c4_focus "* || " ${pending_jobs[*]} " == *" c5_genetic "* || " ${pending_jobs[*]} " == *" c5_consolidate "* ]]; then
+    if command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("glmnet",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
+      echo "  MISSING: R package glmnet (training-only ridge CV)."
+      bad=1
+    fi
+  fi
+  if [[ "$need_c5" == TRUE || " ${pending_jobs[*]} " == *" c5_genetic "* ]]; then
+    [[ -z "${C5_PRS_MANIFEST:-}" || -s "$C5_PRS_MANIFEST" ]] || { echo "  MISSING: supplied C5_PRS_MANIFEST."; bad=1; }
+    [[ " ${biom_layers[*]} " == *" prot "* && " ${biom_layers[*]} " == *" met "* ]] || echo "  Joint C5 unavailable for a single layer; per-layer/reference and evidence atlas remain available."
   fi
   if [[ "$need_dandelion" == TRUE ]] && command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("DANDELION",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
     echo "  MISSING: R package DANDELION."
@@ -823,7 +848,9 @@ preflight() {
   return "$bad"
 }
 
+echo "[LE8] START preflight Y=$trait_csv biom=$BIOM"
 preflight
+echo "[LE8] DONE preflight"
 [[ "$preflight_only" == TRUE ]] && exit 0
 
 traits=("${resume_traits[@]}")
@@ -856,31 +883,22 @@ run_one() {
   log_root="$analysis_root/$trait/logs"
   mkdir -p "$log_root"
   log_file="$log_root/${job}.${action}.${run_biom//,/-}.$(date +%Y%m%d-%H%M%S).log"
-  echo
-  echo "=============================================================================="
-  echo "JOB=$job  TRAIT=$trait  BIOM=$run_biom"
-  if [[ "$action" == reuse-results ]]; then
-    reuse_results=TRUE
-    echo "MODE=reuse-results (reuse numerical results; regenerate PNG/XLSX)"
-  else
-    echo "MODE=analysis (compute/resume results and regenerate PNG/XLSX)"
-  fi
-  echo "GRCH=$grch"
-  echo "OUTCOME_GWAS=$ygwas"
-  echo "OUTCOME_DATE=${LE8_Y_DATE:-fod_icd10_$trait}"
-  echo "CUSTOM_ADJUSTMENT=${LE8_VARS_ADJ:-(original default)}"
-  echo "WHITE_ONLY=${LE8_WHITE_ONLY:-TRUE}"
-  echo "SCRIPT_ROOT=$script_dir"
-  echo "SCRIPT=$fdir/$file"
+  [[ "$action" != reuse-results ]] || reuse_results=TRUE
+  echo "[LE8] START $job Y=$trait biom=$run_biom mode=$action"
   echo "LOG=$log_file"
-  echo "=============================================================================="
+  local started=$SECONDS
   [[ "$dry_run" == TRUE ]] && return 0
   Y="$trait" Y_GWAS="$ygwas" BIOM="$run_biom" PROT_DO="$run_prot" MET_DO="$run_met" LE8_GRCH="$grch" MRLINK2_REF_PFILE_DIR="$mrlink2_ref_pfile_dir" \
     MRLINK2_REF_ID_DIR="$mrlink2_ref_id_dir" \
     MRLINK2_REF_POP="$MRLINK2_REF_POP" MRLINK2_REF_SAMPLES="$mrlink2_ref_samples" \
     LE8_JOB="$job" LE8_SCRIPT="$fdir/$file" LE8_REUSE_RESULTS="$reuse_results" \
     "$R_BIN" -e 'Y <- Sys.getenv("Y"); BIOM <- Sys.getenv("BIOM"); LE8_JOB <- Sys.getenv("LE8_JOB"); source(Sys.getenv("LE8_SCRIPT"), chdir=TRUE)' \
-    2>&1 | tee "$log_file"
+    2>&1 | tee "$log_file" || {
+      local rc=$?
+      echo "[LE8] FAIL $job Y=$trait biom=$run_biom exit=$rc log=$log_file" >&2
+      return "$rc"
+    }
+  echo "[LE8] DONE $job Y=$trait biom=$run_biom elapsed=$((SECONDS-started))s"
 }
 
 for tr in "${traits[@]}"; do

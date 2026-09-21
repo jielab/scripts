@@ -4,7 +4,7 @@ Download UKB proteomics GWAS files from Synapse.
 
 Typical PROT European discovery run:
   python f/ppp_download.py \
-    --out /mnt/d/data/gwas/prot/.project/download \
+    --out /mnt/e/gwas/prot/.project/download \
     --folder syn51365303 \
     --name-regex '\\.tar$' \
     --manifest European_discovery.download_manifest.tsv \
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         description="Download UKB proteomics Synapse files from explicit synIDs or a Synapse folder.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--out", default="/mnt/d/data/gwas/prot/.project/download", help="Staging output directory")
+    p.add_argument("--out", default="/mnt/e/gwas/prot/.project/download", help="Staging output directory")
     p.add_argument("--entities", nargs="*", default=[], help="Synapse entity IDs, e.g. syn51470659")
     p.add_argument("--entities-file", help="Text/TSV file containing Synapse IDs; comments with # are allowed")
     p.add_argument("--folder", help="Synapse Folder/Project ID to recursively scan, e.g. syn51365303")
