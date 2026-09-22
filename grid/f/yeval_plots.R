@@ -1,11 +1,11 @@
 # Plot/report layer, sourced by Yeval.R after metrics have been saved.
-colours <- c(PT='#7C8798',`PRS-CS-multi`='#E1A63B',`PRS-CSX`='#3275B4',
- DiscoDivas='#D45260',`CSx-meta`='#7755A2',`csx.AFR`='#C6813B',`csx.EAS`='#60A67A',`csx.EUR`='#6593CC',`csx.SAS`='#9E83BD')
+colours <- c(`GRID-tuned`='#278C78',GRID_shared='#76A88C',GRID_posterior='#5D9B91',GRID_matched='#86A9AA',COJO='#7C8798',`PRS-CSx-auto-meta`='#E1A63B',`PRS-CSx`='#3275B4',
+ `DiscoDivas-untuned`='#CD8B95',`DiscoDivas-tuned`='#D45260',`PRS-CSx-fixed-meta`='#7755A2',`csx.AFR`='#C6813B',`csx.EAS`='#60A67A',`csx.EUR`='#6593CC',`csx.SAS`='#9E83BD')
 ancestry_colours<-c(EUR='#437CB3',AFR='#DBA13B',EAS='#55A589',SAS='#AE6BA5',OTH='#9A9DA4')
-metric_label<-switch(type,ct='Prediction R²',dt='Liability R²',t2e='Harrell C-index')
-ci_text<-paste0(nfold,'-fold out-of-fold predictions; paired bootstrap 95% intervals')
+metric_label<-switch(type,ct='Partial R²',dt='Observed-scale partial R²',t2e='Harrell C-index')
+ci_text<-paste0(nfold,'-fold out-of-fold predictions; ',if(nboot>0)'paired bootstrap 95% intervals' else 'no confidence intervals (bootstrap=0)')
 target_label<-setNames(paste0('Target = ',pops,'\nN = ',vapply(pops,function(g){v<-performance[target==g]$N;if(length(v))format(v[1],big.mark=',',scientific=FALSE) else 'unavailable'},character(1))),pops)
-label_methods<-function(z)sub('PRS-CS-multi','PRS-CS-\nmulti',z,fixed=TRUE)
+label_methods<-function(z){z<-sub('PRS-CSx-auto-meta','PRS-CSx\nauto-meta',z,fixed=TRUE);z<-sub('PRS-CSx-fixed-meta','PRS-CSx\nfixed-meta',z,fixed=TRUE);sub('DiscoDivas-','DiscoDivas\n',z,fixed=TRUE)}
 plot_theme<-theme_classic(base_size=12)+theme(legend.position='bottom',strip.background=element_rect(fill='#F2F4F7',colour=NA),
  strip.text=element_text(face='bold',margin=margin(8,5,8,5)),plot.title=element_text(face='bold',size=17),
  plot.subtitle=element_text(colour='#526071',size=10),axis.text.x=element_text(angle=35,hjust=1),
@@ -24,17 +24,17 @@ make_comparison<-function(methods,title,caption) {
   labs(title=title,subtitle=paste('UKB |',ci_text),x=NULL,y=metric_label,caption=caption)
 }
 primary_caption<-if(type=='ct')'R² = 1 - SSE(covariates + score) / SSE(covariates), using held-out predictions.' else if(type=='dt')
- 'Liability R²: Lee et al. transformation of held-out linear-model partial R²; K and sample P are recorded separately.' else
+ 'Binary R² uses held-out linear probability models on the observed scale; AUC/Brier use logistic models.' else
  'Concordance uses comparable pairs within each held-out fold; censoring is retained.'
 p1<-make_comparison(main_methods,paste(Y,'| Prediction by target ancestry'),primary_caption)
-p2<-make_comparison(c('PRS-CS-multi','CSx-meta','PRS-CSX','DiscoDivas'),paste(Y,'| Combined-score comparison'),
- 'PRS-CS-multi = csx.auto; CSx-meta = csx.meta. Labels follow the requested comparison; see methods.md for exact provenance.')
+p2<-make_comparison(c('PRS-CSx-auto-meta','PRS-CSx-fixed-meta','PRS-CSx',if(tune)'DiscoDivas-tuned' else 'DiscoDivas-untuned'),paste(Y,'| Combined-score comparison'),
+ 'auto-meta: learned phi; fixed-meta: fixed phi. PRS-CSx combines four scores within the training fold.')
 if(nrow(comparison)) {
  comparison[,target:=factor(target,levels=groups)]
  p3<-ggplot(comparison,aes(target,difference))+geom_hline(yintercept=0,linetype=2,colour='#777777')+
-  geom_errorbar(aes(ymin=lower95,ymax=upper95),width=.12,colour=colours['DiscoDivas'],linewidth=.7)+
-  geom_point(size=3.5,colour=colours['DiscoDivas'])+plot_theme+
-  labs(title=paste(Y,'| DiscoDivas versus PRS-CSX'),subtitle=ci_text,x='Target ancestry',
+  geom_errorbar(aes(ymin=lower95,ymax=upper95),width=.12,colour=colours[disco_method],linewidth=.7)+
+  geom_point(size=3.5,colour=colours[disco_method])+plot_theme+
+  labs(title=paste(Y,'|',disco_method,'versus PRS-CSx'),subtitle=ci_text,x='Target ancestry',
        y=paste0('Difference in ',metric_label),caption='Positive values favour DiscoDivas. Same participants, folds and bootstrap resamples for both methods.')
 } else p3<-ggplot()+theme_void()+labs(title='Paired comparison unavailable')
 # Show all genetically labelled samples, including OTH, without making up an
@@ -73,33 +73,30 @@ for(nm in names(figures)) {
 methods_text<-c(
  paste0('# ',Y,' UKB prediction evaluation'),'',
  paste('Outcome:',outcome_definition),paste('Covariates:',paste(covars,collapse=', ')),
- paste('Folds:',nfold,'; seed:',seed,'; bootstrap:',nboot),
- '', '## Score definitions',
- '- PT: ancestry-matched .jma.cojo SNP/refA/bJ scores (or the explicitly selected --pt-effect). This is the requested COJO-based comparator, not the manuscript’s clumping/P-threshold grid search. Match rsID, Chr/bp and effect allele; duplicate rsIDs are scored only when exactly one genotype record matches. Ambiguous records are excluded and documented in pt.pgs.gz.matches.tsv beside the PT score cache. Chromosomal SCORE_SUM values are added; averages are never added. t2dm.AFA maps to AFR.',
- '- PRS-CS-multi: display label requested for csx.auto. The current upstream pipeline generates csx.auto with PRS-CSx automatic phi and posterior meta-analysis. It is not the independently fitted PRS-CS-mult algorithm in the 2022 paper.',
- '- PRS-CSX: simultaneous regression on training-fold-standardized csx.AFR, csx.EAS, csx.EUR and csx.SAS, separately within each target ancestry. Standardization and score coefficients are fitted using the training fold only. Only the available fixed-phi scores are used; no additional phi grid selection is claimed.',
- '- DiscoDivas: the existing saved disco.pgs.gz from 2disco.sh. Its current pipeline uses the official distance-matrix correction and PC-residualized ancestry scores, 1000 Genomes reference medians, and quality factors of one. It does not fine-tune the input PRS separately on ancestry-specific phenotype training sets as in the full published pipeline. Its phenotype calibration is fitted in each training fold here. The comparison evaluates this saved implementation; it does not claim a full reproduction of the manuscript.',
- '- CSx-meta and individual csx.* scores are also evaluated with the same folds and complete-case cohort. csx.meta is shown in the second figure and all individual scores are in performance.tsv.',
- '', '## Prediction metrics and uncertainty',
- '- Continuous: primary metric is covariate-adjusted out-of-fold partial R² = 1 - SSE(full)/SSE(covariates). Full and baseline total R² and RMSE are also saved. Negative held-out values are retained.',
- '- Binary: logistic models provide OOF probabilities, AUC and Brier scores. Separate OOF linear probability models provide observed-scale partial R² for the Lee et al. (2012) liability transformation. Logistic pseudo-R² and AUC are not relabelled as liability R².',
- '- Liability transformation: t=qnorm(1-K), z=dnorm(t), C=K²(1-K)²/[z²P(1-P)], a=(z/K)(P-K)/(1-K); R²_liability=C R²_observed/[1+C a(a-t) R²_observed]. P is the evaluated ancestry’s sample case fraction. Nonpositive denominators are undefined. Negative predictive R² is retained as a diagnostic extension, not interpreted as a negative biological variance.',
- '- --prevalence cohort uses the full available phenotype cohort within each genetic ancestry before score/covariate filtering, as explicitly requested. This is a UKB cohort-based working assumption, not a representative general-population or lifetime prevalence. K, source, numerator and denominator are shown in the report’s Prevalence assumptions table for binary outcomes. Supply externally justified K for population inference.',
- '- The default derived t2dm binary outcome is dated baseline ICD10 T2D. Incident cases are non-cases at baseline. Unknown dates/invalid outcomes remain missing. This source may under-ascertain diabetes; it is not the broader algorithmic/HbA1c definition used by some UKB publications.',
- '- Survival: fold-wise comparable-pair-weighted Harrell C with censoring. No liability conversion is applied to incident-event indicators.',
- '- Confidence intervals: paired resampling of individuals on fixed OOF predictions, stratified by case/event for binary/survival outcomes. They are conditional on fitted models and do not include discovery-GWAS or model-fitting uncertainty. Relatives are not clustered; independent discovery and unrelated samples must be established upstream.',
- '- Model-specific missing values never become zero. The available methods share complete cases within each target. A partial run labels missing methods explicitly. All phenotype-informed score weights are learned outside the evaluated fold.',
- '', '## Genetic distance analysis',
- paste0('- Euclidean distances use PC1..PC',npc,' in the same reference-projected space and the four reference centers used by the saved DiscoDivas pipeline.'),
- '- Both distance to EUR reference and distance to the nearest reference are examined. Neither is presented as distance to the actual GWAS discovery sample, whose center is unavailable.',
- '- Quantile bins are defined by genetic distance within each target. Each bin evaluates the existing OOF predictions. Local R²/CI uses the bin’s residual errors; binary liability conversions keep the target-level K and use the bin case fraction. Bins with too few cases/controls are omitted.',
- '- The Nature 2023 figure is a conceptual illustration. Here PCA and distance distributions are empirical; binned performance is not the paper’s theoretical individual r_i² estimator, which needs additional discovery genotype/heritability information.',
+ paste('Folds:',nfold,'; seed:',seed,'; bootstrap:',nboot),'',
+ '## Score definitions',
+ '- COJO: ancestry-matched SNP/refA/bJ score (or explicit --pt-effect b). This is not a clumping/P-threshold grid search.',
+ '- PRS-CSx-auto-meta: PRS-CSx learned phi plus official posterior meta-analysis; not independently fitted PRS-CS-mult.',
+ '- PRS-CSx-fixed-meta: posterior meta-analysis using the configured fixed phi.',
+ '- PRS-CSx: joint regression of four training-standardized csx.AFR/EAS/EUR/SAS scores within the target ancestry. No additional phi grid tuning.',
+ '- DiscoDivas-untuned: saved 2disco.sh output using official geometry and raw ancestry-specific scores. Its PCA residualization uses the input scoring cohort (transductive, no outcomes). It is a diagnostic comparator.',
+ '- DiscoDivas-tuned: each outer training fold fits four ancestry-specific C+4PRS anchor models. Only their genetic contributions enter interpolation. Centers are PC medians of the actual anchor training people; PC residualization/scaling uses a balanced subset of training anchors. Calibration is also fit outside the test fold. Quality factors are fixed, not phenotype-selected. This adapts DiscoDivas to CSx inputs; it is not a reproduction of the paper’s LDpred2 experiment.',
+ '', '## Metrics and uncertainty',
+ '- Continuous: held-out partial R² = 1-SSE(C+PRS)/SSE(C). Baseline and full total R² and RMSE are additional metrics; negative estimates are retained.',
+ '- Binary: the main R² is observed-scale partial R² from held-out linear probability models. Logistic models supply AUC/Brier. The old direct Lee conversion of covariate-adjusted partial R² has been removed: the residual denominator is not the raw binary variance P(1-P). These outputs must not be labelled liability R².',
+ '- Prevalence K is retained only as descriptive/context information. Cohort K is not general-population or lifetime prevalence.',
+ '- Default t2dm dt explicitly derives baseline ICD10 status from Yr2e/Yt2e. Use --phenotype-col for another definition. Survival uses the provided positive follow-up time and 0/1 event; prevalent-case exclusions must be correct upstream.',
+ '- Survival: fold-wise comparable-pair-weighted Harrell C; folds do not share an arbitrary Cox baseline. No liability conversion.',
+ '- Bootstrap resamples the same individuals for every method on fixed OOF predictions. It does not include GWAS/model-fitting uncertainty and does not cluster relatives. Use an unrelated evaluation cohort.',
+ '- Missing scores never become zero. Models within an ancestry share complete cases and folds. UNASSIGNED means missing ancestry labels, not proven admixture.',
+ '- Predictions are saved only with --write-predictions TRUE. Successful reports have a SUCCESS marker. No real-UKB performance improvement is implied by software tests.',
+ '', '## Distance analysis',
+ paste0('- Reference distances use PC1..PC',npc,'. They are descriptive distances to 1KG centers; tuned Disco uses its own training centers.'),
+ '- Distance bins evaluate already-fixed OOF predictions; they do not refit/select models or estimate individual heritability.',
  '', '## References',
  '- PRS-CSx: https://doi.org/10.1038/s41588-022-01054-7',
  '- DiscoDivas: https://doi.org/10.1016/j.ajhg.2026.05.006',
- '- Genetic ancestry continuum: https://doi.org/10.1038/s41586-023-06079-4',
- '- Liability R²: Lee et al. (2012), https://doi.org/10.1002/gepi.21614 ; implementation reference https://cnsgenomics.com/data/teaching/GNGWS23/module5/Practical2_accuracy.html',
- '- UKB prevalence context: https://pmc.ncbi.nlm.nih.gov/articles/PMC6936483/ reports 4.4% in White European and 16.4% in South Asian participants under a different baseline T2D definition. These rates are not silently substituted for genetic-ancestry-specific rates in this cohort.'
+ '- PLINK scoring: https://www.cog-genomics.org/plink/2.0/score'
 )
 writeLines(methods_text,file.path(out,'methods.md'))
 escape<-function(x) {x<-gsub('&','&amp;',as.character(x),fixed=TRUE);x<-gsub('<','&lt;',x,fixed=TRUE);gsub('>','&gt;',x,fixed=TRUE)}

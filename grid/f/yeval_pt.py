@@ -240,7 +240,6 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('trait','dir-gwas','dir-gen','output'):
         p.add_argument('--'+name, required=True)
-    p.add_argument('--out', help=argparse.SUPPRESS)  # Legacy; audits stay beside the score cache.
     p.add_argument('--effect',choices=['bJ','b'],default='bJ')
     p.add_argument('--threads',type=int,default=4)
     p.add_argument('--remove',default='/mnt/d/files/ukb.exclude.id')

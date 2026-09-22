@@ -3,60 +3,55 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 usage(){ cat <<'HELP'
-Yeval — paired, held-out UKB prediction comparisons by genetic ancestry.
+Yeval — paired out-of-fold PRS comparisons by genetic ancestry.
 
-  ./Yeval.sh --trait height --type ct
+  ./Yeval.sh --trait height --type ct --covar-name age,sex,PC1,PC2
   ./Yeval.sh --trait ldl --type ct --covar-name age,sex,PC1,PC2,drug.lipid
-  ./Yeval.sh --trait t2dm --type t2e --covar-name age,sex,PC1,PC2
-  ./Yeval.sh --trait t2dm --type dt --covar-name age,sex,PC1,PC2 --prevalence cohort
+  ./Yeval.sh --trait t2dm --type t2e --covar-name age,sex,PC1,PC2,drug.dm,drug.htn
+  ./Yeval.sh --trait t2dm --type dt --phenotype-col t2dm
 
-All evaluation outputs: /mnt/d/analysis/grid/Yeval/<trait>/ (no method/type folders).
-Open report.html for all figures, performance and methods. Its PNG images and
-linked downloads (plots.pdf, performance.tsv, cohort.tsv, methods.md) are kept,
-along with eval.log and run.lock. Intermediate evaluation tables are not exported.
+Methods: COJO, PRS-CSx-auto-meta, PRS-CSx (four-score regression),
+DiscoDivas-tuned. Saved DiscoDivas-untuned and fixed-meta are supplements.
+Tuning is performed inside each outer training fold; no phi-grid selection.
 
-Methods:
-  PT            Same-ancestry .jma.cojo SNP/refA/bJ, PLINK2 --score; cached pt.pgs.gz.
-  PRS-CS-multi  csx.auto (requested display name; see methods.md for provenance).
-  PRS-CSX       Joint regression of csx.AFR/EAS/EUR/SAS, trained within each fold.
-  DiscoDivas    Saved disco.pgs.gz, evaluated on exactly the same held-out people.
-  Supplement    csx.meta and each of the four individual csx.* scores.
-
-Options:
-  --trait Y --type ct|dt|t2e  Required. dt: 0/1 disease; t2e: censored survival.
-  --score-dir DIR            /mnt/d/data/ukb/pgs
-  --pgs-file FILE            Override csx.pgs.gz; --disco-file / --pt-file also supported.
-  --pheno-file FILE          /mnt/d/data/ukb/phe/Rdata/all.rds (full ancestry cohort).
+Inputs:
+  --score-dir DIR            /mnt/d/data/ukb/pgs; trait/csx.pgs.gz
+  --pgs-file FILE            Explicit CSx table; --pt-file / --disco-file also supported.
+  --pheno-file FILE          /mnt/d/data/ukb/phe/Rdata/all.rds (RDS or TSV/gzip)
   --ancestry-file FILE       /mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
-  --group-col NAME           genetic_ancestry; column in phenotype or ancestry file.
-  --covar-name LIST          age,sex,PC1,PC2; comma-separated, or none.
-  --phenotype-col NAME       Default Y. Default t2dm dt is baseline ICD10 T2D status
-                            from dated prevalent/incident status (see methods.md).
-  --event-col / --time-col   Defaults Y.Yt2e / Y.t2e; used only for t2e.
-  --prevalence K|cohort|EUR=K,AFR=K,EAS=K,SAS=K
-                            dt only. Default cohort: ancestry-specific prevalence
-                            before score/covariate filtering; cohort-based assumption.
-                            Not used for t2e (Cox/Harrell C) or ct.
-  --pca-file FILE            Reference-projected PCs; same default as 2disco.sh.
+  --group-col NAME           genetic_ancestry
+  --pca-file FILE            Same folder/ukb.discodivas.pca.tsv.gz
   --med-file FILE            /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
-  --distance-pcs N           10; must match saved DiscoDivas PCA provenance.
-  --distance-bins N          5 quantile bins within each ancestry.
-  --folds N / --seed N       5 / 20260904; folds shared by all methods.
-  --bootstrap N             200 paired subject resamples of fixed OOF predictions.
-  --min-n N                 100; insufficient groups/bins are explicitly recorded.
-  --dir-gwas DIR            /mnt/e/gwas/4grid/common; AFR also accepts t2dm.AFA.
-  --dir-gen DIR             /mnt/e/ukbGen/37/imp; chr1..22 pfiles or bfiles.
-  --pt-effect NAME          bJ (joint COJO effect); may explicitly select b.
-  --threads N               4 for PLINK2. Scoring uses selected COJO variants.
-  --remove FILE             /mnt/d/files/ukb.exclude.id; negative IDs also excluded.
-  --out-root DIR            /mnt/d/analysis/grid/Yeval
-  --check                   Validate evaluation inputs, without fitting or PT scoring.
-  --allow-missing-scores    Explicit partial report; missing methods never zero-filled.
+  --grid-file FILE           Optional GRID table; adds GRID-tuned and saved GRID scores.
+  --covar-name LIST          age,sex,PC1,PC2; comma-separated, or none
+  --phenotype-col NAME       Default trait; default t2dm dt derives baseline Yr2e/Yt2e.
+  --event-col / --time-col   Default trait.Yt2e / trait.t2e
+  --remove FILE             /mnt/d/files/ukb.exclude.id; negative IDs also excluded
 
-Legacy --method csx|disco|all is accepted; the report always compares all methods.
---type dt reports Liability R2 plus AUC/Brier; --type t2e reports Harrell C, not
-Liability R2. New runs overwrite same-named files in the trait root, including
-when switching between dt and t2e; outputs have no type prefix.
+Evaluation:
+  --type ct|dt|t2e           ct/dt: OOF partial R2; dt also AUC/Brier; t2e: Harrell C.
+                            Binary R2 is OBSERVED SCALE, not liability R2.
+  --disco-tune TRUE|FALSE    TRUE; FALSE evaluates only the saved untuned Disco score.
+  --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2disco.sh).
+  --min-anchor N            100 training people per ancestry and fold
+  --distance-pcs N          10; --distance-bins N: 5
+  --folds N / --seed N      5 / 20260904
+  --bootstrap N             200; 0 disables intervals for a smoke run
+  --min-n N                 100 per target/bin
+  --write-predictions TRUE|FALSE  FALSE; TRUE writes one compressed OOF table
+  --prevalence SPEC          cohort / K / EUR=...,AFR=...; descriptive context only
+  --out-root DIR            /mnt/d/analysis/grid/Yeval
+  --allow-missing-scores     Explicit partial report
+  --check                   Validate inputs; no fitting or COJO scoring
+
+COJO scoring if --pt-file is absent:
+  --dir-gwas DIR            /mnt/e/gwas/4grid/common
+  --dir-gen DIR             /mnt/e/ukbGen/37/imp
+  --pt-effect bJ|b           bJ; --threads N: 4
+
+Outputs stay in <out-root>/<trait>/; changing outcome type overwrites this report.
+A completed run has SUCCESS. Failed runs do not replace the previous report.
+Set GRID_RSCRIPT to choose an R executable; the activated grid environment is preferred.
 HELP
 }
 case "${1:-}" in -h|--help|help|'') usage; exit 0;; esac
@@ -74,7 +69,7 @@ while (($#)); do
          --score-dir) score_dir=$2;; --pt-file) pt_file=$2;; --dir-gwas) gwas_dir=$2;;
          --dir-gen) gen_dir=$2;; --pt-effect) pt_effect=$2;; --threads) threads=$2;;
          --remove) remove=$2;;
-         --method|--pgs-file|--disco-file|--pheno-file|--ancestry-file|--group-col|--covar-name|--phenotype-col|--event-col|--time-col|--prevalence|--pca-file|--med-file|--distance-pcs|--distance-bins|--folds|--seed|--bootstrap|--min-n) :;;
+         --method|--pgs-file|--disco-file|--pheno-file|--ancestry-file|--group-col|--covar-name|--phenotype-col|--event-col|--time-col|--prevalence|--pca-file|--med-file|--distance-pcs|--distance-bins|--folds|--seed|--bootstrap|--min-n|--disco-tune|--disco-a|--min-anchor|--write-predictions|--grid-file) :;;
          *) echo "Unknown option: $1" >&2; exit 2;;
        esac;shift 2;;
   esac
@@ -83,9 +78,13 @@ done
 [[ $type == ct || $type == dt || $type == t2e ]] || { echo '--type must be ct, dt or t2e' >&2; exit 2; }
 out="$outroot/$trait"; mkdir -p "$out"
 exec {lock}>"$out/run.lock"; flock -n "$lock" || { echo "Evaluation already running: $out" >&2; exit 1; }
-r=(env -u R_ENVIRON_USER -u R_LIBS_USER /usr/bin/Rscript)
+source "$ROOT/f/environment.sh"
+source "$ROOT/f/r_runtime.sh"
+grid_select_r data.table,ggplot2,survival,pROC,patchwork
+r=("${GRID_R[@]}")
 { printf 'Command: ';printf '%q ' "$ROOT/Yeval.sh" "${args[@]}";printf '\n'; } > "$out/eval.log"
 echo "Evaluation output: $out"
+[[ $check == TRUE ]] || rm -f -- "$out/SUCCESS"
 if [[ $check == FALSE && -z $pt_file ]]; then
   source "$ROOT/f/environment.sh"
   python3 "$ROOT/f/yeval_pt.py" --trait "$trait" --dir-gwas "$gwas_dir" --dir-gen "$gen_dir" \
@@ -96,15 +95,24 @@ fi
 # workspace while a long evaluation runs cannot change the executing program.
 runtime=$(mktemp -d "${TMPDIR:-/tmp}/yeval-runtime.XXXXXX")
 trap 'rm -rf -- "$runtime"' EXIT
-cp "$ROOT/f/Yeval.R" "$ROOT/f/yeval_plots.R" "$runtime/"
-"${r[@]}" "$runtime/Yeval.R" "${args[@]}" 2>&1 | tee -a "$out/eval.log"
+cp "$ROOT/f/Yeval.R" "$ROOT/f/yeval_plots.R" "$ROOT/f/yeval_disco.R" "$runtime/"
+mkdir -p "$runtime/report"
+"${r[@]}" "$runtime/Yeval.R" "${args[@]}" --run-dir "$runtime/report" 2>&1 | tee -a "$out/eval.log"
+if [[ $check == FALSE ]]; then
+  for file in "$runtime/report"/*; do
+    cp -- "$file" "$out/$(basename -- "$file").tmp"
+    mv -f -- "$out/$(basename -- "$file").tmp" "$out/$(basename -- "$file")"
+  done
+  [[ -f $runtime/report/predictions.tsv.gz ]] || rm -f -- "$out/predictions.tsv.gz"
+  date -Is > "$out/SUCCESS"
+fi
 # Remove only known obsolete Yeval outputs, after a successful full report.
 # Keep the lock inode stable: unlinking it could allow concurrent evaluations.
 if [[ $check == FALSE ]]; then
   obsolete=(command.sh comparison.pdf combined_scores.pdf paired_improvement.pdf
     genetic_landscape.pdf distance_performance.pdf distance_performance.tsv
     fold_coefficients.tsv folds.tsv.gz genetic_distance.tsv.gz manifest.tsv
-    methods.tsv paired_comparison.tsv predictions.tsv.gz prevalence.tsv skipped.tsv
+    methods.tsv paired_comparison.tsv prevalence.tsv skipped.tsv
     pt.commands.jsonl pt.log pt.matches.tsv pt.plink.log pt.variants.tsv)
   for name in "${obsolete[@]}"; do rm -f -- "$out/$name"; done
 fi

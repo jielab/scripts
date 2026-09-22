@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse,re
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 def read(path):
   # Standard PRS-CSx posterior files are whitespace-delimited, often without a header.
@@ -20,7 +21,8 @@ def read(path):
   out=pd.DataFrame({'SNP':d[sc].astype(str),'A1':d[ac].astype(str).str.upper(),'BETA':pd.to_numeric(d[bc],errors='coerce')})
   for new,aliases in [('CHR',('CHR','CHROM')),('BP',('BP','POS')),('A2',('A2','NEA'))]:
     z=c(*aliases); out[new]=d[z] if z else pd.NA
-  return out.dropna(subset=['BETA'])[['SNP','A1','BETA','CHR','BP','A2']]
+  if out.empty or out.SNP.duplicated().any() or not np.isfinite(out.BETA).all():raise ValueError(f'Invalid posterior weights: {path}')
+  return out[['SNP','A1','BETA','CHR','BP','A2']]
 def main():
  ap=argparse.ArgumentParser(); ap.add_argument('--input',required=True); ap.add_argument('--output',required=True); a=ap.parse_args(); d=read(a.input); d.to_csv(a.output,sep='\t',index=False); print(len(d))
 if __name__=='__main__':main()

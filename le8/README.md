@@ -1,6 +1,14 @@
 # LE8 5C — disease PRS + proteome + metabolome
 
-版本：2026-09-16。完整 LE8 模块代码；本包不含分析结果或 patch。
+版本：2026-09-21。完整 LE8 模块代码；本包不含分析结果或 patch。
+
+本次优先运行实测/遗传预测分歧分析：
+
+```bash
+bash le8.sh pgs_focus,final --Y cvd_cad,ra --biom prot,met
+```
+
+完整方法、MHC 来源、参数、主图与输出说明见 [PGS_FOCUS_GUIDE.md](PGS_FOCUS_GUIDE.md)。该入口不重跑 MR 或预测模型；原有 C5 联合分析说明保留在下文。
 
 ## 1. 安装与最简运行
 
@@ -186,18 +194,7 @@ C1–C4、TwoSampleMR、MR-link-2、Dandelion、coloc/GPU-coloc、CIGMA、CellAg
 
 ## 7. 代码检验
 
-从 `scripts/` 目录运行（即本文件所在目录的上一层）：
-
-```bash
-python3 -m unittest discover -s le8/tests -p 'test_*.py' -v
-Rscript le8/tests/test_prediction_audit.R
-Rscript le8/tests/test_joint_prediction.R
-Rscript le8/tests/test_final_joint.R
-Rscript le8/tests/test_factorial_prediction.R
-Rscript le8/tests/test_c5_attained_age_empty.R
-Rscript le8/tests/test_c5_streaming_summary.R
-Rscript le8/tests/test_c5_storage_cleanup.R
-```
+当前脚本目录不包含开发测试和测试产物；以下内容为此前的验证记录。
 
 测试涵盖 PRS 精确字段/缺失/方差/来源优先级、模型组合、配对样本一致性、NRI/IDI、增益分解、预测相同则增益与区间为零，以及原先的基线时间和 proxy 验证。测试使用合成数据，不产生 UKB 结果。本次未在 UKB 个体数据上重跑，不能宣称 prediction 已改善。
 

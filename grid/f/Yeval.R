@@ -5,7 +5,7 @@ args <- commandArgs(TRUE)
 allowed <- c('trait','type','method','score-dir','pgs-file','disco-file','pt-file','pheno-file',
  'ancestry-file','group-col','covar-name','phenotype-col','event-col','time-col','prevalence',
  'pca-file','med-file','distance-pcs','distance-bins','folds','seed','bootstrap','min-n',
- 'remove','out-root','dir-gwas','dir-gen','pt-effect','threads','check','allow-missing-scores')
+ 'remove','out-root','dir-gwas','dir-gen','pt-effect','threads','check','allow-missing-scores','disco-tune','disco-a','min-anchor','write-predictions','run-dir','grid-file')
 opt <- list(); i <- 1L
 while(i <= length(args)) {
  key <- sub('^--','',args[i]); if(!key %in% allowed)stop('Unknown option: ',args[i])
@@ -17,16 +17,22 @@ arg <- function(k,default=NULL)if(is.null(opt[[k]]))default else opt[[k]]
 Y <- arg('trait'); type <- arg('type')
 if(is.null(Y)||!type %in% c('ct','dt','t2e'))stop('--trait and --type ct|dt|t2e required')
 if(!arg('method','all') %in% c('all','csx','disco'))stop('Invalid --method')
-out <- file.path(arg('out-root','/mnt/d/analysis/grid/Yeval'),Y)
+out <- arg('run-dir',file.path(arg('out-root','/mnt/d/analysis/grid/Yeval'),Y))
 dir.create(out,recursive=TRUE,showWarnings=FALSE)
 write_tsv <- function(x,name)fwrite(x,file.path(out,name),sep='\t',na='NA')
 intarg <- function(k,v,minimum) {z<-suppressWarnings(as.integer(arg(k,v)));if(is.na(z)||z<minimum)stop('Invalid --',k);z}
 nfold <- intarg('folds',5,2); seed <- intarg('seed',20260904,0)
-nboot <- intarg('bootstrap',200,20); minn <- intarg('min-n',100,20)
+nboot <- intarg('bootstrap',200,0); minn <- intarg('min-n',100,20)
 npc <- intarg('distance-pcs',10,2); nbins <- intarg('distance-bins',5,2)
+tune <- toupper(arg('disco-tune','TRUE'))
+if(!tune %in% c('TRUE','FALSE'))stop('--disco-tune must be TRUE/FALSE')
+tune<-tune=='TRUE'; min_anchor<-intarg('min-anchor',100,10)
+quality<-as.numeric(strsplit(arg('disco-a','1,1,1,1'),',',fixed=TRUE)[[1]])
+if(length(quality)!=4||any(!is.finite(quality)|quality<0)||!any(quality>0))stop('Invalid --disco-a (AFR,EAS,EUR,SAS order)')
 partial <- isTRUE(arg('allow-missing-scores',FALSE))
 pops <- c('EUR','AFR','EAS','SAS'); base_scores <- paste0('csx.',c('AFR','EAS','EUR','SAS'))
-main_methods <- c('PT','PRS-CS-multi','PRS-CSX','DiscoDivas')
+quality <- setNames(quality,c('AFR','EAS','EUR','SAS'))[pops]
+main_methods <- c('COJO','PRS-CSx-auto-meta','PRS-CSx',if(tune)'DiscoDivas-tuned' else 'DiscoDivas-untuned')
 score_dir <- file.path(arg('score-dir','/mnt/d/data/ukb/pgs'),Y)
 files <- c(phenotype=arg('pheno-file','/mnt/d/data/ukb/phe/Rdata/all.rds'),
  csx=arg('pgs-file',file.path(score_dir,'csx.pgs.gz')),
@@ -56,6 +62,7 @@ if(!gc %in% names(phe)) {
  phe<-merge(phe,anc[,c('eid',gc),with=FALSE],by='eid',all.x=TRUE)
 }
 phe[,target:=as.character(get(gc))]
+phe[is.na(target)|!nzchar(target),target:='UNASSIGNED']
 rem <- arg('remove','/mnt/d/files/ukb.exclude.id'); excluded <- character()
 if(nzchar(rem)) {
  if(!file.exists(rem))stop('Missing withdrawal file: ',rem)
@@ -68,7 +75,7 @@ yc <- arg('phenotype-col',Y); ec <- arg('event-col',paste0(Y,'.Yt2e')); tc <- ar
 outcome_definition <- if(type=='t2e')paste(ec,tc) else yc
 # Yt2e is incident-only. Baseline disease includes dated prevalent cases, and
 # treats subsequently diagnosed people as baseline non-cases, never as missing.
-if(type=='dt'&&Y=='t2dm'&&is.null(arg('phenotype-col'))&&!yc %in% names(phe)) {
+if(type=='dt'&&Y=='t2dm'&&is.null(arg('phenotype-col'))) {
  needed<-c('t2dm.Yr2e','t2dm.Yt2e');if(!all(needed%in%names(phe)))stop('Need explicit 0/1 --phenotype-col or t2dm.Yr2e/Yt2e')
  phe[,t2dm:=fifelse(get('t2dm.Yr2e')==1,1,
                    fifelse(get('t2dm.Yt2e')%in%c(0,1)|get('t2dm.Yr2e')==0,0,NA_real_),na=NA_real_)]
@@ -117,26 +124,40 @@ for(kind in c('disco','pt')) {
   d<-merge(d,z[,c('eid',use),with=FALSE],by='eid',all.x=TRUE)
  } else {
   missing<-c(missing,sc)
-  if(!partial&&!isTRUE(arg('check',FALSE)))stop('Missing ',files[kind])
+  if(!partial&&!isTRUE(arg('check',FALSE))&&!(kind=='disco'&&tune))stop('Missing ',files[kind])
  }
+}
+grid_scores<-character()
+if(!is.null(arg('grid-file'))){
+ z<-ids(read_table(arg('grid-file')));grid_scores<-intersect(c(paste0('GRID_',c('AFR','EAS','EUR','SAS')),'GRID_shared','GRID_posterior','GRID_matched'),names(z))
+ if(!length(grid_scores))stop('No recognized GRID columns')
+ d<-merge(d,z[,c('eid',grid_scores),with=FALSE],by='eid',all.x=TRUE);available<-c(available,grid_scores)
 }
 for(s in available)set(d,j=s,value=num(d[[s]],s))
 # Use reference-projected PCs only for genetic distance; phenotype PCs remain covariates.
 pc <- paste0('PC',seq_len(npc)); pca <- ids(read_table(files['pca'])); centers <- read_table(files['centers'])
 if(!all(pc%in%names(pca))||!all(c('POP',pc)%in%names(centers)))stop('Missing reference-projected PCs/centers')
 centers<-centers[match(pops,POP)]
-if(anyNA(centers$POP)||anyDuplicated(centers$POP))stop('Need one center for each EUR/AFR/EAS/SAS')
+if(anyNA(centers$POP)||anyDuplicated(read_table(files['centers'])$POP))stop('Need one center for each EUR/AFR/EAS/SAS')
 pm<-as.matrix(pca[,..pc]); cm<-as.matrix(centers[,..pc])
 if(any(!is.finite(pm))||any(!is.finite(cm)))stop('Nonfinite projected PCs or centers')
+pc_names<-paste0('ancPC',seq_len(npc))
 gd <- data.table(eid=pca$eid,proj_PC1=pm[,1],proj_PC2=pm[,2])
+for(j in seq_len(npc))gd[,(pc_names[j]):=pm[,j]]
 for(j in seq_along(pops))gd[,(paste0('distance.',pops[j])):=sqrt(rowSums(sweep(pm,2,cm[j,],'-')^2))]
 gd[,nearest_distance:=do.call(pmin,.SD),.SDcols=paste0('distance.',pops)]
 d<-merge(d,gd,by='eid');rm(gd,pca,pm);invisible(gc(verbose=FALSE))
-models <- list(PT='pt.TARGET',`PRS-CS-multi`='csx.auto',`PRS-CSX`=base_scores,DiscoDivas='disco',`CSx-meta`='csx.meta')
+models <- list(COJO='pt.TARGET',`PRS-CSx-auto-meta`='csx.auto',`PRS-CSx`=base_scores,`DiscoDivas-untuned`='disco',`PRS-CSx-fixed-meta`='csx.meta')
+if(tune){models[['DiscoDivas-tuned']]<-'disco.cv';available<-c(available,'disco.cv');d[,disco.cv:=0]}
 for(s in base_scores)models[[s]]<-s
+if(length(grid_scores)){
+ g4<-paste0('GRID_',c('AFR','EAS','EUR','SAS'))
+ if(all(g4%in%grid_scores)){models[['GRID-tuned']]<-g4;main_methods<-c(main_methods,'GRID-tuned')}
+ for(g in intersect(c('GRID_shared','GRID_posterior','GRID_matched'),grid_scores))models[[g]]<-g
+}
 model_map<-rbindlist(lapply(names(models),function(m)data.table(method=m,scores=paste(models[[m]],collapse=','))))
-manifest <- data.table(field=c('trait','type',names(files),'covariates','outcome','folds','seed','bootstrap','distance_PCs','missing_scores','uncertainty'),
- value=c(Y,type,files,paste(covars,collapse=','),outcome_definition,nfold,seed,nboot,npc,paste(missing,collapse=','),'Paired subject bootstrap conditional on fixed OOF fits; no discovery/fit uncertainty'))
+manifest <- data.table(field=c('trait','type',names(files),'covariates','outcome','folds','seed','bootstrap','distance_PCs','missing_scores','disco_tuned','grid_file','uncertainty'),
+ value=c(Y,type,files,paste(covars,collapse=','),outcome_definition,nfold,seed,nboot,npc,paste(missing,collapse=','),tune,arg('grid-file','not supplied'),'Paired subject bootstrap conditional on fixed OOF fits; no discovery/fit uncertainty'))
 if(length(missing))cat('Unavailable scores: ',paste(missing,collapse=', '),'\n',sep='')
 cat('Ancestry-matched candidates:\n');print(d[,.N,by=target])
 if(isTRUE(arg('check',FALSE))) {
@@ -175,19 +196,35 @@ summarize_predictions <- function(x,pred,base,linear,linear_base,Kpop=NA_real_,B
  nm<-colnames(pred);n<-nrow(x);P<-mean(x$outcome)
  if(type!='t2e') {
   err<-sweep(linear,1,x$outcome,'-')^2;err0<-(linear_base-x$outcome)^2
-  stat<-function(ix) {v<-1-colSums(err[ix,,drop=FALSE])/sum(err0[ix]);if(type=='dt')liability(v,Kpop,P) else v}
+  stat<-function(ix) {counts<-tabulate(ix,nbins=n);v<-1-as.numeric(crossprod(counts,err))/sum(counts*err0);names(v)<-nm;v}
  } else stat<-function(ix)vapply(nm,function(m)cindex(x$outcome[ix],x$time[ix],pred[ix,m],x$fold[ix]),numeric(1))
  point<-stat(seq_len(n));boots<-matrix(NA_real_,B,length(nm),dimnames=list(NULL,nm))
  for(b in seq_len(B)) {
   ix<-if(type=='ct')sample.int(n,n,replace=TRUE) else unlist(lapply(split(seq_len(n),x$outcome),function(z)sample(z,length(z),replace=TRUE)),use.names=FALSE)
   boots[b,]<-stat(ix)
+  if(B>=100L&&b%%max(1L,B%/%4L)==0L){cat('  bootstrap ',b,'/',B,'\n',sep='');flush.console()}
  }
  ci<-function(v)if(sum(is.finite(v))>=max(10,.8*B))quantile(v,c(.025,.975),na.rm=TRUE,names=FALSE) else c(NA_real_,NA_real_)
- intervals<-t(apply(boots,2,ci));res<-data.table(method=nm,estimate=as.numeric(point),lower95=intervals[,1],upper95=intervals[,2],N=n,events=if(type=='ct')NA_integer_ else sum(x$outcome),K=Kpop,P=if(type=='ct')NA_real_ else P)
- res[,metric:=switch(type,ct='OOF_partial_R2',dt='OOF_liability_R2',t2e='OOF_Harrell_C')]
+ intervals<-if(B>0)t(apply(boots,2,ci)) else matrix(NA_real_,length(nm),2);res<-data.table(method=nm,estimate=as.numeric(point),lower95=intervals[,1],upper95=intervals[,2],N=n,events=if(type=='ct')NA_integer_ else sum(x$outcome),K=Kpop,P=if(type=='ct')NA_real_ else P)
+ res[,metric:=switch(type,ct='OOF_partial_R2',dt='OOF_observed_partial_R2',t2e='OOF_Harrell_C')]
  list(performance=res,bootstrap=boots)
 }
 set.seed(seed)
+source(file.path(dirname(sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])),'yeval_disco.R'))
+groups<-c(pops,setdiff(sort(unique(na.omit(d$target))),pops))
+d[,`:=`(fold=0L,eligible=FALSE,row_index=.I)]
+for(g in groups) {
+ ix<-which(d$target==g);mm<-lapply(models,function(z)sub('TARGET',g,z,fixed=TRUE))
+ mm<-mm[vapply(mm,function(z)all(z%in%available),logical(1))]
+ req<-unique(c('outcome',if(type=='t2e')'time',covars,unlist(mm)))
+ valid<-complete.cases(d[ix,..req]);for(v in req)if(is.numeric(d[[v]]))valid<-valid&is.finite(d[[v]][ix])
+ if(type=='t2e')valid<-valid&d$time[ix]>0
+ good<-ix[valid];d$eligible[good]<-TRUE
+ strata<-if(type=='ct')list(good) else split(good,d$outcome[good])
+ for(j in strata)if(length(j))d$fold[j]<-sample(rep(seq_len(nfold),length.out=length(j)))
+}
+disco_folds<-if(tune)build_disco_folds(d,d$eligible,pc_names,quality,min_anchor) else NULL
+all_predictions<-list()
 perf<-differences<-distance_results<-skips<-list()
 groups<-c(pops,setdiff(sort(unique(na.omit(d$target))),pops))
 for(g in groups) {
@@ -204,14 +241,13 @@ for(g in groups) {
   skips[[length(skips)+1L]]<-data.table(target=g,method='ALL',reason=paste('Insufficient samples or cases/controls:',n));next
  }
  cv<-covars[vapply(x[,..covars],function(v)uniqueN(v)>1,logical(1))]
- x[,fold:=0L]
- if(type=='ct')x[,fold:=sample(rep(seq_len(nfold),length.out=.N))] else for(v in 0:1) {
-  ix<-which(x$outcome==v);x$fold[ix]<-sample(rep(seq_len(nfold),length.out=length(ix)))
- }
+ if(any(x$fold==0L))stop('Internal fold assignment mismatch')
+ cat('START ',g,': N=',n,'; folds=',nfold,'\n',sep='');flush.console()
  pred<-lin<-matrix(NA_real_,n,length(mm),dimnames=list(NULL,names(mm)))
  base<-lb<-rep(NA_real_,n)
  for(k in seq_len(nfold)) {
   tr<-copy(x[fold!=k]);te<-copy(x[fold==k]);it<-which(x$fold==k)
+  if(tune){tr[,disco.cv:=disco_folds[[k]][row_index]];te[,disco.cv:=disco_folds[[k]][row_index]]}
   f0<-formula_for(cv,surv=type=='t2e');bm<-fit_model(f0,tr,type);base[it]<-predict_model(bm,te,type)
   lb[it]<-if(type=='dt')predict_model(fit_model(formula_for(cv),tr,'ct'),te,'ct') else base[it]
   for(m in names(mm)) {
@@ -222,7 +258,9 @@ for(g in groups) {
    lmfit<-if(type=='dt')fit_model(formula_for(cv,length(sc)),tr,'ct') else fm
    lin[it,m]<-if(type=='dt')predict_model(lmfit,te,'ct') else pred[it,m]
   }
+  cat('  fold ',k,'/',nfold,' DONE\n',sep='');flush.console()
  }
+ if(toupper(arg('write-predictions','FALSE'))=='TRUE')all_predictions[[g]]<-cbind(x[,.(eid,target,fold,outcome,time)],data.table(baseline=base),as.data.table(pred))
  if(any(!is.finite(pred))||any(!is.finite(lin)))stop('Nonfinite held-out prediction: ',g)
  kp<-if(type=='dt')prevalence[target==g]$K else NA_real_
  if(type=='dt'&&(length(kp)!=1||!is.finite(kp)||kp<=0||kp>=1)){skips[[length(skips)+1L]]<-data.table(target=g,method='ALL',reason='Missing valid K');next}
@@ -238,10 +276,11 @@ for(g in groups) {
   }
  }
  perf[[length(perf)+1L]]<-pp
- if(all(c('PRS-CSX','DiscoDivas')%in%names(mm))) {
-  bs<-sm$bootstrap;dd<-bs[,'DiscoDivas']-bs[,'PRS-CSX'];ci<-quantile(dd,c(.025,.975),na.rm=TRUE)
-  reference<-pp[method=='PRS-CSX',estimate];val<-pp[method=='DiscoDivas',estimate]-reference
-  rel<-if(reference>0&&mean(bs[,'PRS-CSX']>0,na.rm=TRUE)>=.975)100*dd/bs[,'PRS-CSX'] else rep(NA_real_,nboot)
+ disco_method<-if(tune)'DiscoDivas-tuned' else 'DiscoDivas-untuned'
+ if(nboot>0&&all(c('PRS-CSx',disco_method)%in%names(mm))) {
+  bs<-sm$bootstrap;dd<-bs[,disco_method]-bs[,'PRS-CSx'];ci<-quantile(dd,c(.025,.975),na.rm=TRUE)
+  reference<-pp[method=='PRS-CSx',estimate];val<-pp[method==disco_method,estimate]-reference
+  rel<-if(reference>0&&mean(bs[,'PRS-CSx']>0,na.rm=TRUE)>=.975)100*dd/bs[,'PRS-CSx'] else rep(NA_real_,nboot)
   ri<-if(any(is.finite(rel)))quantile(rel,c(.025,.975),na.rm=TRUE) else c(NA_real_,NA_real_)
   differences[[length(differences)+1L]]<-data.table(target=g,metric=pp$metric[1],difference=val,lower95=ci[1],upper95=ci[2],relative_percent=if(reference>0)100*val/reference else NA_real_,relative_lower95=ri[1],relative_upper95=ri[2],N=n)
  }
@@ -250,7 +289,7 @@ for(g in groups) {
   breaks<-unique(quantile(x[[axis]],seq(0,1,length.out=nbins+1L),na.rm=TRUE))
   if(length(breaks)<3)next
   bins<-cut(x[[axis]],breaks,include.lowest=TRUE,labels=FALSE)
-  selected<-intersect(c('PRS-CS-multi','PRS-CSX','DiscoDivas','CSx-meta'),names(mm))
+  selected<-intersect(c('PRS-CSx-auto-meta','PRS-CSx','DiscoDivas-tuned','DiscoDivas-untuned','PRS-CSx-fixed-meta'),names(mm))
   if(!length(selected))next
   for(bin in sort(unique(bins))) {
    ix<-which(bins==bin)
@@ -263,6 +302,7 @@ for(g in groups) {
  cat('Evaluated ',g,': N=',n,'; methods=',paste(names(mm),collapse=', '),'\n',sep='');flush.console()
 }
 if(!length(perf))stop('No evaluable ancestry groups')
+if(length(all_predictions))write_tsv(rbindlist(all_predictions,fill=TRUE),'predictions.tsv.gz')
 performance<-rbindlist(perf,fill=TRUE);write_tsv(performance,'performance.tsv')
 write_tsv(rbindlist(audit,fill=TRUE),'cohort.tsv')
 comparison<-rbindlist(differences)

@@ -45,6 +45,8 @@ Important parameters:
   --dry-run TRUE               Same preflight/plan behavior; no completion markers.
 
 Permanent outputs:
+  <GWAS folder>/<original-name>.csx.sumstats.gz (normalized GWAS BETA,SE,N,...)
+  Matching .csx.sumstats.json enables reuse after deleting the temporary work directory.
   <GWAS folder>/<original-name>.csx.gz  (SNP,A1,BETA,CHR,BP,A2; NOT individual PRS)
   Example: /mnt/e/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz
   /mnt/d/data/ukb/pgs/<trait>/csx.pgs.gz (eid, csx.AFR/EAS/EUR/SAS, csx.auto, csx.meta)

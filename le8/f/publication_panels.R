@@ -38,7 +38,7 @@ publication_run<-function(trait,layer,analysis_root) {
   stopifnot(layer%in%c('prot','met'))
   root<-file.path(analysis_root,trait,layer)
   if(!dir.exists(root)){message('FINAL: no analysis directory: ',root);return(invisible(NULL))}
-  modules<-c(c1='c1_correlate',c2='c2_cause',c3='c3_coloc',c4='c4_connect',focus='c4_focus',c5='c5_consolidate')
+  modules<-c(c1='c1_correlate',c2='c2_cause',c3='c3_coloc',c4='c4_connect',focus='c4_focus',c5='c5_consolidate',extra='final_supp')
   audit<-list();tables<-list();provenance<-list();figures<-list();captions<-character()
   read<-function(key,module,file) {
     if(layer=='met')file<-sub('^pwas_','mwas_',file)
@@ -254,6 +254,29 @@ publication_run<-function(trait,layer,analysis_root) {
       scale_color_manual(values=pub_cols)+labs(title='Discrimination with minimum lead time',x='Minimum years before diagnosis',y='Case/control AUC')+pub_theme(),'leadtime','Minimum lead-time discrimination')
   }
   captions['Fig5']<-'Cis/local MR and conservative colocalization must overlap retained instruments in the same region. This is region-level corroboration, not signal-resolved causality; missing tests are distinct from negative tests. The minimum-lead-time case/control AUC is not the IPCW AUC in Fig4. Annotation enrichment is contextual evidence.'
+  # The generic association landscape is retained as a supplement. Main
+  # Figure 1 now joins C1 matched scores, calibrated components and C3 loci.
+  old_fig1<-figures[['Fig1']]
+  if(length(old_fig1))pgs_save_panels(old_fig1,file.path(root,'final_supp'),
+    'final.association_landscape',tables[c('incident','prevalent','cohort')],
+    paste(trait,toupper(layer),'association context'),captions[['Fig1']])
+  figures[['Fig1']]<-list()
+  provenance<-Filter(function(z)!identical(z$figure,'Fig1'),provenance)
+  pf<-file.path(root,'c1_correlate','c1.pgs_focus.rds')
+  focus_pgs<-if(file.exists(pf))tryCatch(readRDS(pf),error=function(e)list())else list()
+  if(pgs_ok(focus_pgs$paired,c('feature','evidence_pattern'))) {
+    triangulation<-make_c3_pgs_integration(coloc_summary=co,focus=focus_pgs)
+    loci<-attr(triangulation,'loci')
+    panels<-pgs_main_panels(focus_pgs,triangulation,loci)
+    for(nm in names(focus_pgs))if(is.data.frame(focus_pgs[[nm]]))tables[[paste0('PGS_',nm)]]<-focus_pgs[[nm]]
+    tables$PGS_loci<-loci;tables$PGS_triangulation<-as.data.frame(triangulation)
+    keys<-grep('^PGS_',names(tables),value=TRUE)
+    for(nm in names(panels))add('Fig1',panels[[nm]],keys,paste('PGS discordance:',nm))
+    audit$PGS_focus<-tibble(table='PGS_focus',source=pf,rows=nrow(focus_pgs$paired),
+      bytes=file.info(pf)$size,modified=as.character(file.info(pf)$mtime),status='available')
+  }else audit$PGS_focus<-tibble(table='PGS_focus',source=pf,rows=0L,bytes=NA_real_,modified=NA_character_,
+    status='Run pgs_focus; legacy unequal-sample directions are not used as main evidence')
+  captions['Fig1']<-'Identical-sample measured/PGS associations and cross-fitted captured (G) versus remaining (R) components. Joint contrasts include covariance; conditional CIs and refitted-bootstrap intervals are distinguished. R is not a pure lifestyle fraction. Colocalization is locus-specific, with prior sensitivity retained. Candidate selection is exploratory; opposite directions do not prove antagonistic pleiotropy.'
   manifest<-if(length(provenance))bind_rows(provenance)else tibble(figure=character(),panel=character(),title=character(),tables=character(),selection=character())
   manifest$analysis<-manifest$figure
   source_audit<-bind_rows(audit)
@@ -273,13 +296,18 @@ publication_run<-function(trait,layer,analysis_root) {
       map_dfr(expanded[[i]],function(p)source_rows[i,]|>mutate(source_panel=panel,
         title=paste(as.character(p$labels$title),collapse=' ')))
     })
+    if(n>6L) {
+      pgs_save_panels(pp[7:n],file.path(root,'final_supp'),paste0('final.overflow.',fig),
+        tables[keys],paste(trait,toupper(layer),fig,'additional panels'),captions[[fig]])
+      pp<-pp[1:6];panel_rows<-panel_rows[1:6,];n<-6L
+    }
     actual<-character()
     for(start in seq(1L,n,by=6L)) {
-      page<-pp[start:min(n,start+5L)];figure_number<-figure_number+1L;dest<-paste0('Fig',figure_number);actual<-c(actual,dest)
+      page<-pp[start:min(n,start+5L)];figure_number<-figure_number+1L;dest<-fig;actual<-c(actual,dest)
       page_rows<-panel_rows[start:min(n,start+5L),]|>mutate(figure=dest,panel=LETTERS[seq_along(page)])
       rendered_manifest[[length(rendered_manifest)+1L]]<-page_rows
       sheets<-c(list(provenance=page_rows,caption=tibble(caption=captions[[fig]])),tables[keys])
-      p<-wrap_plots(page,ncol=if(length(page)==1)1 else 2,widths=c(1,1))+plot_annotation(title=paste(trait,toupper(layer),'|',switch(fig,Fig1='Association landscape',Fig2='Genetic triangulation',Fig3='LE8 connections',Fig4='Prediction and assay budget',Fig5='Evidence consolidation')),
+      p<-wrap_plots(page,ncol=if(length(page)==1)1 else 2,widths=c(1,1))+plot_annotation(title=paste(trait,toupper(layer),'|',switch(fig,Fig1='Measured versus genetically predicted biomarkers',Fig2='Genetic triangulation',Fig3='LE8 connections',Fig4='Prediction and assay budget',Fig5='Evidence consolidation')),
         caption=stringr::str_wrap(gsub('Fig4','the prediction figure',captions[[fig]],fixed=TRUE),155),tag_levels='A',theme=theme(plot.title=element_text(size=17,face='bold'),plot.caption=element_text(size=9,hjust=0),plot.tag=element_text(face='bold')))
       ggsave(file.path(root,paste0(dest,'.png')),p,width=19,height=ceiling(length(page)/2)*6+.9,dpi=dpi,bg='white',limitsize=FALSE)
       pub_workbook(sheets,file.path(root,paste0(dest,'.xlsx')))
@@ -299,6 +327,8 @@ publication_run<-function(trait,layer,analysis_root) {
     for(src in files[file.exists(files)]) {
     sn<-sn+1L;dest<-paste0('FigS',sn,'.png')
     if(!file.copy(src,file.path(root,dest),overwrite=TRUE))stop('Cannot copy supplement: ',src)
+    sx<-sub('[.]png$','.xlsx',src)
+    if(file.exists(sx)&&!file.copy(sx,file.path(root,sub('[.]png$','.xlsx',dest)),overwrite=TRUE))stop('Cannot copy supplementary workbook: ',sx)
     supp[[sn]]<-tibble(figure=dest,source=src,module=module,review='Retained module figure; original source layout and previous editions are preserved')
     }
   }
@@ -332,6 +362,12 @@ pub_report<-function(root,trait,layer,t,source_audit,status,captions) {
     d<-t[[key]];if(!pub_ok(d,c('p.value','FDR')))next
     lines<-c(lines,sprintf('%s：测试 %d 项，Bonferroni 显著 %d 项，BH-FDR <0.05 为 %d 项。',key,nrow(d),sum(d$p.value<.05/nrow(d),na.rm=TRUE),sum(d$FDR<.05,na.rm=TRUE)))
   }
+  if(pub_ok(t$PGS_paired,c('evidence_pattern','feature'))) {
+    d<-t$PGS_paired;opposite<-d$feature[d$evidence_pattern=='Both supported: opposite']
+    lines<-c(lines,'',sprintf('同样本 measured/PGS：%d 项可匹配指标；两边均 BH-FDR <0.05 且方向相反 %d 项。',nrow(d),length(opposite)),
+      paste('方向相反候选：',if(length(opposite))paste(opposite,collapse=', ')else'无达到该证据标准的候选'),
+      'G/R 的效应比较、校准能力、随访窗口及位点证据见 Fig1.xlsx；R 不等于纯生活方式来源。')
+  }
   if(pub_ok(t$performance,c('model','biom_set','AUC','C_index'))) {
     d<-t$performance|>filter(model=='Combined',is.finite(AUC))
     lines<-c(lines,'','验证集 Combined 模型（逐模型报告，不按验证集结果挑选最终模型）：','')
@@ -360,7 +396,7 @@ pub_report<-function(root,trait,layer,t,source_audit,status,captions) {
   if(nrow(missing))lines<-c(lines,'','缺失或空表：',paste0('- ',missing$table,'：',missing$source))
   lines<-c(lines,'','## 图表与文章结构','',paste0('- ',status$figure,'：',status$status,'（',status$panels,' panels）'),'',
     '正文可围绕“LE8-supervised、遗传证据分层且限制 assay 数量的疾病风险评估”组织；遗传、可干预解释和预测收益必须分别有对应结果，不能由统计关联推导 intervention promise。','',
-    'Fig1 关联 → Fig2 遗传证据 → Fig3 LE8 connections → Fig4 预测与 assay budget → Fig5 证据整合。',
+    'Fig1 实测与遗传预测的分歧 → Fig2 遗传位点证据 → Fig3 LE8 connections → Fig4 预测与 assay budget → Fig5 证据整合。',
     'Fig*.xlsx 保存来源数据和 panel 映射；TablesS.xlsx 保存设计、缺口、同区域证据和入选附图路径。','')
   writeLines(lines,file.path(root,'final.results.md'),useBytes=TRUE)
   writeLines(c('# Figure legends','',unlist(lapply(names(captions),function(n)c(paste('##',n),'',captions[[n]],'')))),file.path(root,'final.legends.md'))

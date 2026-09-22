@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source /mnt/d/scripts/0f/console.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../0f" && pwd)/console.sh"
 # LE8_REVISION_UPDATES: additional settings; existing CLI remains authoritative.
 _le8_revision_home="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$_le8_revision_home/revision.conf.sh" ]]; then
@@ -13,6 +13,13 @@ set -euo pipefail
 # preflight checks and `conda run -n le8` work from scripts and schedulers too.
 if ! command -v conda >/dev/null 2>&1 && [[ -x "${HOME}/anaconda3/bin/conda" ]]; then
   export PATH="${HOME}/anaconda3/condabin:${PATH}"
+fi
+
+# PGS source scoring runs directly from R. Use the configured helper environment
+# when PLINK2 is installed there but that environment is not activated in PATH.
+if [[ -z "${PLINK2:-}" ]] && ! command -v plink2 >/dev/null 2>&1 &&
+   [[ -n "${PYTHON_BIN:-}" && -x "${PYTHON_BIN%/*}/plink2" ]]; then
+  export PLINK2="${PYTHON_BIN%/*}/plink2"
 fi
 
 # Keep the original command line so the script can relaunch itself inside a
@@ -30,6 +37,7 @@ Modules (executed in pipeline order):
   c3_coloc       Coloc, optional fine-mapping/GPU-coloc and CIGMA annotation
   c4_connect    LE8 proxy discovery, matched omic PGS and mediation
   c4_focus      Matched-budget Yin/Yang supervision and held-out proxy validation
+  pgs_focus     Matched measured/PGS, cross-fitted G/R, source and locus analyses
   c5_genetic    Alias for comprehensive C5 (joint analysis uses both modalities)
   c5_consolidate Joint prot/met/biomarker PGS + automatic all.rds [Y].pgs; root outputs
   s1_interact   Interaction analysis
@@ -156,7 +164,7 @@ MRLINK2_REF_PFILE_DIR=""
 MRLINK2_REF_POP="${MRLINK2_REF_POP:-EUR}"
 MRLINK2_REF_ID_DIR="${MRLINK2_REF_ID_DIR:-}"
 MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
-PHE_F=/mnt/d/scripts/0f/0phe.f.sh
+PHE_F="${PHE_F:-$(cd -- "$_le8_revision_home/../0f" && pwd)/0phe.f.sh}"
 R_BIN=Rscript
 N_CORES=1
 LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
@@ -359,6 +367,8 @@ export PHE_F
 [[ -s "$PHE_F" ]] || { echo "ERROR: missing $PHE_F" >&2; exit 2; }
 # shellcheck source=/mnt/d/scripts/0f/0phe.f.sh
 source "$PHE_F"
+# Reuse the shared build-specific definitions in R source-score analyses.
+export MHC_START_b37 MHC_END_b37 MHC_START_b38 MHC_END_b38
 for phe_fn in check_GRCH match_SNP match_GRCH; do
   declare -F "$phe_fn" >/dev/null 2>&1 || { echo "ERROR: $phe_fn is missing from $PHE_F" >&2; exit 2; }
 done
@@ -392,8 +402,8 @@ for x in "${biom_layers[@]}"; do
 done
 export BIOM="$(IFS=,; echo "${biom_layers[*]}")"
 
-jobs=(c1_correlate c2_cause c3_coloc c4_connect c4_focus c5_genetic c5_consolidate s1_interact s2_nonlin final)
-files=(c1_correlate.R c2_cause.R c3_coloc.R c4_connect.R c4_focus.R c5_genetic.R c5_consolidate.R s1_interact.R s2_nonlin.R final.R)
+jobs=(c1_correlate c2_cause c3_coloc pgs_focus c4_connect c4_focus c5_genetic c5_consolidate s1_interact s2_nonlin final)
+files=(c1_correlate.R c2_cause.R c3_coloc.R pgs_focus.R c4_connect.R c4_focus.R c5_genetic.R c5_consolidate.R s1_interact.R s2_nonlin.R final.R)
 
 job_index() {
   local q="$1" i

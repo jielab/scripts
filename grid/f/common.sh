@@ -37,6 +37,8 @@ GRID_REMOVE=${GRID_REMOVE:-/mnt/d/files/ukb.exclude.id}
 GRID_N_GWAS=${GRID_N_GWAS:-}
 
 # PRS-CSx.
+GRID_BIM_EXPLICIT=${GRID_CSX_BIM_PREFIX:+TRUE}; GRID_BIM_EXPLICIT=${GRID_BIM_EXPLICIT:-FALSE}
+GRID_SNPINFO_EXPLICIT=${GRID_CSX_SNPINFO:+TRUE}; GRID_SNPINFO_EXPLICIT=${GRID_SNPINFO_EXPLICIT:-FALSE}
 GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-/mnt/e/refLD/csx}
 GRID_CSX_SNPINFO=${GRID_CSX_SNPINFO:-$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3}
 GRID_CSX_BIM_PREFIX=${GRID_CSX_BIM_PREFIX:-$GRID_TARGET_DIR/ukb_array}
@@ -91,6 +93,7 @@ GRID_REQUIRE_LD=${GRID_REQUIRE_LD:-TRUE}
 GRID_EXTERNAL_AGE=${GRID_EXTERNAL_AGE:-}
 GRID_MAX_SNPS_PER_CHR=${GRID_MAX_SNPS_PER_CHR:-0}
 GRID_RIDGE_ALPHA=${GRID_RIDGE_ALPHA:-10}
+GRID_TRANSPORT_MODEL=${GRID_TRANSPORT_MODEL:-evolutionary_full}
 GRID_CONSERVATION_MIN=${GRID_CONSERVATION_MIN:-0.05}
 GRID_CONSERVATION_MAX=${GRID_CONSERVATION_MAX:-0.995}
 GRID_LOCAL=${GRID_LOCAL:-FALSE}
@@ -134,8 +137,8 @@ grid_parse_args(){
       --dry-run) _grid_need_value "$@"; GRID_DRY_RUN=$(grid_require_bool "$1" "$2"); shift 2;;
 
       --csx-ref-dir|--ref-dir) _grid_need_value "$@"; GRID_CSX_REF_DIR=${2%/}; shift 2;;
-      --csx-snpinfo) _grid_need_value "$@"; GRID_CSX_SNPINFO=$2; shift 2;;
-      --csx-bim-prefix|--bim-prefix) _grid_need_value "$@"; GRID_CSX_BIM_PREFIX=$2; shift 2;;
+      --csx-snpinfo) _grid_need_value "$@"; GRID_CSX_SNPINFO=$2; GRID_SNPINFO_EXPLICIT=TRUE; shift 2;;
+      --csx-bim-prefix|--bim-prefix) _grid_need_value "$@"; GRID_CSX_BIM_PREFIX=$2; GRID_BIM_EXPLICIT=TRUE; shift 2;;
       --phi) _grid_need_value "$@"; GRID_PHI=$2; shift 2;;
       --mcmc-iter) _grid_need_value "$@"; GRID_MCMC_ITER=$2; shift 2;;
       --mcmc-burnin) _grid_need_value "$@"; GRID_MCMC_BURNIN=$2; shift 2;;
@@ -185,6 +188,7 @@ grid_parse_args(){
       --external-age) _grid_need_value "$@"; GRID_EXTERNAL_AGE=$2; shift 2;;
       --grid-max-snps-per-chr) _grid_need_value "$@"; GRID_MAX_SNPS_PER_CHR=$2; shift 2;;
       --grid-ridge-alpha) _grid_need_value "$@"; GRID_RIDGE_ALPHA=$2; shift 2;;
+      --grid-transport-model) _grid_need_value "$@"; GRID_TRANSPORT_MODEL=$2; shift 2;;
       --conservation-min) _grid_need_value "$@"; GRID_CONSERVATION_MIN=$2; shift 2;;
       --conservation-max) _grid_need_value "$@"; GRID_CONSERVATION_MAX=$2; shift 2;;
       --grid-local) _grid_need_value "$@"; GRID_LOCAL=$(grid_require_bool "$1" "$2"); shift 2;;
@@ -201,6 +205,8 @@ grid_parse_args(){
     esac
   done
   GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT%/}
+  [[ $GRID_BIM_EXPLICIT == TRUE ]] || GRID_CSX_BIM_PREFIX="$GRID_TARGET_DIR/ukb_array"
+  [[ $GRID_SNPINFO_EXPLICIT == TRUE ]] || GRID_CSX_SNPINFO="$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3"
   [[ -n $GRID_LDSCORE_DIR ]] || GRID_LDSCORE_DIR="$GRID_OUTPUT_ROOT/reference/ldscore"
   [[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="$GRID_DATA_ROOT/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
   [[ -n $GRID_ANCESTRY_FILE ]] || GRID_ANCESTRY_FILE="$(dirname -- "$GRID_PCA_FILE")/ukb.ancestry.auto.tsv.gz"

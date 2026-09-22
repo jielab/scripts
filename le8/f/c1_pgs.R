@@ -4,7 +4,11 @@
 # "measured at birth".  These functions therefore keep PGS and adult measured
 # omics in parallel columns and never substitute one for the other.
 
-C1_PGS_SCAN_VERSION <- "2026-09-03.vldl_conditional1"
+C1_PGS_SCAN_VERSION <- "2026-09-21.full-scan-provenance"
+source(file.path(Sys.getenv("LE8_FDIR",unset="."),"pgs_core.R"))
+source(file.path(Sys.getenv("LE8_FDIR",unset="."),"pgs_focus_analysis.R"))
+source(file.path(Sys.getenv("LE8_FDIR",unset="."),"pgs_sources.R"))
+source(file.path(Sys.getenv("LE8_FDIR",unset="."),"pgs_figures.R"))
 
 find_c1_pgs_file <- function(layer) {
   explicit <- Sys.getenv("C1_PGS_FILE", unset = "")
@@ -29,8 +33,7 @@ read_c1_pgs <- function(file) {
   if (!"eid" %in% names(x)) stop("PGS file must contain eid: ", file, call. = FALSE)
   # Keep this conversion: UKB joins otherwise fail when one input stores eid
   # as integer64 and another stores it as character.
-  x$eid <- as.character(x$eid)
-  x
+  pgs_ids(x,"Biomarker PGS input")
 }
 
 map_c1_pgs_columns <- function(features, nms) {
@@ -56,8 +59,9 @@ run_c1_pgs_scan <- function(layer, features, covars, outcome = Y, rawdir = NULL,
   score_file <- find_c1_pgs_file(layer)
   overlap_eids <- as.character(overlap_eids %||% character())
   overlap_signature <- if (!length(overlap_eids)) "none" else le8_hash_object(sort(unique(overlap_eids)))
-  signature <- paste(C1_PGS_SCAN_VERSION,c1_pgs_signature(layer), "omic_overlap",
-    overlap_signature, sep = "|")
+  signature <- pgs_hash(list(C1_PGS_SCAN_VERSION,c1_pgs_signature(layer),overlap_signature,
+    outcome=outcome,covars=covars,features=features,baseline=LE8_BASELINE_VERSION,
+    options=le8_analysis_options(),phenotypes=pgs_stamp(file.path(indir,"Rdata/all.rds"))))
   cache <- if (is.null(rawdir)) NA_character_ else file.path(rawdir, "c1.pgs_scan.rds")
   if (!is.na(cache) && cache_valid(cache)) {
     old <- tryCatch(readRDS(cache), error = function(e) NULL)
@@ -175,7 +179,7 @@ run_c1_pgs_scan <- function(layer, features, covars, outcome = Y, rawdir = NULL,
     status = tibble(status = "ok", detail = paste(length(score_map), "matched PGS columns"),
       score_file = score_file, genotype_rows = nrow(scores), phenotype_matches = nrow(base),
       same_omic_rows = sum(base$.omic_overlap),
-      adjustment = "basic covariates; LE8 deliberately not included as a downstream exposure"),
+      adjustment = paste(covars,collapse=";")),
     incident = finish("incident"), prevalent = finish("prevalent"),
     attained_age = finish("attained_age"),
     incident_same_omic = finish("incident_same_omic"),

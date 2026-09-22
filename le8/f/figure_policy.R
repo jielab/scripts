@@ -108,6 +108,8 @@ le8_layer_figure_correspondence<-function(traitdir) {
     files<-files[!grepl('/_history/',files,fixed=TRUE)]
     ans<-lapply(files,function(f) {
       d<-as.data.frame(data.table::fread(f));if(!nrow(d))return(NULL)
+      if(!'group'%in%names(d))d$group<-sub('[.]png$','',d$file)
+      d$group[is.na(d$group)]<-sub('[.]png$','',d$file[is.na(d$group)])
       d$module<-basename(dirname(f));d$page<-ave(seq_len(nrow(d)),d$group,FUN=seq_along)
       # Genomic protein order and metabolite biochemical order share one theme.
       d$group[d$group%in%c('mh','circular')]<-'association_overview'
@@ -120,7 +122,7 @@ le8_layer_figure_correspondence<-function(traitdir) {
   d<-merge(read_layer('prot'),read_layer('met'),by=c('module','group','page'),all=TRUE)
   d$status<-ifelse(!is.na(d$prot_file)&!is.na(d$met_file),'paired theme',
     ifelse(is.na(d$prot_file),'met only / no usable prot panel','prot only / no usable met panel'))
-  number<-function(x)as.integer(sub('.*[.]Fig([0-9]+).*','\\1',x))
+  number<-function(x)suppressWarnings(as.integer(sub('.*[.]Fig([0-9]+).*','\\1',x)))
   d$same_number<-ifelse(d$status=='paired theme',number(d$prot_file)==number(d$met_file),NA)
   data.table::fwrite(d,file.path(traitdir,'figure_layer_correspondence.csv'))
   invisible(d)

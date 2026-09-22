@@ -313,7 +313,14 @@ credible_set_audit <- function(res,variants=tibble()){
 run_c3_layer <- function(layer=c("protein","metabolite")) {
   layer<-match.arg(layer)
   cigma<-le8_c3_cigma(layer,if(layer=="protein")out.prot else out.met)
-  if (LE8_REUSE_RESULTS) return(le8_restore_outputs(match.arg(layer), "c3_coloc"))
+  if (LE8_REUSE_RESULTS) {
+    restored<-le8_restore_outputs(layer,"c3_coloc")
+    od<-if(layer=="protein")out.prot else out.met
+    cf<-file.path(od,"c3_coloc","c3.coloc_summary.csv")
+    co<-if(file.exists(cf))as.data.frame(data.table::fread(cf))else data.frame()
+    tri<-read_c3_pgs_integration(layer,od,co);plot_c3_pgs_integration(tri,od)
+    return(restored)
+  }
   # LE8_REVISION_UPDATES: guarded caches, definitions and additions.
   layer <- match.arg(layer)
   le8_load_revision(layer, "c3_coloc")

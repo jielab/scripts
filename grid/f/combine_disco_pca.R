@@ -34,33 +34,28 @@ if (!is.null(dir)) {
   missing <- files[!file.exists(files)]
   if (length(missing)) stop("Missing PCA score files: ", paste(missing, collapse = ", "), call. = FALSE)
 
-  scores <- rbindlist(lapply(seq_along(files), function(chr) {
-    x <- fread(files[chr], showProgress = FALSE)
-    id_col <- intersect(c("IID", "#IID"), names(x))[1L]
-    score_cols <- grep("_SUM$", names(x), value = TRUE)
-    if (length(id_col) != 1L || is.na(id_col) || length(score_cols) != n_pc) {
-      stop("Unexpected PLINK2 PCA columns in ", files[chr], "; expected ", n_pc,
-           " score columns but found ", length(score_cols), call. = FALSE)
+  # Accumulate one chromosome at a time: no 22-cohort intermediate table.
+  pca<-NULL; expected_cols<-NULL
+  for(chr in seq_along(files)) {
+    x<-fread(files[chr],showProgress=FALSE,colClasses=list(character=intersect(c('IID','#IID'),names(fread(files[chr],nrows=0)))))
+    id_col<-intersect(c('IID','#IID'),names(x))[1L]
+    score_cols<-setdiff(grep('_SUM$',names(x),value=TRUE),'NAMED_ALLELE_DOSAGE_SUM')
+    if(is.na(id_col)||length(score_cols)!=n_pc)stop('Unexpected PCA score columns: ',files[chr])
+    if(is.null(expected_cols))expected_cols<-score_cols
+    if(!setequal(score_cols,expected_cols))stop('PCA score column mismatch: ',files[chr])
+    y<-x[,c(id_col,expected_cols),with=FALSE];setnames(y,id_col,'IID')
+    if(anyNA(y$IID)||anyDuplicated(y$IID)||any(!is.finite(as.matrix(y[,..expected_cols]))))stop('Invalid PCA IDs/values: ',files[chr])
+    if(is.null(pca))pca<-y else {
+      if(!setequal(pca$IID,y$IID))stop('Chromosome PCA sample sets differ: ',files[chr])
+      ix<-match(pca$IID,y$IID)
+      for(v in expected_cols)set(pca,j=v,value=pca[[v]]+y[[v]][ix])
     }
-    y <- x[, c(id_col, score_cols), with = FALSE]
-    setnames(y, id_col, "IID")
-    y[, IID := as.character(IID)]
-    if (anyDuplicated(y$IID)) stop("Duplicate IID in ", files[chr], call. = FALSE)
-    y[, chr := chr]
-    y
-  }), fill = TRUE)
-
-  coverage <- scores[, .(n_chr = uniqueN(chr)), by = IID]
-  incomplete <- coverage[n_chr != 22L]
-  if (nrow(incomplete)) {
-    warning(nrow(incomplete), " IDs are absent from one or more chromosome PCA files and will be excluded", call. = FALSE)
-    scores <- scores[!IID %chin% incomplete$IID]
+    rm(x,y);invisible(gc(verbose=FALSE))
   }
-  score_cols <- grep("_SUM$", names(scores), value = TRUE)
-  pca <- scores[, lapply(.SD, sum), by = IID, .SDcols = score_cols]
-  setnames(pca, score_cols, paste0("PC", seq_len(n_pc)))
-  dir.create(dirname(out), recursive = TRUE, showWarnings = FALSE)
-  fwrite(pca, out, sep = "\t", quote = FALSE)
+  setnames(pca,expected_cols,paste0('PC',seq_len(n_pc)))
+  dir.create(dirname(out),recursive=TRUE,showWarnings=FALSE)
+  tmp<-paste0(out,'.tmp.gz');fwrite(pca,tmp,sep='\t',quote=FALSE)
+  if(!file.rename(tmp,out))stop('Could not publish PCA projection')
   pca_file <- out
 } else {
   if (is.null(pca_file) || !file.exists(pca_file)) stop("Provide --dir or an existing --pca file", call. = FALSE)
@@ -76,11 +71,12 @@ setnames(pca, id_col, "IID")
 pca[, IID := as.character(IID)]
 all_pc_cols <- paste0("PC", seq_len(n_pc))
 if (!all(all_pc_cols %in% names(pca))) stop("PCA file lacks ", paste(setdiff(all_pc_cols, names(pca)), collapse = ","), call. = FALSE)
-if (anyNA(pca[, ..all_pc_cols])) stop("Target PCA contains missing values", call. = FALSE)
+if (anyDuplicated(pca$IID)||anyNA(pca$IID)||any(!is.finite(as.matrix(pca[, ..all_pc_cols])))) stop("Target PCA contains missing values", call. = FALSE)
 
 pop_col <- names(med)[1L]
 med_available <- intersect(all_pc_cols, names(med))
-actual_distance_pcs <- min(distance_pcs, length(med_available))
+actual_distance_pcs <- distance_pcs
+if(length(med_available)<distance_pcs)stop('Reference has fewer PCs than requested')
 if (actual_distance_pcs < 5L) stop("Reference-center file contains fewer than five PCs", call. = FALSE)
 dist_pc_cols <- paste0("PC", seq_len(actual_distance_pcs))
 if (!all(dist_pc_cols %in% names(med))) stop("Reference centers must contain consecutive PC1-PC", actual_distance_pcs, call. = FALSE)

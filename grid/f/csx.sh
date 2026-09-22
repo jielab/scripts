@@ -17,7 +17,7 @@ done
 python3 - "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_PHI" <<'PY'
 import sys,math
 n,b,t,s=map(int,sys.argv[1:5]); phi=sys.argv[5]
-assert n>b>=0 and t>0 and n-b>=t and s>=0, 'Invalid MCMC settings'
+assert n>b>=0 and t>0 and n//t-b//t>=2 and s>=0, 'Need valid MCMC settings and at least two retained samples'
 assert phi=='auto' or (math.isfinite(float(phi)) and float(phi)>0), 'phi must be auto or positive'
 PY
 need "$GRID_CSX_SNPINFO"; need "$GRID_CSX_BIM_PREFIX.bim"
@@ -38,7 +38,7 @@ if [[ $GRID_STAGE != weights ]]; then
   command -v plink2 >/dev/null || _grid_die 'plink2 is missing'
   for c in "${CHRS[@]}"; do grid_target_mode "$c" >/dev/null || _grid_die "Missing target chr$c under $GRID_TARGET_DIR"; done
   [[ -z $GRID_KEEP ]] || need "$GRID_KEEP"
-  [[ -z $GRID_REMOVE ]] || need "$GRID_REMOVE"
+  [[ -z $GRID_REMOVE || -f $GRID_REMOVE ]] || _grid_die "Missing withdrawal file: $GRID_REMOVE"
 fi
 python3 "$io" inspect "$GRID_CSX_SNPINFO" "${gwas[@]}"
 python3 "$io" coverage "${CHRS[*]}" "${gwas[@]}"
@@ -50,7 +50,7 @@ if [[ $GRID_STAGE == score ]]; then
 fi
 [[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]] || { echo 'CHECK/PLAN complete; no inference or scoring executed'; return 0; }
 # Include source code and input metadata so interrupted runs cannot reuse incompatible results.
-sig=$(python3 "$io" signature "$GRID_PHI" "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_N_GWAS" "${CHRS[*]}" --files "${gwas[@]}" "$GRID_CSX_SNPINFO" "$GRID_CSX_BIM_PREFIX.bim" "$prscx" "$ROOT/f/csx/parse_genet.py" "$ROOT/f/csx/mcmc_gtb.py" "$ROOT/f/prepare_sumstats.py" "$ROOT/f/split_sumstats.py" "$ROOT/f/csx.sh" "$ROOT/f/csx/gigrnd.py" "$ROOT/f/normalize_csx_weights.py" "$io" "${ld_files[@]}")
+sig=$(python3 "$ROOT/f/csx_config.py" "$GRID_PHI" "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_N_GWAS" "${CHRS[*]}" "$GRID_CSX_SNPINFO" "$GRID_CSX_BIM_PREFIX" "${gwas[@]}" "${ld_files[@]}")
 run="$work/$trait/$sig"; mkdir -p "$run" "$work/log/$trait"
 exec {lock}>"$work/$trait/run.lock"
 flock -n "$lock" || _grid_die "Another CSx run is active for $trait"
@@ -67,9 +67,8 @@ if [[ $GRID_STAGE != score ]]; then
     ng=()
     for i in "${!POPS[@]}"; do
       p=${POPS[$i]}; std="$run/sumstats/$p.tsv.gz"; meta="$run/sumstats/$p.json"
-      if [[ ! -s $meta || ! -s $std || $GRID_REPLACE == TRUE ]]; then
-        grid_run_logged "$work/log/$trait/prepare.$p.log" python3 "$ROOT/f/prepare_sumstats.py" --input "${gwas[$i]}" --output "$std" --metadata "$meta" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK"
-      fi
+      grid_run_logged "$work/log/$trait/prepare.$p.log" python3 "$ROOT/f/sumstats_cache.py" --input "${gwas[$i]}" --output "$std" --metadata "$meta" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace "$GRID_REPLACE"
+      tail -n 1 "$work/log/$trait/prepare.$p.log"
       grid_run_logged "$work/log/$trait/split.$p.log" python3 "$ROOT/f/split_sumstats.py" --input "$std" --out-dir "$run/sumstats" --prefix "$p" --chrs "${CHRS[*]}"
       n=$(python3 - "$meta" "$GRID_N_GWAS" "$p" <<'PY'
 import sys,json,re,math
@@ -84,6 +83,10 @@ if value is None or not math.isfinite(value) or value<=0: raise SystemExit('Miss
 print(round(value))
 PY
       )
+      python3 - "$meta" "$n" "$GRID_PHI" <<'PYMETA'
+import json,sys
+p,n,phi=sys.argv[1:];d=json.load(open(p));d.update(n_gwas_used=int(n),inference_phi=phi);open(p,'w').write(json.dumps(d,indent=2)+'\n')
+PYMETA
       ng+=("$n"); echo "  $trait.$p: n_gwas=$n"
     done
     infer_chr(){
@@ -92,12 +95,13 @@ PY
       if [[ -f $marker && $GRID_REPLACE == FALSE ]]; then
         local valid=TRUE
         for p in "${POPS[@]}"; do [[ -s $raw/$p/$p.chr$c.pst_eff.txt ]] || valid=FALSE; done
+        compgen -G "$raw/*META*pst_eff*.txt" >/dev/null || valid=FALSE
         [[ $valid != TRUE ]] || { echo "SKIP $trait chr$c: completed posterior"; return; }
       fi
       rm -f -- "$marker"
       local files=() cmd=()
       for p in "${POPS[@]}"; do files+=("$run/sumstats/$p.chr$c.tsv"); done
-      cmd=(env OMP_NUM_THREADS="$GRID_THREADS" OPENBLAS_NUM_THREADS="$GRID_THREADS" MKL_NUM_THREADS="$GRID_THREADS" python3 "$prscx" --ref_dir="$ref" --bim_prefix="$GRID_CSX_BIM_PREFIX" --sst_file="$(join_comma "${files[@]}")" --n_gwas="$(join_comma "${ng[@]}")" --pop="$(join_comma "${POPS[@]}")" --chrom="$c" --n_iter="$GRID_MCMC_ITER" --n_burnin="$GRID_MCMC_BURNIN" --thin="$GRID_MCMC_THIN" --seed="$((GRID_SEED+c))" --out_dir="$raw" --out_name="$trait")
+      cmd=(env OMP_NUM_THREADS="$GRID_THREADS" OPENBLAS_NUM_THREADS="$GRID_THREADS" MKL_NUM_THREADS="$GRID_THREADS" python3 "$prscx" --ref_dir="$ref" --bim_prefix="$GRID_CSX_BIM_PREFIX" --sst_file="$(join_comma "${files[@]}")" --n_gwas="$(join_comma "${ng[@]}")" --pop="$(join_comma "${POPS[@]}")" --chrom="$c" --n_iter="$GRID_MCMC_ITER" --n_burnin="$GRID_MCMC_BURNIN" --thin="$GRID_MCMC_THIN" --seed="$((GRID_SEED+c))" --out_dir="$raw" --out_name="$trait" --meta=TRUE)
       [[ $GRID_PHI == auto ]] || cmd+=(--phi="$GRID_PHI")
       echo "RUN $trait chr$c: joint PRS-CSx"
       grid_run_logged "$work/log/$trait/csx.chr$c.log" "${cmd[@]}" || return $?

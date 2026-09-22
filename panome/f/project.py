@@ -1,63 +1,133 @@
 #!/usr/bin/env python3
-"""Apply a trusted frozen panome run to a new, unlabeled CSV cohort; no refitting."""
+"""Project new people with frozen models; outcome columns are not required."""
+from pathlib import Path
 import argparse
 import json
-from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
 import torch
-from representation import Autoencoder,encode
+from common import words, log, STAGES
+from io_data import read_table,numeric,map_metabolites
+from representation import load_encoder,encode
+from prediction import make_blocks
+from neural import NeuralModel,random_neighbors
 
+def project_people(root,phenotype,omics,batch=512,met_input="named",r_bin="Rscript"):
+    root=Path(root)
+    manifest=json.loads((root/"manifest.json").read_text())
+    cfg=manifest["config"]
+    from panome import completed
+    for stage in STAGES[:5]:
+        if not completed(root/stage,manifest["signature"]):
+            raise ValueError(f"Projection requires completed {stage}")
+    idcol=cfg["id_col"]
+    cols=list(dict.fromkeys([idcol]+words(cfg["covariates"])+words(cfg["residualize"])+
+                           ([cfg["group_col"]] if cfg["group_col"] else [])))
+    p=read_table(phenotype,idcol,cols,r_bin)
+    raw=read_table(omics,idcol,r_bin=r_bin)
+    if not len(raw):
+        raise ValueError("No new people supplied")
+    if cfg["biom"]=="prot":
+        raw.columns=[c if c==idcol else str(c).upper() for c in raw]
+        if raw.columns.duplicated().any():
+            raise ValueError("Protein names collide after uppercasing")
+    elif met_input=="raw":
+        raw,_=map_metabolites(raw,cfg["met_map"],idcol)
+    if not raw[idcol].isin(p[idcol]).all():
+        raise ValueError("Some molecular IDs lack baseline metadata")
+    p=p.set_index(idcol).loc[raw[idcol]].reset_index()
+    pre=joblib.load(root/"s2_preprocess/preprocessor.joblib")
+    original=(root/"s1_prepare/features.txt").read_text().splitlines()
+    needed=[original[j] for j in pre.keep]
+    absent=set(needed)-set(raw)
+    if absent:
+        raise ValueError("Missing required assays: "+", ".join(sorted(absent)[:20]))
+    values=numeric(raw,needed,"projection")
+    if np.any(np.mean(~np.isfinite(values),axis=1)>=cfg["sample_missing"]):
+        raise ValueError("New people fail the training-defined sample-missingness threshold")
+    full=np.full((len(values),len(original)),np.nan,dtype="float32")
+    full[:,pre.keep]=values
+    x,observed=pre.transform(full,p)
+    torch.set_num_threads(cfg["cores"])
+    encoder=load_encoder(root/"s3_representation/ae.pt")
+    z=encode(encoder,x,observed,batch=batch)
+    pca=joblib.load(root/"s3_representation/pca.joblib").transform(x)
+    atlas=joblib.load(root/"s4_graph/atlas.joblib")
+    if cfg["group_col"] and (p[cfg["group_col"]].isna().any() or
+                            p[cfg["group_col"]].astype(str).str.strip().eq("").any()):
+        raise ValueError("New people require complete family/group IDs")
+    groups=p[cfg["group_col"]].to_numpy(str) if cfg["group_col"] else None
+    graph=atlas.project(z,p[idcol].to_numpy(str),groups)
+    clinical=joblib.load(root/"s5_predict/clinical_preprocessor.joblib")
+    c=clinical.transform(p)
+    pw=joblib.load(root/"s5_predict/pwas_score.joblib")
+    score=x[:,pw["indices"]]@pw["beta"]
+    blocks=make_blocks(c,x,z,pca,graph,score,varying=True)
+    output=p[[idcol]].copy()
+    log("AUDIT","projection categories",str(clinical.unknown_categories(p)))
+    output["state"]=graph["state"]+1
+    output["novel"]=graph["novelty"]
+    output["observed_fraction"]=observed.mean(1)
+    output["effective_neighbors"]=graph["effective_neighbors"]
+    for j in range(z.shape[1]):
+        output[f"AE{j+1}"]=z[:,j]
+    for j in range(graph["soft"].shape[1]):
+        output[f"state_weight_{j+1}"]=graph["soft"][:,j]
+    artifacts=json.loads((root/"s5_predict/models.json").read_text())
+    u=bank=random=None
+    if any(row["type"]=="neural" for row in artifacts):
+        token_encoder=load_encoder(root/"s3_representation/transformer.pt")
+        u=encode(token_encoder,x,observed,batch=batch)
+        u=joblib.load(root/"s5_predict/transformer_scaler.joblib").transform(u).astype("float32")
+        bank=np.load(root/"s5_predict/reference_bank.npy")
+        random=random_neighbors(atlas,p[idcol].to_numpy(str),groups,cfg["seed"])
+    train_time=None
+    if cfg["outcome_type"]=="survival":
+        cohort=pd.read_csv(root/"s2_preprocess/cohort.csv",usecols=["split","time"])
+        train_time=float(cohort.loc[cohort.split=="train","time"].max())
+    for row in artifacts:
+        name=row["name"]
+        path=root/"s5_predict"/row["artifact"]
+        if row["type"]=="classical":
+            fit=joblib.load(path)
+            b=blocks[row["inputs"]]
+            predicted=fit.predict(b)
+            survival=lambda h,fit=fit,b=b:fit.survival_at(b,h)
+        else:
+            fit=NeuralModel.load(path)
+            inputs=x if row["inputs"]=="molecular" else u
+            neighbors=random if row["inputs"]=="random" else graph["neighbors"]
+            predicted=fit.predict(inputs,c,neighbors,bank,batch=batch)
+            survival=lambda h,fit=fit,s=predicted:fit.survival(s,h)
+        output[f"{name}_prediction"]=predicted
+        if cfg["outcome_type"]=="survival":
+            for horizon in cfg["horizons"]:
+                if horizon<train_time:
+                    try:
+                        output[f"{name}_net_risk_{horizon:g}y"]=1-survival(horizon)
+                    except ValueError:
+                        pass
+    return output
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--run-dir',type=Path,required=True)
-    ap.add_argument('--phenotype',required=True);ap.add_argument('--omics',required=True)
-    ap.add_argument('--output',type=Path,required=True)
-    args=ap.parse_args();root=args.run_dir
-    cfg=json.loads((root/'manifest.json').read_text())['config'];idcol=cfg['id_col']
-    p=pd.read_csv(args.phenotype,dtype={idcol:str});raw=pd.read_csv(args.omics,dtype={idcol:str})
-    for table in [p,raw]:
-        if idcol not in table or table[idcol].isna().any() or table[idcol].duplicated().any():raise ValueError('Missing / duplicate person IDs')
-    if not raw[idcol].isin(p[idcol]).all():raise ValueError('Every omics person must have phenotype metadata')
-    p=p.set_index(idcol).loc[raw[idcol]].reset_index()
-    pre=joblib.load(root/'s2_preprocess/preprocessor.joblib')
-    original=(root/'s1_prepare/features.txt').read_text().splitlines()
-    needed=np.asarray(original)[pre.keep]
-    missing=set(needed)-set(raw)
-    if missing:raise ValueError(f'Missing required features: {sorted(missing)[:20]}; harmonize assay features explicitly')
-    x=np.full((len(raw),len(original)),np.nan,dtype='float32');x[:,pre.keep]=raw[list(needed)].to_numpy(dtype='float32')
-    if (np.mean(~np.isfinite(x[:,pre.keep]),axis=1)>=cfg['sample_missing']).any():raise ValueError('Some new people fail training-defined sample missingness threshold')
-    x,_=pre.transform(x,p)
-    checkpoint=torch.load(root/'s3_representation/autoencoder.pt',map_location='cpu',weights_only=True)
-    torch.set_num_threads(cfg['cores']);model=Autoencoder(checkpoint['p'],checkpoint['latent'],checkpoint['hidden'])
-    model.load_state_dict(checkpoint['state_dict']);model.eval();z=encode(model,x,'cpu')
-    gm=joblib.load(root/'s4_graph/graph_model.joblib');zz=gm['scaler'].transform(z).astype('float32');index=gm['index'];k=gm['neighbors']
-    if hasattr(index,'query'):ids,dist=index.query(zz,k=k)
-    else:dist,ids=index.kneighbors(zz,n_neighbors=k)
-    weights=np.exp(-dist/np.maximum(dist[:,-1:],1e-8));weights/=weights.sum(axis=1,keepdims=True)
-    soft=np.stack([(weights*(gm['labels'][ids]==s)).sum(axis=1) for s in range(gm['labels'].max()+1)],axis=1)
-    state=soft.argmax(axis=1);diffusion=(weights[:,:,None]*gm['psi'][ids]).sum(axis=1)
-    cp=joblib.load(root/'s5_predict/clinical_preprocessor.joblib');c=cp['transformer'].transform(p)[:,cp['nonconstant']]
-    pca=joblib.load(root/'s3_representation/pca.joblib').transform(x)
-    pw=joblib.load(root/'s5_predict/pwas_score.joblib');score=x[:,pw['indices']]@pw['beta']
-    hard=np.eye(soft.shape[1])[state][:,1:]
-    blocks={'clinical':c,'clinical_pwas':np.c_[c,score],'clinical_pca':np.c_[c,pca],
-            'clinical_ae':np.c_[c,z],'clinical_state':np.c_[c,hard],'clinical_soft_state':np.c_[c,soft[:,1:]],
-            'clinical_diffusion':np.c_[c,diffusion],'clinical_panome':np.c_[c,z,soft[:,1:]],'clinical_elasticnet':np.c_[c,x]}
-    result=p[[idcol]].copy();result['state']=state+1;result['novel']=dist[:,0]>gm['novelty_threshold']
-    for j in range(soft.shape[1]):result[f'state_weight_{j+1}']=soft[:,j]
-    for j in range(z.shape[1]):result[f'AE{j+1}']=z[:,j]
-    for name,block in blocks.items():
-        artifact=joblib.load(root/f's5_predict/{name}.joblib');b=artifact['scaler'].transform(block)[:,artifact['active']]
-        kwargs={'alpha':artifact['alpha']} if name=='clinical_elasticnet' else {}
-        fitted=artifact['model'];result[name+'_log_hazard']=fitted.predict(b,**kwargs)
-        survival=fitted.predict_survival_function(b,**kwargs)
-        for horizon in cfg['horizons']:
-            if horizon<=survival[0].domain[1]:result[f'{name}_net_risk_{horizon:g}y']=[1-fn(horizon) for fn in survival]
-    if args.output.exists():raise FileExistsError(f'Refusing to overwrite {args.output}')
-    args.output.parent.mkdir(parents=True,exist_ok=True);result.to_csv(args.output,index=False)
-    print(f'Projected {len(result)} people with frozen training models: {args.output}')
+    ap.add_argument("--run-dir",required=True,type=Path)
+    ap.add_argument("--phenotype",required=True)
+    ap.add_argument("--omics",required=True)
+    ap.add_argument("--output",required=True,type=Path)
+    ap.add_argument("--batch-size",type=int,default=512)
+    ap.add_argument("--met-input",choices=["named","raw"],default="named")
+    ap.add_argument("--r-bin",default="Rscript")
+    a=ap.parse_args()
+    if a.batch_size<1:
+        raise ValueError("batch-size must be positive")
+    if a.output.exists():
+        raise FileExistsError(f"Output already exists: {a.output}")
+    result=project_people(a.run_dir,a.phenotype,a.omics,a.batch_size,a.met_input,a.r_bin)
+    a.output.parent.mkdir(parents=True,exist_ok=True)
+    result.to_csv(a.output,index=False)
+    log("DONE","frozen projection",f"N={len(result)}; {a.output}")
 
-if __name__=='__main__':main()
+if __name__=="__main__":
+    main()

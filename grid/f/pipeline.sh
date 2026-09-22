@@ -27,6 +27,7 @@ while (($#)); do
 done
 grid_parse_args "${args[@]}"
 if [[ $method == csx ]]; then
+  python3 -c 'import numpy,pandas,scipy,h5py' || _grid_die 'Missing PRS-CSx Python dependencies; update the grid environment'
   [[ -n $GRID_CSX_MODELS ]] || _grid_die '--models cannot be empty'
   for model in $(grid_csv_words "$GRID_CSX_MODELS"); do
     [[ $model == populations || $model == auto || $model == meta ]] || _grid_die '--models accepts populations,auto,meta'

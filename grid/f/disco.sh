@@ -12,22 +12,21 @@ echo "input PCA: $GRID_PCA_FILE"
 echo "input reference centers: $GRID_MED_FILE"
 inputs=("$score_home/csx.pgs.gz")
 need "${inputs[0]}"
-[[ -z $GRID_REMOVE ]] || need "$GRID_REMOVE"
+exec {score_read_lock}>>"$score_home/csx.pgs.gz.lock"
+flock -s "$score_read_lock"
+[[ -z $GRID_REMOVE || -f $GRID_REMOVE ]] || _grid_die "Missing withdrawal file: $GRID_REMOVE"
 echo "input score file: ${inputs[0]}"
 echo "output score files: $score_home/disco.pgs.gz; $score_home/disco.coef.tsv.gz"
-[[ ! -s $GRID_REMOVE ]] || inputs+=("$GRID_REMOVE")
+[[ -z $GRID_REMOVE ]] || inputs+=("$GRID_REMOVE")
 python3 - "$GRID_DISCO_A" "$GRID_DISTANCE_PCS" <<'PY'
 import math,sys
 x=list(map(float,sys.argv[1].split(',')))
 assert len(x)==4 and all(math.isfinite(v) and v>=0 for v in x) and any(x), '--a-list requires four nonnegative values, at least one positive'
 assert 5<=int(sys.argv[2])<=20, '--distance-pcs must be 5..20'
 PY
-rcheck='p<-c("data.table","dplyr","stringr","rio","optparse"); m<-p[!vapply(p,requireNamespace,logical(1),quietly=TRUE)]; if(length(m))stop("Missing R packages: ",paste(m,collapse=","))'
-disco_r=(Rscript)
-if ! "${disco_r[@]}" -e "$rcheck" >/dev/null 2>&1; then
-  disco_r=(env -u R_ENVIRON_USER -u R_LIBS_USER /usr/bin/Rscript)
-  "${disco_r[@]}" -e "$rcheck" || _grid_die 'No R installation has the required DiscoDivas packages'
-fi
+source "$ROOT/f/r_runtime.sh"
+grid_select_r data.table,dplyr,stringr,rio,optparse
+disco_r=("${GRID_R[@]}")
 echo "Disco R runtime: ${disco_r[*]}"
 [[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]] || { echo 'CHECK/PLAN complete; no Disco calculation executed'; return 0; }
 sig=$(python3 "$io" signature "$GRID_DISCO_A" "$GRID_REGRESS_PCA" "$GRID_DISTANCE_PCS" --files "${inputs[@]}" "$GRID_PCA_FILE" "$GRID_MED_FILE" "$io" "$ROOT/f/disco.sh" "$ROOT/f/disco/DiscoDivas.R" "$ROOT/f/score_output.py")

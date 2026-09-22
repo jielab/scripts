@@ -4,37 +4,42 @@ import argparse, gzip, hashlib, json, os
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from prepare_sumstats import choose
+from prepare_sumstats import MIN_COORDINATE_MATCH,choose,reader_options
 from score_output import filter_samples
 
 
 def stamp(path):
     p = Path(path)
-    if not p.is_file() or not p.stat().st_size:
-        raise ValueError(f'Missing/empty file: {p}')
+    if not p.is_file():
+        raise ValueError(f'Missing file: {p}')
     z = p.stat()
     return [str(p.resolve()), z.st_size, z.st_mtime_ns]
 
 
 def inspect(snpinfo, files):
-    ref = pd.read_csv(snpinfo, sep='\t', usecols=['SNP', 'CHR', 'BP'], dtype={'SNP': str})
+    ref = pd.read_csv(snpinfo, sep=r'\s+', usecols=['SNP', 'CHR', 'BP'], dtype={'SNP': str})
     ref = ref.drop_duplicates('SNP').set_index('SNP')
     for path in files:
         marker = Path(path + '.grch')
         if marker.exists() and marker.read_text().strip() != '37':
             raise ValueError(f'GRCh37 required: {marker}')
-        d = pd.read_csv(path, sep='\t', nrows=100000, dtype={'SNP': str})
+        d = pd.read_csv(path, nrows=100000, **reader_options(path))
         columns = {key: choose(d.columns, key) for key in ('SNP','CHR','BP','A1','A2','BETA','SE','N')}
-        missing = [key for key, value in columns.items() if value is None]
+        missing = [key for key in ('A1','A2','SE') if columns[key] is None]
+        if columns['BETA'] is None and choose(d.columns,'OR') is None:missing.append('BETA or OR')
+        if columns['SNP'] is None and (columns['CHR'] is None or columns['BP'] is None):missing.append('rsID or CHR/BP')
         if missing:
             raise ValueError(f'{path}: missing {missing}')
+        if columns['SNP'] is None or columns['CHR'] is None or columns['BP'] is None:
+            print(f'input GWAS: {path}; coordinate completion uses the explicitly supplied GRCh37 SNPINFO')
+            continue
         check = pd.DataFrame({'SNP': d[columns['SNP']].astype(str),
                               'CHR': pd.to_numeric(d[columns['CHR']].astype(str).str.strip().str.replace(r'^chr','',regex=True),errors='coerce'),
                               'POS': pd.to_numeric(d[columns['BP']],errors='coerce')})
         z = check.merge(ref, on='SNP', suffixes=('', '_ref'))
         ok = (z.CHR == z.CHR_ref) & (z.POS == z.BP)
         n = len(z); rate = float(ok.mean()) if n else 0
-        if n < 100 or rate < .98:
+        if n < min(100,len(ref)) or rate < MIN_COORDINATE_MATCH:
             raise ValueError(f'{path}: GRCh37 reference-coordinate check failed ({int(ok.sum())}/{n})')
         print(f'input GWAS: {path}\n  GRCh37 coordinate sample: {int(ok.sum())}/{n}; N is median of usable HM3 variants (override: --n-gwas)')
 

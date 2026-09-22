@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import numpy as np,pandas as pd
 POPS=['AFR','EAS','EUR','SAS']
-def read(path): return pd.read_csv(path,sep='\t',compression='infer',dtype={'eid':str})
+def read(path): return pd.read_csv(path,sep='\t',compression='infer',dtype={'eid':str,'IID':str,'#IID':str,'ID_2':str})
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--scores',required=True);ap.add_argument('--ancestry',required=True);ap.add_argument('--prefix',required=True);ap.add_argument('--out',required=True);a=ap.parse_args()
  s=read(a.scores);anc=read(a.ancestry);idc=next((c for c in ['eid','IID','#IID','ID_2'] if c in anc),None)
@@ -20,7 +20,10 @@ def main():
   q=anc[['eid',ac]].copy();
   for p in POPS:q[f'q_{p}']=(q[ac].astype(str).str.upper()==p).astype(float)
   q=q.drop(columns=ac)
- z=s.merge(q,on='eid',how='left');Q=z[[f'q_{p}' for p in POPS]].apply(pd.to_numeric,errors='coerce').fillna(0).to_numpy();den=Q.sum(1);Q=np.divide(Q,den[:,None],out=np.full_like(Q,.25),where=den[:,None]>0);B=z[cols].apply(pd.to_numeric,errors='coerce').to_numpy()
- z[f'{a.prefix}_posterior']=np.nansum(B*Q,axis=1);ix=np.argmax(Q,axis=1);z[f'{a.prefix}_matched']=B[np.arange(len(B)),ix]
+ if s.eid.isna().any() or q.eid.isna().any() or s.eid.duplicated().any() or q.eid.duplicated().any():raise ValueError('Missing/duplicate sample IDs')
+ z=s.merge(q,on='eid',how='left',validate='one_to_one');Q=z[[f'q_{p}' for p in POPS]].apply(pd.to_numeric,errors='coerce').to_numpy();den=Q.sum(1)
+ valid=np.isfinite(Q).all(1)&(Q>=0).all(1)&(den>0)
+ Q=np.divide(Q,den[:,None],out=np.full_like(Q,np.nan),where=valid[:,None]);B=z[cols].apply(pd.to_numeric,errors='coerce').to_numpy()
+ z[f'{a.prefix}_posterior']=np.sum(B*Q,axis=1);ix=np.argmax(np.nan_to_num(Q,nan=-1),axis=1);z[f'{a.prefix}_matched']=np.where(valid,B[np.arange(len(B)),ix],np.nan)
  out=z[['eid']+cols+[f'{a.prefix}_posterior',f'{a.prefix}_matched']];Path(a.out).parent.mkdir(parents=True,exist_ok=True);out.to_csv(a.out,sep='\t',index=False,compression='gzip');print(len(out))
 if __name__=='__main__':main()

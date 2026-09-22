@@ -2,8 +2,14 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$ROOT/f/grid_common.sh" "$@"
-# Internal steps run together; only grid and eval are public GRID modules.
-steps=(arg ld transport fit weights score)
+if [[ $GRID_DRY_RUN == TRUE ]]; then echo 'PLAN GRID: arg check -> bridge 1csx inputs -> LD -> transport -> blocked fit -> weights -> scores';exit 0;fi
+# Internal GRID steps run together; evaluation uses the separate Yeval.sh entry.
+exec {grid_lock}>"$gdir/run.lock"
+flock -n "$grid_lock" || _grid_die "Another GRID run is active: $gdir"
+rm -f "$gdir/GRID_RUN.txt"
+bash "$ROOT/f/arg.sh" "$@"
+grid_run python3 "$ROOT/f/grid_inputs.py" --trait "$trait" --gwas-dir "$GRID_GWAS_DIR" --snpinfo "$GRID_CSX_SNPINFO" --chrs "${CHRS[*]}" --out "$out"
+steps=(ld transport fit weights score)
 for step in "${steps[@]}"; do bash "$ROOT/f/$step.sh" "$@"; done
 cat > "$gdir/GRID_RUN.txt" <<META
 created=$(date -Is)

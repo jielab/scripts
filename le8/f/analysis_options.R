@@ -3,7 +3,7 @@ le8_custom_covars<-unique(Filter(nzchar,trimws(strsplit(Sys.getenv('LE8_VARS_ADJ
 le8_custom_adjustment<-function()length(le8_custom_covars)>0L
 le8_y_date<-function(outcome=Y)Sys.getenv('LE8_Y_DATE',paste0('fod_icd10_',outcome))
 le8_analysis_options<-function()list(y_date=le8_y_date(),vars_adj=le8_custom_covars,
-  white_only=Sys.getenv('LE8_WHITE_ONLY','TRUE'),baseline_contract='2026-09-15.baseline-v2',
+  white_only=Sys.getenv('LE8_WHITE_ONLY','TRUE'),baseline_contract=get0('LE8_BASELINE_VERSION',ifnotfound='2026-09-21.baseline-med-source-v3'),
   baseline_med_columns=Sys.getenv('LE8_BASELINE_MED_COLUMNS',''),
   baseline_map=if(nzchar(Sys.getenv('LE8_BASELINE_MAP','')))tools::md5sum(Sys.getenv('LE8_BASELINE_MAP'))else '')
 le8_check_options<-function(obj) {

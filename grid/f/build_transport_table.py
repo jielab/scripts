@@ -23,14 +23,14 @@ def align(d,ref):
  x=d.merge(ref,on='SNP',how='inner',suffixes=('','_REF'))
  a1=x.A1.astype(str).str.upper();a2=x.A2.astype(str).str.upper();r1=x.A1_REF.astype(str).str.upper();r2=x.A2_REF.astype(str).str.upper()
  same=(a1==r1)&(a2==r2); swap=(a1==r2)&(a2==r1); cs=(a1.map(comp)==r1)&(a2.map(comp)==r2); cw=(a1.map(comp)==r2)&(a2.map(comp)==r1)
- ok=same|swap|cs|cw; x=x[ok].copy(); flip=(swap|cw)[ok].to_numpy()
+ ok=(same|swap|cs|cw)&(pd.to_numeric(x.BP,errors='coerce')==pd.to_numeric(x.BP_REF,errors='coerce'));  x=x[ok].copy(); flip=(swap|cw)[ok].to_numpy()
  x['BETA_ALIGNED']=pd.to_numeric(x.BETA,errors='coerce').to_numpy()*np.where(flip,-1,1)
  e=pd.to_numeric(x.get('EAF'),errors='coerce'); x['EAF_ALIGNED']=np.where(flip,1-e,e)
  return x
 
 def external_age(path):
  if not path:return None
- d=pd.read_csv(path,sep=None,engine='python',compression='infer',low_memory=False)
+ d=pd.read_csv(path,sep=None,engine='python',compression='infer')
  sc=next((c for c in ['SNP','rsid','RSID','id','variant_id'] if c in d.columns),None)
  ac=next((c for c in d.columns if any(z in str(c).lower() for z in ['age_gen','allele_age','geva_age','mean_age','age'])),None)
  if sc is None or ac is None: raise SystemExit(f'Cannot find SNP/age in {path}')
@@ -60,15 +60,19 @@ def main():
    z=z[['SNP','BETA_ALIGNED','SE','EAF_ALIGNED','P','N','BP']].rename(columns={c:f'{c}_{p}' for c in ['BETA_ALIGNED','SE','EAF_ALIGNED','P','N','BP']})
    wide=wide.merge(z,on='SNP',how='left')
   if a.max_snps_per_chr>0: wide=wide.sort_values('REF_BP').head(a.max_snps_per_chr)
-  # ARG features: first rsID, then position fallback.
+  # Join ARG annotations by exact rsID and coordinate; never borrow a nearby site.
   afile=Path(a.arg_dir)/f'chr{chrom}.variants.tsv.gz'; arg=read(afile) if afile.exists() else pd.DataFrame()
   if len(arg):
-   arg['SNP']=arg.SNP.astype(str); arg['bp']=pd.to_numeric(arg.bp,errors='coerce'); arg=arg.drop_duplicates('SNP')
+   arg['SNP']=arg.SNP.astype(str); arg['bp']=pd.to_numeric(arg.bp,errors='coerce'); arg=arg[~arg.SNP.duplicated(keep=False)]
    keep=[c for c in arg.columns if c not in {'chr','allele0','allele1'}]
    wide=wide.merge(arg[keep],on='SNP',how='left')
+   if 'bp' in wide:
+    bad=wide.bp.notna()&(pd.to_numeric(wide.bp,errors='coerce')!=wide.REF_BP)
+    for field in [c for c in arg.columns if c not in {'chr','SNP','bp','allele0','allele1'}]:
+     if field in wide:wide.loc[bad,field]=np.nan
    miss=wide['arg_age_gen'].isna() if 'arg_age_gen' in wide else pd.Series(True,index=wide.index)
    if miss.any():
-    apos=arg.drop_duplicates('bp').set_index('bp'); ix=pd.to_numeric(wide.loc[miss,'REF_BP'],errors='coerce');
+    apos=arg[~arg.bp.duplicated(keep=False)].set_index('bp'); ix=pd.to_numeric(wide.loc[miss,'REF_BP'],errors='coerce');
     for c in [x for x in arg.columns if x not in {'chr','SNP','bp','allele0','allele1'}]:
       if c not in wide: wide[c]=np.nan
       wide.loc[miss,c]=ix.map(apos[c])

@@ -42,4 +42,10 @@ dependencies:
   - r-proc
   - r-matrix
   - r-r.utils
+  - r-survival
+  - r-mass
+  - r-dplyr
+  - r-stringr
+  - r-rio
+  - r-optparse
   - pip

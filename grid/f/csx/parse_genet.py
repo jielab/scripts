@@ -7,6 +7,7 @@ Parse the reference panel, summary statistics, and validation set.
 
 
 import os
+import gzip
 import numpy as np
 from scipy.stats import norm
 from scipy import linalg
@@ -66,7 +67,7 @@ def parse_sumstats(ref_dict, vld_dict, sst_file, pop, n_subj):
 
     ATGC = ['A', 'T', 'G', 'C']
     sst_dict = {'SNP':[], 'A1':[], 'A2':[]}
-    with open(sst_file) as ff:
+    with (gzip.open(sst_file,'rt') if str(sst_file).endswith('.gz') else open(sst_file)) as ff:
         header = next(ff)
         for line in ff:
             ll = (line.strip()).split()
@@ -103,7 +104,7 @@ def parse_sumstats(ref_dict, vld_dict, sst_file, pop, n_subj):
 
     n_sqrt = np.sqrt(n_subj)
     sst_eff = {}
-    with open(sst_file) as ff:
+    with (gzip.open(sst_file,'rt') if str(sst_file).endswith('.gz') else open(sst_file)) as ff:
         header = (next(ff).strip()).split()
         header = [col.upper() for col in header]
         for line in ff:
@@ -224,5 +225,3 @@ def align_ldblk(ref_dict, vld_dict, sst_dict, n_pop, chrom):
         idx_dict[pp] = [ii for (ii,snp) in enumerate(snp_dict['SNP']) if snp in sst_dict[pp]['SNP']]
 
     return snp_dict, beta_dict, frq_dict, idx_dict
-
-

@@ -21,7 +21,10 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
         random.seed(seed)
 
     # derived stats
-    n_pst = int((n_iter-n_burnin)/thin)
+    # Samples are retained at absolute iterations divisible by thin.
+    n_pst = n_iter // thin - n_burnin // thin
+    if n_pst < 2:
+        raise ValueError('Need at least two retained posterior samples')
     n_pop = len(pop)
     p_tot = len(snp_dict['SNP'])
 

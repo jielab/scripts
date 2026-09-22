@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-source /mnt/d/scripts/0f/console.sh
 set -euo pipefail
+[[ ! -f /mnt/d/scripts/0f/console.sh ]] || source /mnt/d/scripts/0f/console.sh
 
 
 # 🚩 Command-line help

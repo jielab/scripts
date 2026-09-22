@@ -9,7 +9,7 @@ BASE=['global_pca_distance','mean_maf','delta_maf','mean_ldscore','delta_ldscore
 EVOL=['log_arg_age','mutation_branch_gen','root_time_gen','carrier_frequency','lineage_breadth','lineage_entropy','local_arg_divergence','local_global_ratio']
 
 def prepare(train,valid,features):
- med=train[features].median(numeric_only=True); tr=train[features].fillna(med).to_numpy(float); va=valid[features].fillna(med).to_numpy(float)
+ med=train[features].replace([np.inf,-np.inf],np.nan).median(numeric_only=True).fillna(0); tr=train[features].replace([np.inf,-np.inf],np.nan).fillna(med).to_numpy(float); va=valid[features].replace([np.inf,-np.inf],np.nan).fillna(med).to_numpy(float)
  mu=np.nanmean(tr,0); sd=np.nanstd(tr,0); sd[~np.isfinite(sd)|(sd<1e-12)]=1
  return (tr-mu)/sd,(va-mu)/sd,med.to_dict(),mu,sd
 
@@ -30,21 +30,24 @@ def fit_oof(d,features,groups,alpha):
   te=np.asarray(groups==g); tr=~te
   if tr.sum()<max(50,3*len(features)) or te.sum()<10: continue
   Xtr,Xte,_,_,_=prepare(d.loc[tr],d.loc[te],features); y=d['transport_heterogeneity'].to_numpy(float); w=d['model_weight'].to_numpy(float)
-  b=ridge(Xtr,y[tr],w[tr],alpha); p[te]=pred(Xte,b); rec.append({'validation_group':str(g),**metrics(y[te],p[te])})
+  b=ridge(Xtr,np.minimum(y[tr],np.quantile(y[tr],.995)),training_weights(d.loc[tr]),alpha); p[te]=pred(Xte,b); rec.append({'validation_group':str(g),**metrics(y[te],p[te])})
  return p,rec
 def full_fit(d,features,alpha):
- X,_,med,mu,sd=prepare(d,d,features); y=d.transport_heterogeneity.to_numpy(float);w=d.model_weight.to_numpy(float); b=ridge(X,y,w,alpha)
+ X,_,med,mu,sd=prepare(d,d,features); y=d.transport_heterogeneity.to_numpy(float);w=training_weights(d); b=ridge(X,np.minimum(y,np.quantile(y,.995)),w,alpha)
  return b,med,mu,sd
+def training_weights(d):
+ sv=pd.to_numeric(d.sampling_var,errors='coerce').to_numpy(float)
+ if np.any(~np.isfinite(sv)|(sv<=0)):raise ValueError('sampling_var must be finite and positive')
+ w=1/np.sqrt(np.maximum(sv,np.quantile(sv,.01)));w=np.clip(w,*np.quantile(w,[.01,.99]));return w/w.mean()
 def main():
- ap=argparse.ArgumentParser(); ap.add_argument('--input',required=True); ap.add_argument('--out-dir',required=True); ap.add_argument('--ridge-alpha',type=float,default=10); ap.add_argument('--conservation-min',type=float,default=.05); ap.add_argument('--conservation-max',type=float,default=.995); ap.add_argument('--seed',type=int,default=20260904); a=ap.parse_args()
+ ap=argparse.ArgumentParser(); ap.add_argument('--input',required=True); ap.add_argument('--out-dir',required=True); ap.add_argument('--ridge-alpha',type=float,default=10); ap.add_argument('--conservation-min',type=float,default=.05); ap.add_argument('--conservation-max',type=float,default=.995); ap.add_argument('--seed',type=int,default=20260904); ap.add_argument('--model',choices=['baseline','evolutionary_full'],default='evolutionary_full'); a=ap.parse_args()
  out=Path(a.out_dir);out.mkdir(parents=True,exist_ok=True)
  use=['trait','chr','bp','SNP','A1','A2','pop_a','pop_b','transport_heterogeneity','sampling_var']+BASE+EVOL
  d=pd.read_csv(a.input,sep='\t',compression='infer',usecols=lambda x:x in use,low_memory=False,dtype={'chr':str,'SNP':str})
  d['transport_heterogeneity']=pd.to_numeric(d.transport_heterogeneity,errors='coerce');d=d[np.isfinite(d.transport_heterogeneity)].reset_index(drop=True)
  if len(d)<200: raise SystemExit(f'Too few transport observations: {len(d)}')
- # Winsorize only the training outcome tail; preserve rank and zero mass.
- hi=d.transport_heterogeneity.quantile(.995); d.transport_heterogeneity=d.transport_heterogeneity.clip(upper=hi)
- sv=pd.to_numeric(d.sampling_var,errors='coerce'); w=1/np.sqrt(sv.clip(lower=sv[sv>0].quantile(.01) if (sv>0).any() else 1)); lo,hiw=w.quantile([.01,.99]); d['model_weight']=w.clip(lo,hiw).fillna(1); d.model_weight/=d.model_weight.mean()
+ d['model_weight']=1.0
+ if a.ridge_alpha<=0 or not 0<=a.conservation_min<a.conservation_max<=1:raise ValueError('Invalid ridge/conservation bounds')
  # Remove unusable columns; require at least one ARG-specific predictor.
  bfeat=[x for x in BASE if x in d and d[x].notna().mean()>.01]
  efeat=[x for x in EVOL if x in d and d[x].notna().mean()>.01]
@@ -55,16 +58,19 @@ def main():
  if chroms>=3:
   groups=d.chr.astype(str).to_numpy(); validation='leave_one_chromosome_out'
  else:
-  bp=pd.to_numeric(d.bp,errors='coerce').fillna(np.arange(len(d))); groups=((bp//5_000_000).astype(int)%5).astype(str).to_numpy(); validation='five_genomic_block_folds_pilot'
+  bp=pd.to_numeric(d.bp,errors='coerce');
+  if not np.isfinite(bp).all():raise ValueError('Missing genomic positions; cannot form blocked folds')
+  groups=(d.chr.astype(str)+'_'+((bp//5_000_000).astype(int)%5).astype(str)).to_numpy(); validation='five_genomic_block_folds_pilot'
  pb,rb=fit_oof(d,bfeat,groups,a.ridge_alpha); pf,rf=fit_oof(d,ffeat,groups,a.ridge_alpha)
  y=d.transport_heterogeneity.to_numpy(float); mb=metrics(y,pb); mf=metrics(y,pf)
- selected='evolutionary_full' if mf['rmse']<mb['rmse'] else 'baseline'
+ selected=a.model  # Pre-specified; do not choose a model using its own reported OOF labels.
  ps=pf if selected=='evolutionary_full' else pb
+ if not np.isfinite(ps).all():raise ValueError('Incomplete blocked OOF predictions; use more SNPs/genomic blocks. Missing predictions must not become maximum conservation.')
  d['pred_baseline_oof']=pb; d['pred_full_oof']=pf; d['pred_selected_oof']=ps
  # Variant prior is based exclusively on held-out predictions.
  v=(d.groupby(['trait','chr','bp','SNP','A1','A2'],dropna=False,as_index=False)
       .agg(predicted_heterogeneity=('pred_selected_oof','median'),observed_heterogeneity=('transport_heterogeneity','median'),n_pairs=('transport_heterogeneity','size')))
- ph=np.maximum(pd.to_numeric(v.predicted_heterogeneity,errors='coerce').fillna(0),0);v['conservation']=np.exp(-.5*ph).clip(a.conservation_min,a.conservation_max);v['selected_model']=selected
+ ph=np.maximum(pd.to_numeric(v.predicted_heterogeneity,errors='raise'),0);v['conservation']=np.exp(-.5*ph).clip(a.conservation_min,a.conservation_max);v['selected_model']=selected
  v.to_csv(out/'variant_conservation.tsv.gz',sep='\t',index=False,compression='gzip',float_format='%.9g')
  d.to_csv(out/'pair_predictions.tsv.gz',sep='\t',index=False,compression='gzip',float_format='%.9g')
  cv=[]

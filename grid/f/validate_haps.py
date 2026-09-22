@@ -5,8 +5,8 @@ from pathlib import Path
 
 def op(path): return gzip.open(path,"rt") if str(path).endswith(".gz") else open(path)
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument("--haps",required=True); ap.add_argument("--sample",required=True); ap.add_argument("--out",required=True); ap.add_argument("--max-check",type=int,default=0); ap.add_argument('--keep'); ap.add_argument('--map'); a=ap.parse_args()
-    # Compatibility with older callers; new preparation validates every genotype.
+    ap=argparse.ArgumentParser(); ap.add_argument("--haps",required=True); ap.add_argument("--sample",required=True); ap.add_argument("--out",required=True); ap.add_argument('--keep'); ap.add_argument('--map'); a=ap.parse_args()
+    # Validate every genotype.
     sl=Path(a.sample).read_text().splitlines(); n=max(0,len([x for x in sl[2:] if x.strip()])); exp=2*n
     nv=0; prev=-1; errors=[]; first=None; last=None
     ids=[x.split()[1] for x in sl[2:] if x.strip()]
@@ -20,7 +20,7 @@ def main():
       for line in h:
         if not line.strip(): continue
         z=line.split(); nv+=1
-        # PLINK/Oxford HAPS usually has five metadata columns. Six-column variants are accepted.
+        # PLINK/Oxford HAPS has five metadata columns.
         meta=5 if len(z)-5==exp else None
         if meta is None:
             errors.append(f"line {nv}: columns={len(z)} not metadata+2N ({exp})");
@@ -30,9 +30,8 @@ def main():
         except Exception: errors.append(f"line {nv}: bad position"); continue
         if pos<=prev: errors.append(f"line {nv}: positions not strictly increasing {prev}>={pos}")
         prev=pos; first=pos if first is None else first; last=pos
-        if a.max_check==0 or nv<=a.max_check:
-            bad={x for x in z[meta:] if x not in {"0","1"}}
-            if bad: errors.append(f"line {nv}: invalid hap values {sorted(bad)[:5]}")
+        bad={x for x in z[meta:] if x not in {"0","1"}}
+        if bad: errors.append(f"line {nv}: invalid hap values {sorted(bad)[:5]}")
         if len(z[3])!=1 or len(z[4])!=1 or z[3] not in 'ACGT' or z[4] not in 'ACGT' or z[3]==z[4]: errors.append(f'line {nv}: invalid alleles')
         if maps:
             m=maps.readline().split()

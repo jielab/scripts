@@ -27,9 +27,9 @@ for i in "${!POPS[@]}"; do
     rm -f -- "$o.done"
     local cmd=(plink2 "--$mode" "$prefix")
     if [[ $mode == pfile && ! -s $prefix.pvar ]]; then cmd+=(vzs); fi
-    cmd+=(--score "${finals[$i]}" 1 2 3 header-read no-mean-imputation cols=+scoresums --threads "$GRID_THREADS" --memory 4096 --out "$o")
+    cmd+=(--score "${finals[$i]}" 1 2 3 header-read no-mean-imputation list-variants cols=+scoresums --threads "$GRID_THREADS" --memory 4096 --out "$o")
     [[ -z $GRID_KEEP ]] || cmd+=(--keep "$GRID_KEEP")
-    [[ -z $GRID_REMOVE ]] || cmd+=(--remove "$GRID_REMOVE")
+    [[ ! -s $GRID_REMOVE ]] || cmd+=(--remove "$GRID_REMOVE")
     grid_run_logged "$work/log/$trait/score.$p.chr$c.log" "${cmd[@]}" || return $?
     need "$o.sscore"; touch "$o.done"
   }
