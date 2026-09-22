@@ -4,7 +4,7 @@ setDTthreads(4)
 args <- commandArgs(TRUE)
 allowed <- c('trait','type','method','score-dir','pgs-file','disco-file','pt-file','pheno-file',
  'ancestry-file','group-col','covar-name','phenotype-col','event-col','time-col','prevalence',
- 'pca-file','med-file','distance-pcs','distance-bins','folds','seed','bootstrap','min-n',
+ 'pca-file','med-file','distance-pcs','distance-bins','min-bin-events','folds','seed','bootstrap','min-n',
  'remove','out-root','dir-gwas','dir-gen','pt-effect','threads','check','allow-missing-scores','disco-tune','disco-a','min-anchor','write-predictions','run-dir','grid-file')
 opt <- list(); i <- 1L
 while(i <= length(args)) {
@@ -23,7 +23,8 @@ write_tsv <- function(x,name)fwrite(x,file.path(out,name),sep='\t',na='NA')
 intarg <- function(k,v,minimum) {z<-suppressWarnings(as.integer(arg(k,v)));if(is.na(z)||z<minimum)stop('Invalid --',k);z}
 nfold <- intarg('folds',5,2); seed <- intarg('seed',20260904,0)
 nboot <- intarg('bootstrap',200,0); minn <- intarg('min-n',100,20)
-npc <- intarg('distance-pcs',10,2); nbins <- intarg('distance-bins',5,2)
+npc <- intarg('distance-pcs',10,2); nbins <- intarg('distance-bins',10,2)
+min_bin_events <- intarg('min-bin-events',20,5)
 tune <- toupper(arg('disco-tune','TRUE'))
 if(!tune %in% c('TRUE','FALSE'))stop('--disco-tune must be TRUE/FALSE')
 tune<-tune=='TRUE'; min_anchor<-intarg('min-anchor',100,10)
@@ -156,8 +157,8 @@ if(length(grid_scores)){
  for(g in intersect(c('GRID_shared','GRID_posterior','GRID_matched'),grid_scores))models[[g]]<-g
 }
 model_map<-rbindlist(lapply(names(models),function(m)data.table(method=m,scores=paste(models[[m]],collapse=','))))
-manifest <- data.table(field=c('trait','type',names(files),'covariates','outcome','folds','seed','bootstrap','distance_PCs','missing_scores','disco_tuned','grid_file','uncertainty'),
- value=c(Y,type,files,paste(covars,collapse=','),outcome_definition,nfold,seed,nboot,npc,paste(missing,collapse=','),tune,arg('grid-file','not supplied'),'Paired subject bootstrap conditional on fixed OOF fits; no discovery/fit uncertainty'))
+manifest <- data.table(field=c('trait','type',names(files),'covariates','outcome','folds','seed','bootstrap','distance_PCs','distance_bins_max','min_bin_events','group_column','missing_scores','disco_tuned','grid_file','uncertainty'),
+ value=c(Y,type,files,paste(covars,collapse=','),outcome_definition,nfold,seed,nboot,npc,nbins,min_bin_events,gc,paste(missing,collapse=','),tune,arg('grid-file','not supplied'),'Paired subject bootstrap conditional on fixed OOF fits; no discovery/fit uncertainty'))
 if(length(missing))cat('Unavailable scores: ',paste(missing,collapse=', '),'\n',sep='')
 cat('Ancestry-matched candidates:\n');print(d[,.N,by=target])
 if(isTRUE(arg('check',FALSE))) {
@@ -197,17 +198,26 @@ summarize_predictions <- function(x,pred,base,linear,linear_base,Kpop=NA_real_,B
  if(type!='t2e') {
   err<-sweep(linear,1,x$outcome,'-')^2;err0<-(linear_base-x$outcome)^2
   stat<-function(ix) {counts<-tabulate(ix,nbins=n);v<-1-as.numeric(crossprod(counts,err))/sum(counts*err0);names(v)<-nm;v}
- } else stat<-function(ix)vapply(nm,function(m)cindex(x$outcome[ix],x$time[ix],pred[ix,m],x$fold[ix]),numeric(1))
- point<-stat(seq_len(n));boots<-matrix(NA_real_,B,length(nm),dimnames=list(NULL,nm))
+ } else stat<-function(ix)c(vapply(nm,function(m)cindex(x$outcome[ix],x$time[ix],pred[ix,m],x$fold[ix]),numeric(1)),
+                           .baseline=cindex(x$outcome[ix],x$time[ix],base[ix],x$fold[ix]))
+ point<-stat(seq_len(n));boot_names<-names(point)
+ boots<-matrix(NA_real_,B,length(boot_names),dimnames=list(NULL,boot_names))
  for(b in seq_len(B)) {
   ix<-if(type=='ct')sample.int(n,n,replace=TRUE) else unlist(lapply(split(seq_len(n),x$outcome),function(z)sample(z,length(z),replace=TRUE)),use.names=FALSE)
   boots[b,]<-stat(ix)
   if(B>=100L&&b%%max(1L,B%/%4L)==0L){cat('  bootstrap ',b,'/',B,'\n',sep='');flush.console()}
  }
  ci<-function(v)if(sum(is.finite(v))>=max(10,.8*B))quantile(v,c(.025,.975),na.rm=TRUE,names=FALSE) else c(NA_real_,NA_real_)
- intervals<-if(B>0)t(apply(boots,2,ci)) else matrix(NA_real_,length(nm),2);res<-data.table(method=nm,estimate=as.numeric(point),lower95=intervals[,1],upper95=intervals[,2],N=n,events=if(type=='ct')NA_integer_ else sum(x$outcome),K=Kpop,P=if(type=='ct')NA_real_ else P)
+ intervals<-if(B>0)t(apply(boots,2,ci)) else matrix(NA_real_,length(boot_names),2,dimnames=list(boot_names,NULL))
+ res<-data.table(method=nm,estimate=as.numeric(point[nm]),lower95=intervals[nm,1],upper95=intervals[nm,2],N=n,events=if(type=='ct')NA_integer_ else sum(x$outcome),K=Kpop,P=if(type=='ct')NA_real_ else P)
+ if(type=='t2e') {
+  res[,`:=`(baseline_C=unname(point['.baseline']),baseline_C_lower95=intervals['.baseline',1],
+            baseline_C_upper95=intervals['.baseline',2],delta_C=estimate-unname(point['.baseline']))]
+  dc<-if(B>0)t(vapply(nm,function(m)ci(boots[,m]-boots[,'.baseline']),numeric(2))) else matrix(NA_real_,length(nm),2)
+  res[,`:=`(delta_C_lower95=dc[,1],delta_C_upper95=dc[,2])]
+ }
  res[,metric:=switch(type,ct='OOF_partial_R2',dt='OOF_observed_partial_R2',t2e='OOF_Harrell_C')]
- list(performance=res,bootstrap=boots)
+ list(performance=res,bootstrap=boots[,nm,drop=FALSE])
 }
 set.seed(seed)
 source(file.path(dirname(sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])),'yeval_disco.R'))
@@ -269,10 +279,12 @@ for(g in groups) {
  for(m in names(mm)) {
   if(type=='ct') {
    den<-sum((x$outcome-mean(x$outcome))^2)
-   pp[method==m,`:=`(baseline_R2=1-sum((x$outcome-base)^2)/den,full_R2=1-sum((x$outcome-pred[,m])^2)/den,RMSE=sqrt(mean((x$outcome-pred[,m])^2)))]
+   sse0<-sum((x$outcome-base)^2);sse1<-sum((x$outcome-pred[,m])^2)
+   pp[method==m,`:=`(baseline_R2=1-sse0/den,full_R2=1-sse1/den,
+                    delta_R2=(sse0-sse1)/den,baseline_SSE=sse0,full_SSE=sse1,RMSE=sqrt(sse1/n))]
   } else if(type=='dt') {
    auc<-function(p)as.numeric(pROC::auc(pROC::roc(x$outcome,p,levels=0:1,direction='<',quiet=TRUE)))
-   pp[method==m,`:=`(AUC=auc(pred[,m]),baseline_AUC=auc(base),Brier=mean((x$outcome-pred[,m])^2),baseline_Brier=mean((x$outcome-base)^2))]
+   pp[method==m,`:=`(AUC=auc(pred[,m]),baseline_AUC=auc(base),delta_AUC=auc(pred[,m])-auc(base),Brier=mean((x$outcome-pred[,m])^2),baseline_Brier=mean((x$outcome-base)^2))]
   }
  }
  perf[[length(perf)+1L]]<-pp
@@ -284,21 +296,32 @@ for(g in groups) {
   ri<-if(any(is.finite(rel)))quantile(rel,c(.025,.975),na.rm=TRUE) else c(NA_real_,NA_real_)
   differences[[length(differences)+1L]]<-data.table(target=g,metric=pp$metric[1],difference=val,lower95=ci[1],upper95=ci[2],relative_percent=if(reference>0)100*val/reference else NA_real_,relative_lower95=ri[1],relative_upper95=ri[2],N=n)
  }
- # Fixed predictions only: bins never choose scores, fit models or use outcomes.
- for(axis in c('distance.EUR','nearest_distance')) {
-  breaks<-unique(quantile(x[[axis]],seq(0,1,length.out=nbins+1L),na.rm=TRUE))
-  if(length(breaks)<3)next
-  bins<-cut(x[[axis]],breaks,include.lowest=TRUE,labels=FALSE)
-  selected<-intersect(c('PRS-CSx-auto-meta','PRS-CSx','DiscoDivas-tuned','DiscoDivas-untuned','PRS-CSx-fixed-meta'),names(mm))
-  if(!length(selected))next
-  for(bin in sort(unique(bins))) {
+ # PRS-CSx only. Quantile boundaries depend on distance; for binary/survival
+ # outcomes reduce the bin count until every bin meets the event-count guard.
+ # Never select bins for high performance or refit a model within a bin.
+ # Distance resampling cannot change the next ancestry's main bootstrap stream.
+ rng_before_distance<-.Random.seed
+ if('PRS-CSx'%in%names(mm)) {
+  axis<-'distance.EUR'; selected<-'PRS-CSx'
+  bins<-NULL; max_bins<-min(nbins,n%/%minn)
+  if(type!='ct')max_bins<-min(max_bins,sum(x$outcome==1)%/%min_bin_events,sum(x$outcome==0)%/%min_bin_events)
+  if(max_bins>=2L)for(q in seq.int(max_bins,2L)) {
+   breaks<-unique(quantile(x[[axis]],seq(0,1,length.out=q+1L),na.rm=TRUE))
+   if(length(breaks)<3L)next
+   candidate<-cut(x[[axis]],breaks,include.lowest=TRUE,labels=FALSE)
+   counts<-x[,.(N=.N,events=sum(outcome==1),non_events=sum(outcome==0)),by=.(bin=candidate)]
+   if(all(counts$N>=minn)&&
+      (type=='ct'||all(counts$events>=min_bin_events & counts$non_events>=min_bin_events))) {bins<-candidate;break}
+  }
+  if(!is.null(bins))for(bin in sort(unique(bins))) {
    ix<-which(bins==bin)
-   if(length(ix)<minn||(type!='ct'&&min(table(factor(x$outcome[ix],levels=0:1)))<5))next
    zz<-summarize_predictions(x[ix],pred[ix,selected,drop=FALSE],base[ix],lin[ix,selected,drop=FALSE],lb[ix],kp,B=min(nboot,100L))$performance
-   zz[,`:=`(target=g,distance_axis=axis,bin=bin,distance=median(x[[axis]][ix]),distance_min=min(x[[axis]][ix]),distance_max=max(x[[axis]][ix]))]
+   zz[,`:=`(target=g,distance_axis=axis,bin=bin,bins_in_group=uniqueN(bins),distance=median(x[[axis]][ix]),
+            distance_min=min(x[[axis]][ix]),distance_max=max(x[[axis]][ix]))]
    distance_results[[length(distance_results)+1L]]<-zz
   }
  }
+ .Random.seed<-rng_before_distance
  cat('Evaluated ',g,': N=',n,'; methods=',paste(names(mm),collapse=', '),'\n',sep='');flush.console()
 }
 if(!length(perf))stop('No evaluable ancestry groups')
@@ -307,5 +330,7 @@ performance<-rbindlist(perf,fill=TRUE);write_tsv(performance,'performance.tsv')
 write_tsv(rbindlist(audit,fill=TRUE),'cohort.tsv')
 comparison<-rbindlist(differences)
 distperf<-rbindlist(distance_results)
+if(!ncol(distperf))distperf<-data.table(method=character(),target=character(),estimate=numeric(),lower95=numeric(),upper95=numeric(),N=integer(),distance=numeric())
+write_tsv(distperf,'distance_performance.tsv')
 source(file.path(dirname(sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])),'yeval_plots.R'))
 cat('DONE: ',file.path(out,'report.html'),'\n',sep='')

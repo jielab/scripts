@@ -74,6 +74,34 @@ R 优先使用当前环境；必要时设置 `GRID_RSCRIPT=/path/to/Rscript`，�
 `--write-predictions TRUE` 可增加一个含 IID、折分及各模型预测的压缩表。默认保持报告目录简洁。
 `--bootstrap 0` 仅用于快速流程检查，没有置信区间。
 
+### Yeval 图表和指标
+
+报告依次展示以下四张图；前两图均有方法颜色图例，重复方法使用相同估计值。
+
+1. **Prediction by target ancestry**：包括 COJO 的整体方法比较。
+2. **Combined-score comparison**：聚焦 CSx 分数如何组合，比较 auto-meta、fixed-meta、四分数回归和 Disco 插值；去掉 COJO，增加 fixed-meta。
+3. **Prediction along genetic distance**：只展示 PRS-CSx，采用 2×2 四面板。a 为原始祖源标签着色的 PCA；b 为各祖源表现；c 为相同样本按到 1KG EUR 中心的距离着色；d 为各祖源内部距离分箱的预测表现。
+4. **DiscoDivas-tuned versus PRS-CSx**：补充差值图。
+
+这里的“原始祖源”指 `--group-col` 指定的已有标签（默认 `genetic_ancestry`），不是根据遗传距离重新分组，也不自动等同于自报族群。OTH/UNASSIGNED 保留原标签。
+四面板结构参考 [Ding et al., Nature 2023, Fig. 1](https://www.nature.com/articles/s41586-023-06079-4/figures/1)。原论文图是示意图；本报告用实际群体/分箱估计，不生成个体 R²，也不强加随距离下降的曲线。
+PRS-CSx 仍沿用每个目标祖源训练折拟合的四分数组合，因此不同祖源并非共享同一套组合系数。
+
+**height/LDL 的 partial R²**：`1 − SSE(full)/SSE(covariates)`，其中两个 SSE 都来自留出预测。
+也等于 `(full_R2 − baseline_R2)/(1 − baseline_R2)`。它衡量加入 PRS 减少了多少协变量模型剩余误差；`delta_R2` 则以表型总方差为分母。
+报告开头用本次 PRS-CSx 结果代入公式，`performance.tsv` 保存两个 SSE、两个总 R²、增量 R² 及 RMSE。partial R² 不是按参数数目校正的 adjusted R²。
+PRS-CS 论文描述的是协变量调整后的 observed-versus-predicted R²；仅凭该描述不能断言与本程序的 OOF SSE 定义数值完全一致，尤其预测校准不同时。
+
+**T2DM 生存分析**：主图显示 `covariates + PRS` 的 Harrell C-index；前两图虚线和四面板 b 的黑色刻线显示 covariates-only C。
+概览表同时显示 `baseline_C`、`delta_C` 及配对区间，以及 N、事件数和观察到的事件比例。事件比例不是固定时间风险；C-index 也不是 R² 或 PRS 单独的贡献。
+二分类 `--type dt` 继续使用 observed-scale partial R²，并单列 AUC、baseline_AUC、delta_AUC 和 Brier。
+
+距离使用投影的前 10 个 PC 和 1KG EUR 参考中心，不是发现 GWAS 的中心。图中平方根刻度只改变显示间距，刻度值保持原始距离单位。
+`--distance-bins` 默认最多 10 个祖源内等人数箱，`--min-n` 默认每箱 100 人；`--min-bin-events` 默认要求 dt/t2e 每箱至少 20 个事件/病例和 20 个非事件/对照，必要时减少箱数。无法形成两个合格箱的祖源只显示总体结果。
+所有分箱使用已有留出预测，不在箱内重新拟合。`distance_performance.tsv` 保存实际箱数、边界、中位距离、N、事件数和指标，便于复查图中点。
+
+替换代码后需在 UKB 数据环境重跑 Yeval；旧的汇总表和图片不足以恢复个体距离分箱或协变量基线 C。重跑可显式使用已有 `--pt-file`，无需重新运行 CSx/Disco 或 COJO 评分。
+
 `--chrs 22` 等子集有独立的权重文件名与评分目录 `<trait>/chr22/`，不会覆盖全基因组结果。Yeval 对子集运行需显式指定对应的 `--pgs-file` 等输入。
 
 ## 各方法准确含义

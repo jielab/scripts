@@ -34,12 +34,13 @@ def read_table(path, id_col="eid", columns=None, r_bin="Rscript"):
         if shutil.which(r_bin):
             # R selects columns before serialization, avoiding a second full RDS in Python.
             with tempfile.TemporaryDirectory(prefix="panome_rds_") as tmp:
-                out = Path(tmp) / "selected.csv"
+                out = Path(tmp) / "selected.rds"
                 cols = Path(tmp) / "columns.txt"
                 cols.write_text("\n".join(columns or []))
                 subprocess.run([r_bin, str(Path(__file__).with_name("export_rds.R")),
                                 str(path), str(out), str(cols)], check=True)
-                frame = pd.read_csv(out, dtype={id_col: str}, low_memory=False)
+                import pyreadr
+                frame = pyreadr.read_r(str(out))[None].reset_index(drop=True)
         else:
             import pyreadr
             objects = pyreadr.read_r(str(path))
@@ -228,3 +229,4 @@ def prepare(a, out):
     dump(out / "input_audit.json", dict(n=len(p), features=len(features),
          source="SYNTHETIC" if a.demo else upstream, met_input=a.met_input,
          missing_fraction=float(np.mean(~np.isfinite(x)))))
+    return p

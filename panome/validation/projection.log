@@ -1,0 +1,12 @@
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+PASS: binary RDS preserves exact subnormal values and leading-zero IDs
+PASS: IPCW matches ordinary Brier without early censoring
+[PANOME] DONE project | N=12; released=8
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+[PANOME] DONE project | N=12; released=8
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+[PANOME] DONE project | N=1; released=1
+PASS: 23 models reproduce frozen test predictions without outcomes; batch/order invariance, normalized matches, and family separation

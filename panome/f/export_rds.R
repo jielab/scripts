@@ -14,8 +14,5 @@ for (nm in names(x)) {
     x[[nm]] <- format(x[[nm]], "%Y-%m-%d")
   if (inherits(x[[nm]], "integer64")) x[[nm]] <- as.character(x[[nm]])
 }
-if (requireNamespace("data.table", quietly = TRUE)) {
-  data.table::fwrite(x, args[2], na = "")
-} else {
-  write.csv(x, args[2], row.names = FALSE, na = "")
-}
+# Binary transfer preserves subnormal numeric metadata used as category codes.
+saveRDS(x, args[2], compress = FALSE)

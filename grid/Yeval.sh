@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compare ancestry-matched PT, csx.auto, phenotype-tuned PRS-CSX and saved DiscoDivas.
+# Compare PRS models and display PRS-CSx across ancestry groups and genetic distance.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 usage(){ cat <<'HELP'
@@ -31,10 +31,14 @@ Inputs:
 Evaluation:
   --type ct|dt|t2e           ct/dt: OOF partial R2; dt also AUC/Brier; t2e: Harrell C.
                             Binary R2 is OBSERVED SCALE, not liability R2.
+                            t2e also reports covariates-only C and paired delta C.
   --disco-tune TRUE|FALSE    TRUE; FALSE evaluates only the saved untuned Disco score.
   --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2disco.sh).
   --min-anchor N            100 training people per ancestry and fold
-  --distance-pcs N          10; --distance-bins N: 5
+  --distance-pcs N          10; distance to the 1KG EUR reference center
+  --distance-bins N         Up to 10 quantile bins per original ancestry group
+  --min-bin-events N        20 events/cases AND non-events/controls per bin
+                            Sparse groups use fewer bins; only PRS-CSx is plotted.
   --folds N / --seed N      5 / 20260904
   --bootstrap N             200; 0 disables intervals for a smoke run
   --min-n N                 100 per target/bin
@@ -50,6 +54,8 @@ COJO scoring if --pt-file is absent:
   --pt-effect bJ|b           bJ; --threads N: 4
 
 Outputs stay in <out-root>/<trait>/; changing outcome type overwrites this report.
+The four-panel distance figure pairs categorical ancestry with continuous distance.
+distance_performance.tsv contains the plotted bin estimates and sample/event counts.
 A completed run has SUCCESS. Failed runs do not replace the previous report.
 Set GRID_RSCRIPT to choose an R executable; the activated grid environment is preferred.
 HELP
@@ -69,7 +75,7 @@ while (($#)); do
          --score-dir) score_dir=$2;; --pt-file) pt_file=$2;; --dir-gwas) gwas_dir=$2;;
          --dir-gen) gen_dir=$2;; --pt-effect) pt_effect=$2;; --threads) threads=$2;;
          --remove) remove=$2;;
-         --method|--pgs-file|--disco-file|--pheno-file|--ancestry-file|--group-col|--covar-name|--phenotype-col|--event-col|--time-col|--prevalence|--pca-file|--med-file|--distance-pcs|--distance-bins|--folds|--seed|--bootstrap|--min-n|--disco-tune|--disco-a|--min-anchor|--write-predictions|--grid-file) :;;
+         --method|--pgs-file|--disco-file|--pheno-file|--ancestry-file|--group-col|--covar-name|--phenotype-col|--event-col|--time-col|--prevalence|--pca-file|--med-file|--distance-pcs|--distance-bins|--min-bin-events|--folds|--seed|--bootstrap|--min-n|--disco-tune|--disco-a|--min-anchor|--write-predictions|--grid-file) :;;
          *) echo "Unknown option: $1" >&2; exit 2;;
        esac;shift 2;;
   esac
@@ -91,7 +97,7 @@ if [[ $check == FALSE && -z $pt_file ]]; then
     --output "$score_dir/$trait/pt.pgs.gz" --effect "$pt_effect" \
     --threads "$threads" --remove "$remove" 2>&1 | tee -a "$out/eval.log"
 fi
-# Rscript reads its source incrementally. Snapshot both files so editing the
+# Rscript reads its source incrementally. Snapshot all R files so editing the
 # workspace while a long evaluation runs cannot change the executing program.
 runtime=$(mktemp -d "${TMPDIR:-/tmp}/yeval-runtime.XXXXXX")
 trap 'rm -rf -- "$runtime"' EXIT
@@ -110,7 +116,7 @@ fi
 # Keep the lock inode stable: unlinking it could allow concurrent evaluations.
 if [[ $check == FALSE ]]; then
   obsolete=(command.sh comparison.pdf combined_scores.pdf paired_improvement.pdf
-    genetic_landscape.pdf distance_performance.pdf distance_performance.tsv
+    genetic_landscape.pdf genetic_landscape.png distance_performance.pdf
     fold_coefficients.tsv folds.tsv.gz genetic_distance.tsv.gz manifest.tsv
     methods.tsv paired_comparison.tsv prevalence.tsv skipped.tsv
     pt.commands.jsonl pt.log pt.matches.tsv pt.plink.log pt.variants.tsv)

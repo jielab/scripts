@@ -5,7 +5,9 @@
 #
 # Usage:
 #   ./github_copy.sh scan project,...    # inspect source files and rebuild the allowlist
-#   ./github_copy.sh sync [project,...]  # copy allowlisted files only; no content scan/deletion
+#   ./github_copy.sh sync [project,...]  # rebuild listed projects; no content scan
+# Delete each destination project represented by selected allowlist entries,
+# then copy its listed files. Projects absent from the entries stay untouched.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -18,6 +20,8 @@ MANIFEST_NAME=github_files.lst
 
 # GitHub rejects files above 100 MiB. Use a deliberately conservative limit.
 MAX_FILE_BYTES=$((50 * 1024 * 1024))
+# Panome: admit non-participant results up to 100 MB (decimal), below GitHub's 100 MiB ceiling.
+PANOME_MAX_FILE_BYTES=100000000
 # Compressed files are harder to inspect. Only small .gz files in gu/normalize
 # are accepted, preserving the small normalized artifacts already in that tree.
 MAX_GZIP_BYTES=$((10 * 1024 * 1024))
@@ -58,12 +62,20 @@ cd /mnt/d/scripts/0data
 
 ./github_copy.sh scan le8,maha
 ./github_copy.sh sync le8,maha
+
+# Panome: recursively inspect results; excludes participant data and files >100 MB.
+./github_copy.sh scan panome
+./github_copy.sh sync
+
+# sync deletes and rebuilds destination projects with selected entries in github_files.lst.
+# Old files within those projects are removed, even if not listed.
+# Projects with no selected entries (for example grid/) are left untouched.
 HELP
 }
 
 require_commands() {
     local command_name
-    for command_name in find sort stat realpath mktemp mv cp cmp mkdir dirname rm chmod tr; do
+    for command_name in find sort stat realpath mktemp mv cp mkdir dirname rm chmod tr; do
         command -v "$command_name" >/dev/null 2>&1 || die "required command not found: $command_name"
     done
 }
@@ -182,6 +194,13 @@ matches_publish_rule() {
         fi
     done
 
+    if [[ ${parts[0],,} == panome ]]; then
+        case "$ext" in
+            csv|tsv|xlsx|png|txt|md|json|jsonl|yaml|yml|html|htm|svg) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
     if [[ $lower == gu/normalize/* && ${#parts[@]} -ge 3 ]]; then
         return 0
     fi
@@ -214,7 +233,7 @@ matches_publish_rule() {
 check_file_safety() {
     local rel=$1
     local source_path=$2
-    local lower_base ext part current
+    local lower_base ext part current max_bytes size_reason
     local -a parts
 
     REJECT_REASON=
@@ -280,12 +299,34 @@ check_file_safety() {
             ;;
     esac
 
+    if [[ ${parts[0],,} == panome ]]; then
+        # These outputs remain participant-level even if eid is absent or renamed.
+        case "$ext" in
+            npy|npz|joblib|pkl|pickle|pt|pth|h5|hdf5|onnx|bin)
+                REJECT_REASON=participant_matrix_or_model; return 1 ;;
+        esac
+        case "$lower_base" in
+            raw.*|x.*|observed.*|ae.*|pca.*|transformer.*|phenotype.*|cohort.*|            graph_node_ids.*|graph_coordinates.*|sample_graph.*|test_predictions.*|            person_*|reference_bank.*|attribution_completeness.*|            matched_risk_pairs.*|matched_pair_features.*|*.landscape.*|            *.ae_attributions.*|*.integration_error.*|*.pairs.*|*.pair_features.*|*.support.*)
+                REJECT_REASON=participant_level_output; return 1 ;;
+        esac
+        case "$lower_base" in
+            *individual*.png|*individual*.svg|*person*.png|*person*.svg|*matched_pair*.png)
+                REJECT_REASON=participant_example_figure; return 1 ;;
+        esac
+    fi
+
     FILE_SIZE=$(stat -c '%s' -- "$source_path") || {
         REJECT_REASON=cannot_read_size
         return 1
     }
-    if (( FILE_SIZE > MAX_FILE_BYTES )); then
-        REJECT_REASON=over_50_MiB
+    max_bytes=$MAX_FILE_BYTES
+    size_reason=over_50_MiB
+    if [[ ${parts[0],,} == panome ]]; then
+        max_bytes=$PANOME_MAX_FILE_BYTES
+        size_reason=over_100_MB
+    fi
+    if (( FILE_SIZE > max_bytes )); then
+        REJECT_REASON=$size_reason
         return 1
     fi
 
@@ -338,13 +379,13 @@ scan_files() {
     while IFS= read -r -d '' source_path; do
         rel=${source_path#"$SRC_REAL"/}
 
-        if ! matches_publish_rule "$rel"; then
-            (( skipped[not_publish_result] += 1 ))
-            continue
-        fi
         if ! check_file_safety "$rel" "$source_path"; then
             reason=$REJECT_REASON
             (( skipped[$reason] += 1 ))
+            continue
+        fi
+        if ! matches_publish_rule "$rel"; then
+            (( skipped[not_publish_result] += 1 ))
             continue
         fi
         if [[ ! ${approved_set[$rel]+_} ]]; then
@@ -356,6 +397,9 @@ scan_files() {
         for project in "${SELECTED_PROJECT_LIST[@]}"; do
             lower_project=${project,,}
             case "$lower_project" in
+                panome)
+                    find_scan_candidates "$SRC_REAL/$project" 0
+                    ;;
                 le8)
                     # Includes le8/cvd_cad/prot/c2_cause/<result file>.
                     find_scan_candidates "$SRC_REAL/$project" 4
@@ -432,22 +476,14 @@ scan_files() {
     fi
 }
 
-check_destination_target() {
-    local rel=$1
-    local current=$DST_REAL
-    local target=$DST_REAL/$rel
-    local -a parts
-    local i
+check_destination_project() {
+    local project=$1
+    local target=$DST_REAL/$project
 
-    IFS=/ read -r -a parts <<< "$rel"
-    for ((i = 0; i < ${#parts[@]} - 1; i++)); do
-        current=$current/${parts[i]}
-        [[ ! -L $current ]] || die "destination parent is a symlink: $current"
-        [[ ! -e $current || -d $current ]] || die "destination parent is not a directory: $current"
-    done
-
-    [[ ! -L $target ]] || die "destination file is a symlink: $target"
-    [[ ! -d $target ]] || die "destination file path is a directory: $target"
+    [[ -n $project && $project != .* && $project != */* && $project != *\\* &&
+       ${project,,} != ukb ]] || die "unsafe destination project: $project"
+    [[ ! -L $target ]] || die "destination project is a symlink: $target"
+    [[ ! -e $target || -d $target ]] || die "destination project is not a directory: $target"
 }
 
 read_manifest_project_spec() {
@@ -502,6 +538,7 @@ run_ukb_content_scanner() {
 
     if ! python3 - "$SRC_REAL" "$input_file" > "$result_file" <<'PY'
 import csv
+import json
 import re
 import sys
 import zipfile
@@ -526,7 +563,7 @@ TEXT_EXTENSIONS = {
     ".map", ".json", ".jsonl", ".yaml", ".yml", ".html", ".htm",
     ".svg", ".md",
 }
-csv.field_size_limit(50 * 1024 * 1024)
+csv.field_size_limit(100000000)
 MAX_XLSX_EXPANDED_BYTES = 250 * 1024 * 1024
 MAX_XLSX_MEMBER_BYTES = 100 * 1024 * 1024
 
@@ -541,12 +578,21 @@ def eid_like(value):
     return bool(SEVEN_DIGIT_ID.fullmatch(str(value or "").strip()))
 
 
-def detect_table(rows):
+def detect_table(rows, panome=False):
     # Walk every row and column, including headers after introductory notes.
     generic_columns = {}
     ukb_columns = {}
     for row in rows:
         headers = [clean_header(value) for value in row]
+        if panome:
+            fields = set(headers)
+            if fields & {"person_id", "reference_person_id", "person_1", "person_2",
+                         "individual_id", "subject_id", "sample_id"}:
+                return "participant_identifier_field"
+            latent = sum(bool(re.fullmatch(r"(?:ae|pca|pc|diffusion)[0-9]+", h)) for h in fields)
+            if (latent >= 2 or {"time", "event"} <= fields or
+                    any(h.startswith("state_weight_") for h in fields)):
+                return "participant_measurements_without_identifier"
         if any(header in STRONG_ID_HEADERS for header in headers):
             return "participant_identifier_field"
         for column, header in enumerate(headers):
@@ -643,7 +689,7 @@ def worksheet_rows(workbook, member, strings):
             element.clear()
 
 
-def detect_xlsx(path):
+def detect_xlsx(path, panome=False):
     with zipfile.ZipFile(path) as workbook:
         infos = workbook.infolist()
         if (sum(info.file_size for info in infos) > MAX_XLSX_EXPANDED_BYTES or
@@ -655,23 +701,51 @@ def detect_xlsx(path):
         if not sheets:
             raise ValueError("workbook has no inspectable sheets")
         for member in sheets:
-            reason = detect_table(worksheet_rows(workbook, member, strings))
+            reason = detect_table(worksheet_rows(workbook, member, strings), panome)
             if reason:
                 return reason
     return None
 
 
-def detect_file(path):
+def json_rows(value):
+    if isinstance(value, dict):
+        yield list(value)
+        # Nested participant records and column-oriented tables are both inspected.
+        for item in value.values():
+            if isinstance(item, (dict, list)):
+                yield from json_rows(item)
+    elif isinstance(value, list):
+        if value and all(not isinstance(v, (dict, list)) for v in value):
+            yield value
+        else:
+            for item in value:
+                yield from json_rows(item)
+
+
+def detect_file(path, panome=False):
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
         try:
-            return detect_xlsx(path)
+            return detect_xlsx(path, panome)
         except Exception:
             # A workbook that cannot be inspected must not be left ready to publish.
             return "xlsx_content_check_failed"
+    if suffix in {".json", ".jsonl"} and panome:
+        try:
+            with path.open(encoding="utf-8-sig") as handle:
+                if suffix == ".json":
+                    return detect_table(json_rows(json.load(handle)), panome)
+                for line in handle:
+                    if line.strip():
+                        reason = detect_table(json_rows(json.loads(line)), panome)
+                        if reason:
+                            return reason
+            return None
+        except Exception:
+            return "json_content_check_failed"
     if suffix in TEXT_EXTENSIONS:
         try:
-            return detect_table(text_rows(path))
+            return detect_table(text_rows(path), panome)
         except Exception:
             return "text_content_check_failed"
     return None
@@ -683,7 +757,7 @@ with input_path.open("r", encoding="utf-8") as entries:
         if not relative:
             continue
         candidate = root.joinpath(*relative.split("/"))
-        reason = detect_file(candidate)
+        reason = detect_file(candidate, relative.split("/", 1)[0].lower() == "panome")
         if reason:
             print(f"{relative}\t{reason}")
 PY
@@ -696,9 +770,9 @@ PY
 sync_files() {
     local project_spec=${1-}
     local manifest line source_path target parent rel top project
-    local line_number=0 copied=0 unchanged=0 total_bytes=0
-    local -a files=()
-    local -A wanted=()
+    local line_number=0 copied=0 total_bytes=0
+    local -a files=() projects=()
+    local -A wanted=() projects_seen=()
 
     prepare_roots
     manifest=$DST_REAL/$MANIFEST_NAME
@@ -733,12 +807,24 @@ sync_files() {
             die "manifest line $line_number failed safety check ($REJECT_REASON): $line"
         fi
         [[ ! ${wanted[$line]+_} ]] || die "duplicate manifest entry on line $line_number: $line"
-        check_destination_target "$line"
+        check_destination_project "$top"
+
+        if [[ ! ${projects_seen[$top]+_} ]]; then
+            projects_seen["$top"]=1
+            projects+=("$top")
+        fi
 
         wanted["$line"]=1
         files+=("$line")
         total_bytes=$((total_bytes + FILE_SIZE))
     done < "$manifest"
+
+    # Only projects with selected file entries are cleared. A scope header alone
+    # (including an empty scan result) must not cause an unrelated tree deletion.
+    for project in "${projects[@]}"; do
+        check_destination_project "$project"
+        rm -rf -- "$DST_REAL/$project"
+    done
 
     # Copy through a same-directory temporary file, then rename atomically.
     for rel in "${files[@]}"; do
@@ -752,11 +838,6 @@ sync_files() {
             die "source changed or became unsafe during sync ($REJECT_REASON): $rel"
         fi
 
-        if [[ -f $target && ! -L $target ]] && cmp -s -- "$source_path" "$target"; then
-            ((unchanged += 1))
-            continue
-        fi
-
         TEMP_FILE=$(mktemp "$parent/.github_copy.tmp.XXXXXX")
         cp --preserve=mode,timestamps -- "$source_path" "$TEMP_FILE"
         mv -f -- "$TEMP_FILE" "$target"
@@ -764,7 +845,7 @@ sync_files() {
         ((copied += 1))
     done
 
-    printf 'SYNC OK: %d copied/updated, %d unchanged.\n' "$copied" "$unchanged"
+    printf 'SYNC OK: %d projects rebuilt, %d files copied.\n' "${#projects[@]}" "$copied"
     printf 'Allowlisted payload: %d files, %d MiB.\n' \
         "${#files[@]}" "$((total_bytes / 1024 / 1024))"
 }

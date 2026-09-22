@@ -6,7 +6,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, SplineTransformer
 from sklearn.linear_model import Ridge
-from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from common import words
 
 def parsed_date(raw, name):
@@ -54,26 +53,6 @@ def outcomes(p, a):
         other_baseline_disease=int((~healthy & ~prevalent).sum()),
         diagnosis_after_censor=int((diagnosis > censor).sum()),
         incident=int(p.loc[p.eligible, "event"].sum()), outcome_type="survival")
-
-def split_people(p, a):
-    ix = np.arange(len(p))
-    if a.group_col:
-        if p[a.group_col].isna().any() or p[a.group_col].astype(str).str.strip().eq("").any():
-            raise ValueError("Family/group IDs must be complete")
-        groups = p[a.group_col].astype(str).to_numpy()
-        if len(np.unique(groups)) < 10:
-            raise ValueError("At least ten independent split groups required")
-        tv, te = next(GroupShuffleSplit(n_splits=1, test_size=.2, random_state=a.seed).split(ix, groups=groups))
-        tr0, va0 = next(GroupShuffleSplit(n_splits=1, test_size=.25, random_state=a.seed + 1).split(tv, groups=groups[tv]))
-        tr, va = tv[tr0], tv[va0]
-    else:
-        strat = p.event if a.outcome_type == "survival" else None
-        tv, te = train_test_split(ix, test_size=.2, random_state=a.seed, stratify=strat)
-        tr, va = train_test_split(tv, test_size=.25, random_state=a.seed + 1,
-                                stratify=strat.iloc[tv] if strat is not None else None)
-    part = np.full(len(p), "test", dtype=object)
-    part[tr], part[va] = "train", "validation"
-    return part
 
 class MetadataDesign:
     """Normalize categorical types and fit all encodings on training rows only."""

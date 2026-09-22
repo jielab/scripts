@@ -7,9 +7,7 @@ import os
 import time
 import numpy as np
 
-VERSION = "3.0.0"
-STAGES = ["s1_prepare", "s2_preprocess", "s3_representation", "s4_graph",
-          "s5_predict", "s6_report"]
+VERSION = "4.0.0"
 
 def words(value):
     return [s.strip() for s in (value or "").split(",") if s.strip()]

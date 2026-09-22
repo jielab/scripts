@@ -1,114 +1,140 @@
-# Panome
+# Panome 4 — 个体 reference matching 与分子组合解释
 
-Panome把人的分子组合、邻域和混合状态作为分析对象，检验它们能否在常规组学预测之外解释个体差异。本次下载包未附带其原先引用的 PROJECT_PROPOSAL.md、DESIGN.md 和 VALIDATION.md；本地核查与迁移记录见 `LOCAL_REVIEW.md`。当前版本为3.0.0；它是可运行的研究实现，不包含真实UKB结果。
+本版按照“建 reference → 找匹配 → COPY / 借用 reference 的结局信息”重写。以真实个体作为榜样，保留整体匹配、模块 mosaic、原始 COPY Y 和多参考风险估计，不以 AUC 决定唯一赢家。默认主面板预先固定为 100 人；300、1000 人只作为并列敏感性分析。
 
-## 文件与运行方式
+这是研究实现。真实 UKB 新版结果须在你的本地数据上重新运行；本包不包含这些结果。旧版结果的核查见 `AUDIT.md`。本版聚焦有首诊日期和随访的疾病，按指定时间窗预测 net risk；不提供旧版 height、Transformer、Leiden 或 PGS 接口。
 
-沿用LE8的组织习惯：根目录保留 `panome.sh` 入口，计算代码放在 `f/`，结果放在独立analysis目录。Python负责建模，`f/export_rds.R`仅负责读取RDS并导出所需字段，不执行LE8的表型构建或遗传分析。
+本机替换前的修复、真实输入抽样核查及运行记录见 [LOCAL_REVIEW.md](LOCAL_REVIEW.md)。
 
-`f/panome.py`调度六个阶段；`io_data.py`读取数据；`preprocess.py`处理结局、分组和训练集预处理；`representation.py`学习AE与分子模块Transformer；`graph.py`建立训练参照图；`prediction.py`、`neural.py`和`evaluation.py`拟合并比较预测；`pgs.py`提供可选遗传评分注释；`interpretation.py`解释个体；`final.py`生成图及源数据；`project.py`投影新个体；`common.py`记录配置、缓存与锁。
+## 运行
 
-建议Python 3.11或3.12。在本目录创建环境，或使用已有环境并设置 `PANOME_PYTHON`：
+将整个 `panome/` 目录作为新版使用，避免混入旧 `f/`。默认输出到新的 `v4_reference` 子目录，不覆盖旧结果。
 
 ```bash
+cd /mnt/d/scripts/panome
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 chmod +x panome.sh
-./panome.sh --help
-```
-
-RDS优先使用可用的 `Rscript`，否则使用pyreadr。含特殊R对象的文件建议使用Rscript；RDS必须是一个data.frame。CSV、TSV和gzip文本也可直接读取。Parquet需要额外安装pyarrow。CUDA须安装与机器匹配的PyTorch；`--device auto`自动选用可用GPU，`--device cpu`强制CPU。不会自动安装R包或修改输入数据。
-
-## 数据位置
-
-默认 `UKB_PHE=/mnt/d/data/ukb/phe`，也可通过 `--ukb-phe` 指定。以下位置来自核对后的LE8/UKB代码：
-
-- 表型：`/mnt/d/data/ukb/phe/Rdata/all.rds`。
-- 原始蛋白：`/mnt/d/data/ukb/phe/rap/raw/prot.tab.gz`。
-- 原始代谢物：`/mnt/d/data/ukb/phe/rap/met.tab.gz`。
-- 代谢物映射：`/mnt/d/data/ukb/phe/common/met.lst`，支持无表头或当前 data_field/met_name 表头，前两列为原始字段或算术表达式、目标特征名。保留baseline `_i0`，去掉后续访视字段，只允许字段之间的加减乘除。
-- 可选已清洗矩阵：`Rdata/prot.rds`、`Rdata/met.rds`，用 `--input-source cleaned` 明确选择。上游全样本过滤或插补无法在此撤销，主分析建议原始数据。已变换、含负值的代谢物需指定 `--transform none`。
-- 可选PGS：优先 `Rdata/prot.pgs.rds` 或 `Rdata/met.pgs.rds`，不存在时读取 `all.rds` 中的 `*.pgs`；`--pgs-file`覆盖这一选择。
-
-矩阵中第一列应为唯一 `eid`，其余列只放分子测量。结局和协变量放在表型文件中；已知结局、随访或协变量混入分子矩阵会报错。蛋白名转为大写，代谢物保留映射后的名称。不固定蛋白数量。输入均要求一个人一行；本版不自行合并重复访视。
-
-默认临床协变量为 `age,sex,tdi,PC1,PC2,center`，其中年龄采用训练拟合的样条。分子残差化默认 `age,sex,prot.plate` 或 `age,sex,met.plate`。这些字段必须实际存在；可用 `--covariates`、`--residualize`和 `--categorical`明确修改。临床变量可以加入已核验的baseline风险因子或LE8变量。本版默认协变量集合不是SCORE2、QRISK等经过验证的临床风险计算器。
-
-默认不限制祖源，也不假定所有人无其他疾病。正式研究请准备符合纳入标准的表型文件；需要额外排除baseline疾病时，使用 `--healthy-date-cols` 提供一组首诊日期列。`--group-col family_component`使用完整亲缘连通分量分组，不能只给某个家庭成员的零散亲属编号。
-
-## CAD与height
-
-先查看路径、再检查文件和依赖：
-
-```bash
 ./panome.sh --Y cvd_cad --biom prot --dry-run
 ./panome.sh --Y cvd_cad --biom prot --preflight
-./panome.sh --Y cvd_cad --biom prot --run-name cad_primary
+./panome.sh --Y cvd_cad --biom prot --cores 16
 ```
 
-CAD默认读取 `fod_icd10_cvd_cad`、`date_attend`、`date_death`和 `date_lost`。末次行政随访默认2023-04-01，来自现有UKB表型代码；正式运行应按自己的数据覆盖日期指定 `--end-date`。baseline当天及之前确诊者排除，事件不得晚于死亡、失访或行政截止时间。若另有确诊标记而缺少首诊日期，可通过 `--disease-evidence-col`排除此类时间不明者。仅有日期列时，程序无法识别未编码的既往病例。
+不读取真实数据的快速检查：
 
 ```bash
-./panome.sh --Y height --outcome-type quantitative --target-col height \
-  --biom prot --run-name height_primary
-./panome.sh --Y cvd_cad --biom prot,met --run-name cad_layers
+./panome.sh --demo --tree hist --max-samples 1600 --run-name synthetic_check --analysis-root /tmp/panome_check
 ```
 
-`height`须替换成all.rds中的实际列名；本环境未读取你的UKB数据来核对该列。`prot,met`执行两个独立图谱，**不是**多视图联合训练。当前一次接受一个Y；分析多个疾病可在shell中循环调用。
+默认输入保持现有 UKB 布局：
 
-启用已有PGS的可选注释：
+- 表型 `/mnt/d/data/ukb/phe/Rdata/all.rds`。
+- 蛋白 `/mnt/d/data/ukb/phe/rap/raw/prot.tab.gz`。
+- CAD 首诊 `fod_icd10_cvd_cad`，基线 `date_attend`，死亡 `date_death`，失访 `date_lost`。
+- 行政截止日期沿用已有分析的 `2023-04-01`，请按实际数据覆盖期设置 `--end-date`。
+- 临床协变量 `age,sex,tdi,PC1,PC2,center`；蛋白残差化 `age,sex,prot.plate`。
+- 死亡作为删失，输出是死亡删失下的 net risk，**不是竞争死亡下的实际累计发病概率**。
+
+RDS 优先用已有 `Rscript` 提取字段，再由 `pyreadr` 读取二进制中间文件；`pyreadr` 已列入依赖，没有 R 时直接使用它读取。这样可保留批次等分类元数据中的极小数值。CSV、TSV、gzip 文本也可直接输入。不会 source LE8 或修改原始数据。`--tree lightgbm` 是默认树基准；未安装会报错，不会默默替换。可明确选 `--tree hist` 使用 sklearn 的 histogram gradient boosting。
+
+亲缘连通分量列已准备好时，请加 `--group-col family_component`。这样外层划分、内层 OOF、匹配排除和 bootstrap 都以亲缘组处理。没有亲缘信息时是个人随机划分，不能声称已排除亲缘泄漏。
 
 ```bash
-./panome.sh --Y cvd_cad --biom prot --run-name cad_pgs \
-  --pgs --pgs-file /mnt/d/data/ukb/phe/Rdata/all.rds \
-  --pgs-source 'describe GWAS and scoring version' --pgs-overlap unknown
+# 先完整训练并冻结，稍后才打开测试结果
+./panome.sh --Y cvd_cad --biom prot --run-name cad_reference --train-only
+./panome.sh evaluate --run-dir /mnt/d/analysis/panome/cvd_cad/prot/cad_reference
+
+# 保留蛋白的年龄/性别相关部分，另做明确命名的敏感性分析
+./panome.sh --Y cvd_cad --biom prot --residualize prot.plate --run-name cad_plate_only_residual
+
+# 5 年风险是另一个明确时间窗，须重新拟合
+./panome.sh --Y cvd_cad --biom prot --horizon 5 --run-name cad_5y
+
+# 多次划分用于重训稳定性，不能挑选其中 AUC 最高的一次作为最终结果
+for seed in 2026 2027 2028; do
+  ./panome.sh --Y cvd_cad --biom prot --seed "$seed" --run-name "cad_seed_${seed}"
+done
 ```
 
-只有 `feature.pgs` 能匹配该feature，蛋白匹配忽略大小写。PGS模块比较临床项与临床项+PGS对成年实测分子的重构，输出独立测试R²增量和个体偏离；它不参与主图谱或主疾病预测。GWAS发现样本的重叠不能通过本项目的60/20/20划分消除，需记录实际来源。PGS不是出生时的蛋白浓度，偏离不能直接解释为环境效应、亚临床疾病或因果成分。
+默认外层 50% test，另外 50% 分为 build/tune/calibration，占总样本约 30%/10%/10%。QC 后比例可能略变。所有模型都采用同样的划分。可通过 `--split-file` 提供含 `eid,split` 的 CSV，split 必须是 `build,tune,calibration,test` 之一。用固定 split 比较多个方案，避免样本变化造成混淆。
 
-## 阶段与结果
+## 并列实现的方案
 
-默认输出 `/mnt/d/analysis/panome/<Y>/<biom>/<run-name>/`；`--analysis-root`可修改根目录。默认run-name为 `v3`，不会导入旧版缓存。
+| 输出名 | 实际行为 |
+|---|---|
+| `copy1_fullproteome` | 最低 OOF log loss 的 100 个真实人；在全部保留蛋白的标准化空间寻找 1 人；直接 COPY 其已知 10 年 Y=0/1。原始方案的直接对照，不做概率校准。 |
+| `copy1_topfit` | 同样的榜样，改用训练获得的分子距离匹配，再 COPY 1 人 Y。 |
+| `copyk_fullproteome`, `copyk_topfit` | 相同榜样，K 人距离加权 COPY，加入 IPCW；保存原始值和独立校准值。 |
+| `random_panel` | 按已知结局比例抽样的随机 100 人，检验是否真的需要挑榜样。 |
+| `diversity_panel` | 优先覆盖分子空间的真实 100 人，不按 fit 挑选。 |
+| `reliable_100` / `panome` | 重复 OOF 质量、结局类别配额和分子多样性共同选择真实个体；在其局部邻域估计风险，再进行加权匹配。 |
+| `reliable_300`, `reliable_1000` | 面板大小敏感性分析；不会自动取代预设的 100 人主面板。 |
+| `all_reference` | 使用全部已知时间窗结局的 build 人员，普通 IPCW 加权 kNN；检查压缩到 100 人损失了多少信息。 |
+| `unsupervised_matching` | 与主方案相同参考身份，用不利用 Y 的 PCA 距离重新估计邻域和匹配。 |
+| `mosaic_equal` | 不同分子模块分别匹配不同真实参考人；各模块风险等权组合。 |
+| `mosaic_weighted` | 相同模块匹配，根据 tune 的 Brier 改善给予模块权重，保留 10% 等权收缩。 |
+| `panome_clinical`, `mosaic_clinical` | 参考风险与临床预测在独立 calibration 中组合。 |
+| `panome_elasticnet_hybrid` | 参考风险与 elastic net 组合；用于评价预测增量，不把全部预测归因于参考人。 |
+| `clinical`, `protein_elasticnet`, `elasticnet`, `clinical_pca`, `lightgbm` | 临床、蛋白 EN、临床+蛋白 EN、临床+PCA、临床+蛋白树模型基准。 |
+| `clinical_technical` | 临床+残差化使用的元数据+蛋白缺失比例；检查明显技术信息是否也能预测。不是完整的逐 assay 缺失模式负对照。 |
 
-- `s1_prepare`：保留原始缺失的分子矩阵、表型与输入审计。
-- `s2_preprocess`：结局、60/20/20划分、仅训练拟合的处理器及QC审计。
-- `s3_representation`：AE、PCA和可选模块Transformer的冻结模型与坐标。
-- `s4_graph`：训练样本图、Leiden发现标签、所有人的投影坐标、状态权重和稳定性。
-- `s5_predict`：所有可用模型、测试预测、校准、配对bootstrap、landmark与PGS结果。
-- `s6_report`：个体分子状态、状态关联、AE归因、近邻注意力、相近风险配对及文字报告。
-- `publication`：Fig1图谱、Fig2预测、Fig3个体；每组均有PNG、PDF和XLSX源数据。
+`--panel-size` 改变主面板大小；`--panel-sizes` 决定额外大小。主面板不够人数时会记录实际人数及 `not_ready`，不会偷偷补成“合格 100 人”。所有可以计算的探索性结果仍输出。
 
-本版增加状态权重调节的变系数模型、邻域汇总模型和对训练参照的cross-attention，并保留临床、PWAS score、PCA、AE、elastic net、树模型、个体内部Transformer及同结构随机邻域等对照。最多16个模型；无合格多状态解、事件不足或模型失败时会明确记录，不伪造输出。务必查看 `s5_predict/model_status.csv` 与 `metric_limitations.json`，不要只看总流程DONE。
+## 如何定义“榜样”
 
-部分运行和重绘示例：
+在 build 内重复 3 次、每次 5 折。每折重新拟合分子预处理和模型。默认质量教师为蛋白 elastic net 与浅层非线性树的平均预测，避免仅挑选“符合线性模型的人”。`--quality-teacher elasticnet` 可单独运行线性教师作为敏感性分析。
+
+每个人记录 OOF 概率、OOF log loss、相对该折常数风险的 log-likelihood gain、重复之间的变化，以及正 gain 比例。主候选要求平均 gain>0 且至少 2/3 重复为正。未知时间窗结局者不能被当作 Y=0，也不能成为 COPY Y 的来源，但其分子数据可以参与 build 表征。
+
+原始 `topfit` 对照按最低 log loss 全局取人；这很可能主要选出低风险非病例。改进方案在结局类别内挑选可靠且互相不同的人，配额接近 build 已知标签的比例。100 人本身仍不是疾病总体的无偏随机样本，因此独立校准以及未筛选邻域的风险估计很重要。
+
+一个人只有一次观察结局。这里的“可靠”指给定模型下重复 OOF 的一致性，不是证明这个人的蛋白和疾病之间有确定关系，也不意味着其他人是坏数据。
+
+## 个体解释与 copy 稳定性
+
+| 文件 | 要回答的问题 |
+|---|---|
+| `reference_candidates.csv` | 每个候选人的 fit 依据、稳定性、两种教师的 OOF 预测是什么？ |
+| `reference_panel.csv` | 最终参考人是谁？观察标签、局部风险、邻域有效人数和事件支持是多少？ |
+| `test_reference_matches.csv` | 这个人整体匹配了谁？各参考人的权重是多少？ |
+| `test_mosaic_matches.csv.gz` | 这个人的不同分子模块分别匹配了谁？各模块支持怎样的风险？ |
+| `test_feature_explanations.csv.gz` | 哪些蛋白共同偏高/偏低，哪些蛋白与参考组合最不一致？ |
+| `test_person_cards.jsonl.gz` | 每人一行完整 JSON 解释卡，可用于后续个体浏览界面。 |
+| `molecular_profiles.csv`, `molecular_blocks.csv` | 每个人的模块坐标，以及模块包含哪些蛋白、如何计算。 |
+| `same_risk_pairs.csv` | 预测风险相近、分子组合不同的个体，不要求不同离散 subtype。 |
+| `masked_copy_stability.csv` | 遮住已测蛋白后，能否重构它们？参考身份和原始风险变化多大？ |
+| `matching_diagnostics.csv.gz` | 各匹配方案的距离、有效参考人数、重构误差与局部事件支持。 |
+| `reference_utilization.csv` | 有哪些参考人真正被使用？是否大部分目标都落在极少数人上？ |
+
+默认分子模块从 build 蛋白的 PCA loading 相似性获得，并在每个模块中学习 PC1。它们是数据驱动的坐标，不会自动被命名为“炎症”“脂质”或被解释为通路活动。若已有审定的通路映射，可用 `--module-file pathways.tsv`，两列必须为 `feature,module`；特征名须精确匹配。允许一个蛋白属于多个外部模块，但这种相关性使模块风险不能作为可相加的病因占比。
+
+mosaic 借鉴“不同部分匹配不同参考”的思想，没有蛋白 phasing、染色体顺序、重组率或 HMM。单个模块仅用 PC1 是可检验的首版假设，不能声称保留了该模块全部信息。
+
+## 无合适匹配与面板评估
+
+`reference_readiness.json` 分开记录结构/支持不足与预测性能提示。AUC 没有改善不会自动否定其解释价值。`provisional_pass` 只表示预设的内部支持检查通过，仍不是外部有效性的认证。
+
+个体判断依赖冻结的 tune-X 阈值：参考距离、标准化蛋白重构误差、参考风险分歧、有效参考人数、未知分类水平及缺失比例。它们可在不知道该人的 Y 时计算。`supported_match` 和 `rejection_reason` 对所有 test 人员输出；面板和个体都通过时，`released_net_risk` 才有值。所有人的探索性原始/校准风险仍保留。这个字段仅用于研究流程，不是临床使用许可或个体正确概率保证。
+
+`approach_comparison.csv` 同时给出预测指标和参考使用/匹配描述。`coverage_curve.csv` 在完全相同的被保留人员中比较所有模型，防止只报告容易预测的人而夸大优势。遮蔽重构默认抽取 1000 个 test 人、重复 3 次、每次遮住 10% 的已测蛋白；对 Panome、全蛋白 COPY 1、随机面板和多样性面板使用相同的人员与遮蔽位置，不使用其疾病标签。可用 `--mask-models` 选择其他匹配方案；可用 `--explanation-samples`、`--mask-repeats`、`--mask-fraction` 修改。
+
+## 给新个体预测
+
+只需要分子测量和基线元数据，不需要 Y。所有预测、校准、参考面板和阈值固定，目标批次不会成为彼此的 reference。
 
 ```bash
-./panome.sh --Y cvd_cad --biom prot --run-name cad_primary --to s4_graph
-./panome.sh --Y cvd_cad --biom prot --run-name cad_primary --from s5_predict
-./panome.sh final --Y cvd_cad --biom prot --run-name cad_primary
+./panome.sh project \
+  --run-dir /mnt/d/analysis/panome/cvd_cad/prot/v4_reference \
+  --phe-file /path/new_baseline.csv --omics-file /path/new_proteins.csv \
+  --output /path/new_people.csv
 ```
 
-恢复运行须提供与原运行一致的分析参数。manifest记录源代码、配置、依赖版本和输入指纹；已完成阶段还核对输出指纹。大文件默认检查路径、大小和mtime；`--full-input-hash`会额外完整哈希输入。代码移动、参数或输入变化时使用新的run-name，或者明确 `--replace` 重建该run的全部阶段。`--replace` 会删除这个run下六个阶段与publication目录，保留其他run。中断的阶段会重做；本版不从半轮神经网络训练恢复。若硬中断留下锁，核实无运行进程后删除该run的 `.lock`。`final`从完成的结果重绘，不需要原始UKB文件，也不重新训练。
+输出各方案预测、整体匹配支持，并另存 `new_people_mosaic.csv.gz`。保留 assay 必须齐全，个别测量可缺失。若训练使用亲缘组，新个体也要提供完整连通分量编号。跨平台测量单位或系统偏移未被此接口自动解决。joblib 仅加载你信任的本地训练产物。
 
-## 新个体投影
+## 执行、验证与边界
 
-投影只需分子测量和baseline协变量，不需要Y。使用训练时相同的特征定义、单位、采样及平台处理。缺少训练保留的assay、样本缺失率过高或重复ID会报错；新出现的分类变量水平会记录审计，不能据此认为平台差异已经解决。
+日志只记录主要步骤 START/DONE 和 OOF 重复结束。`--cores` 同时限制 BLAS/OpenMP 线程。保存冻结模型后，可独立 `evaluate` 重画图和计算指标；不提供折训练中断的自动续跑。已有结果目录默认拒绝覆盖；需要重跑用新 run-name，或对该 run 明确 `--replace`。
 
-```bash
-.venv/bin/python f/project.py \
-  --run-dir /mnt/d/analysis/panome/cvd_cad/prot/cad_primary \
-  --phenotype /path/new_baseline.csv --omics /path/new_proteins.csv \
-  --output /path/new_people_panome.csv
-```
+主要输出包括 `Fig_prediction_coverage.png/pdf`、`Fig_individual_profiles.png/pdf`、`REPORT.md`、`test_metrics.csv`、`paired_contrasts.csv`。Bootstrap 是对冻结模型的条件不确定性；跨 seed 重训与外部队列验证另行进行。当前小型合成数据验证见 `VALIDATION.md`。
 
-若训练使用亲缘组，投影表型也需完整组编号。输入可以是CSV、TSV或RDS；原始代谢物另加 `--met-input raw`，并保留训练配置中的映射文件。近邻仅来自冻结训练参照，自身和同亲缘组排除。改变测试批量大小或顺序不会改变个体的参考人群。生存输出是死亡删失下的net risk，不是竞争风险累计发生率。
-
-## 验证及研究边界
-
-原始发布说明称其合成数据已经覆盖生存和连续结局、全部16个模型、新个体无Y投影、批量与顺序不变性、亲缘划分及部分RDS/代谢物接口。上述属于原始发布说明；本机现已完成真实 PPP 抽样读取、预处理与原生 Rscript 桥接核验，详见 LOCAL_REVIEW.md。仍未完成真实全量训练、GPU及全量资源验证。
-
-正式分析应补齐强临床基准、plate-only和缺失模式对照、多次完整重训、预先定义的疾病排除、PPP选择性抽样评估、外部队列与平台校准。并行线程可用 `--cores` 调整；它不是总内存上限。可以先用 `--max-samples 5000 --run-name pilot`检查数据，但pilot不能作为全队列结果。
-
-基于同一批分子建图后再发现组间分子差异，属于描述而非独立机制证据。注意力和integrated gradients解释模型，不识别因果。单次baseline数据不建立真实病程；本版没有执行MR、共定位、Dandelion、通路富集或动态agent模拟，也不声称优于现有模型。
-
-重写依据：`jielab/scripts`，核对快照 `8c49af6a148e2cfd2f077176862f9d40c1ee72e7` 中的panome、le8、UKB表型函数，以及提供的DESIGN.md。迁移时建议把原panome目录另存后，使用本包的完整目录，避免旧辅助脚本混用。
+本版疾病基准使用同时间窗的 IPCW logistic/树模型，与旧版 Cox 的 Harrell C 不同，不应把新旧不同划分的数值直接相减。IPCW 使用 build 的边际删失分布，依赖独立删失假设；病例抽样权重、协变量条件删失、竞争死亡及经验证的完整临床风险模型仍需按正式研究设计扩展。本版未执行动态数字孪生、干预模拟、MR 或因果机制发现。

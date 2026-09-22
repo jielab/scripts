@@ -1,0 +1,32 @@
+[PANOME] START prepare
+[PANOME] DONE prepare | N=1600; proteins=45; build=480; test=800
+[PANOME] START reference_quality
+[PANOME] DONE OOF quality | repeat=1/3
+[PANOME] DONE OOF quality | repeat=2/3
+[PANOME] DONE OOF quality | repeat=3/3
+[PANOME] DONE reference_quality | reliable=186/480
+[PANOME] START reference_panels
+[PANOME] DONE reference_panels | selected=reliable_100; K=5
+[PANOME] START comparators
+[PANOME] DONE clinical
+[PANOME] DONE elasticnet
+[PANOME] DONE protein_elasticnet
+[PANOME] DONE clinical_pca
+[PANOME] DONE clinical_technical
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+[PANOME] DONE comparators
+[PANOME] START calibration_and_support
+/tmp/panome_v4_review_20260922_132704/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+[PANOME] START mosaic_matching
+[PANOME] DONE mosaic_matching | blocks=3
+[PANOME] START individual_explanations
+[PANOME] DONE individual_explanations
+[PANOME] DONE calibration_and_support | panel=provisional_pass; tune_coverage=88.1%
+[PANOME] START test_evaluation
+[PANOME] DONE test_evaluation | N=800; cases_by_horizon=344; supported=84.2%
