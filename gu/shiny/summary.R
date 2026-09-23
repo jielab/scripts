@@ -64,7 +64,7 @@ gu_ibdmix_summary_text <- function(s, manifest) {
 }
 
 gu_ibdmix_summary_table <- function(s, burden) {
-  refs<-c("Altai","Chagyr","Vindija","Denisova","Denisova25")
+  refs<-c("Altai","Chagyr","Vindija","Denisova","Denisova25","Altai + Denisova","All Five")
   d<-merge(s$samples[,c("sample_id","population","super_population")],burden,by="sample_id",sort=FALSE)
   d<-d[is.finite(d$archaic_bp) & d$tested_bp>0 & d$n_chromosomes>0,,drop=FALSE]
   group_rows<-function(d,group) {
@@ -91,11 +91,13 @@ gu_ibdmix_summary_table <- function(s, burden) {
     lapply(refs,function(ref)shiny::tags$th(ref,shiny::tags$br(),"Mb / ind.")),
     list(shiny::tags$th("Cell 2020 (Altai)",shiny::tags$br(),"Mb / ind.")))
   shiny::tagList(
-    shiny::tags$h6("Population summary · 5 archaic references"),
+    shiny::tags$h6("Population summary · 5 archaic references + 2 unions"),
     shiny::tags$div(class="gu-summary-table-scroll",shiny::tags$table(class="table table-sm gu-summary-table",
       shiny::tags$thead(shiny::tags$tr(headers)),shiny::tags$tbody(rows))),
     shiny::tags$p(class="gu-summary-caption",
-      "每列独立统计该参考在已确认完成的常染色体上的片段并集长度，再按已检测个体等权平均（Mb / ind.）；排除 X，不跨参考合并或相加。地图、Coverage 和右侧比例均仅基于 Altai。n 为 Altai 已检测人数；其他参考人数不同或染色体不完整时在单元格标注，N/A 表示未检测。鼠标悬停可查看各列人数与染色体范围。"),
+      "前五列分别统计各参考的片段并集长度；Altai + Denisova 仅合并这两个参考（不含 Denisova25），All Five 合并全部五参考。两种合并均先按个体取跨参考片段并集，重叠位置只计一次，再按已检测个体等权平均（Mb / ind.），不能直接相加前五列。排除 X，合并列仅统计所有成员参考均已确认完成的常染色体。"),
+    shiny::tags$p(class="gu-summary-caption",
+      "地图、Coverage 和右侧比例均仅基于 Altai。n 为 Altai 已检测人数；其他列人数不同或染色体不完整时在单元格标注，N/A 表示缺少该参考或组合的共同检测结果。鼠标悬停可查看各列人数与染色体范围。"),
     shiny::tags$p(class="gu-summary-caption",
       "Altai、Chagyr、Vindija 为 Neanderthal 参考；Denisova、Denisova25 为 Denisovan 参考。Denisovan 列为原生参考匹配片段，不能直接等同于已确认的渗入来源。AFR (5) 仅含 ESN、GWD、LWK、MSL、YRI。Cell 2020 为 Altai 文献近似值。")
   )

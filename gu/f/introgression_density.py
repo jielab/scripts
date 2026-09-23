@@ -11,8 +11,10 @@ from pathlib import Path
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 10
+SCHEMA = 11
 SUMMARY_REFERENCES = ('Altai', 'Chagyr', 'Vindija', 'Denisova', 'Denisova25')
+SUMMARY_GROUPS = {ref: (ref,) for ref in SUMMARY_REFERENCES}
+SUMMARY_GROUPS.update({'Altai + Denisova': ('Altai', 'Denisova'), 'All Five': SUMMARY_REFERENCES})
 
 
 def whole_chromosome_run(text, chrom):
@@ -34,15 +36,26 @@ def neanderthal_summary(con, dataset, build, samples, lengths, targets):
     return [dict(row, neanderthal_bp=row['archaic_bp']) for row in
             reference_summary(con, dataset, build, samples, lengths, targets, 'Altai')]
 
+def shared_reference_targets(reference_targets, references):
+    """Only certify sample/chromosome pairs tested against every group member."""
+    common = {}
+    for chrom in map(str, range(1, 23)):
+        samples = set.intersection(*(reference_targets.get(ref, {}).get(chrom, set()) for ref in references))
+        if samples:
+            common[chrom] = samples
+    return common
+
 def reference_summary(con, dataset, build, samples, lengths, targets, reference):
-    """Exact single-reference autosomal union; targets certify whole-chromosome runs.
+    """Exact reference/group autosomal union; targets certify whole-chromosome runs.
 
     Untested individuals remain missing, including when provenance is unavailable.
     Do not infer a denominator from positive calls or extrapolate partial genomes.
     """
     burden = dict.fromkeys(samples, 0)
     autosomes=set(map(str,range(1,23)))
-    sources = ('Chagyr', 'Chagyrskaya') if reference == 'Chagyr' else (reference,)
+    references = SUMMARY_GROUPS.get(reference, (reference,))
+    sources = tuple(source for ref in references for source in
+                    (('Chagyr', 'Chagyrskaya') if ref == 'Chagyr' else (ref,)))
     placeholders = ','.join('?' for _ in sources)
     rows = con.execute(f"SELECT sample_id,chr,start,end FROM segments WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND source IN ({placeholders}) ORDER BY sample_id,chr,start,end", (dataset, build, *sources))
     for sample, chrom, left, right in merged_intervals(rows):
@@ -201,10 +214,11 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
         write_tsv_rows(stage/'bins.tsv',['bin_index','chr','start','end','tested'],bins)
         print(f'DENSITY summarizing Neanderthal autosomes: {len(summary_targets)}/22 chromosomes',flush=True)
         reference_rows=[]
-        for ref in SUMMARY_REFERENCES:
-            print(f'DENSITY summarizing {ref} autosomes: {len(reference_targets[ref])}/22 chromosomes',flush=True)
+        for ref, members in SUMMARY_GROUPS.items():
+            group_targets = shared_reference_targets(reference_targets, members)
+            print(f'DENSITY summarizing {ref} autosomes: {len(group_targets)}/22 chromosomes',flush=True)
             reference_rows.extend(dict(row,reference=ref) for row in
-                                  reference_summary(con,dataset,build,samples,lengths,reference_targets[ref],ref))
+                                  reference_summary(con,dataset,build,samples,lengths,group_targets,ref))
         write_tsv_rows(stage/'archaic_summary.tsv', ['reference','sample_id','chromosomes','n_chromosomes','tested_bp','haploid_bp','archaic_bp','coverage_pct'],reference_rows)
         write_tsv_rows(stage/'neanderthal_summary.tsv', ['sample_id','chromosomes','n_chromosomes','tested_bp','haploid_bp','neanderthal_bp','coverage_pct'],
                        [dict(row,neanderthal_bp=row['archaic_bp']) for row in reference_rows if row['reference']=='Altai'])
@@ -216,7 +230,8 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
             lineages=['Neanderthal','Denisovan'],definition='Per-lineage union bp / diploid bin span (male non-PAR X: haploid); percent; untested entries are missing',
             summary_definition='Altai-only union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage',summary_references=sorted(summary_refs),
             archaic_summary_references=list(SUMMARY_REFERENCES),
-            archaic_summary_definition='Separate reference union bp on certified whole autosomes; no cross-reference summation; untested entries are missing',ibdmix_filters=filters),indent=2))
+            archaic_summary_groups=SUMMARY_GROUPS,
+            archaic_summary_definition='Per-individual interval union within each reference/group on autosomes certified for all group members; overlapping bp counted once; untested entries are missing',ibdmix_filters=filters),indent=2))
         os.replace(stage,dest)
         write_tsv_rows(pointer,['directory'],[{'directory':version}])
         print(f'DENSITY ready {dest}',flush=True)

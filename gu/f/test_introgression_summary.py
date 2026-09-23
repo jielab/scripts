@@ -48,6 +48,32 @@ class ReferenceSummaryTests(unittest.TestCase):
                 self.assertEqual(b['archaic_bp'], 0)  # Tested, no positive calls.
                 self.assertEqual(c['archaic_bp'], '')  # No certified run.
 
+    def test_combined_unions_deduplicate_and_exclude_denisova25_from_pair(self):
+        self.con.executemany('INSERT INTO segments VALUES (?,?,?,?,?,?,?,?,?)', [
+            ('test', 'GRCh37', 'ibdmix', 'Denisova', 'Denisovan', 'a', '1', 25, 40),
+            ('test', 'GRCh37', 'ibdmix', 'Denisova25', 'Denisovan', 'a', '1', 90, 100),
+        ])
+        pair = self.summary('Altai + Denisova')
+        all_five = self.summary('All Five')
+        self.assertEqual(pair[0]['archaic_bp'], 40)  # Altai [0,30) union Denisova [0,10),[25,40).
+        self.assertEqual(all_five[0]['archaic_bp'], 100)
+        self.assertEqual(pair[1]['archaic_bp'], 0)
+        self.assertEqual(all_five[2]['archaic_bp'], '')
+        summed = sum(self.summary(ref)[0]['archaic_bp'] for ref in density.SUMMARY_REFERENCES)
+        self.assertLess(all_five[0]['archaic_bp'], summed)
+
+    def test_combined_scope_requires_every_reference_per_sample_and_chromosome(self):
+        targets = {'Altai': {'1': {'a', 'b'}, '2': {'a'}},
+                   'Denisova': {'1': {'a'}, '2': {'b'}}}
+        common = density.shared_reference_targets(targets, ('Altai', 'Denisova'))
+        self.assertEqual(common, {'1': {'a'}})
+        rows = density.reference_summary(self.con, 'test', 'GRCh37', ['a', 'b'], self.lengths,
+                                         common, 'Altai + Denisova')
+        self.assertEqual(rows[0]['archaic_bp'], 30)
+        self.assertEqual(rows[0]['n_chromosomes'], 1)
+        self.assertEqual(rows[1]['archaic_bp'], '')
+        self.assertEqual(density.shared_reference_targets(targets, density.SUMMARY_REFERENCES), {})
+
     def test_cache_certifies_references_and_excludes_background_only(self):
         for background_only in [False, True]:
             with self.subTest(background_only=background_only), tempfile.TemporaryDirectory() as tmp:
@@ -78,9 +104,12 @@ class ReferenceSummaryTests(unittest.TestCase):
                 self.assertEqual(rows['Denisova', 'a']['archaic_bp'], '' if background_only else '10')
                 self.assertEqual(rows['Vindija', 'a']['archaic_bp'], '')
                 self.assertEqual(rows['Denisova25', 'a']['archaic_bp'], '')
+                self.assertEqual(rows['Altai + Denisova', 'a']['archaic_bp'], '' if background_only else '30')
+                self.assertEqual(rows['Altai + Denisova', 'b']['archaic_bp'], '' if background_only else '0')
+                self.assertEqual(rows['All Five', 'a']['archaic_bp'], '')
                 with (cache / 'neanderthal_summary.tsv').open() as stream:
                     self.assertEqual(next(csv.DictReader(stream, delimiter='\t'))['neanderthal_bp'], '30')
-                self.assertEqual(json.loads((cache / 'manifest.json').read_text())['schema'], 10)
+                self.assertEqual(json.loads((cache / 'manifest.json').read_text())['schema'], 11)
 
 
 if __name__ == '__main__':

@@ -448,7 +448,7 @@ function(input, output, session) {
     version <- data.table::fread(pointer)$directory[[1]]
     path <- file.path(root,version)
     manifest <- jsonlite::fromJSON(file.path(path,"manifest.json"))
-    validate(need(!is.null(manifest$schema) && manifest$schema>=10,"请重新运行 gu.sh shiny，生成五个参考各自的常染色体统计。"))
+    validate(need(!is.null(manifest$schema) && manifest$schema>=11,"请重新运行 gu.sh shiny，生成五参考及 Altai + Denisova、All Five 合并统计。"))
     info<-file.info(db_path)
     validate(need(!is.null(manifest$mtime_ns) && !is.null(manifest$size) &&
       abs(as.numeric(info$mtime)*1e9-manifest$mtime_ns)<1e6 && info$size==manifest$size,
@@ -483,7 +483,7 @@ function(input, output, session) {
   })
   output$ibdmix_summary_table <- renderUI({
     d<-density_data()
-    validate(need(!is.null(d$archaic_summary),"请重新运行 gu.sh shiny，生成五参考汇总缓存。"))
+    validate(need(!is.null(d$archaic_summary),"请重新运行 gu.sh shiny，生成五参考及两种合并统计的汇总缓存。"))
     gu_ibdmix_summary_table(ibdmix_summary(),d$archaic_summary)
   })
   density_selection <- reactiveVal(NULL)
