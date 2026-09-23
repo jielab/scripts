@@ -96,6 +96,7 @@ def oof_quality(raw, people, features, a, out):
     repeat_gains = np.full_like(repeat_predictions, np.nan)
     linear_predictions = np.full_like(repeat_predictions, np.nan)
     tree_predictions = np.full_like(repeat_predictions, np.nan)
+    neural_predictions = np.full_like(repeat_predictions, np.nan)
     coefs, fit_rows = [], []
     ids = people[a.id_col].to_numpy(str)
     groups = people[a.group_col].to_numpy(str) if a.group_col else None
@@ -109,7 +110,7 @@ def oof_quality(raw, people, features, a, out):
         for fold, (tr, va) in enumerate(cv.split(raw, strata, groups)):
             prep = MolecularPreprocessor(a.feature_missing, words(a.residualize),
                                          words(a.categorical), a.transform).fit(raw[tr], people.iloc[tr])
-            xt, _ = prep.transform(raw[tr], people.iloc[tr])
+            xt, mt = prep.transform(raw[tr], people.iloc[tr])
             xv, mv = prep.transform(raw[va], people.iloc[va])
             train_ok = np.mean(~np.isfinite(raw[tr][:, prep.keep]), axis=1) <= a.sample_missing
             km = CensoringKM().fit(people.iloc[tr[train_ok]], a.horizon, a.min_censor_survival)
@@ -120,7 +121,7 @@ def oof_quality(raw, people, features, a, out):
             linear_pred = model.predict_proba(xv)[:, 1]
             linear_predictions[repeat, va] = linear_pred
             pred = linear_pred
-            if a.quality_teacher == "ensemble":
+            if a.quality_teacher in ["ensemble", "all"]:
                 tree = HistGradientBoostingClassifier(max_iter=a.quality_trees, max_leaf_nodes=7,
                     learning_rate=.05, min_samples_leaf=30, l2_regularization=10,
                     early_stopping=False, random_state=a.seed+repeat*a.folds+fold)
@@ -130,6 +131,29 @@ def oof_quality(raw, people, features, a, out):
                 tree_pred = tree.predict_proba(xv)[:,1]
                 tree_predictions[repeat,va] = tree_pred
                 pred = .5*(linear_pred+tree_pred)
+            if a.quality_teacher in ["neural", "all"]:
+                import copy
+                from neural import token_partition, train_encoder, encode, device_for
+                from borrowing import ReferenceBank
+                child = copy.copy(a)
+                child.seed = a.seed+repeat*a.folds+fold
+                child.epochs, child.pretrain_epochs = a.quality_neural_epochs, a.quality_pretrain_epochs
+                child.patience = min(a.patience, 5)
+                xx, mm = xt[train_ok], mt[train_ok]
+                ii = ids[tr[train_ok]]
+                gg = None if groups is None else groups[tr[train_ok]]
+                membership, _ = token_partition(xx, [features[j] for j in prep.keep], a.tokens,
+                                                 child.seed, a.module_file)
+                net, _ = train_encoder(xx,mm,yt,wt,ii,gg,membership,child,
+                    out/"quality_neural"/f"repeat_{repeat+1}_fold_{fold+1}")
+                zt = encode(net,xx,mm,device_for(a.device),a.batch_size)[0]
+                zv = encode(net,xv,mv,device_for(a.device),a.batch_size)[0]
+                net.cpu()
+                bank = ReferenceBank(zt,xx,mm,ii,gg,yt,wt,np.flatnonzero(wt>0),net,seed=child.seed)
+                neural_pred = bank.match(zv,ids[va],None if groups is None else groups[va],
+                    k=min(a.neural_k,len(bank.ids)),strength=a.train_prior)[0]
+                neural_predictions[repeat,va] = neural_pred
+                pred = neural_pred if a.quality_teacher=="neural" else (linear_pred+tree_pred+neural_pred)/3
             prior = np.average(yt, weights=wt)
             gain = loss(yv, prior)-loss(yv, pred)
             valid = (wv > 0) & (1-mv.mean(1) <= a.sample_missing)
@@ -153,6 +177,7 @@ def oof_quality(raw, people, features, a, out):
                           "OOF_probability_SD": repeat_predictions.std(0),
                           "OOF_elasticnet_probability": linear_predictions.mean(0),
                           "OOF_tree_probability": tree_predictions.mean(0),
+                          "OOF_neural_probability": neural_predictions.mean(0),
                           "OOF_logloss": loss(y_all, repeat_predictions.mean(0)),
                           "fit_gain": mean_gain, "fit_gain_SD": sd_gain,
                           "positive_gain_fraction": fraction, "reliable_candidate": reliable})

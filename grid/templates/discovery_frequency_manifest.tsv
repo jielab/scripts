@@ -1,0 +1,5 @@
+POP	FILE	N_GWAS
+AFR	/path/to/AFR_projection_eaf.tsv.gz	NA
+EAS	/path/to/EAS_projection_eaf.tsv.gz	NA
+EUR	/path/to/EUR_projection_eaf.tsv.gz	NA
+SAS	/path/to/SAS_projection_eaf.tsv.gz	NA

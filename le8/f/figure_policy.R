@@ -70,7 +70,9 @@ le8_refresh_figure_files<-function(rawdir,incoming=NULL) {
   old<-if(file.exists(mf))as.data.frame(data.table::fread(mf))else data.frame()
   fresh<-if(!is.null(incoming))as.data.frame(data.table::fread(file.path(incoming,'figure_manifest.csv')))else old[FALSE,]
   retained<-if(nrow(old))old[!old$group%in%fresh$group,,drop=FALSE]else old
-  revised<-rbind(retained,fresh)
+  # PGS manifests use `source`; grouped figures add `sources` and `policy`.
+  # Align by name and retain all metadata when refreshing mixed/older outputs.
+  revised<-as.data.frame(data.table::rbindlist(list(retained,fresh),use.names=TRUE,fill=TRUE))
   if(!nrow(revised)) {
     data.table::fwrite(revised,mf)
     if(!is.null(incoming))stopifnot(file.copy(file.path(incoming,'figure_omission_audit.csv'),

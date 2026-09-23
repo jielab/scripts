@@ -1,0 +1,3 @@
+-r requirements.txt
+# The weighted fine-tuning adapter is tested against this exact model API.
+tabicl==2.2.0

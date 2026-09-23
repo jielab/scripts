@@ -5,7 +5,7 @@ args <- commandArgs(TRUE)
 allowed <- c('trait','type','method','score-dir','pgs-file','disco-file','pt-file','pheno-file',
  'ancestry-file','group-col','covar-name','phenotype-col','event-col','time-col','prevalence',
  'pca-file','med-file','distance-pcs','distance-bins','min-bin-events','folds','seed','bootstrap','min-n',
- 'remove','out-root','dir-gwas','dir-gen','pt-effect','threads','check','allow-missing-scores','disco-tune','disco-a','min-anchor','write-predictions','run-dir','grid-file')
+ 'remove','out-root','dir-gwas','dir-gen','pt-effect','threads','check','allow-missing-scores','disco-tune','disco-a','min-anchor','write-predictions','run-dir','grid-file','posterior-file','posterior-mode','genetic-variance-file','training-centers','pca-space','allow-chromosome-subset','individual-metric','individual-max-points','distance-source')
 opt <- list(); i <- 1L
 while(i <= length(args)) {
  key <- sub('^--','',args[i]); if(!key %in% allowed)stop('Unknown option: ',args[i])
@@ -55,6 +55,14 @@ ids <- function(d) {
  d
 }
 num <- function(x,name) {y<-suppressWarnings(as.numeric(as.character(x)));if(any(!is.na(x)&is.na(y)))stop('Non-numeric: ',name);y}
+source(file.path(dirname(sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])),'yeval_posterior.R'))
+variance_spec<-read_variance()
+requested_individual<-arg('individual-metric',if(type=='ct'&&arg('posterior-mode','required')!='off')'reliability' else 'sd')
+if(!requested_individual%in%c('auto','reliability','sd'))stop('Invalid --individual-metric')
+if(requested_individual=='reliability'&&(is.null(variance_spec)||!nrow(variance_spec)))stop('Individual model-based R2 requires --genetic-variance-file; use explicit --individual-metric sd to plot posterior uncertainty without claiming accuracy')
+posterior_table<-load_posterior()
+individual_results<-list()
+fold_coefficients<-list()
 cat('Reading full phenotype cohort: ',files['phenotype'],'\n',sep='')
 phe <- ids(read_table(files['phenotype']))
 gc <- arg('group-col','genetic_ancestry')
@@ -112,10 +120,17 @@ d <- phe[,..keep]; rm(phe); invisible(gc(verbose=FALSE))
 for(v in covars)if(is.character(d[[v]])||is.factor(d[[v]])||v=='sex')set(d,j=v,value=factor(d[[v]]))
 audit <- list(data.table(stage='phenotype_after_withdrawal',target=d$target)[,.N,by=.(stage,target)])
 pgs <- ids(read_table(files['csx']))
+if(!is.null(posterior_table)) {
+ # Means and variances must describe the SAME scores. These are discovery-
+ # centred scores with mean-imputed missing genotypes, not the old uncentred sums.
+ oldcols<-intersect(base_scores,names(pgs));pgs[,(oldcols):=NULL]
+ pgs<-merge(pgs,posterior_table,by='eid',all=FALSE)
+ if(!nrow(pgs))stop('No IDs shared by scores and posterior moments')
+}
 missing <- setdiff(c(base_scores,'csx.auto','csx.meta'),names(pgs))
 if(length(missing)&&!partial)stop('Missing CSx columns: ',paste(missing,collapse=', '),'. Complete upstream scores or explicitly use --allow-missing-scores.')
 available <- intersect(c(base_scores,'csx.auto','csx.meta'),names(pgs))
-d <- merge(d,pgs[,c('eid',available),with=FALSE],by='eid');rm(pgs)
+d <- merge(d,pgs[,c('eid',available,if(!is.null(posterior_table))cov_columns),with=FALSE],by='eid');rm(pgs,posterior_table)
 for(kind in c('disco','pt')) {
  sc<-if(kind=='disco')'disco' else paste0('pt.',pops)
  if(file.exists(files[kind])) {
@@ -147,6 +162,8 @@ gd <- data.table(eid=pca$eid,proj_PC1=pm[,1],proj_PC2=pm[,2])
 for(j in seq_len(npc))gd[,(pc_names[j]):=pm[,j]]
 for(j in seq_along(pops))gd[,(paste0('distance.',pops[j])):=sqrt(rowSums(sweep(pm,2,cm[j,],'-')^2))]
 gd[,nearest_distance:=do.call(pmin,.SD),.SDcols=paste0('distance.',pops)]
+geometry<-training_geometry(gd,pm,pc,centers)
+gd<-geometry$gd
 d<-merge(d,gd,by='eid');rm(gd,pca,pm);invisible(gc(verbose=FALSE))
 models <- list(COJO='pt.TARGET',`PRS-CSx-auto-meta`='csx.auto',`PRS-CSx`=base_scores,`DiscoDivas-untuned`='disco',`PRS-CSx-fixed-meta`='csx.meta')
 if(tune){models[['DiscoDivas-tuned']]<-'disco.cv';available<-c(available,'disco.cv');d[,disco.cv:=0]}
@@ -177,11 +194,6 @@ fit_model <- function(f,x,kind) {
  m
 }
 predict_model<-function(m,x,kind)as.numeric(if(kind=='ct')predict(m,x) else predict(m,x,type=if(kind=='dt')'response' else 'lp'))
-liability <- function(r2,K,P) {
- t<-qnorm(1-K);z<-dnorm(t);i<-z/K;C<-K^2*(1-K)^2/(z^2*P*(1-P));a<-i*(P-K)/(1-K)
- den<-1+C*a*(a-t)*r2
- ifelse(is.finite(den)&den>0,C*r2/den,NA_real_)
-}
 cindex <- function(y,time,p,fold) {
  num<-den<-0
  for(k in unique(fold)) {
@@ -192,12 +204,23 @@ cindex <- function(y,time,p,fold) {
  }
  if(den>0)num/den else NA_real_
 }
-# All methods share bootstrap indices. Negative held-out R2 is retained.
+# All methods share bootstrap indices. Calibration/SSE metrics are saved separately.
 summarize_predictions <- function(x,pred,base,linear,linear_base,Kpop=NA_real_,B=nboot) {
  nm<-colnames(pred);n<-nrow(x);P<-mean(x$outcome)
- if(type!='t2e') {
-  err<-sweep(linear,1,x$outcome,'-')^2;err0<-(linear_base-x$outcome)^2
-  stat<-function(ix) {counts<-tabulate(ix,nbins=n);v<-1-as.numeric(crossprod(counts,err))/sum(counts*err0);names(v)<-nm;v}
+ if(type=='ct') {
+  yres<-x$outcome-base;pres<-sweep(linear,1,base,'-')
+  stat<-function(ix) {
+   counts<-tabulate(ix,nbins=n);w<-counts/sum(counts)
+   ym<-sum(w*yres);pm<-as.numeric(crossprod(w,pres))
+   vy<-sum(w*yres^2)-ym^2
+   vp<-as.numeric(crossprod(w,pres^2))-pm^2
+   cp<-as.numeric(crossprod(w*yres,pres))-ym*pm
+   value<-cp^2/(vy*vp);value[vy<=0|vp<=0]<-NA_real_
+   value<-pmin(1,pmax(0,value));names(value)<-nm;value
+  }
+ } else if(type=='dt') {
+  auc<-function(y,p)if(length(unique(y))<2)NA_real_ else as.numeric(pROC::auc(pROC::roc(y,p,levels=0:1,direction='<',quiet=TRUE)))
+  stat<-function(ix)c(vapply(nm,function(m)auc(x$outcome[ix],pred[ix,m]),numeric(1)),.baseline=auc(x$outcome[ix],base[ix]))
  } else stat<-function(ix)c(vapply(nm,function(m)cindex(x$outcome[ix],x$time[ix],pred[ix,m],x$fold[ix]),numeric(1)),
                            .baseline=cindex(x$outcome[ix],x$time[ix],base[ix],x$fold[ix]))
  point<-stat(seq_len(n));boot_names<-names(point)
@@ -216,7 +239,12 @@ summarize_predictions <- function(x,pred,base,linear,linear_base,Kpop=NA_real_,B
   dc<-if(B>0)t(vapply(nm,function(m)ci(boots[,m]-boots[,'.baseline']),numeric(2))) else matrix(NA_real_,length(nm),2)
   res[,`:=`(delta_C_lower95=dc[,1],delta_C_upper95=dc[,2])]
  }
- res[,metric:=switch(type,ct='OOF_partial_R2',dt='OOF_observed_partial_R2',t2e='OOF_Harrell_C')]
+ if(type=='dt') {
+  res[,`:=`(baseline_AUC=unname(point['.baseline']),delta_AUC=estimate-unname(point['.baseline']))]
+  dc<-if(B>0)t(vapply(nm,function(m)ci(boots[,m]-boots[,'.baseline']),numeric(2))) else matrix(NA_real_,length(nm),2)
+  res[,`:=`(delta_AUC_lower95=dc[,1],delta_AUC_upper95=dc[,2])]
+ }
+ res[,metric:=switch(type,ct='OOF_prediction_R2',dt='OOF_AUC',t2e='OOF_Harrell_C')]
  list(performance=res,bootstrap=boots[,nm,drop=FALSE])
 }
 set.seed(seed)
@@ -267,6 +295,12 @@ for(g in groups) {
    f<-formula_for(cv,length(sc),type=='t2e');fm<-fit_model(f,tr,type);pred[it,m]<-predict_model(fm,te,type)
    lmfit<-if(type=='dt')fit_model(formula_for(cv,length(sc)),tr,'ct') else fm
    lin[it,m]<-if(type=='dt')predict_model(lmfit,te,'ct') else pred[it,m]
+   if(m=='PRS-CSx') {
+    fold_coefficients[[length(fold_coefficients)+1L]]<-data.table(target=g,fold=k,score=sc,
+      coefficient=as.numeric(coef(fm)[paste0('z',seq_along(sc))]),training_mean=mu,training_sd=ss,
+      raw_weight=as.numeric(coef(fm)[paste0('z',seq_along(sc))])/ss)
+    if(all(cov_columns%in%names(te)))individual_results[[length(individual_results)+1L]]<-individual_posterior(te,tr,fm,bm,ss,g,k)
+   }
   }
   cat('  fold ',k,'/',nfold,' DONE\n',sep='');flush.console()
  }
@@ -281,7 +315,8 @@ for(g in groups) {
    den<-sum((x$outcome-mean(x$outcome))^2)
    sse0<-sum((x$outcome-base)^2);sse1<-sum((x$outcome-pred[,m])^2)
    pp[method==m,`:=`(baseline_R2=1-sse0/den,full_R2=1-sse1/den,
-                    delta_R2=(sse0-sse1)/den,baseline_SSE=sse0,full_SSE=sse1,RMSE=sqrt(sse1/n))]
+                    delta_R2=(sse0-sse1)/den,baseline_SSE=sse0,full_SSE=sse1,RMSE=sqrt(sse1/n),
+                    SSE_partial_R2=1-sse1/sse0,prediction_r=cor(x$outcome-base,pred[,m]-base))]
   } else if(type=='dt') {
    auc<-function(p)as.numeric(pROC::auc(pROC::roc(x$outcome,p,levels=0:1,direction='<',quiet=TRUE)))
    pp[method==m,`:=`(AUC=auc(pred[,m]),baseline_AUC=auc(base),delta_AUC=auc(pred[,m])-auc(base),Brier=mean((x$outcome-pred[,m])^2),baseline_Brier=mean((x$outcome-base)^2))]
@@ -302,7 +337,7 @@ for(g in groups) {
  # Distance resampling cannot change the next ancestry's main bootstrap stream.
  rng_before_distance<-.Random.seed
  if('PRS-CSx'%in%names(mm)) {
-  axis<-'distance.EUR'; selected<-'PRS-CSx'
+  axis<-'distance.analysis'; selected<-'PRS-CSx'
   bins<-NULL; max_bins<-min(nbins,n%/%minn)
   if(type!='ct')max_bins<-min(max_bins,sum(x$outcome==1)%/%min_bin_events,sum(x$outcome==0)%/%min_bin_events)
   if(max_bins>=2L)for(q in seq.int(max_bins,2L)) {
@@ -326,6 +361,12 @@ for(g in groups) {
 }
 if(!length(perf))stop('No evaluable ancestry groups')
 if(length(all_predictions))write_tsv(rbindlist(all_predictions,fill=TRUE),'predictions.tsv.gz')
+individual<-rbindlist(individual_results,fill=TRUE)
+if(nrow(individual))write_tsv(individual,'individual_posterior.tsv.gz')
+write_tsv(rbindlist(fold_coefficients),'fold_coefficients.tsv')
+write_tsv(geometry$centers,'distance_centers.tsv')
+manifest<-rbind(manifest,data.table(field=c('posterior_mode','distance_status','distance_definition','genetic_variance_file'),
+ value=c(arg('posterior-mode','required'),geometry$status,geometry$description,arg('genetic-variance-file',file.path(score_dir,'genetic_variance.tsv')))))
 performance<-rbindlist(perf,fill=TRUE);write_tsv(performance,'performance.tsv')
 write_tsv(rbindlist(audit,fill=TRUE),'cohort.tsv')
 comparison<-rbindlist(differences)

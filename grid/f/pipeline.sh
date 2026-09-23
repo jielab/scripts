@@ -11,10 +11,16 @@ GRID_SCORE_DIR=${GRID_SCORE_DIR:-/mnt/d/data/ukb/pgs}
 GRID_DISCO_A=1,1,1,1
 GRID_REGRESS_PCA=TRUE
 GRID_CSX_MODELS=populations,auto,meta
+GRID_POSTERIOR=TRUE
+GRID_POSTERIOR_FREQ_DIR=
+GRID_POSTERIOR_MEMORY=8192
 args=()
 while (($#)); do
   case "$1" in
     --check) GRID_CHECK=TRUE; shift;;
+    --posterior) _grid_need_value "$@"; GRID_POSTERIOR=$(grid_require_bool "$1" "$2"); shift 2;;
+    --posterior-frequency-dir) _grid_need_value "$@"; GRID_POSTERIOR_FREQ_DIR=$2; shift 2;;
+    --posterior-memory) _grid_need_value "$@"; GRID_POSTERIOR_MEMORY=$2; shift 2;;
     --models) _grid_need_value "$@"; GRID_CSX_MODELS=$2; shift 2;;
     --stage) _grid_need_value "$@"; GRID_STAGE=$2; shift 2;;
     --score-dir) _grid_need_value "$@"; GRID_SCORE_DIR=${2%/}; shift 2;;

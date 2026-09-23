@@ -16,3 +16,4 @@ for (nm in names(x)) {
 }
 # Binary transfer preserves subnormal numeric metadata used as category codes.
 saveRDS(x, args[2], compress = FALSE)
+

@@ -158,3 +158,4 @@ class MolecularPreprocessor:
         if self.adjust is not None:
             z -= self.adjust.predict(self.design.transform(p))
         return np.clip((z - self.mean) / self.scale, -10, 10).astype("float32"), observed
+

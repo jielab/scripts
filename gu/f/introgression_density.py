@@ -11,7 +11,8 @@ from pathlib import Path
 import numpy as np
 from comm import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 9
+SCHEMA = 10
+SUMMARY_REFERENCES = ('Altai', 'Chagyr', 'Vindija', 'Denisova', 'Denisova25')
 
 
 def whole_chromosome_run(text, chrom):
@@ -29,14 +30,21 @@ def whole_chromosome_run(text, chrom):
     return any(row[:2]==['format','vcf'] for row in source)
 
 def neanderthal_summary(con, dataset, build, samples, lengths, targets):
-    """Exact Altai autosomal union; targets certify whole-chromosome runs.
+    """Keep the Altai cache used by the map and Cell 2020 comparison."""
+    return [dict(row, neanderthal_bp=row['archaic_bp']) for row in
+            reference_summary(con, dataset, build, samples, lengths, targets, 'Altai')]
+
+def reference_summary(con, dataset, build, samples, lengths, targets, reference):
+    """Exact single-reference autosomal union; targets certify whole-chromosome runs.
 
     Untested individuals remain missing, including when provenance is unavailable.
     Do not infer a denominator from positive calls or extrapolate partial genomes.
     """
     burden = dict.fromkeys(samples, 0)
     autosomes=set(map(str,range(1,23)))
-    rows = con.execute("SELECT sample_id,chr,start,end FROM segments WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND source='Altai' ORDER BY sample_id,chr,start,end", (dataset, build))
+    sources = ('Chagyr', 'Chagyrskaya') if reference == 'Chagyr' else (reference,)
+    placeholders = ','.join('?' for _ in sources)
+    rows = con.execute(f"SELECT sample_id,chr,start,end FROM segments WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND source IN ({placeholders}) ORDER BY sample_id,chr,start,end", (dataset, build, *sources))
     for sample, chrom, left, right in merged_intervals(rows):
         if chrom in autosomes and sample in burden and sample in targets.get(chrom, set()):
             burden[sample] += max(0, min(lengths[chrom], right) - max(0, left))
@@ -46,7 +54,7 @@ def neanderthal_summary(con, dataset, build, samples, lengths, targets):
         physical = sum(lengths[ch] for ch in chroms)
         denominator = 2 * physical
         result.append(dict(sample_id=sample, chromosomes=','.join(chroms), n_chromosomes=len(chroms),
-                           tested_bp=denominator, haploid_bp=physical, neanderthal_bp=burden[sample] if denominator else '',
+                           tested_bp=denominator, haploid_bp=physical, archaic_bp=burden[sample] if denominator else '',
                            coverage_pct=100 * burden[sample] / denominator if denominator else ''))
     return result
 
@@ -104,6 +112,7 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
         runs=con.execute("SELECT chr,evidence_eligible,raw_file,availability_note FROM method_runs WHERE dataset_id=? AND genome_build=? AND method='ibdmix' AND status='complete'",(dataset,build)).fetchall()
         tested={r[0] for r in runs};x_male=False;targets={};psam_cache={};summary_targets={};summary_refs=set();neanderthal_tested=set()
         lineage_targets={'Neanderthal':{},'Denisovan':{}}
+        reference_targets={ref:{} for ref in SUMMARY_REFERENCES}
         # Use the database's provenance snapshot. Raw metadata may already have
         # changed during a rerun while this database still contains old calls.
         legacy_chromosomes=sorted({r[0] for r in runs if not str(r[3]).startswith('audited IBDmix ')})
@@ -146,6 +155,12 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
             # Their absence in segments is unmeasured, not zero coverage.
             background_only=(any(line.split('\t')[:2]==['background_filter','1'] for line in text.splitlines())
                              and not any(line.split('\t')[:2]==['export_denisovan','1'] for line in text.splitlines()))
+            if whole and run_targets and chrom in map(str,range(1,23)):
+                for ref in refs:
+                    ref = 'Chagyr' if ref == 'Chagyrskaya' else ref
+                    if ref not in reference_targets or (background_only and ref.startswith('Denisova')):
+                        continue
+                    reference_targets[ref].setdefault(chrom,set()).update(run_targets)
             for lineage, has_refs in [('Neanderthal',bool(neand_refs)),('Denisovan',not background_only and any('denis' in ref.lower() for ref in refs))]:
                 if has_refs and whole and run_targets:
                     lineage_targets[lineage].setdefault(chrom,set()).update(run_targets)
@@ -185,15 +200,23 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
             dict(row_index=i,sample_id=s,population=metadata.get(s,('UNKNOWN','UNKNOWN'))[0],super_population=metadata.get(s,('UNKNOWN','UNKNOWN'))[1]) for i,s in enumerate(samples)])
         write_tsv_rows(stage/'bins.tsv',['bin_index','chr','start','end','tested'],bins)
         print(f'DENSITY summarizing Neanderthal autosomes: {len(summary_targets)}/22 chromosomes',flush=True)
+        reference_rows=[]
+        for ref in SUMMARY_REFERENCES:
+            print(f'DENSITY summarizing {ref} autosomes: {len(reference_targets[ref])}/22 chromosomes',flush=True)
+            reference_rows.extend(dict(row,reference=ref) for row in
+                                  reference_summary(con,dataset,build,samples,lengths,reference_targets[ref],ref))
+        write_tsv_rows(stage/'archaic_summary.tsv', ['reference','sample_id','chromosomes','n_chromosomes','tested_bp','haploid_bp','archaic_bp','coverage_pct'],reference_rows)
         write_tsv_rows(stage/'neanderthal_summary.tsv', ['sample_id','chromosomes','n_chromosomes','tested_bp','haploid_bp','neanderthal_bp','coverage_pct'],
-                       neanderthal_summary(con,dataset,build,samples,lengths,summary_targets))
+                       [dict(row,neanderthal_bp=row['archaic_bp']) for row in reference_rows if row['reference']=='Altai'])
         filters=[]
         if con.execute("SELECT 1 FROM sqlite_master WHERE name='ibdmix_filter_runs'").fetchone():
             filters=[dict(chrom=c,status=s,daf_status=d) for c,s,d in con.execute('SELECT chr,status,daf_status FROM ibdmix_filter_runs WHERE dataset_id=? AND genome_build=?',(dataset,build))]
         (stage/'manifest.json').write_text(json.dumps(dict(signature,dataset=dataset,build=build,n_samples=len(samples),n_bins=len(bins),union_intervals=unions,x_male_only=x_male,
             legacy_chromosomes=legacy_chromosomes,profiles=profiles,diploid_autosome_bp=2*sum(lengths.get(str(ch),0) for ch in range(1,23)),
             lineages=['Neanderthal','Denisovan'],definition='Per-lineage union bp / diploid bin span (male non-PAR X: haploid); percent; untested entries are missing',
-            summary_definition='Altai-only union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage',summary_references=sorted(summary_refs),ibdmix_filters=filters),indent=2))
+            summary_definition='Altai-only union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage',summary_references=sorted(summary_refs),
+            archaic_summary_references=list(SUMMARY_REFERENCES),
+            archaic_summary_definition='Separate reference union bp on certified whole autosomes; no cross-reference summation; untested entries are missing',ibdmix_filters=filters),indent=2))
         os.replace(stage,dest)
         write_tsv_rows(pointer,['directory'],[{'directory':version}])
         print(f'DENSITY ready {dest}',flush=True)

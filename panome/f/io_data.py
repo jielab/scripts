@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import numpy as np
 import pandas as pd
-from common import words, dump
+from common import words, dump, log
 
 def validate_ids(frame, id_col):
     if id_col not in frame:
@@ -105,7 +105,7 @@ def safe_expression(expression, frame):
         raise ValueError(f"Unsupported metabolite expression: {expression}")
     return calculate(ast.parse(expression, mode="eval").body)
 
-def map_metabolites(frame, mapping, id_col):
+def map_metabolites(frame, mapping, id_col, nonnegative=False):
     # Match ukb/f/phe.R: baseline _i0 fields and common/met.lst.
     repeated = [c for c in frame if re.search(r"_i[1-9]\d*$", str(c))]
     frame = frame.drop(columns=repeated).copy()
@@ -131,16 +131,25 @@ def map_metabolites(frame, mapping, id_col):
                       if expr in frame else safe_expression(expr, frame))
             values = np.broadcast_to(values, (len(frame),)).copy()
             invalid = ~np.isfinite(values)
-            values[invalid] = np.nan
+            # Raw abundances used with log1p have a nonnegative domain. Apply
+            # this fixed rule before sample/feature QC in every partition.
+            negative = np.isfinite(values) & (values < 0) if nonnegative else np.zeros(len(values), bool)
+            values[invalid | negative] = np.nan
             result[feature] = values.astype("float32")
             audit.append(dict(feature=feature, expression=expr, status="mapped",
-                              nonfinite_to_missing=int(invalid.sum())))
+                              nonfinite_to_missing=int(invalid.sum()),
+                              negative_to_missing=int(negative.sum())))
         except KeyError as exc:
             audit.append(dict(feature=feature, expression=expr, status="missing_source",
                               reason=str(exc)))
     if result.shape[1] < 4:
         raise ValueError("Fewer than three metabolites map; check raw baseline fields and met.lst")
-    return result, pd.DataFrame(audit)
+    audit = pd.DataFrame(audit)
+    count = int(audit.negative_to_missing.sum())
+    if count:
+        affected = ",".join(audit.loc[audit.negative_to_missing.gt(0), "feature"])
+        log("QC", "raw_metabolites", f"negative_abundances_to_missing={count}; features={affected}")
+    return result, audit
 
 def phenotype_columns(a):
     cols = [a.id_col] + words(a.covariates) + words(a.residualize)
@@ -197,7 +206,8 @@ def prepare(a, out):
         p = read_table(a.phe_file, a.id_col, phenotype_columns(a), a.r_bin)
         omics = read_table(a.omics_file, a.id_col, r_bin=a.r_bin)
         if a.biom == "met" and a.met_input == "raw":
-            omics, mapping_audit = map_metabolites(omics, a.met_map, a.id_col)
+            omics, mapping_audit = map_metabolites(omics, a.met_map, a.id_col,
+                                                  nonnegative=a.transform == "log1p")
         if a.biom == "prot":
             omics.columns = [c if c == a.id_col else str(c).upper() for c in omics]
             if omics.columns.duplicated().any():

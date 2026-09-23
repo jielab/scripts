@@ -448,7 +448,7 @@ function(input, output, session) {
     version <- data.table::fread(pointer)$directory[[1]]
     path <- file.path(root,version)
     manifest <- jsonlite::fromJSON(file.path(path,"manifest.json"))
-    validate(need(!is.null(manifest$schema) && manifest$schema>=9,"请运行 gu.sh final 更新过滤结果和 Altai 常染色体统计。"))
+    validate(need(!is.null(manifest$schema) && manifest$schema>=10,"请重新运行 gu.sh shiny，生成五个参考各自的常染色体统计。"))
     info<-file.info(db_path)
     validate(need(!is.null(manifest$mtime_ns) && !is.null(manifest$size) &&
       abs(as.numeric(info$mtime)*1e9-manifest$mtime_ns)<1e6 && info$size==manifest$size,
@@ -464,8 +464,10 @@ function(input, output, session) {
     }
     matrices<-list(Neanderthal=read_matrix("matrix.tsv.gz"),Denisovan=read_matrix("denisovan_matrix.tsv.gz"))
     summary_file <- file.path(path,"neanderthal_summary.tsv")
+    archaic_summary_file <- file.path(path,"archaic_summary.tsv")
     list(samples=samples,bins=bins,z=matrices$Neanderthal,matrices=matrices,
          summary=if(file.exists(summary_file))as.data.frame(data.table::fread(summary_file,na.strings=c("","NA"))) else NULL,
+         archaic_summary=if(file.exists(archaic_summary_file))as.data.frame(data.table::fread(archaic_summary_file,na.strings=c("","NA"))) else NULL,
          manifest=manifest)
   })
   ibdmix_summary <- reactive({
@@ -478,6 +480,11 @@ function(input, output, session) {
   },res=120,alt="Static world map of average Neanderthal sequence coverage by 1000 Genomes population. Red pie sectors show percentages; N/A denotes untested populations.")
   output$ibdmix_summary_text <- renderUI({
     gu_ibdmix_summary_text(ibdmix_summary(),density_data()$manifest)
+  })
+  output$ibdmix_summary_table <- renderUI({
+    d<-density_data()
+    validate(need(!is.null(d$archaic_summary),"请重新运行 gu.sh shiny，生成五参考汇总缓存。"))
+    gu_ibdmix_summary_table(ibdmix_summary(),d$archaic_summary)
   })
   density_selection <- reactiveVal(NULL)
   density_view <- reactiveVal(NULL) # NULL = All; explicit region = shared viewport

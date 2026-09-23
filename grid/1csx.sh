@@ -9,10 +9,14 @@ PRS-CSx — height / ldl / t2dm, jointly using AFR,EAS,EUR,SAS GWAS
 Usage examples (WSL):
   cd /mnt/d/scripts/grid
   ./1csx.sh --traits height,ldl,t2dm --check
-  ./1csx.sh --traits height,ldl,t2dm --jobs 4 --threads 1
-  ./1csx.sh --traits height,ldl,t2dm --models auto,meta --jobs 4 --threads 1
-  ./1csx.sh --trait height --stage weights --jobs 4 --threads 1
-  ./1csx.sh --trait height --stage score --jobs 4 --threads 8
+  ./1csx.sh --traits height,ldl,t2dm --jobs 4 --threads 4
+
+  # The full run above enables --posterior TRUE by default.
+  # Optional: append only auto/meta scores (does not generate individual posterior scores).
+  ./1csx.sh --traits height,ldl,t2dm --models auto,meta --jobs 4 --threads 4
+  # Optional: run inference and scoring separately; retain the inference directory.
+  ./1csx.sh --trait height --stage weights --jobs 4 --threads 4
+  ./1csx.sh --trait height --stage score --jobs 4 --threads 4
 
 Modules:
   weights  Normalize BETA+SE GWAS -> joint four-population PRS-CSx by chromosome.
@@ -31,6 +35,10 @@ Important parameters:
   --csx-ref-dir DIR             /mnt/e/refLD/csx (1000 Genomes LD)
   --csx-snpinfo FILE            Default: snpinfo_mult_1kg_hm3 in default LD folder
   --phi VALUE|auto              Default: 1e-2; fixed value, NOT phenotype-tuned.
+  --posterior TRUE|FALSE       TRUE; save synchronized population draws and score them.
+  --posterior-frequency-dir DIR Optional AFR/EAS/EUR/SAS.tsv.gz discovery EAF tables.
+                               Defaults to normalized GWAS EAF; MAF is not accepted.
+  --posterior-memory MB         8192 per PLINK posterior scoring call; chromosomes scored sequentially.
   --mcmc-iter N                 4000; --mcmc-burnin 2000; --mcmc-thin 5
   --n-gwas N|AFR=N,EAS=N,...     Default: median N over retained HM3 SNPs.
                                 For t2dm, verify N is effective sample size.
@@ -50,6 +58,9 @@ Permanent outputs:
   <GWAS folder>/<original-name>.csx.gz  (SNP,A1,BETA,CHR,BP,A2; NOT individual PRS)
   Example: /mnt/e/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz
   /mnt/d/data/ukb/pgs/<trait>/csx.pgs.gz (eid, csx.AFR/EAS/EUR/SAS, csx.auto, csx.meta)
+  csx.posterior.tsv.gz: four centred posterior means + ten covariance terms per person.
+  .json sidecar records discovery EAF centering and model provenance.
+  Keep joint_posterior.h5 files under temporary inference directories to rescore without MCMC.
   Combined SNP weights: <score-dir>/<trait>/.weights/csx.{auto,meta}.gz
   Per-population scores and score signatures: /mnt/d/analysis/grid/csx/scores/<trait>/
   t2dm.AFA is mapped to AFR LD, but its GWAS output retains the name t2dm.AFA.

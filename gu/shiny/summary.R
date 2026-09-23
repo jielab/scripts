@@ -1,5 +1,5 @@
-# Static population map. All statistics use the cached exact Altai union,
-# independently of the Overview viewport, with equal weight per tested person.
+# Static Altai map and separate per-reference population burdens use cached exact
+# unions, independently of the Overview viewport, with equal weight per tested person.
 gu_ibdmix_summary <- function(samples, burden) {
   d <- merge(samples, burden, by="sample_id", all.x=TRUE, sort=FALSE)
   good <- is.finite(d$coverage_pct) & d$tested_bp>0 & d$n_chromosomes>0
@@ -44,21 +44,13 @@ gu_ibdmix_summary_text <- function(s, manifest) {
   pct <- function(x)if(is.finite(x))sprintf("%.2f%%",x) else "N/A"
   mb <- function(x)if(is.finite(x))sprintf("%.1f",x) else "—"
   d<-s$measured
-  groups<-c("AFR (5)","EUR","EAS","SAS","AMR")
-  rows<-lapply(groups,function(group) {
-    p<-if(group=="AFR (5)") d[d$population %in% c("ESN","GWD","LWK","MSL","YRI"),,drop=FALSE] else d[d$super_population %in% group,,drop=FALSE]
-    reference<-switch(group,`AFR (5)`="~17",EUR="~51",EAS="~55",SAS="~55","—")
-    shiny::tags$tr(shiny::tags$td(group),shiny::tags$td(nrow(p)),
-      shiny::tags$td(pct(if(nrow(p))mean(p$coverage_pct) else NA_real_)),
-      shiny::tags$td(mb(if(nrow(p))mean(p$neanderthal_bp)/1e6 else NA_real_)),shiny::tags$td(reference))
-  })
   scope<-if(s$complete)"22 / 22 autosomes · X excluded" else if(nrow(d))paste0("Partial coverage · ",paste(sort(unique(d$n_chromosomes)),collapse=", ")," / 22 autosomes per person") else "No certified whole-autosome results"
   filters<-manifest$ibdmix_filters
   daf_complete<-is.data.frame(filters) && nrow(filters)>0 &&
     any(filters$chrom %in% as.character(1:22)) &&
     all(filters$daf_status[filters$chrom %in% as.character(1:22)]=="applied")
   shiny::tagList(
-    shiny::tags$div(class="gu-summary-kicker","NEANDERTHAL / DIPLOID GENOME"),
+    shiny::tags$div(class="gu-summary-kicker","ALTAI NEANDERTHAL / DIPLOID GENOME"),
     shiny::tags$div(class="gu-summary-value",pct(s$overall_pct)),
     shiny::tags$p(class="gu-summary-subvalue",paste0(mb(s$overall_mb)," Mb / person")),
     shiny::tags$p(paste0(format(nrow(d),big.mark=",")," / ",format(nrow(s$samples),big.mark=",")," individuals · ",sum(s$populations$n>0)," populations")),
@@ -67,9 +59,44 @@ gu_ibdmix_summary_text <- function(s, manifest) {
     shiny::tags$p(class="text-muted",if(daf_complete)"已应用 Altai 衍生等位基因比例最高 0.1% 窗口过滤。" else "尚未应用 Altai 衍生等位基因比例最高 0.1% 窗口过滤，不能视为论文严格过滤结果。"),
     if(length(manifest$diploid_autosome_bp))shiny::tags$p(class="text-muted",sprintf("完整常染色体二倍体分母：%.3f Gb（2 × 参考序列长度）。",manifest$diploid_autosome_bp/1e9)),
     if(!s$complete)shiny::tags$p(class="text-muted","仅统计已确认完成的整条常染色体；未分析的染色体、人群或缺少目标样本记录的运行记为 N/A，不外推全基因组比例。"),
-    if(!s$comparable_scope && nrow(d))shiny::tags$p(class="text-muted","个体的已分析染色体范围不同，人群比例不能直接比较。"),
-    shiny::tags$h6("Population summary"),
-    shiny::tags$table(class="table table-sm gu-summary-table",
-      shiny::tags$thead(shiny::tags$tr(lapply(c("Group","n","Coverage","Mb / ind.","Cell 2020"),shiny::tags$th))),shiny::tags$tbody(rows))
+    if(!s$comparable_scope && nrow(d))shiny::tags$p(class="text-muted","个体的已分析染色体范围不同，人群比例不能直接比较。")
+  )
+}
+
+gu_ibdmix_summary_table <- function(s, burden) {
+  refs<-c("Altai","Chagyr","Vindija","Denisova","Denisova25")
+  d<-merge(s$samples[,c("sample_id","population","super_population")],burden,by="sample_id",sort=FALSE)
+  d<-d[is.finite(d$archaic_bp) & d$tested_bp>0 & d$n_chromosomes>0,,drop=FALSE]
+  group_rows<-function(d,group) {
+    if(group=="AFR (5)") d[d$population %in% c("ESN","GWD","LWK","MSL","YRI"),,drop=FALSE] else d[d$super_population %in% group,,drop=FALSE]
+  }
+  rows<-lapply(c("AFR (5)","EUR","EAS","SAS","AMR"),function(group) {
+    p<-group_rows(d,group)
+    altai<-p[p$reference=="Altai",,drop=FALSE]
+    cells<-lapply(refs,function(ref) {
+      x<-p[p$reference==ref,,drop=FALSE]
+      if(!nrow(x))return(shiny::tags$td("N/A"))
+      scope<-paste(sort(unique(x$n_chromosomes)),collapse=",")
+      partial<-any(x$n_chromosomes!=22)
+      detail<-paste0("n = ",nrow(x)," · ",scope," / 22 autosomes; chromosomes: ",paste(unique(x$chromosomes),collapse="; "))
+      shiny::tags$td(title=detail,sprintf("%.1f",mean(x$archaic_bp)/1e6),
+        if(partial || nrow(x)!=nrow(altai))shiny::tags$small(class="gu-summary-cell-scope",
+          paste0("n = ",nrow(x),if(partial)paste0(" · partial ",scope,"/22 chr"))))
+    })
+    shiny::tags$tr(shiny::tags$td(group),shiny::tags$td(nrow(altai)),
+      shiny::tags$td(if(nrow(altai))sprintf("%.2f%%",mean(altai$coverage_pct)) else "N/A"),cells,
+      shiny::tags$td(switch(group,`AFR (5)`="~17",EUR="~51",EAS="~55",SAS="~55","—")))
+  })
+  headers<-c(list(shiny::tags$th("Group"),shiny::tags$th("n (Altai)"),shiny::tags$th("Coverage (Altai)")),
+    lapply(refs,function(ref)shiny::tags$th(ref,shiny::tags$br(),"Mb / ind.")),
+    list(shiny::tags$th("Cell 2020 (Altai)",shiny::tags$br(),"Mb / ind.")))
+  shiny::tagList(
+    shiny::tags$h6("Population summary · 5 archaic references"),
+    shiny::tags$div(class="gu-summary-table-scroll",shiny::tags$table(class="table table-sm gu-summary-table",
+      shiny::tags$thead(shiny::tags$tr(headers)),shiny::tags$tbody(rows))),
+    shiny::tags$p(class="gu-summary-caption",
+      "每列独立统计该参考在已确认完成的常染色体上的片段并集长度，再按已检测个体等权平均（Mb / ind.）；排除 X，不跨参考合并或相加。地图、Coverage 和右侧比例均仅基于 Altai。n 为 Altai 已检测人数；其他参考人数不同或染色体不完整时在单元格标注，N/A 表示未检测。鼠标悬停可查看各列人数与染色体范围。"),
+    shiny::tags$p(class="gu-summary-caption",
+      "Altai、Chagyr、Vindija 为 Neanderthal 参考；Denisova、Denisova25 为 Denisovan 参考。Denisovan 列为原生参考匹配片段，不能直接等同于已确认的渗入来源。AFR (5) 仅含 ESN、GWD、LWK、MSL、YRI。Cell 2020 为 Altai 文献近似值。")
   )
 }

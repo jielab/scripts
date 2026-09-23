@@ -1,140 +1,131 @@
-# Panome 4 — 个体 reference matching 与分子组合解释
+# Panome 5.1：学习个体匹配，再向真实参考人借用结局
 
-本版按照“建 reference → 找匹配 → COPY / 借用 reference 的结局信息”重写。以真实个体作为榜样，保留整体匹配、模块 mosaic、原始 COPY Y 和多参考风险估计，不以 AUC 决定唯一赢家。默认主面板预先固定为 100 人；300、1000 人只作为并列敏感性分析。
+新增独立入口 `panome_TF.sh`：使用已下载的 TabICLv2 数值表格 Transformer，对 prot/met → 疾病 Y 做监督微调并预测测试样本。模型、隔离策略、运行命令和限制见 [PANOME_TF.md](PANOME_TF.md)。输出位于单独的 `/mnt/d/analysis/panome_TF/`。
 
-这是研究实现。真实 UKB 新版结果须在你的本地数据上重新运行；本包不包含这些结果。旧版结果的核查见 `AUDIT.md`。本版聚焦有首诊日期和随访的疾病，按指定时间窗预测 net risk；不提供旧版 height、Transformer、Leiden 或 PGS 接口。
+本版围绕你的 **row-based、individual-based、imputation-like** 思路重写。主模型输出的风险由真实 reference 的观察结局及其权重组成；Transformer 学习蛋白组合和个体之间的匹配。原始“挑选最合适的 100 人、找最近的人、COPY Y”仍作为独立模型完整保留。
 
-本机替换前的修复、真实输入抽样核查及运行记录见 [LOCAL_REVIEW.md](LOCAL_REVIEW.md)。
+本次是 v5 的 attention 深化版，内部版本 **5.1.0**。主模型包含两层含义：个人内部的分子模块 Q/K/V self-attention，以及个人对真实 reference 的多头 Q/K attention（Value 为真实 Y）。`ATTENTION_DESIGN.md` 说明哪些部分来自原 Transformer，哪些为了保留 COPY 解释而改变。方法细节见 `METHODS.md`。
 
-## 运行
+主流程保留 top-fit、随机面板、距离匹配及独立训练的模型对照，用于检验 reference 选择和 attention 是否有效；运行时间本身不构成方法优劣的证据。
 
-将整个 `panome/` 目录作为新版使用，避免混入旧 `f/`。默认输出到新的 `v4_reference` 子目录，不覆盖旧结果。
+## 安装与正式运行
+
+当前目录使用 v5.1 运行代码。`panome.sh` 优先使用 `PANOME_PYTHON`，否则复用 `$HOME/venvs/panome-v3/bin/python`，最后回退到 `python3`。本项目不创建 `.venv`，现有外部环境已满足依赖。若使用其他已配置环境，可先设置 `export PANOME_PYTHON=/path/to/python`。`panome.sh` 默认使用 CUDA、16 核、`quality-teacher all` 和运行名 `v5_attention_allteachers`，命令行显式参数可以覆盖这些默认值。不需要下载预训练模型。
 
 ```bash
 cd /mnt/d/scripts/panome
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-chmod +x panome.sh
-./panome.sh --Y cvd_cad --biom prot --dry-run
-./panome.sh --Y cvd_cad --biom prot --preflight
-./panome.sh --Y cvd_cad --biom prot --cores 16
+bash panome.sh --check-device
+./panome.sh --Y cvd_cad --biom prot,met --preflight
+
+# 完整推荐分析：依次运行蛋白与代谢物，包括神经 OOF 榜样评分
+./panome.sh --Y cvd_cad --biom prot,met
+
+# 多个结局 × 多个分子层：依次运行四个独立分析
+./panome.sh --Y cvd_cad,ra --biom prot,met
 ```
 
-不读取真实数据的快速检查：
+`--biom prot,met` 按顺序执行两个独立分析，各自使用对应的原始矩阵、映射、变换和批次列。蛋白默认残差化 `prot.plate`，代谢物默认残差化 `met.plate` 并使用原始代谢物映射及 `log1p`。结果分别写入 `/mnt/d/analysis/panome/cvd_cad/prot/v5_attention_allteachers/` 和 `/mnt/d/analysis/panome/cvd_cad/met/v5_attention_allteachers/`，首个分析失败时停止。多个 biom 时用 `--analysis-root`、`--run-name` 修改输出位置；需要 `--run-dir`、`--omics-file` 或 `--output` 时分别运行单个 biom。
 
-```bash
-./panome.sh --demo --tree hist --max-samples 1600 --run-name synthetic_check --analysis-root /tmp/panome_check
-```
+原始代谢物映射配合 `log1p` 时，将负丰度作为无效测量转为缺失，并在 `input/metabolite_mapping.csv` 的 `negative_to_missing` 列逐指标记录。该固定规则在样本/特征 QC 之前应用，不使用结局；缺失值随后由训练集拟合的中位数填补。原始代谢物的无 Y 投影使用相同规则，并输出 `*_metabolite_mapping.csv`。`--transform none` 保留有符号值；已变换的蛋白或代谢物矩阵应使用此选项。直接提供的命名矩阵仍保留 `log1p` 非负检查。
 
-默认输入保持现有 UKB 布局：
+这里的 Transformer 是从分子数据随机初始化并训练的自定义网络，BERT 的文本词表和权重不适配它，无需 Hugging Face 模型或 token。遮蔽重建预训练阶段不计算分类 logloss，因此日志显示 `N/A (reconstruction only)`；联合训练阶段才显示实际 logloss。
 
-- 表型 `/mnt/d/data/ukb/phe/Rdata/all.rds`。
-- 蛋白 `/mnt/d/data/ukb/phe/rap/raw/prot.tab.gz`。
-- CAD 首诊 `fod_icd10_cvd_cad`，基线 `date_attend`，死亡 `date_death`，失访 `date_lost`。
-- 行政截止日期沿用已有分析的 `2023-04-01`，请按实际数据覆盖期设置 `--end-date`。
-- 临床协变量 `age,sex,tdi,PC1,PC2,center`；蛋白残差化 `age,sex,prot.plate`。
-- 死亡作为删失，输出是死亡删失下的 net risk，**不是竞争死亡下的实际累计发病概率**。
+`--Y cvd_cad,ra --biom prot,met` 按 `cvd_cad/prot`、`cvd_cad/met`、`ra/prot`、`ra/met` 顺序运行，分别读取 `fod_icd10_cvd_cad` 或 `fod_icd10_ra`，结果目录为 `<analysis-root>/<Y>/<biom>/<run-name>/`。可先加 `--dry-run` 核对配置。多个结局时不能指定共用的 `--run-dir`、`--output` 或 `--diagnosis-col`；单个 biom 的 `--omics-file` 可跨结局复用。列表不接受空项或重复项，任何一次分析失败即停止后续运行。直接调用 `f/panome.py` 时仍须指定单个结局和单个 biom。
 
-RDS 优先用已有 `Rscript` 提取字段，再由 `pyreadr` 读取二进制中间文件；`pyreadr` 已列入依赖，没有 R 时直接使用它读取。这样可保留批次等分类元数据中的极小数值。CSV、TSV、gzip 文本也可直接输入。不会 source LE8 或修改原始数据。`--tree lightgbm` 是默认树基准；未安装会报错，不会默默替换。可明确选 `--tree hist` 使用 sklearn 的 histogram gradient boosting。
+`--device cuda` 检测不到 GPU 会报错；`--device auto` 自动选择。若 `--check-device` 显示 CPU 版 PyTorch，请按 [PyTorch 官方安装器](https://pytorch.org/get-started/locally/) 选择与你机器相符的 CUDA wheel。不要仅凭安装了 `transformers` 就判断 GPU 已可用。
 
-亲缘连通分量列已准备好时，请加 `--group-col family_component`。这样外层划分、内层 OOF、匹配排除和 bootstrap 都以亲缘组处理。没有亲缘信息时是个人随机划分，不能声称已排除亲缘泄漏。
+入口默认启用 `--quality-teacher all`。显式设置 `--quality-teacher ensemble` 时，榜样评分用重复 OOF elastic net + 小树模型，主流程仍会训练 Transformer、MLP、独立的无 retrieval Transformer、无预训练 Transformer，固定均匀 self-attention 对照、距离匹配对照，并保留自监督 encoder。`all` 把严格 OOF 的神经网络预测也加入评分，默认额外训练 3 × 5 个网络，计算量明显增加；每个 OOF 网络有自己的早停样本，其外层 OOF 对象从未参与该网络的预处理、token 构建或训练。
 
-```bash
-# 先完整训练并冻结，稍后才打开测试结果
-./panome.sh --Y cvd_cad --biom prot --run-name cad_reference --train-only
-./panome.sh evaluate --run-dir /mnt/d/analysis/panome/cvd_cad/prot/cad_reference
+默认路径和终点：
 
-# 保留蛋白的年龄/性别相关部分，另做明确命名的敏感性分析
-./panome.sh --Y cvd_cad --biom prot --residualize prot.plate --run-name cad_plate_only_residual
-
-# 5 年风险是另一个明确时间窗，须重新拟合
-./panome.sh --Y cvd_cad --biom prot --horizon 5 --run-name cad_5y
-
-# 多次划分用于重训稳定性，不能挑选其中 AUC 最高的一次作为最终结果
-for seed in 2026 2027 2028; do
-  ./panome.sh --Y cvd_cad --biom prot --seed "$seed" --run-name "cad_seed_${seed}"
-done
-```
-
-默认外层 50% test，另外 50% 分为 build/tune/calibration，占总样本约 30%/10%/10%。QC 后比例可能略变。所有模型都采用同样的划分。可通过 `--split-file` 提供含 `eid,split` 的 CSV，split 必须是 `build,tune,calibration,test` 之一。用固定 split 比较多个方案，避免样本变化造成混淆。
-
-## 并列实现的方案
-
-| 输出名 | 实际行为 |
+| 项目 | 默认值 |
 |---|---|
-| `copy1_fullproteome` | 最低 OOF log loss 的 100 个真实人；在全部保留蛋白的标准化空间寻找 1 人；直接 COPY 其已知 10 年 Y=0/1。原始方案的直接对照，不做概率校准。 |
-| `copy1_topfit` | 同样的榜样，改用训练获得的分子距离匹配，再 COPY 1 人 Y。 |
-| `copyk_fullproteome`, `copyk_topfit` | 相同榜样，K 人距离加权 COPY，加入 IPCW；保存原始值和独立校准值。 |
-| `random_panel` | 按已知结局比例抽样的随机 100 人，检验是否真的需要挑榜样。 |
-| `diversity_panel` | 优先覆盖分子空间的真实 100 人，不按 fit 挑选。 |
-| `reliable_100` / `panome` | 重复 OOF 质量、结局类别配额和分子多样性共同选择真实个体；在其局部邻域估计风险，再进行加权匹配。 |
-| `reliable_300`, `reliable_1000` | 面板大小敏感性分析；不会自动取代预设的 100 人主面板。 |
-| `all_reference` | 使用全部已知时间窗结局的 build 人员，普通 IPCW 加权 kNN；检查压缩到 100 人损失了多少信息。 |
-| `unsupervised_matching` | 与主方案相同参考身份，用不利用 Y 的 PCA 距离重新估计邻域和匹配。 |
-| `mosaic_equal` | 不同分子模块分别匹配不同真实参考人；各模块风险等权组合。 |
-| `mosaic_weighted` | 相同模块匹配，根据 tune 的 Brier 改善给予模块权重，保留 10% 等权收缩。 |
-| `panome_clinical`, `mosaic_clinical` | 参考风险与临床预测在独立 calibration 中组合。 |
-| `panome_elasticnet_hybrid` | 参考风险与 elastic net 组合；用于评价预测增量，不把全部预测归因于参考人。 |
-| `clinical`, `protein_elasticnet`, `elasticnet`, `clinical_pca`, `lightgbm` | 临床、蛋白 EN、临床+蛋白 EN、临床+PCA、临床+蛋白树模型基准。 |
-| `clinical_technical` | 临床+残差化使用的元数据+蛋白缺失比例；检查明显技术信息是否也能预测。不是完整的逐 assay 缺失模式负对照。 |
+| 表型 | `/mnt/d/data/ukb/phe/Rdata/all.rds` |
+| 蛋白 | `/mnt/d/data/ukb/phe/rap/raw/prot.tab.gz` |
+| 首诊 / 基线 | `fod_icd10_cvd_cad` / `date_attend` |
+| 死亡 / 失访 | `date_death` / `date_lost` |
+| 行政截止 | `2023-04-01`，须核对是否适合你的数据版本 |
+| 风险时间窗 | 10 年；死亡按删失处理的 net risk |
+| 临床基准 | `age,sex,tdi,PC1,PC2,center` |
+| 蛋白残差化 | **仅 `prot.plate`**；本版保留蛋白中的年龄、性别相关生物变化 |
+| 主参考库 | 100 个真实人；300/1000 人及全部已知结局 build 样本作对照 |
 
-`--panel-size` 改变主面板大小；`--panel-sizes` 决定额外大小。主面板不够人数时会记录实际人数及 `not_ready`，不会偷偷补成“合格 100 人”。所有可以计算的探索性结果仍输出。
+默认残差化不同于 v4 的 `age,sex,prot.plate`。因此不能把跨版本差异全归功于 Transformer。本版同一次运行的各模型使用相同预处理；重复运行器可同时检验两种残差化策略。蛋白风险也不能据此解释为独立于年龄、性别的因果效应。
 
-## 如何定义“榜样”
+如果已经准备了亲缘连通分量，增加 `--group-col family_component`；外层拆分、OOF、神经训练 donor fold 排除、查询排除和 bootstrap 都使用亲缘组。未提供时不能声称排除了亲缘泄漏。可使用 CSV、TSV、gzip、RDS 输入；Parquet 另需安装 `pyarrow`。RDS 保留最新版代码中二进制传递和极小数值分类编码的修复。
 
-在 build 内重复 3 次、每次 5 折。每折重新拟合分子预处理和模型。默认质量教师为蛋白 elastic net 与浅层非线性树的平均预测，避免仅挑选“符合线性模型的人”。`--quality-teacher elasticnet` 可单独运行线性教师作为敏感性分析。
+## 本机检查与修复
 
-每个人记录 OOF 概率、OOF log loss、相对该折常数风险的 log-likelihood gain、重复之间的变化，以及正 gain 比例。主候选要求平均 gain>0 且至少 2/3 重复为正。未知时间窗结局者不能被当作 Y=0，也不能成为 COPY Y 的来源，但其分子数据可以参与 build 表征。
+2026-09-22 已完成 CPU/CUDA 合成端到端检查（1,600 人、800 人测试集），包括六种训练方案、42 个预测输出、CUDA 混合精度、LightGBM 和神经 OOF。15 项数学/attention 测试、CPU 断点恢复、无 Y 投影、查询顺序/批次一致性及测试结局隔离均通过。GPU 训练的冻结预测在 CPU 投影的最大差约 1.1e-6；固定拆分改变 800 人的测试结局后，重新训练的 30 个输出、OOF 评分、参考名单与神经参数保持一致。
 
-原始 `topfit` 对照按最低 log loss 全局取人；这很可能主要选出低风险非病例。改进方案在结局类别内挑选可靠且互相不同的人，配额接近 build 已知标签的比例。100 人本身仍不是疾病总体的无偏随机样本，因此独立校准以及未筛选邻域的风险估计很重要。
+修复 CUDA autocast 下概率 BCE 报错：编码器继续使用混合精度，reference 匹配与概率损失使用 float32。保留 RDS 二进制中转修复，并将 R 读取桥接与 shell 入口纳入断点恢复的代码指纹。
 
-一个人只有一次观察结局。这里的“可靠”指给定模型下重复 OOF 的一致性，不是证明这个人的蛋白和疾病之间有确定关系，也不意味着其他人是坏数据。
+真实输入抽样 1,600 人已完成读取；排除既往病例后 1,521 人，QC 后 1,273 人、2,915 assays，按新版默认仅残差化 `prot.plate`，处理后的分子和临床矩阵全部为有限值。这是抽样预处理核查，不是全量训练。
 
-## 个体解释与 copy 稳定性
+历史审计材料、发布包验证记录和演示动画已从运行目录移除。训练时生成的 calibration-audit、attention 检查与输入/输出审计属于模型流程，继续保留。完整真实队列训练、全量资源消耗及科学有效性仍需正式运行验证。
 
-| 文件 | 要回答的问题 |
-|---|---|
-| `reference_candidates.csv` | 每个候选人的 fit 依据、稳定性、两种教师的 OOF 预测是什么？ |
-| `reference_panel.csv` | 最终参考人是谁？观察标签、局部风险、邻域有效人数和事件支持是多少？ |
-| `test_reference_matches.csv` | 这个人整体匹配了谁？各参考人的权重是多少？ |
-| `test_mosaic_matches.csv.gz` | 这个人的不同分子模块分别匹配了谁？各模块支持怎样的风险？ |
-| `test_feature_explanations.csv.gz` | 哪些蛋白共同偏高/偏低，哪些蛋白与参考组合最不一致？ |
-| `test_person_cards.jsonl.gz` | 每人一行完整 JSON 解释卡，可用于后续个体浏览界面。 |
-| `molecular_profiles.csv`, `molecular_blocks.csv` | 每个人的模块坐标，以及模块包含哪些蛋白、如何计算。 |
-| `same_risk_pairs.csv` | 预测风险相近、分子组合不同的个体，不要求不同离散 subtype。 |
-| `masked_copy_stability.csv` | 遮住已测蛋白后，能否重构它们？参考身份和原始风险变化多大？ |
-| `matching_diagnostics.csv.gz` | 各匹配方案的距离、有效参考人数、重构误差与局部事件支持。 |
-| `reference_utilization.csv` | 有哪些参考人真正被使用？是否大部分目标都落在极少数人上？ |
-
-默认分子模块从 build 蛋白的 PCA loading 相似性获得，并在每个模块中学习 PC1。它们是数据驱动的坐标，不会自动被命名为“炎症”“脂质”或被解释为通路活动。若已有审定的通路映射，可用 `--module-file pathways.tsv`，两列必须为 `feature,module`；特征名须精确匹配。允许一个蛋白属于多个外部模块，但这种相关性使模块风险不能作为可相加的病因占比。
-
-mosaic 借鉴“不同部分匹配不同参考”的思想，没有蛋白 phasing、染色体顺序、重组率或 HMM。单个模块仅用 PC1 是可检验的首版假设，不能声称保留了该模块全部信息。
-
-## 无合适匹配与面板评估
-
-`reference_readiness.json` 分开记录结构/支持不足与预测性能提示。AUC 没有改善不会自动否定其解释价值。`provisional_pass` 只表示预设的内部支持检查通过，仍不是外部有效性的认证。
-
-个体判断依赖冻结的 tune-X 阈值：参考距离、标准化蛋白重构误差、参考风险分歧、有效参考人数、未知分类水平及缺失比例。它们可在不知道该人的 Y 时计算。`supported_match` 和 `rejection_reason` 对所有 test 人员输出；面板和个体都通过时，`released_net_risk` 才有值。所有人的探索性原始/校准风险仍保留。这个字段仅用于研究流程，不是临床使用许可或个体正确概率保证。
-
-`approach_comparison.csv` 同时给出预测指标和参考使用/匹配描述。`coverage_curve.csv` 在完全相同的被保留人员中比较所有模型，防止只报告容易预测的人而夸大优势。遮蔽重构默认抽取 1000 个 test 人、重复 3 次、每次遮住 10% 的已测蛋白；对 Panome、全蛋白 COPY 1、随机面板和多样性面板使用相同的人员与遮蔽位置，不使用其疾病标签。可用 `--mask-models` 选择其他匹配方案；可用 `--explanation-samples`、`--mask-repeats`、`--mask-fraction` 修改。
-
-## 给新个体预测
-
-只需要分子测量和基线元数据，不需要 Y。所有预测、校准、参考面板和阈值固定，目标批次不会成为彼此的 reference。
+## 多次训练、残差化敏感性与真正的负对照
 
 ```bash
-./panome.sh project \
-  --run-dir /mnt/d/analysis/panome/cvd_cad/prot/v4_reference \
-  --phe-file /path/new_baseline.csv --omics-file /path/new_proteins.csv \
-  --output /path/new_people.csv
+"${PANOME_PYTHON:-$HOME/venvs/panome-v3/bin/python}" run_experiments.py --output-root /mnt/d/analysis/panome_suite \
+  --seeds 2026,2027,2028 --residualization-sensitivity --include-null -- \
+  --Y cvd_cad --biom prot --device cuda --cores 16 --quality-teacher all
 ```
 
-输出各方案预测、整体匹配支持，并另存 `new_people_mosaic.csv.gz`。保留 assay 必须齐全，个别测量可缺失。若训练使用亲缘组，新个体也要提供完整连通分量编号。跨平台测量单位或系统偏移未被此接口自动解决。joblib 仅加载你信任的本地训练产物。
+默认固定第一个运行的外层拆分，再改变训练 seed，避免把不同测试集的结果误当成模型稳定性。所有运行先冻结，然后统一评估测试集。`--vary-splits` 可进一步研究拆分敏感性。输出按残差化/负对照方案分别汇总 AUC、Brier、覆盖率及其跨 seed 波动，同时比较 reference Jaccard 和同一批人的风险相关性。
 
-## 执行、验证与边界
+`--include-null` 额外运行 development 结局打乱：build、tune、calibration-fit、calibration-audit 内分别打乱成对的随访时间和事件，测试集结局保持原样。它是完整拟合的负对照，**不是**置换检验的 p 值。普通主流程中的 `permuted_values_same_panel` 只扰动已学模型的 donor 结局，回答另一个问题：预测是否实际依赖 reference 的 Y。二者不能混称。
 
-日志只记录主要步骤 START/DONE 和 OOF 重复结束。`--cores` 同时限制 BLAS/OpenMP 线程。保存冻结模型后，可独立 `evaluate` 重画图和计算指标；不提供折训练中断的自动续跑。已有结果目录默认拒绝覆盖；需要重跑用新 run-name，或对该 run 明确 `--replace`。
+## 无结局信息的新个体预测
 
-主要输出包括 `Fig_prediction_coverage.png/pdf`、`Fig_individual_profiles.png/pdf`、`REPORT.md`、`test_metrics.csv`、`paired_contrasts.csv`。Bootstrap 是对冻结模型的条件不确定性；跨 seed 重训与外部队列验证另行进行。当前小型合成数据验证见 `VALIDATION.md`。
+```bash
+bash panome.sh project \
+  --run-dir /mnt/d/analysis/panome/cvd_cad/prot/v5_attention_allteachers \
+  --phe-file /path/query_baseline.csv --omics-file /path/query_proteins.csv \
+  --output /path/query_predictions.csv --device cuda
+```
 
-本版疾病基准使用同时间窗的 IPCW logistic/树模型，与旧版 Cox 的 Harrell C 不同，不应把新旧不同划分的数值直接相减。IPCW 使用 build 的边际删失分布，依赖独立删失假设；病例抽样权重、协变量条件删失、竞争死亡及经验证的完整临床风险模型仍需按正式研究设计扩展。本版未执行动态数字孪生、干预模拟、MR 或因果机制发现。
+这里只需要 ID、训练所需的基线协变量/批次，以及蛋白数据，不需要 diagnosis、event、time。训练中使用的 assay 列可以部分缺失；缺失比例计入支持判断。每位 query 只匹配 build reference；不会把同一批的其他待预测者作为 donor。输出预测、是否有支持、拒绝理由，以及旁边的 `*_references.csv.gz`。没有支持时保留探索性结果，但 `released_net_risk` 为空。
+
+## 运行控制与计算量
+
+- 默认 48 个分子 token、宽度 64、4 个头、2 层，batch 128。先遮蔽重建预训练 20 epochs，再联合训练最多 60 epochs，早停 patience 10。每个 epoch 记录损失、内层验证值并保存 checkpoint。
+- `--tokens` 调整模块 token 数，不丢弃保留的蛋白。token 内对各 assay 使用不同的可学习参数，再跨 token 做 self-attention；这是分层压缩，不是声称实现了 3,000 个蛋白的全配对 attention。
+- `--quality-neural-epochs 20 --quality-pretrain-epochs 5` 控制每个 OOF 神经网络的预算。
+- `--experiments transformer` 可先检查主网络；默认会运行六个训练方案：`transformer,mlp,direct,no_pretrain,uniform,metric`。`ssl` 对照自动来自主 Transformer 的预训练快照。
+- 显存不足先降低 `--batch-size`，再考虑 `--width`、`--tokens`；主库检索分批计算，不构造 50,000 × 50,000 的矩阵。完整数据仍需保存若干蛋白矩阵和 reference bank，请按实际机器观察内存日志。
+- `--train-only` 冻结模型但不计算测试集指标；随后 `bash panome.sh evaluate --run-dir ...`。
+- 中断后使用完全相同参数增加 `--resume`。会核对代码、输入指纹、依赖和配置，重跑准备/经典模型阶段，并从神经 epoch checkpoint 继续。`--full-input-hash` 可对大输入做完整 SHA256；默认大输入记录大小和修改时间。若强制终止留下 `.lock`，先核实其中 PID 不再运行再移除。
+- 可以直接重复原命令：已完成的分析显示 `SKIP completed` 并跳过，未完成或失败的分析显示 `RESTART incomplete_or_failed`，清空原运行输出后从头训练。完整完成要求 `DONE.json` 和模型、报告、指标等核心文件存在；仅有 checkpoint 或 `MODEL_FROZEN.json` 不算完成。`--train-only` 使用训练结束后写入的 `TRAIN_DONE.json`。此规则对单个和批量分析均适用。
+- 默认按输出目录判断完成状态，不因代码或参数变化自动重训已完成结果；需要更新它们时使用新的 `--run-name` 或显式 `--replace`。`--resume` 仍按严格指纹检查续训。覆盖操作全程持有 `.lock`，拒绝覆盖正在运行的目录，也不清理没有有效 Panome manifest 的非空目录。
+
+v5.0 的 checkpoint/bundle 与本次 Q/K/V 参数结构不兼容；请用新目录重新训练，不要将旧模型复制到本版 run 目录。既往结果保留用于审计。默认超参数只是预设起点，不因为训练更久就自动更好。若要增加容量，可在开发集计划中比较 `--tokens 48/96 --width 64/128 --layers 2/4`，固定最终 test，不依据 test 反复挑模型。
+
+## 主要输出
+
+| 文件 | 回答的问题 |
+|---|---|
+| `reference_candidates.csv` | 每个人的 OOF 预测、相对常数风险的拟合增益、稳定性；不是人的“好坏” |
+| `panel_*.csv` / `panel_specs.json` | 实际选了哪些人，病例覆盖、邻居数、温度、收缩量是多少 |
+| `neural/*/learning_curve.csv` | 是否真正训练、早停在哪、重建和预测损失如何变化 |
+| `embedding_diagnostics.csv` | 表征是否趋于常数、有效维度是否塌缩 |
+| `test_reference_matches.csv.gz` | 每个 target 的真实参考人、Y、权重、风险贡献、删除/翻转 Y 的影响 |
+| `individual_risk_decomposition.csv` | reference 贡献 + 先验贡献能否重构原始风险和校准后的风险 |
+| `individual_explanations.jsonl.gz` | 抽样个体的共同异常蛋白、主要不匹配蛋白和解释边界 |
+| `masked_reconstruction.csv` / `masked_feature_metrics.csv` | 遮蔽位置的 RMSE、R² 是否优于均值、PCA和随机参考人 |
+| `module_perturbations.csv.gz` | 移除某模块的信息后，风险与匹配人是否改变 |
+| `test_mosaic_matches.csv.gz` | 不同分子模块是否匹配到不同参考人 |
+| `attention/self_attention.npz` | 真实逐人 × 层 × head × query token × key token 的权重矩阵 |
+| `attention/reference_head_contributions.csv.gz` | 每个 head 对实际 donor Y 的贡献，能否重构总风险 |
+| `attention/attention_interventions.csv.gz` | 改变 attention / 移除 head / 遮蔽模块后，风险及参考人如何改变 |
+| `attention/attention_vs_sensitivity.csv` | attention rollout 与实际模块遮蔽敏感性是否一致 |
+| `same_risk_pairs.csv` | 相似预测风险、不同分子组合的个体对 |
+| `reference_readiness.json` | 独立 audit 中是否优于常数风险；参考库是否完整 |
+| `support_error_audit.csv` / `subgroup_metrics.csv` | 支持规则是否仅排除了高风险人或特定人群 |
+| `approach_comparison.csv` / `paired_contrasts.csv` | 所有方法及相同个体上的成对比较 |
+| `raw_test_metrics.csv` / `test_calibration.csv` | 区分原始 COPY/borrowing 和校准的影响 |
+| `REPORT.md` / `Fig_*.png` | 本次运行的汇总和科学图 |
+
+默认另对 128 人导出完整 attention 和机制干预，使用 `--attention-samples` 调整或设为 0 关闭。逐 donor 表及无 Y 投影输出都包含各 head 的权重与贡献列。默认对 1,000 人做重复遮蔽重建，对 256 人做全部模块移除实验；reference 贡献表覆盖所有测试者。可用 `--explanation-samples`、`--perturbation-samples` 修改。任何模块名 `data_token_*` 都只是数据驱动分组。提供 `--module-file`（TSV：`feature`,`module`）才使用外部命名；重叠通路按模块名字排序取第一个，未覆盖蛋白另分组，映射完整写出。
+
+本版为固定时间窗疾病分析，不实现基因型 phasing、连续表型、个体因果效应、竞争风险 CIF 或治疗数字孪生。代码能够计算并检验个体证据，不能预先保证 Transformer 或 100 人方案会胜出。

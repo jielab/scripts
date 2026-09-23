@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""Panome 4: reference-based fixed-horizon disease risk research pipeline."""
+"""Panome 5: Transformer-assisted individual reference copying and disease risk."""
 from pathlib import Path
 import argparse
 import os
 import sys
-import shutil
 from types import SimpleNamespace
 
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Usage examples:
-  ./panome.sh --Y cvd_cad --biom prot --dry-run
-  ./panome.sh --Y cvd_cad --biom prot --preflight
-  ./panome.sh --Y cvd_cad --biom prot --cores 16
-  ./panome.sh evaluate --run-dir /mnt/d/analysis/panome/cvd_cad/prot/v4_reference
+        epilog="""panome.sh defaults: --device cuda --cores 16 --quality-teacher all
+                    --run-name v5_attention_allteachers
+Explicit options override these defaults. Comma-separated --Y and --biom values
+in panome.sh run each outcome/layer pair separately in order.
+
+Usage examples:
+  ./panome.sh --Y cvd_cad --biom prot,met
+  ./panome.sh --Y cvd_cad,ra --biom prot,met
+  ./panome.sh --Y cvd_cad --biom prot,met --dry-run
+  ./panome.sh --check-device
+  ./panome.sh --Y cvd_cad --biom prot,met --preflight
+  ./panome.sh evaluate --run-dir /mnt/d/analysis/panome/cvd_cad/prot/v5_attention_allteachers
   ./panome.sh --demo --tree hist --max-samples 1600 --run-name synthetic_check --analysis-root /tmp/panome_check
 """)
     p.add_argument("command", nargs="?", choices=["run", "evaluate", "project"], default="run")
-    p.add_argument("--Y", dest="trait", default="cvd_cad")
-    p.add_argument("--biom", choices=["prot", "met"], default="prot")
+    p.add_argument("--Y", dest="trait", default="cvd_cad",
+                   help="Outcome; panome.sh also accepts comma-separated outcomes for sequential runs")
+    p.add_argument("--biom", choices=["prot", "met"], default="prot",
+                   help="Molecular layer; panome.sh also accepts prot,met for sequential runs")
     p.add_argument("--ukb-phe", default=os.environ.get("UKB_PHE", "/mnt/d/data/ukb/phe"))
     p.add_argument("--phe-file")
     p.add_argument("--omics-file")
@@ -52,12 +60,12 @@ def parser():
     p.add_argument("--panel-sizes", default="100,300,1000")
     p.add_argument("--match-k", default="5,10,20")
     p.add_argument("--all-k", default="30,100,300")
-    p.add_argument("--donor-neighbors", type=int, default=100)
-    p.add_argument("--prior-strength", type=float, default=10)
     p.add_argument("--folds", type=int, default=5)
     p.add_argument("--oof-repeats", type=int, default=3)
     p.add_argument("--teacher-c", type=float, default=.01)
-    p.add_argument("--quality-teacher", choices=["elasticnet", "ensemble"], default="ensemble")
+    p.add_argument("--quality-teacher", choices=["elasticnet", "ensemble", "neural", "all"], default="ensemble")
+    p.add_argument("--quality-neural-epochs", type=int, default=20)
+    p.add_argument("--quality-pretrain-epochs", type=int, default=5)
     p.add_argument("--quality-trees", type=int, default=100)
     p.add_argument("--c-grid", default="0.001,0.01,0.1,1")
     p.add_argument("--max-iter", type=int, default=3000)
@@ -75,9 +83,8 @@ def parser():
     p.add_argument("--explanation-samples", type=int, default=1000)
     p.add_argument("--mask-fraction", type=float, default=.1)
     p.add_argument("--mask-repeats", type=int, default=3)
-    p.add_argument("--mask-models", default="panome,copy1_fullproteome,random_panel,diversity_panel")
     p.add_argument("--analysis-root", default="/mnt/d/analysis/panome")
-    p.add_argument("--run-name", default="v4_reference")
+    p.add_argument("--run-name", default="v5_attention")
     p.add_argument("--run-dir")
     p.add_argument("--output", help="CSV output for project")
     p.add_argument("--seed", type=int, default=2026)
@@ -90,11 +97,41 @@ def parser():
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--preflight", action="store_true")
     p.add_argument("--full-input-hash", action="store_true")
-    p.add_argument("--replace", action="store_true")
+    p.add_argument("--replace", action="store_true", help="Force rebuilding even completed runs; incomplete runs are replaced automatically")
+    p.add_argument("--experiments", default="transformer,mlp,direct,no_pretrain,uniform,metric")
+    p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    p.add_argument("--check-device", action="store_true")
+    p.add_argument("--tokens", type=int, default=48)
+    p.add_argument("--width", type=int, default=64)
+    p.add_argument("--heads", type=int, default=4)
+    p.add_argument("--layers", type=int, default=2)
+    p.add_argument("--dropout", type=float, default=.1)
+    p.add_argument("--batch-size", type=int, default=128)
+    p.add_argument("--pretrain-epochs", type=int, default=20)
+    p.add_argument("--epochs", type=int, default=60)
+    p.add_argument("--patience", type=int, default=10)
+    p.add_argument("--neural-k", type=int, default=64)
+    p.add_argument("--learning-rate", type=float, default=.0003)
+    p.add_argument("--weight-decay", type=float, default=.001)
+    p.add_argument("--reconstruction-weight", type=float, default=.2)
+    p.add_argument("--direct-weight", type=float, default=.3)
+    p.add_argument("--train-prior", type=float, default=2.)
+    p.add_argument("--gradient-clip", type=float, default=5.)
+    p.add_argument("--temperatures", default="0.05,0.2,1,5")
+    p.add_argument("--prior-grid", default="0,2,10")
+    p.add_argument("--attention-samples", type=int, default=128,
+                   help="Outcome-blind ID sample for head maps and mechanistic perturbations; 0 disables")
+    p.add_argument("--perturbation-samples", type=int, default=256)
+    p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--deterministic", action="store_true")
+    p.add_argument("--resume", action="store_true", help="Resume neural epochs after interruption; configuration and inputs must match")
+    p.add_argument("--shuffle-development-outcomes", action="store_true", help="Negative control: permute time/event pairs independently within each non-test role")
     return p
 
 
 def configure(a):
+    if not a.trait.strip() or "," in a.trait:
+        raise ValueError("Python entry point requires a single --Y; use panome.sh for comma-separated outcomes")
     for field, cast in [("panel_sizes", int), ("match_k", int), ("all_k", int), ("c_grid", float)]:
         setattr(a, field, sorted(set(cast(v) for v in getattr(a, field).split(","))))
         if not getattr(a, field) or min(getattr(a, field)) <= 0:
@@ -108,7 +145,7 @@ def configure(a):
                                            "rap/raw/prot.tab.gz" if a.biom == "prot" else "rap/met.tab.gz"))
     a.met_map = a.met_map or str(base/"common/met.lst")
     a.met_input = a.met_input or ("raw" if a.biom == "met" and a.input_source == "raw" else "named")
-    a.residualize = f"age,sex,{a.biom}.plate" if a.residualize is None else a.residualize
+    a.residualize = f"{a.biom}.plate" if a.residualize is None else a.residualize
     a.categorical = f"sex,center,{a.biom}.plate" if a.categorical is None else a.categorical
     a.transform = a.transform or ("log1p" if a.biom == "met" and a.input_source == "raw" and not a.demo else "none")
     if a.horizon <= 0 or a.panel_size < 3 or a.dimensions < 1 or a.folds < 2 or a.oof_repeats < 2:
@@ -122,6 +159,25 @@ def configure(a):
             raise ValueError(f"Invalid {field}")
     if any(v in a.run_name for v in ["/", "\\"]) or a.run_name in ["", ".", ".."]:
         raise ValueError("Use a simple nonempty --run-name")
+    a.experiments = [v.strip() for v in a.experiments.split(",") if v.strip()]
+    if "transformer" not in a.experiments or len(set(a.experiments)) != len(a.experiments) or not set(a.experiments) <= {"transformer","mlp","direct","no_pretrain","uniform","metric"}:
+        raise ValueError("--experiments requires transformer; other choices: mlp,direct,no_pretrain,uniform,metric; no duplicates")
+    a.temperatures = sorted(set(float(v) for v in a.temperatures.split(",")))
+    a.prior_grid = sorted(set(float(v) for v in a.prior_grid.split(",")))
+    if not a.temperatures or min(a.temperatures)<=0 or not a.prior_grid or min(a.prior_grid)<0:
+        raise ValueError("Invalid temperature/prior grid")
+    if a.width<8 or a.heads<1 or a.width % a.heads or a.tokens<2 or a.layers<1 or a.batch_size<2:
+        raise ValueError("Invalid Transformer dimensions; width must divide by heads")
+    if a.epochs<1 or a.pretrain_epochs<0 or a.patience<1 or a.neural_k<2 or not 0<=a.dropout<1:
+        raise ValueError("Invalid neural training settings")
+    if a.quality_neural_epochs<1 or a.quality_pretrain_epochs<0:
+        raise ValueError("Invalid neural OOF budget")
+    if a.learning_rate<=0 or a.weight_decay<0 or a.reconstruction_weight<0 or a.direct_weight<0 or a.train_prior<0 or a.gradient_clip<=0:
+        raise ValueError("Invalid loss/optimizer settings")
+    if a.attention_samples<0 or a.perturbation_samples<0 or a.bootstrap<0 or a.min_events<1 or not 0<=a.min_coverage<=1 or a.min_match_ess<1:
+        raise ValueError("Invalid evaluation settings")
+    if a.resume and a.replace:
+        raise ValueError("Choose --resume or --replace")
     return a
 
 
@@ -132,7 +188,12 @@ def main():
     for name in ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"]:
         os.environ[name] = str(a.cores)
     # Imports occur after thread limits have been set.
-    from common import log, run_lock, dump
+    from common import log, run_lock, dump, prepare_run_directory, VERSION
+    if a.check_device:
+        import torch, json
+        print(json.dumps({"torch":torch.__version__, "cuda_available":torch.cuda.is_available(),
+            "cuda_version":torch.version.cuda, "gpu":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}, indent=2))
+        return
     from pipeline import train, evaluate, project
     from threadpoolctl import threadpool_limits
     out = Path(a.run_dir) if a.run_dir else Path(a.analysis_root)/a.trait/a.biom/a.run_name
@@ -140,7 +201,7 @@ def main():
         if not a.run_dir or not a.output:
             raise ValueError("project requires --run-dir and --output")
         with threadpool_limits(a.cores):
-            project(out, a.phe_file, a.omics_file, a.output, a.r_bin, a.met_input)
+            project(out, a.phe_file, a.omics_file, a.output, a.r_bin, a.met_input, a.device)
         return
     if a.dry_run:
         import json
@@ -162,6 +223,8 @@ def main():
             raise RuntimeError("RDS needs pyreadr for lossless binary reading; install requirements.txt")
         if a.tree == "lightgbm" and not importlib.util.find_spec("lightgbm"):
             raise RuntimeError("LightGBM missing; install requirements.txt or explicitly choose --tree hist")
+        from neural import device_for
+        device_for(a.device)
         log("DONE", "preflight", "paths and required reader/tree dependencies available; data values not yet read")
         return
     if a.command == "evaluate":
@@ -174,15 +237,12 @@ def main():
         import importlib.util
         if not importlib.util.find_spec("lightgbm"):
             raise RuntimeError("LightGBM missing; install requirements.txt or explicitly choose --tree hist before training")
-    if out.exists() and any(out.iterdir()):
-        if not a.replace:
-            raise FileExistsError(f"Existing run: {out}. Use evaluate, a new run-name, or --replace")
-        if not (out/"manifest.json").is_file() or (out/".lock").exists():
-            raise ValueError("Refusing replacement without Panome manifest or while locked")
-        shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
     with run_lock(out), threadpool_limits(a.cores):
+        if not prepare_run_directory(out, a.resume, a.replace, a.train_only):
+            return
         train(a, out)
+        dump(out/"TRAIN_DONE.json", dict(version=VERSION))
         if not a.train_only:
             log("START", "test_evaluation")
             evaluate(out)

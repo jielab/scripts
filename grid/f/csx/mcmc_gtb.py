@@ -7,6 +7,7 @@ Markov Chain Monte Carlo (MCMC) sampler for cross-ethnic polygenic prediction wi
 
 
 import os
+import h5py
 import numpy as np
 from scipy import linalg 
 from numpy import random
@@ -37,10 +38,8 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
         het[pp] = np.sqrt(2.0*frq_dict[pp]*(1.0-frq_dict[pp]))
 
     n_grp = np.zeros((p_tot,1))
-    for jj in range(p_tot):
-        for pp in range(n_pop):
-            if jj in idx_dict[pp]:
-                n_grp[jj] += 1
+    for pp in range(n_pop):
+        n_grp[np.asarray(idx_dict[pp],dtype=int)] += 1
 
     # initialization
     beta = {}
@@ -56,10 +55,24 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
     else:
         phi_updt = False
 
-    if (write_pst == 'TRUE') and (meta == 'TRUE'):
-        beta_pst = {}
-        for pp in range(n_pop):
-            beta_pst[pp] = np.zeros((p[pp],n_pst))
+    # Save each population at the SAME retained iteration. Disk-backed datasets
+    # avoid keeping four SNP-by-draw matrices in RAM. META stays a mean-weight file.
+    draw_file = None
+    if write_pst == 'TRUE':
+        draw_path = os.path.join(out_dir, 'joint_posterior.h5')
+        draw_file = h5py.File(draw_path + '.tmp', 'w')
+        draw_file.attrs.update(schema='grid_csx_draws_v1', chromosome=chrom,
+                               seed=-1 if seed is None else seed, complete=False,
+                               effect_scale='standardized_phenotype_per_allele')
+        draw_file.create_dataset('iteration', data=np.arange(thin, n_iter+1, thin)[np.arange(thin,n_iter+1,thin)>n_burnin])
+        for pp, population in enumerate(pop):
+            group = draw_file.create_group(population)
+            ii = idx_dict[pp]
+            for name in ('SNP','A1','A2'):
+                group.create_dataset(name, data=np.asarray([snp_dict[name][j] for j in ii], dtype=h5py.string_dtype()))
+            group.create_dataset('reference_eaf', data=frq_dict[pp].ravel())
+            group.create_dataset('beta', shape=(p[pp],n_pst), dtype='f8',
+                                 chunks=(min(p[pp],4096),1), compression='gzip',compression_opts=1)
 
     # space allocation
     beta_est = {}
@@ -128,36 +141,31 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
             psi_est = psi_est + psi/n_pst
             phi_est = phi_est + phi/n_pst
 
-            if (write_pst == 'TRUE') and (meta == 'TRUE'):
-                for pp in range(n_pop):
-                    beta_pst[pp][:,[qq]] = beta[pp]
-                qq += 1
+            if draw_file is not None:
+                for pp, population in enumerate(pop):
+                    draw_file[population]['beta'][:,qq] = (beta[pp]/het[pp]).ravel()
+            qq += 1
 
     # convert standardized beta to per-allele beta
     for pp in range(n_pop):
         beta_est[pp] /= het[pp]
         beta_sq_est[pp] /= het[pp]**2
 
-    if (write_pst == 'TRUE') and (meta == 'TRUE'):
-        for pp in range(n_pop):
-            beta_pst[pp] /= het[pp]
+    if draw_file is not None:
+        if qq != n_pst: raise RuntimeError('Retained draw count mismatch')
+        draw_file.attrs['complete'] = True
+        draw_file.close()
+        os.replace(draw_path + '.tmp', draw_path)
 
     # meta
     if meta == 'TRUE':
         vv = np.zeros((p_tot,1))
         zz = np.zeros((p_tot,1))
         for pp in range(n_pop):
-            vv[idx_dict[pp]] += 1.0/(beta_sq_est[pp]-beta_est[pp]**2)
-            zz[idx_dict[pp]] += 1.0/(beta_sq_est[pp]-beta_est[pp]**2)*beta_est[pp]
+            variance = np.maximum(beta_sq_est[pp]-beta_est[pp]**2, np.finfo(float).tiny)
+            vv[idx_dict[pp]] += 1.0/variance
+            zz[idx_dict[pp]] += beta_est[pp]/variance
         mu = zz/vv
-
-        if write_pst == 'TRUE':
-            vv = np.zeros((p_tot,1))
-            zz = np.zeros((p_tot,n_pst))
-            for pp in range(n_pop):
-                vv[idx_dict[pp]] += 1.0/(beta_sq_est[pp]-beta_est[pp]**2)
-                zz[idx_dict[pp],:] += 1.0/(beta_sq_est[pp]-beta_est[pp]**2)*beta_pst[pp]
-            mu_pst = zz/vv    
 
     # write posterior effect sizes
     for pp in range(n_pop):
@@ -173,7 +181,7 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
 
         with open(eff_file, 'w') as ff:
             for snp, bp, a1, a2, beta in zip(snp_pp, bp_pp, a1_pp, a2_pp, beta_est[pp]):
-                ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta))
+                ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta[0]))
 
     if meta == 'TRUE':
         if phi_updt == True:
@@ -182,12 +190,8 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
             eff_file = out_dir + '/' + '%s_META_pst_eff_a%d_b%.1f_phi%1.0e_chr%d.txt' % (out_name, a, b, phi, chrom)
 
         with open(eff_file, 'w') as ff:
-            if write_pst == 'TRUE':
-                for snp, bp, a1, a2, beta in zip(snp_dict['SNP'], snp_dict['BP'], snp_dict['A1'], snp_dict['A2'], mu_pst):
-                    ff.write(('%d\t%s\t%d\t%s\t%s' + '\t%.6e'*n_pst + '\n') % (chrom, snp, bp, a1, a2, *beta))
-            else:
-                for snp, bp, a1, a2, beta in zip(snp_dict['SNP'], snp_dict['BP'], snp_dict['A1'], snp_dict['A2'], mu):
-                    ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta))
+            for snp, bp, a1, a2, beta in zip(snp_dict['SNP'], snp_dict['BP'], snp_dict['A1'], snp_dict['A2'], mu):
+                ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta[0]))
 
 
     # print estimated phi

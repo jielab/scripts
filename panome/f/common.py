@@ -4,10 +4,11 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import shutil
 import time
 import numpy as np
 
-VERSION = "4.0.0"
+VERSION = "5.1.0"
 
 def words(value):
     return [s.strip() for s in (value or "").split(",") if s.strip()]
@@ -84,3 +85,51 @@ def run_lock(root):
         yield
     finally:
         path.unlink(missing_ok=True)
+
+
+def run_complete(root, train_only=False):
+    """A frozen model alone is not a completed run: audits may still fail."""
+    root = Path(root)
+    required = ["manifest.json", "MODEL_FROZEN.json", "model_bundle.joblib"]
+    marker = "TRAIN_DONE.json" if train_only else "DONE.json"
+    if train_only and (root/"DONE.json").is_file():
+        return run_complete(root)
+    if not train_only:
+        required += ["REPORT.md", "test_metrics.csv"]
+    if any(not (root/name).is_file() or (root/name).stat().st_size == 0
+           for name in required + [marker]):
+        return False
+    try:
+        record = json.loads((root/marker).read_text())
+        return isinstance(record, dict) and bool(record.get("version"))
+    except (ValueError, OSError):
+        return False
+
+
+def prepare_run_directory(root, resume=False, replace=False, train_only=False):
+    """Called under run_lock; keep that lock held while clearing old outputs."""
+    root = Path(root)
+    entries = [p for p in root.iterdir() if p.name != ".lock"]
+    if not entries:
+        return True
+    manifest = root/"manifest.json"
+    if not manifest.is_file():
+        raise ValueError("Refusing to overwrite a nonempty directory without a Panome manifest")
+    try:
+        record = json.loads(manifest.read_text())
+    except (ValueError, OSError) as exc:
+        raise ValueError("Refusing to overwrite a directory with an unreadable Panome manifest") from exc
+    if not isinstance(record, dict) or not {"version", "config", "signature"} <= record.keys():
+        raise ValueError("Refusing to overwrite a directory without a valid Panome manifest")
+    if resume:
+        return True
+    if not replace and run_complete(root, train_only):
+        log("SKIP", "completed", str(root))
+        return False
+    log("RESTART", "replace" if replace else "incomplete_or_failed", str(root))
+    for path in entries:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    return True

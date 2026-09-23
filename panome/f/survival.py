@@ -64,35 +64,3 @@ def metrics(y, w, p):
                 LogLoss_IPCW=float(np.mean(w*loss(y, p))),
                 observed_IPCW=float(np.average(y, weights=w)))
 
-
-def bootstrap_contrasts(y, w, predictions, masks, groups, count, seed):
-    import pandas as pd
-    rng = np.random.default_rng(seed)
-    pairs = [(m, "elasticnet") for m in predictions if m != "elasticnet"]
-    pairs += [("panome", b) for b in ["all_reference", "random_panel", "diversity_panel", "copy1_topfit"]
-              if b in predictions]
-    pairs += [("panome_clinical", "clinical")]
-    rows = []
-    for subset, mask in masks.items():
-        idx = np.flatnonzero(mask)
-        if len(idx) < 30 or len(np.unique(y[idx][w[idx] > 0])) < 2:
-            continue
-        units = ([idx[groups[idx] == g] for g in np.unique(groups[idx])]
-                 if groups is not None else None)
-        point = {m: metrics(y[idx], w[idx], p[idx]) for m, p in predictions.items()}
-        draws = {(m, b, k): [] for m, b in pairs for k in ["AUC_IPCW", "Brier_IPCW"]}
-        for _ in range(count):
-            draw = (np.concatenate([units[j] for j in rng.integers(0, len(units), len(units))])
-                    if units is not None else rng.choice(idx, len(idx), replace=True))
-            scores = {m: metrics(y[draw], w[draw], p[draw]) for m, p in predictions.items()}
-            for key in draws:
-                m, b, k = key
-                delta = scores[m][k] - scores[b][k]
-                if np.isfinite(delta):
-                    draws[key].append(delta)
-        for (m, b, k), values in draws.items():
-            ci = np.quantile(values, [.025, .975]) if len(values) >= 20 else [np.nan]*2
-            rows.append(dict(subset=subset, model=m, reference=b, metric=k,
-                             delta=point[m][k]-point[b][k], lower=ci[0], upper=ci[1],
-                             replicates=len(values), uncertainty="conditional_on_frozen_pipeline"))
-    return pd.DataFrame(rows)

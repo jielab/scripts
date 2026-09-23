@@ -26,6 +26,9 @@ ui <- page_navbar(
       .gu-summary-subvalue{font-size:1.1rem;color:#52616d}
       .gu-summary-scope{background:#f3f6f8;border-radius:5px;padding:.55rem .7rem;color:#435563}
       .gu-summary-table{font-size:.76rem;font-variant-numeric:tabular-nums}
+      .gu-summary-table-panel{margin-top:1.2rem;min-width:0}
+      .gu-summary-table-scroll{overflow-x:auto}
+      .gu-summary-cell-scope{display:block;font-size:.7rem;color:#687883;font-weight:400}
       .gu-summary-table th,.gu-summary-table td{text-align:right;white-space:nowrap}
       .gu-summary-table th:first-child,.gu-summary-table td:first-child{text-align:left}
       .gu-summary-caption{font-size:.8rem;color:#687883;padding:.5rem .4rem}
@@ -92,8 +95,9 @@ ui <- page_navbar(
           div(class="gu-summary-layout",
             div(class="gu-summary-map-scroll",
               div(class="gu-summary-map",plotOutput("ibdmix_summary_map",height="620px")),
-              tags$p(class="gu-summary-caption","圆饼红色扇区为人群平均 Neanderthal 覆盖比例（0–100%）；旁注给出百分比数值。地点为采样地或祖籍的近似位置，南亚侨居人群按祖籍定位；引线仅用于避让标签。底图：Natural Earth。")),
-            div(class="gu-summary-text",uiOutput("ibdmix_summary_text")))))
+              tags$p(class="gu-summary-caption","圆饼红色扇区为人群平均 Altai Neanderthal 覆盖比例（0–100%）；旁注给出百分比数值。地点为采样地或祖籍的近似位置，南亚侨居人群按祖籍定位；引线仅用于避让标签。底图：Natural Earth。")),
+            div(class="gu-summary-text",uiOutput("ibdmix_summary_text"))),
+          div(class="gu-summary-table-panel",uiOutput("ibdmix_summary_table"))))
     )
   ),
   nav_panel("PhyML", value = "phyml",

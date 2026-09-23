@@ -17,7 +17,7 @@ ALIASES={
  "NEFF":["NEFF","N_EFF","N_EFFECTIVE","EFFECTIVE_N"],
  "N":["N","N_TOTAL","TOTAL_N","OBS_CT","N_SAMPLES"],
  "NCASE":["N_CASE","NCASE","NCASES","CASES","N_CASES"], "NCTRL":["N_CONTROL","N_CONTROLS","NCTRL","NCONTROLS","CONTROLS"],
- "EAF":["EAF","AF","POOLED_ALT_AF","EFFECT_ALLELE_FREQUENCY","A1FREQ","FREQ1","ALT_FREQ","MAF"]}
+ "EAF":["EAF","AF","POOLED_ALT_AF","EFFECT_ALLELE_FREQUENCY","A1FREQ","FREQ1","ALT_FREQ"]}
 def canon(s): return re.sub(r"[^A-Z0-9]+","_",str(s).upper()).strip("_")
 def choose(cols,key):
     d={canon(c):c for c in cols}

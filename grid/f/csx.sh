@@ -20,6 +20,9 @@ n,b,t,s=map(int,sys.argv[1:5]); phi=sys.argv[5]
 assert n>b>=0 and t>0 and n//t-b//t>=2 and s>=0, 'Need valid MCMC settings and at least two retained samples'
 assert phi=='auto' or (math.isfinite(float(phi)) and float(phi)>0), 'phi must be auto or positive'
 PY
+if [[ $GRID_POSTERIOR == TRUE ]]; then
+  ((GRID_MCMC_ITER / GRID_MCMC_THIN - GRID_MCMC_BURNIN / GRID_MCMC_THIN >= 100)) || _grid_die 'Posterior scoring requires at least 100 retained draws; increase iterations or reduce thinning'
+fi
 need "$GRID_CSX_SNPINFO"; need "$GRID_CSX_BIM_PREFIX.bim"
 # PRS-CSx chooses reference type by SNPINFO filename; explicitly stage only the selected one.
 case $(basename -- "$GRID_CSX_SNPINFO") in
@@ -60,6 +63,9 @@ for i in "${!POPS[@]}"; do ln -sfn "${ref_dirs[$i]}" "$ref/ldblk_${ref_type}_${P
 if [[ $GRID_STAGE != score ]]; then
   complete=TRUE
   for f in "${finals[@]}"; do [[ -s $f && -s $f.signature && $(cat "$f.signature") == "$sig" ]] || complete=FALSE; done
+  if [[ $GRID_POSTERIOR == TRUE ]]; then
+    for c in "${CHRS[@]}"; do [[ -s $run/raw/chr$c/joint_posterior.h5 ]] || complete=FALSE; done
+  fi
   if [[ $complete == TRUE && $GRID_REPLACE == FALSE ]]; then
     echo "SKIP $trait inference: matching permanent weights"
   else
@@ -96,12 +102,14 @@ PYMETA
         local valid=TRUE
         for p in "${POPS[@]}"; do [[ -s $raw/$p/$p.chr$c.pst_eff.txt ]] || valid=FALSE; done
         compgen -G "$raw/*META*pst_eff*.txt" >/dev/null || valid=FALSE
+        [[ $GRID_POSTERIOR != TRUE || -s $raw/joint_posterior.h5 ]] || valid=FALSE
         [[ $valid != TRUE ]] || { echo "SKIP $trait chr$c: completed posterior"; return; }
       fi
       rm -f -- "$marker"
       local files=() cmd=()
       for p in "${POPS[@]}"; do files+=("$run/sumstats/$p.chr$c.tsv"); done
       cmd=(env OMP_NUM_THREADS="$GRID_THREADS" OPENBLAS_NUM_THREADS="$GRID_THREADS" MKL_NUM_THREADS="$GRID_THREADS" python3 "$prscx" --ref_dir="$ref" --bim_prefix="$GRID_CSX_BIM_PREFIX" --sst_file="$(join_comma "${files[@]}")" --n_gwas="$(join_comma "${ng[@]}")" --pop="$(join_comma "${POPS[@]}")" --chrom="$c" --n_iter="$GRID_MCMC_ITER" --n_burnin="$GRID_MCMC_BURNIN" --thin="$GRID_MCMC_THIN" --seed="$((GRID_SEED+c))" --out_dir="$raw" --out_name="$trait" --meta=TRUE)
+      cmd+=(--write_pst="$GRID_POSTERIOR")
       [[ $GRID_PHI == auto ]] || cmd+=(--phi="$GRID_PHI")
       echo "RUN $trait chr$c: joint PRS-CSx"
       grid_run_logged "$work/log/$trait/csx.chr$c.log" "${cmd[@]}" || return $?
@@ -131,3 +139,12 @@ PYMETA
 fi
 if [[ $GRID_STAGE == weights ]]; then echo "DONE $trait: permanent SNP weights saved"; return 0; fi
 source "$ROOT/f/csx_score.sh"
+if [[ $GRID_POSTERIOR == TRUE ]]; then
+  for c in "${CHRS[@]}"; do need "$run/raw/chr$c/joint_posterior.h5"; done
+  posterior_args=(--raw-dir "$run/raw" --sumstats-dir "$run/sumstats" --target-dir "$GRID_TARGET_DIR"
+    --output "$score_home/csx.posterior.tsv.gz" --chrs "${CHRS[*]}" --threads "$GRID_THREADS"
+    --memory "$GRID_POSTERIOR_MEMORY" --keep "$GRID_KEEP" --remove "$GRID_REMOVE" --replace "$GRID_REPLACE")
+  [[ -z $GRID_POSTERIOR_FREQ_DIR ]] || posterior_args+=(--frequency-dir "$GRID_POSTERIOR_FREQ_DIR")
+  grid_run_logged "$work/log/$trait/posterior.log" python3 "$ROOT/f/csx_posterior.py" "${posterior_args[@]}"
+  echo "DONE $trait: individual posterior covariance in $score_home/csx.posterior.tsv.gz"
+fi
