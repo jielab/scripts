@@ -716,11 +716,14 @@ if(nrow(comparison)){
 	labs(title = paste(Y, '|', disco_method, 'versus PRS-CSx'), subtitle = 'Positive differences favour DiscoDivas; negative differences favour PRS-CSx.',
 			 x = 'Target ancestry', y = paste0('Difference in ', switch(type, ct = 'prediction R²', dt = 'AUC', t2e = 'C-index')))
 }else p_paired <- ggplot() + theme_void() + labs(title = 'DiscoDivas versus PRS-CSx', subtitle = 'Comparison unavailable or intervals disabled')
+
+
+# 🚩 Named PNG figures
 figures <- list(comparison = p1, combined_scores = p2, distance_performance = p_distance, paired_improvement = p_paired, distance_bins = p_bins)
-if(capabilities('cairo'))grDevices::cairo_pdf(file.path(out, 'plots.pdf'), width = 14, height = 11, onefile = TRUE) else pdf(file.path(out, 'plots.pdf'), width = 14, height = 11, useDingbats = FALSE)
-for(p in figures)print(p)
-invisible(dev.off())
-for(nm in names(figures))ggsave(file.path(out, paste0(nm, '.png')), figures[[nm]], width = 14, height = if(nm == 'distance_performance')11 else 6.8, dpi = 170, bg = 'white')
+for(nm in names(figures)){
+	ggsave(file.path(out, paste0(nm, '.png')), figures[[nm]], width = 14,
+		height = if(nm == 'distance_performance')11 else 6.8, dpi = 170, bg = 'white')
+}
 
 methods_text <- c(paste0('# ', Y, ' PRS evaluation'), '', paste('Outcome:', outcome_definition), paste('Covariates:', paste(covars, collapse = ', ')),
  paste('Evaluation:', ci_text), '',
@@ -775,7 +778,7 @@ writeLines(paste0('<!doctype html><html lang="en"><meta charset="utf-8"><meta na
  '<style>body{font:16px system-ui;max-width:1440px;margin:32px auto;padding:0 24px;color:#263446;line-height:1.55}img{width:100%;height:auto;margin:18px 0}.table-wrap{overflow-x:auto}table{border-collapse:collapse;font-size:13px;width:100%}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:right;white-space:nowrap}th{background:#f2f4f7}td:first-child,th:first-child{text-align:left}.metric{background:#f2f6fa;padding:16px 22px;border-radius:8px}pre{white-space:pre-wrap;font:14px system-ui}a{color:#245f9b}details{margin:18px 0}</style>',
  '<h1>', escape(Y), ' | PRS prediction comparison</h1><p><strong>Outcome:</strong> ', escape(outcome_definition), ' · <strong>Covariates:</strong> ', escape(paste(covars, collapse = ', ')), ' · ', nfold, ' held-out folds.</p>',
  '<div class="metric">', metric_explanation, '<p>', escape(geometry$description), '</p></div>',
- '<p><a href="plots.pdf">Figures PDF</a> · <a href="performance.tsv">Performance</a> · <a href="distance_performance.tsv">Empirical bins</a> · <a href="methods.md">Methods</a>',
+ '<p><a href="performance.tsv">Performance</a> · <a href="distance_performance.tsv">Empirical bins</a> · <a href="methods.md">Methods</a>',
  if(nrow(individual))' · <a href="individual_posterior.tsv.gz">Individual posterior estimates</a>' else '', '</p>',
  '<h2>PRS-CSx overview</h2>', html_table(overview),
  paste0('<img src="', names(figures), '.png" alt="', names(figures), '">', collapse = ''),

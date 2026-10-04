@@ -9,6 +9,7 @@
 - 只保留一个最终版本。不要保留旧代码、兼容别名、转发文件、重复实现或永久备份。确有整理需要时，暂存文件放 `/tmp`。
 - 删除函数前检查整个脚本目录的调用关系，包括 shell 调用、动态加载、配置和命令入口；确认没有用途后再删除。改名或合并时同步修改调用方、路径和说明。
 - github_copy.sh scan代码一定要排除含有 UKB ID的数据，UKB ID是7位数，比如 4278161。
+- `github_copy.sh scan` 和 `sync` 均排除 `.log`、`.done`（含 gzip 压缩形式）以及没有归属名称的 `plots.pdf`、`Rplots.pdf`。旧清单中的这些文件也不能同步；分析源目录内用于复用的完成标记不因同步而删除。
 
 ## 目录、归属和合并
 
@@ -23,6 +24,7 @@
 - 汇总表按模块或方法合并为一个或尽量少的 `.xlsx`，不同表放在不同 worksheet。不要再同时保留同内容的多份 CSV、XLSX 和汇总 RDS。
 - 例如 C2 的常规结果使用 `c2.tables.xlsx`，Dandelion 的多张结果表使用 `c2.dandelion.xlsx`。包含多个汇总表的 `tables.rds` 应整合为工作簿。
 - 图片可保留多个 `.png`；同一主题尽量用多个 panel 组织。已有 PNG 时不再生成同内容 PDF。只用于拼图的中间 panel 放 `/tmp`，正式目录保留合成图。
+- 图片文件名应说明归属和内容，不生成或保留通用名称的 `plots.pdf`、`Rplots.pdf`；R 绘图应显式指定输出文件，避免默认图形设备产生这些文件。
 - 带 UKB 等个体 ID 的数据保存为 `.rds`，不能混入汇总工作簿或公开查看界面。文件名按数据内容确定，如 `test_individuals.rds`、`individual_explanations.rds`、`review_split.rds`，不要统一命名为 `individual.rds`；嵌套个体解释也不用 JSONL 留在正式目录。
 - 可复用的模型或分阶段分析对象也可以保留 RDS。文件名简短、固定、说明用途，例如 `c2.dandelion.rds`、`c2.instruments.rds`、`c2.mr.rds`，不把日期、模式和版本串堆进文件名。
 - 为减少文件数量，可以迁移现有结果，并同步修改读写路径。迁移后验证数据完整、数值不变、下游可读取，再删除被替代的文件。

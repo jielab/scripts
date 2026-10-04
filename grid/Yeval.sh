@@ -171,7 +171,7 @@ fi
 # Remove only known obsolete Yeval outputs, after a successful full report.
 # Keep the lock inode stable: unlinking it could allow concurrent evaluations.
 if [[ $check == FALSE ]]; then
-	obsolete=(command.sh comparison.pdf combined_scores.pdf paired_improvement.pdf
+	obsolete=(command.sh plots.pdf Rplots.pdf comparison.pdf combined_scores.pdf paired_improvement.pdf
 		genetic_landscape.pdf genetic_landscape.png distance_performance.pdf
 		folds.tsv.gz genetic_distance.tsv.gz manifest.tsv
 		methods.tsv paired_comparison.tsv prevalence.tsv skipped.tsv
