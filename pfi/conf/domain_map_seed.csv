@@ -1,0 +1,6 @@
+pattern,domain
+clinical trial|randomized|double blind|phase 2|phase 3,clinical_science
+epidemiology|cohort|case-control|population|public health,public_health
+molecular|cell|protein|genome|transcriptome|animal model|mouse,basic_biomedical
+machine learning|algorithm|software|database|bioinformatics|pipeline,methods_data_software
+health service|quality improvement|cost-effectiveness|implementation,health_services

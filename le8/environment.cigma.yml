@@ -1,0 +1,14 @@
+# Full upstream CIGMA environment for new installations. The prepared-matrix
+# adapter has also been numerically tested in the local fit-only runtime.
+name: le8-cigma
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - r-base
+  - r-optparse
+  - r-numderiv
+  - r-matrix
+  - pip:
+      - cigma==1.1.0

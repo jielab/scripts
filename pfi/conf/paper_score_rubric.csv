@@ -1,0 +1,10 @@
+column,scale,weight,direction,definition
+new_results,0-100,0.18,positive,New empirical finding or important confirmation/refutation
+new_methods,0-100,0.16,positive,New method design assay statistical framework or analytical approach
+new_data,0-100,0.14,positive,New dataset cohort trial resource or deep phenotyping
+new_software,0-100,0.12,positive,Reusable software algorithm package database or workflow
+clinical_public_health_value,0-100,0.16,positive,Clinical translational public-health or policy relevance
+evidence_strength,0-100,0.14,positive,Design and analysis support for the claims
+reproducibility,0-100,0.10,positive,Data/code/protocol transparency validation preregistration
+claim_evidence_gap,0-100,-0.10,negative,Penalty for overclaiming relative to evidence
+paper_score,0-100,NA,positive,Overall paper-level score after reading blinded content
