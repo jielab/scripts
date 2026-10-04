@@ -10,6 +10,7 @@
 - 删除函数前检查整个脚本目录的调用关系，包括 shell 调用、动态加载、配置和命令入口；确认没有用途后再删除。改名或合并时同步修改调用方、路径和说明。
 - github_copy.sh scan代码一定要排除含有 UKB ID的数据，UKB ID是7位数，比如 4278161。
 - `github_copy.sh scan` 和 `sync` 均排除 `.log`、`.done`（含 gzip 压缩形式）以及没有归属名称的 `plots.pdf`、`Rplots.pdf`。旧清单中的这些文件也不能同步；分析源目录内用于复用的完成标记不因同步而删除。
+- `github_copy.sh scan` 的单文件大小上限为 50 MB（50,000,000 字节，等于上限可纳入）；`sync` 复核时沿用相同上限。仍须通过个体 ID 等内容检查。
 
 ## 目录、归属和合并
 
@@ -21,14 +22,23 @@
 
 - 正式输出只保留重要的分析结果、必要的质量控制结果，以及确实可复用的数据或模型对象。不要输出零散的运行参数、旧代码版本记录、输入路径清单等管理文件。
 - 不生成或保留 `analysis_options.rds`、`revision_manifest.rds`、`analysis_manifest.rds`、`run_options.json`、`fit_options.json`，也不要换成同用途的其他格式文件。程序需要的最少缓存一致性检查信息放在相应结果对象内部。
-- 汇总表按模块或方法合并为一个或尽量少的 `.xlsx`，不同表放在不同 worksheet。不要再同时保留同内容的多份 CSV、XLSX 和汇总 RDS。
-- 例如 C2 的常规结果使用 `c2.tables.xlsx`，Dandelion 的多张结果表使用 `c2.dandelion.xlsx`。包含多个汇总表的 `tables.rds` 应整合为工作簿。
+- 每张正式 `.png` 配一个同目录、同名的 `.xlsx`，例如 `c3.Fig2.regional_top_loci.png` 与 `c3.Fig2.regional_top_loci.xlsx`。工作簿只放该图对应的分析结果；不同 panel 的结果可放不同 worksheet。不要把整个模块的所有表塞进一个巨型工作簿。
+- 同一主题分页时，各图的工作簿应对应各自展示的数据范围。没有对应图片、但确有独立用途的分析结果，按方法或主题另存少量工作簿；不要为了减少文件数而制造难以浏览的大量 worksheet。
+- 工作簿按分析内容组织，不按“每 N 张表”机械拆分，也不使用含义不明的 `.2.xlsx`、`.3.xlsx` 分卷。先把结果归到对应图片或分析主题，再合并同结构的表，用结果类型列区分；确需拆分时使用具体主题名称，例如 `c1.pgs.comparison.xlsx`、`c1.pgs.decomposition.xlsx`、`c1.pgs.temporal.xlsx`。时间窗口、landmark 及各自对比放在一起，富集结果不混入关联分析工作簿。图片重新编号后，结果表按主题继续归属该图。
+- Worksheet 使用简短、直观的结果名称。删除空表、无结果的占位表、重复表、过期的跨模块注释，以及运行参数、输入路径、版本和文件清单等管理性 worksheet。例如 C3 不保留无用的 `CIGMA_annotation`。必要的分析质量控制结果可以保留。
+- 不在 XLSX 内重复嵌入旧 XLSX，也不同时保留同内容的 CSV、XLSX、汇总 RDS。区域／SNP 等完整大数据若已保存在可复用的分析对象中，图表工作簿只导出该图涉及的数据，不复制整个底层数据集。
+- XLSX 必须能被 Microsoft Excel 正常打开，不能只验证 R/Python 能读取。ZIP 包不写入独立目录项；内部精确数据导出使用明确的内容类型，不能继承 `.bin` 的打印设置类型。修改打包逻辑后，用 Excel 正常打开模式验证代表性工作簿，并核对单元格内容与内部数据未改变。
 - 图片可保留多个 `.png`；同一主题尽量用多个 panel 组织。已有 PNG 时不再生成同内容 PDF。只用于拼图的中间 panel 放 `/tmp`，正式目录保留合成图。
 - 图片文件名应说明归属和内容，不生成或保留通用名称的 `plots.pdf`、`Rplots.pdf`；R 绘图应显式指定输出文件，避免默认图形设备产生这些文件。
+- 图号只出现一次，采用“模块＋图号＋主题”，例如 `c3.Fig5.pgs_coloc_triangulation.png`；不生成 `c3.Fig1.c3.Fig7...` 这样的重复前缀。同一主题下内容完全相同的图片只保留一份，改名时同步更新工作簿、网页和 Shiny 索引。
 - 带 UKB 等个体 ID 的数据保存为 `.rds`，不能混入汇总工作簿或公开查看界面。文件名按数据内容确定，如 `test_individuals.rds`、`individual_explanations.rds`、`review_split.rds`，不要统一命名为 `individual.rds`；嵌套个体解释也不用 JSONL 留在正式目录。
 - 可复用的模型或分阶段分析对象也可以保留 RDS。文件名简短、固定、说明用途，例如 `c2.dandelion.rds`、`c2.instruments.rds`、`c2.mr.rds`，不把日期、模式和版本串堆进文件名。
+- GRID 的个体 PRS-CSx posterior 使用 `1csx.posterior.rds`，不以 `individual_posterior.tsv.gz` 留在正式结果目录。迁移个体文件时更新所有生产方、读取方和报告链接，并核对行数、ID、数值和类型。
+- GRID 的评分分别使用 `1csx.scores.rds`、`2disco.scores.rds`、`Yeval.cojo.rds`；Yeval 图表使用 `Yeval.<主题>.png/.xlsx`。已有 MCMC 后验 HDF5 和 SNP 模型权重保留原生格式供复用，评分交换文件及缓存进入 `/tmp`。
+- GU 的个体／单倍型及原生拟合结果按方法、数据集和位点／染色体保存为 `phyml.haplotypes.rds`、`ibdmix.tracts.rds`、`trace.segments.rds` 或 `as3.tracts.rds`；综合个体结果保存为 `final/gu.results.rds`。SQLite 仅作为 `/tmp` 中的查看缓存；`gu.validation.rds` 保留需供 Shiny 读取的个体验证数据。正式结果不重复复制到 `final/normalize`。
+- 旧图片若未保存某项作图统计量，应明确说明缺失，不能把其他汇总统计量当作原图数据。是否重新拟合须单独获得授权；允许重算时应同步更新 PNG 和 XLSX。
 - 为减少文件数量，可以迁移现有结果，并同步修改读写路径。迁移后验证数据完整、数值不变、下游可读取，再删除被替代的文件。
-- LE8 的综合结果直接放在 `final/`，不另建 `overview/`，不生成结果目录的 README。C4 固定预算验证并入 `c4_connect/`，共用工作簿；验证对象使用 `c4.validation.rds`，避免覆盖连接分析的 `c4.res.rds`。
+- LE8 的综合结果直接放在 `final/`，不另建 `overview/`，不生成结果目录的 README。C4 固定预算验证并入 `c4_connect/`，按对应图片分配工作簿；验证对象使用 `c4.validation.rds`，避免覆盖连接分析的 `c4.res.rds`。
 
 ## 临时文件与复用
 

@@ -24,7 +24,7 @@ DiscoDivas-tuned. Saved DiscoDivas-untuned and fixed-meta are supplements.
 Tuning is performed inside each outer training fold; no phi-grid selection.
 
 Inputs:
-  --score-dir DIR            /mnt/d/data/ukb/pgs; trait/csx.pgs.gz
+  --score-dir DIR            /mnt/d/data/ukb/pgs; trait/1csx.scores.rds
   --pgs-file FILE            Explicit CSx table; --pt-file / --disco-file also supported.
   --pheno-file FILE          /mnt/d/data/ukb/phe/Rdata/all.rds (RDS or TSV/gzip)
   --ancestry-file FILE       /mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
@@ -44,7 +44,7 @@ Evaluation:
   --disco-tune TRUE|FALSE    TRUE; FALSE evaluates only the saved untuned Disco score.
   --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2disco.sh).
   --min-anchor N            100 training people per ancestry and fold
-  --posterior-file FILE      Default <score-dir>/<trait>/csx.posterior.tsv.gz
+  --posterior-file FILE      Default <score-dir>/<trait>/1csx.posterior.rds
   --posterior-mode required|off  required; off explicitly disables individual posterior analysis.
   --genetic-variance-file FILE   Optional trait,target,scale,h2/genetic_variance,source table.
   --individual-metric reliability|sd|auto  sd (default for all outcome types).
@@ -64,7 +64,7 @@ Evaluation:
   --folds N / --seed N      5 / 20260904
   --bootstrap N             200; 0 disables intervals for a smoke run
   --min-n N                 100 per target/bin
-  --write-predictions TRUE|FALSE  FALSE; TRUE writes one compressed OOF table
+  --write-predictions TRUE|FALSE  FALSE; TRUE writes Yeval.predictions.rds
   --prevalence SPEC          cohort / K / EUR=...,AFR=...; descriptive context only
   --out-root DIR            /mnt/d/analysis/grid/Yeval
   --allow-missing-scores     Explicit partial report
@@ -77,8 +77,9 @@ COJO scoring if --pt-file is absent:
 
 Outputs stay in <out-root>/<trait>/; changing outcome type overwrites this report.
 The four-panel distance figure pairs categorical ancestry with continuous distance.
-distance_performance.tsv contains the plotted bin estimates and sample/event counts.
-A completed run has SUCCESS. Failed runs do not replace the previous report.
+Yeval.distance_bins.xlsx contains the plotted bin estimates and sample/event counts.
+Each PNG has a same-name XLSX. Participant estimates use 1csx.posterior.rds.
+Logs, locks and completion markers stay under /tmp/grid/Yeval.
 Set GRID_RSCRIPT to choose an R executable; the activated grid environment is preferred.
 HELP
 }
@@ -128,7 +129,10 @@ done
 }
 out="$outroot/$trait"
 mkdir -p "$out"
-exec {lock}>"$out/run.lock"
+cache="/tmp/grid/Yeval/$(printf '%s' "$out" | sha256sum | cut -c1-16)"
+mkdir -p "$cache"
+log="$cache/eval.log"
+exec {lock}>"$cache/run.lock"
 flock -n "$lock" || {
 	echo "Evaluation already running: $out" >&2
 	exit 1
@@ -136,45 +140,54 @@ flock -n "$lock" || {
 source "$ROOT/f/0.common.sh"
 grid_activate_environment
 
-grid_select_r data.table,ggplot2,survival,pROC,patchwork
+grid_select_r data.table,ggplot2,survival,pROC,patchwork,openxlsx,jsonlite,digest,zip
 r=("${GRID_R[@]}")
 {
 	printf 'Command: '
 	printf '%q ' "$ROOT/Yeval.sh" "${args[@]}"
 	printf '\n'
-} >"$out/eval.log"
+} >"$log"
 echo "Evaluation output: $out"
-[[ $check == TRUE ]] || rm -f -- "$out/SUCCESS"
+echo "Evaluation log: $log"
+[[ $check == TRUE ]] || rm -f -- "$cache/SUCCESS"
 if [[ $check == FALSE && -z $pt_file ]]; then
 	source "$ROOT/f/0.common.sh"
 	grid_activate_environment
 	python3 "$ROOT/f/Yeval.py" --trait "$trait" --dir-gwas "$gwas_dir" --dir-gen "$gen_dir" \
-		--output "$score_dir/$trait/pt.pgs.gz" --effect "$pt_effect" \
-		--threads "$threads" --remove "$remove" 2>&1 | tee -a "$out/eval.log"
+		--output "$score_dir/$trait/Yeval.cojo.rds" --effect "$pt_effect" \
+		--threads "$threads" --remove "$remove" 2>&1 | tee -a "$log"
 fi
 # Rscript reads its source incrementally. Snapshot the consolidated R program so editing the
 # workspace while a long evaluation runs cannot change the executing program.
 runtime=$(mktemp -d "${TMPDIR:-/tmp}/yeval-runtime.XXXXXX")
 trap 'rm -rf -- "$runtime"' EXIT
 cp "$ROOT/f/Yeval.R" "$runtime/"
+cp "$ROOT/../0f/results.R" "$runtime/results.R"
+export GRID_RESULTS_R="$runtime/results.R"
 mkdir -p "$runtime/report"
-"${r[@]}" "$runtime/Yeval.R" "${args[@]}" --run-dir "$runtime/report" 2>&1 | tee -a "$out/eval.log"
+"${r[@]}" "$runtime/Yeval.R" "${args[@]}" --run-dir "$runtime/report" 2>&1 | tee -a "$log"
 if [[ $check == FALSE ]]; then
 	for file in "$runtime/report"/*; do
-		cp -- "$file" "$out/$(basename -- "$file").tmp"
-		mv -f -- "$out/$(basename -- "$file").tmp" "$out/$(basename -- "$file")"
+		cp -p -- "$file" "$out/$(basename -- "$file")"
+		cmp -s -- "$file" "$out/$(basename -- "$file")"
 	done
-	[[ -f $runtime/report/predictions.tsv.gz ]] || rm -f -- "$out/predictions.tsv.gz"
-	[[ -f $runtime/report/individual_posterior.tsv.gz ]] || rm -f -- "$out/individual_posterior.tsv.gz"
-	date -Is >"$out/SUCCESS"
+	[[ -f $runtime/report/Yeval.predictions.rds ]] || rm -f -- "$out/Yeval.predictions.rds"
+	[[ -f $runtime/report/1csx.posterior.rds ]] || rm -f -- "$out/1csx.posterior.rds"
+	date -Is >"$cache/SUCCESS"
 fi
 # Remove only known obsolete Yeval outputs, after a successful full report.
-# Keep the lock inode stable: unlinking it could allow concurrent evaluations.
+# The active lock inode stays in /tmp and is never removed here.
 if [[ $check == FALSE ]]; then
 	obsolete=(command.sh plots.pdf Rplots.pdf comparison.pdf combined_scores.pdf paired_improvement.pdf
+		comparison.png combined_scores.png distance_performance.png paired_improvement.png distance_bins.png
+		performance.tsv cohort.tsv fold_coefficients.tsv distance_centers.tsv distance_performance.tsv
+		individual_posterior.tsv.gz predictions.tsv.gz SUCCESS eval.log methods.md
 		genetic_landscape.pdf genetic_landscape.png distance_performance.pdf
 		folds.tsv.gz genetic_distance.tsv.gz manifest.tsv
 		methods.tsv paired_comparison.tsv prevalence.tsv skipped.tsv
 		pt.commands.jsonl pt.log pt.matches.tsv pt.plink.log pt.variants.tsv)
 	for name in "${obsolete[@]}"; do rm -f -- "$out/$name"; done
+	for name in paired_improvement distance_bins; do
+		[[ -f "$runtime/report/Yeval.$name.png" ]] || rm -f -- "$out/Yeval.$name.png" "$out/Yeval.$name.xlsx"
+	done
 fi

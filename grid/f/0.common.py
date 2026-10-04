@@ -6,6 +6,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
+sys.dont_write_bytecode = True
+
 
 def load_module(filename):
 	"""Load a neighbouring workflow module whose filename contains a dot/digit."""
@@ -20,6 +22,22 @@ def load_module(filename):
 			sys.modules.pop(key, None)
 			raise
 	return sys.modules[key]
+
+
+# 🚩 Shared result storage and temporary workspaces
+_result_spec = spec_from_file_location("shared_results", Path(__file__).resolve().parents[2] / "0f/results.py")
+_result_io = module_from_spec(_result_spec)
+_result_spec.loader.exec_module(_result_io)
+read_result_table = _result_io.read_table
+write_rds = _result_io.write_rds
+rds_metadata = _result_io.rds_metadata
+write_result_workbook = _result_io.write_workbook
+
+
+def cache_directory(path):
+	path = Path(path).resolve()
+	key = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+	return Path("/tmp/grid-cache") / key / path.name
 
 
 # 🚩 prepare-sumstats: prepare_sumstats
@@ -331,10 +349,12 @@ def update_csx_table(d, dest, remove=""):
 	d = d.rename(columns={"IID": "eid"}).copy()
 	dest = Path(dest)
 	dest.parent.mkdir(parents=True, exist_ok=True)
-	with Path(str(dest) + ".lock").open("a") as lock:
+	lock_path = cache_directory(dest) / "write.lock"
+	lock_path.parent.mkdir(parents=True, exist_ok=True)
+	with lock_path.open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		if dest.exists():
-			old = pd.read_csv(dest, sep="\t", dtype={"eid": str, "IID": str}).rename(columns={"IID": "eid"})
+			old = read_result_table(dest, dtype={"eid": str, "IID": str}).rename(columns={"IID": "eid"})
 			old = filter_samples(old, "eid", remove)
 			if old.eid.isna().any() or old.eid.duplicated().any():
 				raise ValueError("Invalid existing CSx IDs")
@@ -348,14 +368,12 @@ def update_csx_table(d, dest, remove=""):
 			raise ValueError("Empty/missing/duplicate CSx IDs")
 		if not np.isfinite(d.drop(columns="eid").to_numpy(float)).all():
 			raise ValueError("Nonfinite CSx scores")
-		tmp = dest.with_name(dest.name + f".tmp.{os.getpid()}")
-		d.to_csv(tmp, sep="\t", index=False, compression="gzip")
-		tmp.replace(dest)
+		write_rds(d, dest)
 	return d
 
 
 def publish_table(src, dest, method, remove):
-	d = pd.read_csv(src, sep="\t", dtype={"eid": str, "IID": str})
+	d = read_result_table(src, dtype={"eid": str, "IID": str})
 	idcol = "eid" if "eid" in d else "IID"
 	before = len(d)
 	d = filter_samples(d, idcol, remove)
@@ -373,9 +391,7 @@ def publish_table(src, dest, method, remove):
 		raise ValueError("Nonfinite scores")
 	dest = Path(dest)
 	dest.parent.mkdir(parents=True, exist_ok=True)
-	tmp = dest.with_name(dest.name + ".tmp")
-	d.to_csv(tmp, sep="\t", index=False, compression="gzip")
-	tmp.replace(dest)
+	write_rds(d, dest)
 	print(f"{method}: retained={len(d)}; excluded={before - len(d)}; output={dest}")
 
 
@@ -499,11 +515,11 @@ def disco_inputs(pca, centers, score_dir, outdir, npc, remove="/mnt/d/files/ukb.
 	if list(med.iloc[:, 0]) != pops or not np.isfinite(med[pc].to_numpy()).all():
 		raise ValueError("Centers must have finite PCs in AFR,EAS,EUR,SAS order")
 	scores = []
-	merged = Path(score_dir) / "csx.pgs.gz"
-	combined = pd.read_csv(merged, sep="\t", dtype={"eid": str}) if merged.is_file() else None
+	merged = Path(score_dir) / "1csx.scores.rds"
+	combined = read_result_table(merged, dtype={"eid": str})
 	for pop in pops:
-		p = Path(score_dir) / f"csx.{pop}.tsv.gz"
-		source = combined if combined is not None else pd.read_csv(p, sep="\t", dtype={"eid": str, "IID": str})
+		p = merged
+		source = combined
 		z = source.rename(columns={"eid": "IID", f"CSX_{pop}": "PRS", f"csx.{pop}": "PRS"})[["IID", "PRS"]]
 		if z.IID.isna().any() or z.IID.duplicated().any() or not np.isfinite(z.PRS).all():
 			raise ValueError(f"Invalid scores: {p}")
@@ -953,7 +969,14 @@ def merge_scores_cli():
 	merge_scores_main()
 
 
+def cache_path_cli():
+	if len(sys.argv) != 2:
+		raise SystemExit("Usage: 0.common.py cache-path PATH")
+	print(cache_directory(sys.argv[1]))
+
+
 COMMANDS = {
+	"cache-path": cache_path_cli,
 	"prepare-sumstats": prepare_sumstats_cli,
 	"publish": score_output_cli,
 	"io": pipeline_io_cli,
@@ -962,6 +985,8 @@ COMMANDS = {
 	"combine-scores": combine_scores_cli,
 	"merge-scores": merge_scores_cli,
 }
+
+
 
 
 def main():

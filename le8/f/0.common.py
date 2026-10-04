@@ -213,6 +213,12 @@ def aggregate_allowed(path, root):
 		return False
 	if PRIVATE_NAMES.search(path.name):
 		return False
+	if re.search(
+		r"(?:manifest|provenance|output_index|omission_audit|genetic_score_weights)",
+		path.name,
+		re.I,
+	):
+		return False
 	if not re.search(r"\.(csv|tsv)(\.gz)?$", path.name, re.I):
 		return False
 	return bool(

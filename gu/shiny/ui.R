@@ -111,7 +111,7 @@ ui <- page_navbar(
 				selectInput("phyml_locus", "位点", choices = character(0), width = "280px"),
 				selectInput("phyml_tree_choice", "谱系 / 系统树", choices = character(0), width = "360px"),
 				selectInput("tree_display_min_copies", "显示单倍型", choices = c("拷贝数 > 10" = "11", "拷贝数 ≥ 2" = "2"), selected = "11", width = "180px"),
-				downloadButton("download_panel_b_pdf", "下载树图 PDF")),
+				downloadButton("download_panel_b_png", "下载树图 PNG")),
 			plotOutput("phyml_tree", height = "800px")
 		),
 		gu_phyml_report_ui(),

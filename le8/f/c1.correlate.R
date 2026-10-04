@@ -839,6 +839,7 @@ pgs_save_panels <- function(pp, rd, stem, tables, title, caption = "") {
 	keys[missing] <- paste0("panel_", which(missing)) ; names(pp) <- keys
 	pp <- Filter(Negate(is.null), pp) ; if (!length(pp)) return(invisible(NULL))
 	dir.create(rd, recursive = TRUE, showWarnings = FALSE) ; manifest <- list()
+	group <- le8_figure_rule(paste0(stem, '.png'))$group
 	for (start in seq(1, length(pp), by = 6L)) {
 		page <- pp[start : min(length(pp), start + 5L)] ; name <- if (length(pp) <= 6) stem else paste0(stem, ".page", ceiling(start / 6))
 		p <- patchwork::wrap_plots(page, ncol = 2) + patchwork::plot_annotation(
@@ -847,13 +848,22 @@ pgs_save_panels <- function(pp, rd, stem, tables, title, caption = "") {
 		)
 		height <- ceiling(length(page) / 2) * 4.7 + 1
 		ggplot2::ggsave(file.path(rd, paste0(name, ".png")), p, width = 17, height = height, dpi = as.integer(Sys.getenv("LE8_FINAL_DPI", "300")), bg = "white", limitsize = FALSE)
+		le8_table_plot_exports(page, rd, name)
 		provenance <- data.frame(panel = LETTERS[seq_along(page)], key = names(page), title = vapply(page, function(p) paste(as.character(p$labels$title), collapse = " "), character(1)))
 		pgs_focus_export(c(list(panels = provenance, caption = data.frame(caption = caption)), tables), rd, name)
-		manifest[[length(manifest) + 1]] <- data.frame(file = paste0(name, ".png"), group = stem, panels = length(page), source = "PGS focus aggregate results")
+		manifest[[length(manifest) + 1]] <- data.frame(file = paste0(name, ".png"), group = group, panels = length(page), source = "PGS focus aggregate results")
 	}
 	mf <- file.path(rd, "figure_manifest.csv") ; old <- if (file.exists(mf)) as.data.frame(data.table::fread(mf)) else data.frame()
-	new <- pgs_bind(manifest) ; if (nrow(old) && "file" %in% names(old)) old <- old[!old$file %in% new$file, ]
-	data.table::fwrite(pgs_bind(list(old, new)), mf) ; invisible(pp)
+	new <- pgs_bind(manifest)
+	if (nrow(old) && 'group' %in% names(old)) {
+		old$group <- sub('^(c[1-5][.])?Fig[0-9]+[.]', '', old$group)
+		stale <- old$file[old$group == group & !old$file %in% new$file]
+		old <- old[old$group != group, , drop = FALSE]
+		if (length(stale)) unlink(file.path(rd, stale))
+	}
+	data.table::fwrite(pgs_bind(list(old, new)), mf)
+	le8_refresh_figure_files(rd)
+	invisible(pp)
 }
 pgs_plot_focus <- function(x, outdir, tri = data.frame(), loci = data.frame()) {
 	caption <- "Exploratory association decomposition. G denotes the part captured by the supplied PGS; R includes uncaptured genetics, lifestyle, disease and measurement. Opposite associations do not establish antagonistic pleiotropy. Conditional CIs do not include calibration uncertainty; anchor bootstrap refits calibration."
@@ -1415,7 +1425,7 @@ plot_c3_pgs_integration <- function(x, outdir) {
 	rd <- file.path(outdir, "c3_coloc") ; dir.create(rd, recursive = TRUE, showWarnings = FALSE)
 	pp <- pgs_locus_panels(x, attr(x, "loci"))
 	if (length(pp)) pgs_save_panels(
-		pp, rd, "c3.Fig7.pgs_coloc_triangulation",
+		pp, rd, "c3.Fig5.pgs_coloc_triangulation",
 		list(features = as.data.frame(x), loci = attr(x, "loci")), "Measured / PGS discordance and locus evidence"
 	)
 	invisible(x)
@@ -2388,7 +2398,7 @@ plot_quantile_top <- function(dat, features, tvar, evar, covars, title_prefix) {
 			exp(sm[i5, "coef"]), exp(sm[i5, "coef"] - 1.96 * sm[i5, "se(coef)"]), exp(sm[i5, "coef"] + 1.96 * sm[i5, "se(coef)"]),
 			format.pval(sm[i5, "Pr(>|z|)"], digits = 2, eps = 1e-99)
 		)
-		ggplot(sdf, aes(time, 1 - surv, color = quintile, fill = quintile)) +
+		p <- ggplot(sdf, aes(time, 1 - surv, color = quintile, fill = quintile)) +
 			geom_step(linewidth = .7) +
 			geom_ribbon(aes(ymin = 1 - hi, ymax = 1 - lo), alpha = .07, color = NA) +
 			annotate("text", x = Inf, y = Inf, label = ann, hjust = 1.03, vjust = 1.5, size = 3, fontface = "bold") +
@@ -2397,6 +2407,17 @@ plot_quantile_top <- function(dat, features, tvar, evar, covars, title_prefix) {
 			labs(title = x, x = "Years after baseline", y = "Cumulative incidence", color = NULL, fill = NULL) +
 			theme_5c(10) +
 			theme(legend.position = "top")
+		curves <- as.data.frame(sdf)
+		curves$feature <- x
+		results <- list(curves = curves)
+		if (length(i5) && !is.na(i5)) results$contrast <- data.frame(
+			feature = x, contrast = 'Q5 versus Q1', beta = sm[i5, 'coef'], SE = sm[i5, 'se(coef)'],
+			HR = exp(sm[i5, 'coef']), lower95 = exp(sm[i5, 'coef'] - 1.96 * sm[i5, 'se(coef)']),
+			upper95 = exp(sm[i5, 'coef'] + 1.96 * sm[i5, 'se(coef)']), p = sm[i5, 'Pr(>|z|)'],
+			N = nrow(d), events = sum(d[[evar]] == 1)
+		)
+		attr(p, 'le8_result_tables') <- results
+		p
 	})
 }
 

@@ -6,14 +6,22 @@
 
 import argparse
 import hashlib
+from importlib.util import module_from_spec, spec_from_file_location
 import json
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
 
 import numpy as np
 import pandas as pd
+
+_spec = spec_from_file_location("shared_results", Path(__file__).resolve().parents[2] / "0f/results.py")
+_result_io = module_from_spec(_spec)
+_spec.loader.exec_module(_result_io)
 
 POPS = ("EUR", "AFR", "EAS", "SAS")
 
@@ -139,19 +147,18 @@ def score(a):
 		inputs.append(Path(a.remove))
 	stamp = [(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in inputs]
 	sig = hashlib.sha256(json.dumps([stamp, a.effect, "SUM-no-mean-imputation"], sort_keys=True).encode()).hexdigest()
-	sf = Path(str(dest) + ".signature")
-	audit_file = Path(str(dest) + ".variants.tsv")
-	matches_file = Path(str(dest) + ".matches.tsv")
+	cache = Path("/tmp/grid-cache") / hashlib.sha256(str(dest.resolve()).encode()).hexdigest()[:16] / "cojo"
+	cache.mkdir(parents=True, exist_ok=True)
+	audit_file = cache / "variants.tsv"
+	matches_file = cache / "matches.tsv"
 	dest.parent.mkdir(parents=True, exist_ok=True)
-	if all(p.is_file() for p in (dest, sf, audit_file, matches_file)) and sf.read_text().strip() == sig:
+	if dest.is_file() and dest.with_suffix(".xlsx").is_file() and _result_io.rds_metadata(dest).get("signature") == sig:
 		print(f"PT: reuse matching cache {dest}", flush=True)
 		return
 	if not shutil.which("plink2"):
 		raise RuntimeError("plink2 not found")
-	# Invalidate old scores before updating their audit sidecars, including on failure.
-	sf.unlink(missing_ok=True)
 	audit, matches, total = [], [], None
-	with tempfile.TemporaryDirectory(prefix="yeval-pt-") as scratch:
+	with tempfile.TemporaryDirectory(prefix="yeval-pt-", dir="/tmp") as scratch:
 		scratch = Path(scratch)
 		for ch in chromosomes:
 			wanted = set(s for w in weights.values() for s in w.loc[w.Chr == ch, "SNP"])
@@ -297,10 +304,8 @@ def score(a):
 	if total.isna().any().any() or not np.isfinite(total.to_numpy()).all():
 		raise ValueError("Nonfinite final PT scores")
 	total.index.name = "eid"
-	tmp = Path(str(dest) + ".tmp")
-	total.to_csv(tmp, sep="\t", compression="gzip")
-	tmp.replace(dest)
-	sf.write_text(sig + "\n")
+	_result_io.write_rds(total.reset_index(), dest, {"signature": sig})
+	_result_io.write_workbook({"variants": audit, "matches": pd.DataFrame(matches)}, dest.with_suffix(".xlsx"))
 	print(f"PT published: {dest}; N={len(total)}", flush=True)
 
 

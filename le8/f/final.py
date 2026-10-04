@@ -232,8 +232,6 @@ class Report:
 		)
 		self.tables[key] = d
 		self.source_files[key] = str(chosen)
-		if len(d):
-			d.to_csv(self.table_dir / (key + ".csv"), index=False)
 		return d
 
 	def get(self, trait, layer, role):

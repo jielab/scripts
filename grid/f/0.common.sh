@@ -4,6 +4,8 @@
 
 # 🚩 grid_activate_environment
 grid_activate_environment() {
+	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/python-cache
+	export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
 	# Make the supported environment usable for non-interactive GRID calls without
 	# requiring `conda activate` first.
 	GRID_CONDA_ENV=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -746,19 +748,25 @@ grid_enable_logging() {
 			return "$rc"
 		fi
 	}
-	grid_run() { grid_run_logged "$work/log/step.$(date +%s%N).$BASHPID.log" "$@"; }
+	grid_run() { grid_run_logged "$logdir/step.$(date +%s%N).$BASHPID.log" "$@"; }
 	need() { [[ -s $1 ]] || _grid_die "Missing/empty file: $1"; }
 	join_comma() {
 		local IFS=,
 		echo "$*"
 	}
-	# Publish with rename on the destination filesystem; never expose partial results.
+	# Publish verified results; staging and rollback copies stay in /tmp.
 	publish() {
-		local src=$1 dst=$2
+		local src=$1 dst=$2 previous
 		need "$src"
 		mkdir -p "$(dirname -- "$dst")"
-		cp -- "$src" "$dst.tmp.$BASHPID"
-		mv -f -- "$dst.tmp.$BASHPID" "$dst"
+		previous=$(mktemp /tmp/grid-publish.XXXXXX)
+		if [[ -f $dst ]]; then cp -p -- "$dst" "$previous"; fi
+		if ! cp -- "$src" "$dst" || ! cmp -s -- "$src" "$dst"; then
+			if [[ -s $previous ]]; then cp -p -- "$previous" "$dst"; else rm -f -- "$dst"; fi
+			rm -f -- "$previous"
+			return 1
+		fi
+		rm -f -- "$previous"
 	}
 	# A subset run must never overwrite a genome-wide result.
 	suffix=''
@@ -890,10 +898,15 @@ grid_pipeline() (
 	for t in $(grid_csv_words "$GRID_TRAITS"); do [[ $t == height || $t == ldl || $t == t2dm ]] || _grid_die "Unknown trait: $t"; done
 	[[ -n $GRID_TRAITS ]] || _grid_die 'Empty trait list'
 	work="$GRID_OUTPUT_ROOT/$method"
-	mkdir -p "$work/cmd" "$work/log"
+	if [[ $method == pca || $method == disco ]]; then
+		work=$(python3 "$ROOT/f/0.common.py" cache-path "$work")
+	fi
+	logdir=$(python3 "$ROOT/f/0.common.py" cache-path "$GRID_OUTPUT_ROOT/$method/log")
+	cmddir=$(python3 "$ROOT/f/0.common.py" cache-path "$GRID_OUTPUT_ROOT/$method/cmd")
+	mkdir -p "$work" "$cmddir" "$logdir"
 	run_id=$(date +%Y%m%dT%H%M%S).$$
-	GRID_COMMAND_FILE="$work/cmd/$method.$run_id.sh"
-	GRID_RUN_LOG="$work/log/$method.$run_id.log"
+	GRID_COMMAND_FILE="$cmddir/$method.$run_id.sh"
+	GRID_RUN_LOG="$logdir/$method.$run_id.log"
 	printf '#!/usr/bin/env bash\nset -euo pipefail\nsource %q\ngrid_activate_environment\n' "$ROOT/f/0.common.sh" >"$GRID_COMMAND_FILE"
 	exec > >(tee -a "$GRID_RUN_LOG") 2>&1
 	trap 'rc=$?; if ((rc)); then echo "ERROR: exit=$rc; details: $GRID_RUN_LOG"; fi' EXIT
@@ -963,7 +976,8 @@ grid_preflight() (
 		;;
 	esac
 
-	report="$GRID_OUTPUT_ROOT/preflight.${scope}.tsv"
+	report="$(python3 "$ROOT/f/0.common.py" cache-path "$GRID_OUTPUT_ROOT/preflight")/${scope}.tsv"
+	mkdir -p "$(dirname "$report")"
 	mkdir -p "$(dirname "$report")"
 	printf 'scope\tstatus\titem\tdetail\n' >"$report"
 	fail=0

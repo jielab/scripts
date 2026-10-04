@@ -15,7 +15,7 @@ Usage: ./le8.sh [module[,module...]] [options]
 No module list: C1 -> C2 -> C3 -> C4 (connect/panel validation) -> C5 -> final -> shiny.
 Completed results keep their original methods/scope; --replace TRUE requests new fits.
 Result workbooks and named participant RDS files restore numerical inputs in /tmp.
-Saved fits regenerate PNGs and workbooks grouped by module and method; no refitting.
+Saved fits regenerate PNGs with same-name result workbooks; no refitting.
 Participant tables use descriptive names such as test_individuals.rds; no workbook export.
 
 Examples:

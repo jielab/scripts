@@ -64,12 +64,14 @@ Permanent outputs:
   Matching .csx.sumstats.json enables reuse after deleting the temporary work directory.
   <GWAS folder>/<original-name>.csx.gz  (SNP,A1,BETA,CHR,BP,A2; NOT individual PRS)
   Example: /mnt/f/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz
-  /mnt/d/data/ukb/pgs/<trait>/csx.pgs.gz (eid, csx.AFR/EAS/EUR/SAS, csx.auto, csx.meta)
-  csx.posterior.tsv.gz: four centred posterior means + ten covariance terms per person.
-  .json sidecar records discovery EAF centering and model provenance.
+  /mnt/d/data/ukb/pgs/<trait>/1csx.scores.rds (eid, csx.AFR/EAS/EUR/SAS, csx.auto, csx.meta)
+  1csx.posterior.rds: four centred posterior means + ten covariance terms per person.
+  RDS attributes retain discovery EAF centering and the fitted-input identity.
   Keep joint_posterior.h5 files under temporary inference directories to rescore without MCMC.
+  Inference directories: csx/<trait>/phi-1e-2/ or auto/; config.json records settings.
+  Different inputs/settings use numbered suffixes; no hash-based directory names.
   Combined SNP weights: <score-dir>/<trait>/.weights/csx.{auto,meta}.gz
-  Per-population scores and score signatures: /mnt/d/analysis/grid/csx/scores/<trait>/
+  Per-population score exchanges and signatures: /tmp/grid-cache/.
   t2dm.AFA is mapped to AFR LD, but its GWAS output retains the name t2dm.AFA.
 
 Temporary files/commands/logs: /mnt/d/analysis/grid/csx/
@@ -97,7 +99,7 @@ csx_score_run() {
 		need "$f.signature"
 		[[ $(cat "$f.signature") == "$sig" ]] || _grid_die "Weights/settings mismatch: $f; rerun --stage weights with these settings"
 	done
-	score_inputs=("${finals[@]}" "$ROOT/1csx.sh" "$ROOT/f/0.common.py")
+	score_inputs=("${finals[@]}")
 	for c in "${CHRS[@]}"; do
 		mode=$(grid_target_mode "$c")
 		prefix="$GRID_TARGET_DIR/chr$c"
@@ -108,10 +110,10 @@ csx_score_run() {
 	done
 	[[ -z $GRID_KEEP ]] || score_inputs+=("$GRID_KEEP")
 	[[ -z $GRID_REMOVE ]] || score_inputs+=("$GRID_REMOVE")
-	score_sig=$(python3 "$io" signature "$sig" "$GRID_KEEP" "$GRID_REMOVE" --files "${score_inputs[@]}")
-	score_run="$run/scores/$score_sig"
-	mkdir -p "$score_run" "$score_home"
-	score_cache="$work/scores/$trait${suffix:+/${suffix#.}}"
+	score_sig=$(python3 "$ROOT/f/1csx.py" score-config "$sig" "$GRID_KEEP" "$GRID_REMOVE" --files "${score_inputs[@]}")
+	score_run=$(python3 "$ROOT/f/1csx.py" workspace "$run/scores" run "$score_sig")
+	mkdir -p "$score_home"
+	score_cache="$(python3 "$ROOT/f/0.common.py" cache-path "$work/scores")/$trait${suffix:+/${suffix#.}}"
 	mkdir -p "$score_cache"
 	for i in "${!POPS[@]}"; do
 		p=${POPS[$i]}
@@ -132,7 +134,7 @@ csx_score_run() {
 			cmd+=(--score "${finals[$i]}" 1 2 3 header-read no-mean-imputation list-variants cols=+scoresums --threads "$GRID_THREADS" --memory "$GRID_SCORE_MEMORY" --out "$o")
 			[[ -z $GRID_KEEP ]] || cmd+=(--keep "$GRID_KEEP")
 			[[ ! -s $GRID_REMOVE ]] || cmd+=(--remove "$GRID_REMOVE")
-			grid_run_logged "$work/log/$trait/score.$p.chr$c.log" "${cmd[@]}" || return $?
+			grid_run_logged "$logdir/$trait/score.$p.chr$c.log" "${cmd[@]}" || return $?
 			need "$o.sscore"
 			touch "$o.done"
 		}
@@ -153,7 +155,7 @@ csx_score_run() {
 		((status == 0)) || _grid_die 'CSx scoring failed'
 		inputs=()
 		for c in "${CHRS[@]}"; do inputs+=("$score_run/$p.chr$c.sscore"); done
-		grid_run_logged "$work/log/$trait/combine.$p.log" python3 "$ROOT/f/0.common.py" combine-scores --inputs "${inputs[@]}" --name "CSX_$p" --output "$score_run/$p.tsv.gz"
+		grid_run_logged "$logdir/$trait/combine.$p.log" python3 "$ROOT/f/0.common.py" combine-scores --inputs "${inputs[@]}" --name "CSX_$p" --output "$score_run/$p.tsv.gz"
 		publish "$score_run/$p.tsv.gz" "$dest"
 		printf '%s\n' "$score_sig" >"$score_run/signature"
 		publish "$score_run/signature" "$dest.signature"
@@ -161,13 +163,12 @@ csx_score_run() {
 	merge=()
 	for p in "${POPS[@]}"; do merge+=("$score_cache/csx.$p.tsv.gz"); done
 	grid_run python3 "$ROOT/f/0.common.py" merge-scores --inputs "${merge[@]}" --output "$score_run/csx.tsv.gz"
-	grid_run python3 "$ROOT/f/0.common.py" publish csx "$score_run/csx.tsv.gz" "$score_home/csx.pgs.gz" --remove "$GRID_REMOVE"
+	grid_run python3 "$ROOT/f/0.common.py" publish csx "$score_run/csx.tsv.gz" "$score_home/1csx.scores.rds" --remove "$GRID_REMOVE"
 	{
 		printf 'trait\tpopulation\tinput_gwas\tweights\tukb_score\n'
-		for i in "${!POPS[@]}"; do printf '%s\t%s\t%s\t%s\t%s\n' "$trait" "${POPS[$i]}" "${gwas[$i]}" "${finals[$i]}" "$score_home/csx.pgs.gz"; done
+		for i in "${!POPS[@]}"; do printf '%s\t%s\t%s\t%s\t%s\n' "$trait" "${POPS[$i]}" "${gwas[$i]}" "${finals[$i]}" "$score_home/1csx.scores.rds"; done
 	} >"$score_run/manifest.tsv"
-	publish "$score_run/manifest.tsv" "$score_home/csx.manifest.tsv"
-	echo "DONE $trait: $score_home/csx.pgs.gz"
+	echo "DONE $trait: $score_home/1csx.scores.rds"
 }
 
 
@@ -241,7 +242,7 @@ PY
 	python3 "$io" inspect "$GRID_CSX_SNPINFO" "${gwas[@]}"
 	python3 "$io" coverage "${CHRS[*]}" "${gwas[@]}"
 	for f in "${finals[@]}"; do echo "output SNP weights: $f"; done
-	echo "output score files: $score_home/csx.pgs.gz"
+	echo "output score files: $score_home/1csx.scores.rds"
 	echo "CSx: joint AFR,EAS,EUR,SAS; phi=$GRID_PHI; iter/burnin/thin=$GRID_MCMC_ITER/$GRID_MCMC_BURNIN/$GRID_MCMC_THIN; seed=$GRID_SEED; chromosomes=${CHRS[*]}"
 	if [[ $GRID_STAGE == score ]]; then
 		for f in "${finals[@]}"; do
@@ -253,12 +254,12 @@ PY
 		echo 'CHECK/PLAN complete; no inference or scoring executed'
 		return 0
 	}
-	# Include source code and input metadata so interrupted runs cannot reuse incompatible results.
+	# Keep settings/input metadata in JSON; choose readable directories independently.
 	sig=$(python3 "$ROOT/f/1csx.py" signature "$GRID_PHI" "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_N_GWAS" "${CHRS[*]}" "$GRID_CSX_SNPINFO" "$GRID_CSX_BIM_PREFIX" "${gwas[@]}" "${ld_files[@]}")
-	run="$work/$trait/$sig"
-	mkdir -p "$run" "$work/log/$trait"
+	mkdir -p "$work/$trait" "$logdir/$trait"
 	exec {lock}>"$work/$trait/run.lock"
 	flock -n "$lock" || _grid_die "Another CSx run is active for $trait"
+	run=$(python3 "$ROOT/f/1csx.py" workspace "$work/$trait" inference "$sig")
 	ref="$run/reference"
 	mkdir -p "$ref"
 	ln -sfn "$GRID_CSX_SNPINFO" "$ref/$(basename -- "$GRID_CSX_SNPINFO")"
@@ -278,9 +279,9 @@ PY
 				p=${POPS[$i]}
 				std="$run/sumstats/$p.tsv.gz"
 				meta="$run/sumstats/$p.json"
-				grid_run_logged "$work/log/$trait/prepare.$p.log" python3 "$ROOT/f/0.common.py" sumstats-cache --input "${gwas[$i]}" --output "$std" --metadata "$meta" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace "$GRID_REPLACE"
-				tail -n 1 "$work/log/$trait/prepare.$p.log"
-				grid_run_logged "$work/log/$trait/split.$p.log" python3 "$ROOT/f/0.common.py" split-sumstats --input "$std" --out-dir "$run/sumstats" --prefix "$p" --chrs "${CHRS[*]}"
+				grid_run_logged "$logdir/$trait/prepare.$p.log" python3 "$ROOT/f/0.common.py" sumstats-cache --input "${gwas[$i]}" --output "$std" --metadata "$meta" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace "$GRID_REPLACE"
+				tail -n 1 "$logdir/$trait/prepare.$p.log"
+				grid_run_logged "$logdir/$trait/split.$p.log" python3 "$ROOT/f/0.common.py" split-sumstats --input "$std" --out-dir "$run/sumstats" --prefix "$p" --chrs "${CHRS[*]}"
 				n=$(
 					python3 - "$meta" "$GRID_N_GWAS" "$p" <<'PY'
 import sys,json,re,math
@@ -322,7 +323,7 @@ PYMETA
 				cmd+=(--write_pst="$GRID_POSTERIOR")
 				[[ $GRID_PHI == auto ]] || cmd+=(--phi="$GRID_PHI")
 				echo "RUN $trait chr$c: joint PRS-CSx"
-				grid_run_logged "$work/log/$trait/csx.chr$c.log" "${cmd[@]}" || return $?
+				grid_run_logged "$logdir/$trait/csx.chr$c.log" "${cmd[@]}" || return $?
 				for p in "${POPS[@]}"; do need "$raw/$p/$p.chr$c.pst_eff.txt"; done
 				touch "$marker"
 			}
@@ -365,11 +366,11 @@ PYMETA
 	if [[ $GRID_POSTERIOR == TRUE ]]; then
 		for c in "${CHRS[@]}"; do need "$run/raw/chr$c/joint_posterior.h5"; done
 		posterior_args=(--raw-dir "$run/raw" --sumstats-dir "$run/sumstats" --target-dir "$GRID_TARGET_DIR"
-			--output "$score_home/csx.posterior.tsv.gz" --chrs "${CHRS[*]}" --threads "$GRID_THREADS"
+			--output "$score_home/1csx.posterior.rds" --chrs "${CHRS[*]}" --threads "$GRID_THREADS"
 			--memory "$GRID_POSTERIOR_MEMORY" --keep "$GRID_KEEP" --remove "$GRID_REMOVE" --replace "$GRID_REPLACE")
 		[[ -z $GRID_POSTERIOR_FREQ_DIR ]] || posterior_args+=(--frequency-dir "$GRID_POSTERIOR_FREQ_DIR")
-		grid_run_logged "$work/log/$trait/posterior.log" python3 "$ROOT/f/1csx.py" posterior "${posterior_args[@]}"
-		echo "DONE $trait: individual posterior covariance in $score_home/csx.posterior.tsv.gz"
+		grid_run_logged "$logdir/$trait/posterior.log" python3 "$ROOT/f/1csx.py" posterior "${posterior_args[@]}"
+		echo "DONE $trait: individual posterior covariance in $score_home/1csx.posterior.rds"
 	fi
 }
 

@@ -21,7 +21,8 @@ grid_setup() {
 	)"
 	[[ $trait == height || $trait == ldl || $trait == t2dm ]] || _grid_die 'Unknown trait'
 	for c in "${CHRS[@]}"; do [[ $c =~ ^([1-9]|1[0-9]|2[0-2])$ ]] || _grid_die "Invalid autosome: $c"; done
-	out="$GRID_OUTPUT_ROOT/$trait$suffix"
+	published="$GRID_OUTPUT_ROOT/3grid/$trait$suffix"
+	out=$(python3 "$ROOT/f/0.common.py" cache-path "$published")
 	gdir="$out/grid"
 	mkdir -p "$gdir" "$out/log" "$out/scores" "$gdir/weights" "$gdir/model"
 }
@@ -284,7 +285,8 @@ local_genealogy=$GRID_ARG_TREES_DIR/chrCHR.variants.tsv.gz
 ld_source=PRS-CSx HDF5 reference panels
 participant_phenotype_used_for_weights=FALSE
 META
-	echo "GRID completed: $out/scores/grid.tsv.gz"
+	grid_run python3 "$ROOT/f/3grid.py" publish --work "$out" --output "$published"
+	echo "GRID completed: $published/3grid.scores.rds"
 )
 
 command=${1:-help}

@@ -18,8 +18,9 @@ C1 使用 ABM（agent-based modeling）命名。模型运行、注释及图形�
 
 ## 结果文件
 
-- 按模块和方法集中工作簿，例如 `c2_cause/c2.tables.xlsx` 保存常规 C2 汇总表，`c2_cause/c2.dandelion.xlsx` 保存 Dandelion 表格。每张汇总表对应一个 worksheet；`_tables` 页列出表名、worksheet 和行列数。
-- 工作簿内部同时保存原始汇总导出及校验信息，供重绘、缓存复用和 Shiny 读取；不再另存通用汇总 RDS。超过 worksheet 展示容量的表和工具交换数据也保留在工作簿内，目录页注明。程序可以在 `/tmp` 完整恢复这些导出。
+- 每张 PNG 配同名 XLSX，只放对应图的分析结果；同类 panel 用 panel 列区分，尽量合并为少量 worksheet。例如 `c3.Fig2.regional_top_loci.png` 对应 `c3.Fig2.regional_top_loci.xlsx`。重要的未绘图结果按主题另外保存。
+- 未绘图结果按分析内容组织，不按表数量分卷：C1 使用 `c1.association.xlsx`，PGS 配对比较、分解、时间分析分别为 `c1.pgs.comparison.xlsx`、`c1.pgs.decomposition.xlsx`、`c1.pgs.temporal.xlsx`；C4 验证按表现、面板、模型和遗传证据区分。Final 和 Shiny 同样按主题组织，不再生成 `.2.xlsx`、`.3.xlsx`。
+- 工作簿内部同时保存原始汇总导出及校验信息，供重绘、缓存复用和 Shiny 读取；不再另存通用汇总 RDS。完整区域／SNP 结果留在可复用分析 RDS，图表只导出实际展示的范围，不重复嵌入旧工作簿。程序可以在 `/tmp` 完整恢复这些导出。
 - 工作簿是可复用结果，需保留。Excel 等编辑器重新保存时可能移除内部来源记录；需要编辑展示版时，另存到其他目录。
 - 带个体 ID 的表按具体数据名称保存为 `.rds`，例如 `test_individuals.rds`、`individual_explanations.rds`、`c4.focus.roles.rds`，不进入汇总工作簿或 Shiny。嵌套的个体解释和 attention 数组也保存在 RDS 内，不另留 JSONL、NPZ 文件。
 - 不单独输出分析参数、代码版本或输入路径清单，不生成 `analysis_options`、`revision_manifest`、`analysis_manifest` 文件。缓存复用所需的最少一致性信息保存在相应分析结果对象内部。
@@ -31,14 +32,14 @@ C1 使用 ABM（agent-based modeling）命名。模型运行、注释及图形�
 | 目录 | 内容 |
 |---|---|
 | `<疾病>/<prot或met>/c1_correlate/` | C1 工作簿、PNG 和可复用分析对象；`abm_reference/`、`abm_tabicl/` 各保存一个 ABM 方法的结果 |
-| `<疾病>/<数据层>/c2_cause/` | `c2.tables.xlsx`、`c2.dandelion.xlsx`、PNG 和命名明确的 RDS |
+| `<疾病>/<数据层>/c2_cause/` | 按图配对的 XLSX、PNG 和命名明确的 RDS |
 | `<疾病>/<数据层>/c3_coloc/` | 共定位汇总、PNG 和可复用结果；GPU 格式转换和逐区域计算缓存在 `/tmp` |
-| `<疾病>/<数据层>/c4_connect/` | LE8 连接、代理、交互、非线性及固定预算验证结果；共用 `c4.tables.xlsx`，验证拟合保存在 `c4.validation.rds`；Yin、YinYang 区分代理发现人群 |
+| `<疾病>/<数据层>/c4_connect/` | LE8 连接、代理、交互、非线性及固定预算验证结果；每张 PNG 配同名 XLSX，验证拟合保存在 `c4.validation.rds`；Yin、YinYang 区分代理发现人群 |
 | `<疾病>/<数据层>/c5_cellulation/` | 细胞注释汇总和 PNG；自动构建的输入表在 `/tmp` |
-| `final/` | `final.tables.xlsx`、Fig1–8、补充图、`report.html`、`index.html` 和图注；研究问题综合结果也在本层，不另建 `overview/`、`tables/`、`panels/` 或结果 README |
-| `shiny/` | `shiny.tables.xlsx`，含查看器索引和综合视图；表格详情、图像仍通过相对路径引用各模块结果 |
+| `final/` | Fig1–8、补充图及各自的 XLSX、`report.html`、`index.html` 和图注；研究问题综合结果也在本层，不另建 `overview/`、`tables/`、`panels/` 或结果 README |
+| `shiny/` | 按主题拆分的索引工作簿，含查看器索引和综合视图；表格详情、图像仍通过相对路径引用各模块结果 |
 
-先看 `final/report.html` 或 Shiny 总览，再按疾病、数据层和模块查阅结果。工作簿 `_tables` 页列出表名和 worksheet。已有 PNG 时不生成同名 PDF；中间 panel 图、PGS 扫描缓存、MR-link-2 工作文件、GPU 转换文件和日志均留在 `/tmp`。ABM 的输入副本、逐折神经网络检查点也放在 `/tmp/le8-cache/`；正式目录保留自包含的最终 `model_bundle.joblib` 和必要的个体 RDS。ABM 的冻结状态、校准信息等复用所需信息收进方法工作簿内部，不再散落为 JSON 文件。不因整理重新拟合模型。
+先看 `final/report.html` 或 Shiny 总览，再按疾病、数据层和模块查阅结果。工作簿使用简短的结果页名，不保留空表、重复表和无用的管理页。已有 PNG 时不生成同名 PDF；中间 panel 图、PGS 扫描缓存、MR-link-2 工作文件、GPU 转换文件和日志均留在 `/tmp`。ABM 的输入副本、逐折神经网络检查点也放在 `/tmp/le8-cache/`；正式目录保留自包含的最终 `model_bundle.joblib` 和必要的个体 RDS。ABM 的冻结状态、校准信息等复用所需信息收进方法工作簿内部，不再散落为 JSON 文件。不因整理重新拟合模型。
 
 ## 分享 Shiny
 

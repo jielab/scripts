@@ -975,10 +975,10 @@ function(input, output, session) {
 	output$phyml_tree <- renderPlot({
 		gu_draw_panel_b(panel_b_bundle(), as.integer(input$tree_display_min_copies %||% "11"))
 	}, res = 130)
-	output$download_panel_b_pdf <- downloadHandler(
-		filename = function()paste0(selected_locus()$locus_id[[1]], ".phylogeny.panelB.pdf"),
+	output$download_panel_b_png <- downloadHandler(
+		filename = function()paste0(selected_locus()$locus_id[[1]], ".phylogeny.panelB.png"),
 		content = function(file) {
-			grDevices::pdf(file, width = 10, height = 10.4, useDingbats = FALSE)
+			grDevices::png(file, width = 2400, height = 2500, res = 240, type = 'cairo')
 			on.exit(grDevices::dev.off())
 			gu_draw_panel_b(panel_b_bundle(), as.integer(input$tree_display_min_copies %||% "11"))
 		})

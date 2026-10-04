@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+sys.dont_write_bytecode = True
 
 if "gu_0_common" not in sys.modules:
 	_spec = spec_from_file_location("gu_0_common", Path(__file__).with_name("0.common.py"))
@@ -184,141 +185,20 @@ def find_first(root, patterns):
 	return sorted(set(out))
 
 
-CORE_FILE_PATTERNS = {
-	"ibdmix": (),
-	"trace": (),
-	"as3": (),
-	"phyml": (
-		"**/final/*.tsv",
-		"**/final/gwas_parameters.json",
-		"**/final/evidence_parameters.json",
-		"**/final/*unfiltered.tsv.gz",
-		"**/loci/**/sites.tsv",
-		"**/loci/**/search_sites.tsv",
-		"**/loci/**/ld.tsv",
-		"**/loci/**/selected_region.tsv",
-		"**/loci/**/archaic.tsv",
-		"**/loci/**/ancestral.tsv",
-		"**/loci/**/haplotypes.tsv",
-		"**/loci/**/haplotypes.phy",
-		"**/loci/**/haplotypes.phy.meta.tsv",
-		"**/loci/**/*_phyml_tree.txt",
-		"**/loci/**/*_phyml_tree.png",
-		"**/loci/**/*_phyml_tree.panelB*.png",
-		"**/loci/**/*_phyml_tree.panelB*.pdf",
-		"**/loci/**/*_phyml_stats.txt",
-		"**/loci/**/*_phyml_tree.*.panelB*.png",
-		"**/loci/**/*_phyml_tree.*.panelB*.pdf",
-		"**/run.meta.tsv",
-		"**/request.loci.analysis.bed",
-		"**/request.loci.core.bed",
-		"**/request.loci.map.tsv",
-	),
-}
-
-
-@contextmanager
-def stable_phyml_run(run_dir):
-	"""Keep a GWAS bundle consistent with the producer's existing run lock."""
-	lock_path = run_dir / ".gwas.lock"
-	lock = lock_path.open("r") if lock_path.exists() else None
-	try:
-		if lock is not None:
-			try:
-				fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-			except BlockingIOError:
-				print(f"PhyML running; deferred from final: {run_dir}", flush=True)
-				yield False
-				return
-		final = run_dir / "final"
-		if (final / "gwas_loci.tsv").exists():
-			required = (
-				"gwas_parameters.json",
-				"gwas_haplotypes.tsv",
-				"gwas_copies.tsv",
-				"loci.tsv",
-				"trees.tsv",
-				"evidence_trees.tsv",
-				"haplotypes.tsv",
-				"haplotype_samples.tsv",
-			)
-			if any(not (final / name).is_file() for name in required):
-				print(f"PhyML incomplete bundle; deferred from final: {run_dir}", flush=True)
-				yield False
-				return
-		yield True
-	finally:
-		if lock is not None:
-			lock.close()
-
-
+# Results are read from the single temporary method workspace. Shiny's
+# relative artifact paths resolve through a directory link in that workspace.
 def package_core_results(analysis_root, output_dir):
-	"""Copy the small, reusable result subset used by Shiny into normalize/<method>."""
-	analysis_root = analysis_root.resolve()
-	output_dir = output_dir.resolve()
-	stage = output_dir / f".core.part.{os.getpid()}"
-	if stage.exists():
-		shutil.rmtree(stage)
-	copied = {}
-	try:
-		for method, patterns in CORE_FILE_PATTERNS.items():
-			dst_root = stage / method
-			dst_root.mkdir(parents=True, exist_ok=True)
-			copied[method] = 0
-			for src_root, prefix in ((analysis_root / method, Path()), (analysis_root / "ukb" / method, Path("ukb"))):
-				files = []
-				if src_root.is_dir():
-					for pattern in patterns:
-						files.extend(src_root.glob(pattern))
-				files = sorted(
-					set(
-						resolve_tsv_path(x)
-						for x in files
-						if x.is_file() and not is_transient_output(x) and x.stat().st_size > 0
-					)
-				)
-				runs = {}
-				for src in files:
-					relative = src.relative_to(src_root)
-					run = src_root.joinpath(*relative.parts[:2])
-					runs.setdefault(run, []).append(src)
-				for run, run_files in runs.items():
-					with stable_phyml_run(run) as ready:
-						if not ready:
-							continue
-						for src in run_files:
-							# Files may have been replaced between discovery and
-							# acquiring the run lock; only read the current bundle.
-							if not src.is_file():
-								continue
-							dst = dst_root / prefix / src.relative_to(src_root)
-							dst.parent.mkdir(parents=True, exist_ok=True)
-							if src.name.endswith("unfiltered.tsv"):
-								dst = dst.with_name(dst.name + ".gz")
-								with src.open("rb") as reader, gzip.open(dst, "wb") as writer:
-									shutil.copyfileobj(reader, writer, length=1024 * 1024)
-							else:
-								shutil.copy2(src, dst)
-							copied[method] += 1
-		for method in CORE_FILE_PATTERNS:
-			dst = output_dir / method
-			backup = output_dir / f".{method}.old.{os.getpid()}"
-			if backup.exists():
-				shutil.rmtree(backup)
-			if dst.exists():
-				os.replace(dst, backup)
-			try:
-				os.replace(stage / method, dst)
-			except Exception:
-				if backup.exists() and not dst.exists():
-					os.replace(backup, dst)
-				raise
-			if backup.exists():
-				shutil.rmtree(backup)
-	finally:
-		if stage.exists():
-			shutil.rmtree(stage)
-	return copied
+	output_dir.mkdir(parents = True, exist_ok = True)
+	link = output_dir / 'phyml'
+	target = (analysis_root / 'phyml').resolve()
+	if link.is_symlink():
+		if link.resolve() != target:
+			link.unlink()
+	elif link.exists():
+		raise ValueError('Remove the obsolete copied PhyML cache before normalization: ' + str(link))
+	if not link.is_symlink():
+		link.symlink_to(target, target_is_directory = True)
+	return {'phyml': 'shared method results'}
 
 
 def portable_paths(df, package_root, columns):

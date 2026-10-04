@@ -9,6 +9,8 @@ from __future__ import annotations
 import csv
 import gzip
 import sys
+
+sys.dont_write_bytecode = True
 import math
 
 

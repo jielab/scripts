@@ -2,6 +2,8 @@
 source /mnt/d/scripts/0f/console.sh
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX=/tmp/gu-python-cache
+export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 F=$ROOT/f
 SHINY=$ROOT/shiny
@@ -779,10 +781,14 @@ HELP
 
 	GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
 	GU_REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
-	GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-$GU_DATA_ROOT/analysis/gu}
-	GU_FINAL_DIR=${GU_FINAL_DIR:-$GU_ANALYSIS_ROOT/final}
-	export GU_FINAL_DIR
-	GU_RUN_TMP_ROOT=${GU_RUN_TMP_ROOT:-$GU_DATA_ROOT/tmp/gu}
+	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_DATA_ROOT/analysis/gu}}
+	export GU_PUBLISHED_ROOT
+	if [[ ${GU_CMD_WORKER:-0} != 1 || ${GU_ANALYSIS_ROOT:-} != /tmp/gu-cache/*/analysis || ! -d ${GU_ANALYSIS_ROOT:-/nonexistent} ]]; then
+		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT")
+	fi
+	GU_FINAL_DIR=$GU_ANALYSIS_ROOT/final
+	export GU_ANALYSIS_ROOT GU_FINAL_DIR
+	GU_RUN_TMP_ROOT=/tmp/gu-runs
 	GU_SOFT=${GU_SOFT:-$GU_DATA_ROOT/software/gu}
 	default_build=37
 	[[ $METHOD == as3 ]] && default_build=38
@@ -1141,6 +1147,7 @@ PYKEY
 				printf 'export IBDMIX_AFR_DENISOVAN_FILTER=%q\nexport IBDMIX_MASK_DIR=%q\n' "${IBDMIX_AFR_DENISOVAN_FILTER:-1}" "${IBDMIX_MASK_DIR:-}"
 			fi
 			printf 'export GU_ANALYSIS_ROOT=%q\n' "$GU_ANALYSIS_ROOT"
+			printf 'export GU_PUBLISHED_ROOT=%q\n' "$GU_PUBLISHED_ROOT"
 			[[ -z $output_var ]] || printf 'export %s=%q\n' "$output_var" "$out"
 			printf 'exec'
 			printf ' %q' "${cmd_args[@]}"
@@ -1297,6 +1304,7 @@ PYKEY
 	}
 
 	gu_launch_analysis_request_background() {
+		GU_PUBLICATION_DEFERRED=1
 		local log_root stamp base log pid_file status_file pid cmd_list job_pattern
 		local runner
 		log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
@@ -1941,6 +1949,7 @@ exit "$rc"'
 		[[ -z ${LOCI_INPUT:-} ]] || report_args+=(--loci "$LOCI_INPUT")
 		python3 "$F/phyml.py" report "${report_args[@]}"
 		python3 "$F/normalize.py" density --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --output "${GU_DENSITY_DIR:-$(dirname "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}")/normalize/density}" --sample-panel "$pop_panel"
+		python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method final
 	}
 
 	maybe_run_final() {
@@ -2299,5 +2308,17 @@ exit "$rc"'
 
 {
 	gu_main "$@"
-	exit $?
+	case "${METHOD:-}" in
+		phyml | ibdmix | trace | as3)
+			if [[ ${ACTION:-run} != check && ${GU_PUBLICATION_DEFERRED:-0} != 1 && -n ${GU_PUBLISHED_ROOT:-} ]]; then
+				publication_args=()
+				if [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
+					case "$METHOD" in phyml) publication_run=$PHYML_OUT ;; ibdmix) publication_run=$IBDMIX_OUT ;; trace) publication_run=$TRACE_OUT ;; as3) publication_run=$AS3_OUT ;; esac
+					publication_args+=(--run "$publication_run")
+				fi
+				python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method "$METHOD" "${publication_args[@]}"
+			fi
+			;;
+	esac
+	exit 0
 }

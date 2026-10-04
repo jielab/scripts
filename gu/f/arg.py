@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+sys.dont_write_bytecode = True
 
 if "gu_0_common" not in sys.modules:
 	_spec = spec_from_file_location("gu_0_common", Path(__file__).with_name("0.common.py"))

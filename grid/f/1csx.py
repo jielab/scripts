@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""1csx.py: signature, combined, posterior, normalize-weights. Use a subcommand followed by --help."""
+"""1csx.py: signature, score-config, workspace, combined, posterior, normalize-weights."""
 
 from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+
+sys.dont_write_bytecode = True
 
 if "grid_0_common" not in sys.modules:
 	_spec = spec_from_file_location("grid_0_common", Path(__file__).with_name("0.common.py"))
@@ -20,9 +22,10 @@ from grid_0_common import load_module
 
 # 🚩 signature: csx_config
 """Shared inference identity and validation for all PRS-CSx output modes."""
-import hashlib, json, math
+import json, math
+from decimal import Decimal
 from pathlib import Path
-from grid_0_common import stamp
+from grid_0_common import stamp, cache_directory, read_result_table, write_rds, rds_metadata
 
 ROOT = Path(__file__).resolve().parent
 POPS = ["AFR", "EAS", "EUR", "SAS"]
@@ -44,18 +47,89 @@ def validate_mcmc(phi, n, b, t, seed):
 		raise ValueError("Invalid phi")
 
 
+def phi_label(phi):
+	if phi == "auto":
+		return "auto"
+	value = Decimal(str(phi))
+	if not value.is_finite() or value <= 0:
+		raise ValueError("phi must be auto or positive")
+	mantissa, exponent = format(value.normalize(), "e").split("e")
+	return f"{mantissa}e{int(exponent)}"
+
+
+def inference_name(phi, chrs):
+	name = "auto" if phi == "auto" else "phi-" + phi_label(phi)
+	chrs = sorted(map(int, chrs))
+	if chrs != list(range(1, 23)):
+		name += ".chr" + "-".join(map(str, chrs))
+	return name
+
+
+def configuration(settings, files):
+	"""Readable cache identity; code edits alone do not invalidate computed results."""
+	return json.dumps({"settings": settings, "files": [stamp(p) for p in files]}, sort_keys=True)
+
+
 def inference_signature(phi, n, b, t, seed, override, chrs, gwas, snpinfo, bim, ld):
 	validate_mcmc(phi, n, b, t, seed)
-	code = [
-		ROOT / p
-		for p in ["csx/PRScsx.py", "csx/parse_genet.py", "csx/mcmc_gtb.py", "csx/gigrnd.py", "0.common.py", "1csx.py"]
-	]
-	obj = {
-		"settings": [str(phi), n, b, t, seed, str(override), list(map(int, chrs))],
-		"files": [stamp(p) for p in list(gwas) + [snpinfo, str(bim) + ".bim"] + list(ld)],
-		"code": [(p.name, hashlib.sha256(p.read_bytes()).hexdigest()) for p in code],
-	}
-	return hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
+	return configuration(
+		{"phi": phi_label(phi), "iterations": n, "burnin": b, "thin": t, "seed": seed,
+		 "n_gwas": str(override), "chromosomes": sorted(map(int, chrs))},
+		list(gwas) + [snpinfo, str(bim) + ".bim"] + list(ld),
+	)
+
+
+def workspace(parent, name, config):
+	"""Reuse matching settings, keeping other runs under readable numbered names.
+
+	Callers hold the trait's run.lock while selecting and using the workspace.
+	An unlabelled or interrupted directory is never accepted as a cache hit.
+	"""
+	parent = Path(parent)
+	if parent.name in {"scores", "posterior_scores"} or parent.parent.name == "combined_scores":
+		parent = cache_directory(parent)
+	expected = json.loads(config)
+	# Keep run numbers distinct from chromosome lists such as .chr1-2.
+	prefix = "run-" if name == "run" else name + ".run-"
+	first_free = None
+	candidates = [(1, parent / name)]
+	if parent.is_dir():
+		for path in parent.glob(prefix + "*"):
+			suffix = path.name[len(prefix):]
+			if suffix.isdigit() and int(suffix) >= 2:
+				candidates.append((int(suffix), path))
+	for number, path in sorted(candidates):
+		if not path.exists():
+			first_free = first_free or path
+			continue
+		marker = path / "config.json"
+		if marker.is_file():
+			try:
+				if json.loads(marker.read_text()) == expected:
+					return path
+			except (ValueError, OSError):
+				pass
+	path = first_free or parent / f"{prefix}{max(n for n, _ in candidates) + 1}"
+	path.mkdir(parents=True, exist_ok=False)
+	marker = path / "config.json"
+	tmp = marker.with_suffix(".tmp")
+	tmp.write_text(json.dumps(expected, indent=2) + "\n")
+	tmp.replace(marker)
+	return path
+
+
+def csx_workspace_cli():
+	parent, name, config = sys.argv[1:]
+	if name == "inference":
+		settings = json.loads(config)["settings"]
+		name = inference_name(settings["phi"], settings["chromosomes"])
+	print(workspace(parent, name, config))
+
+
+def csx_score_config_cli():
+	args = sys.argv[1:]
+	split = args.index("--files")
+	print(configuration(args[:split], args[split + 1:]))
 
 
 def sample_size(meta, override, pop):
@@ -89,7 +163,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from grid_0_common import filter_samples, update_csx_table
-from grid_0_common import inspect, coverage, signature, stamp
+from grid_0_common import inspect, coverage, stamp
 
 
 def genotype(prefix):
@@ -180,13 +254,13 @@ def csx_combined_main():
 	ready = weight.is_file() and meta.is_file() and json.loads(meta.read_text()).get("signature") == sig
 	if a.stage == "score" and not ready:
 		raise ValueError("Matching combined weights missing; run --stage all or weights")
-	print(f"CSx {a.mode}: phi={phi}; shared joint-run signature={sig[:12]}", flush=True)
+	print(f"CSx {a.mode}: phi={phi}; joint run={inference_name(phi, chrs)}", flush=True)
 	if a.check:
 		return
-	run = work / a.trait / sig
-	run.mkdir(parents=True, exist_ok=True)
+	(work / a.trait).mkdir(parents=True, exist_ok=True)
 	lock = (work / a.trait / "run.lock").open("a")
 	fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+	run = workspace(work / a.trait, inference_name(phi, chrs), sig)
 	logs = run / "logs"
 	logs.mkdir(exist_ok=True)
 	command_lock = threading.Lock()
@@ -317,12 +391,11 @@ def csx_combined_main():
 		meta.write_text(json.dumps({"signature": sig, "phi": phi, "inputs": list(map(str, inputs))}, indent=2) + "\n")
 	if a.stage == "weights":
 		return
-	scoring_sig = signature(
+	scoring_sig = configuration(
 		[sig, a.mode],
-		targetfiles + [weight] + [Path(x) for x in (a.remove, a.keep) if x] + [Path(__file__), ROOT / "0.common.py"],
+		targetfiles + [weight] + [Path(x) for x in (a.remove, a.keep) if x],
 	)
-	score = run / "combined_scores" / a.mode / scoring_sig
-	score.mkdir(parents=True, exist_ok=True)
+	score = workspace(run / "combined_scores" / a.mode, "run", scoring_sig)
 
 	def scoring(c):
 		out = score / f"chr{c}"
@@ -376,7 +449,7 @@ def csx_combined_main():
 		f"{a.mode}.combine",
 	)
 	z = filter_samples(pd.read_csv(combined, sep="\t", dtype={"eid": str}), "eid", a.remove)
-	output = home / "csx.pgs.gz"
+	output = home / "1csx.scores.rds"
 	update_csx_table(z, output, a.remove)
 	print(f"DONE {a.trait}: csx.{a.mode}; N={len(z)}; {output}", flush=True)
 
@@ -397,7 +470,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pandas as pd
-from grid_0_common import signature
 
 PAIRS = [(j, k) for j in range(4) for k in range(j, 4)]
 COMP = str.maketrans("ACGT", "TGCA")
@@ -490,15 +562,13 @@ def moments(pop_files, output):
 			h.close()
 
 
-def combine_chromosomes(files, output):
+def combine_chromosomes(files):
 	handles = [h5py.File(p, "r") for p in files]
 	try:
 		n = len(handles[0]["eid"])
-		output = Path(output)
-		tmp = output.with_name(output.name + ".tmp.gz")
 		if any(len(h["eid"]) != n or not h.attrs.get("complete") for h in handles):
 			raise ValueError("Incomplete chromosome moments")
-		first = True
+		frames = []
 		for start in range(0, n, 4096):
 			sl = slice(start, min(start + 4096, n))
 			ids = handles[0]["eid"].asstr()[sl]
@@ -507,24 +577,15 @@ def combine_chromosomes(files, output):
 			mu = sum(h["mean"][sl] for h in handles)
 			cov = sum(h["cov"][sl] for h in handles)
 			d = pd.DataFrame({"eid": ids})
-			for j, p in enumerate(POPS):
-				d[f"csx.{p}"] = mu[:, j]
-			for j, (p, q) in enumerate(PAIRS):
-				d[f"cov.{POPS[p]}.{POPS[q]}"] = cov[:, j]
-			d.to_csv(
-				tmp,
-				sep="\t",
-				index=False,
-				mode="w" if first else "a",
-				header=first,
-				compression="gzip",
-				float_format="%.12g",
-			)
-			first = False
-		tmp.replace(output)
+			for j, pop in enumerate(POPS):
+				d[f"csx.{pop}"] = mu[:, j]
+			for j, (pop, other) in enumerate(PAIRS):
+				d[f"cov.{POPS[pop]}.{POPS[other]}"] = cov[:, j]
+			frames.append(d)
+		return pd.concat(frames, ignore_index=True)
 	finally:
-		for h in handles:
-			h.close()
+		for handle in handles:
+			handle.close()
 
 
 def csx_posterior_main():
@@ -562,22 +623,14 @@ def csx_posterior_main():
 	for c in chrs:
 		gen[c], fs = genotype(Path(a.target_dir) / f"chr{c}")
 		gen_files.extend(fs)
-	sig = signature(
+	sig = configuration(
 		[chrs, a.min_draws],
-		raw + freq_paths + gen_files + [Path(__file__)] + [Path(x) for x in (a.keep, a.remove) if x],
+		raw + freq_paths + gen_files + [Path(x) for x in (a.keep, a.remove) if x],
 	)
-	meta_path = Path(str(output) + ".json")
-	if (
-		a.replace == "FALSE"
-		and output.is_file()
-		and meta_path.is_file()
-		and Path(str(output) + ".metadata.tsv").is_file()
-		and json.loads(meta_path.read_text()).get("signature") == sig
-	):
+	if a.replace == "FALSE" and output.is_file() and rds_metadata(output).get("signature") == sig:
 		print("SKIP posterior scores: matching individual covariance")
 		return
-	work = Path(a.raw_dir).parent / "posterior_scores" / sig
-	work.mkdir(parents=True, exist_ok=True)
+	work = workspace(Path(a.raw_dir).parent / "posterior_scores", "run", sig)
 	chr_files = []
 	draw_counts = []
 	for c, source in zip(chrs, raw):
@@ -679,7 +732,7 @@ def csx_posterior_main():
 			for file in score_files:
 				file.unlink(missing_ok=True)
 		print(f"DONE posterior scoring chr{c}", flush=True)
-	combine_chromosomes(chr_files, output)
+	combined = combine_chromosomes(chr_files)
 	metadata = {
 		"schema": "grid_csx_moments_v1",
 		"signature": sig,
@@ -690,22 +743,8 @@ def csx_posterior_main():
 		"covariance": "joint within chromosome; summed across independent chromosomes",
 		"means": "posterior mean scores centred at discovery EAF",
 		"effect_scale": "standardized_phenotype_per_allele",
-		"source_draws": [str(p.resolve()) for p in raw],
-		"frequency_files": [str(p.resolve()) for p in freq_paths],
 	}
-	temp = Path(str(meta_path) + ".tmp")
-	temp.write_text(json.dumps(metadata, indent=2) + "\n")
-	temp.replace(meta_path)
-	audit = {key: metadata[key] for key in ("schema", "centering", "covariance", "effect_scale")}
-	audit.update(chromosomes=",".join(map(str, chrs)), draw_counts=",".join(map(str, draw_counts)))
-	digest = hashlib.md5()
-	with output.open("rb") as f:
-		for block in iter(lambda: f.read(1024 * 1024), b""):
-			digest.update(block)
-	audit["md5"] = digest.hexdigest()
-	mt = Path(str(output) + ".metadata.tsv.tmp")
-	pd.DataFrame({"field": list(audit), "value": list(audit.values())}).to_csv(mt, sep="\t", index=False)
-	mt.replace(str(output) + ".metadata.tsv")
+	write_rds(combined, output, metadata, float_format="%.12g")
 	print(f"DONE individual posterior moments: {output}", flush=True)
 
 
@@ -770,6 +809,8 @@ def normalize_csx_weights_cli():
 
 COMMANDS = {
 	"signature": csx_config_cli,
+	"score-config": csx_score_config_cli,
+	"workspace": csx_workspace_cli,
 	"combined": csx_combined_cli,
 	"posterior": csx_posterior_cli,
 	"normalize-weights": normalize_csx_weights_cli,

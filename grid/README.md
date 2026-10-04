@@ -76,11 +76,13 @@ GWAS 必须提供正确的效应等位基因频率 **EAF**。已移除 MAF 自�
 
 输出位于 `/mnt/d/data/ukb/pgs/<trait>/`：
 
-- `csx.pgs.gz`：原有模型的平均分数。
-- `csx.posterior.tsv.gz`：四个 discovery-centred 后验均值和十个协方差元素。
-- 配套 `.json` 和 `.metadata.tsv`：来源、染色体、校验值；必须一起保留。
+- `1csx.scores.rds`：原有模型的平均分数。
+- `1csx.posterior.rds`：四个 discovery-centred 后验均值和十个协方差元素。
+- posterior 的必要输入校验、染色体和中心化信息保存在 RDS 的 `model_info` 属性内，不再生成 JSON 或 TSV 边车文件。
 
-SNP 抽样在 `.../csx/<trait>/<signature>/raw/chr*/joint_posterior.h5`；如以后需要重新评分而不重跑 MCMC，应保留。完成后的个体 posterior 表可直接供 Yeval 复用。
+SNP 抽样在 `.../csx/<trait>/phi-1e-2/raw/chr*/joint_posterior.h5`（自动 phi 为 `auto/`）；如以后需要重新评分而不重跑 MCMC，应保留。完成后的个体 posterior 表可直接供 Yeval 复用。
+
+CSx 的 MCMC 推断结果仍按性状、phi 和染色体保存，以便重新评分时复用。原始 HDF5 后验抽样、SNP 权重及工具恢复运行必需的状态属于模型数据，保留其原生格式。普通评分、combined 评分、posterior 评分及 PCA、DISCO 工作目录统一位于 `/tmp/grid-cache/`；日志、命令和交换表也在 `/tmp`。代码根据正式路径计算稳定的缓存位置。仅修改注释或排版不触发重算；确需重新计算时使用 `--replace TRUE`。
 
 PLINK 使用 `center no-mean-imputation`，只读 **SUM**。中心化后缺失位点贡献 0，等价于用相同 discovery EAF 均值填补；不能读取随缺失改变分母的 AVG。这也避免旧 PLINK 将未中心化均值加到缺失位点的问题。Yeval 使用 posterior 文件中的四个均值进行组合，使均值、方差和尺度对应同一个预测器。
 
@@ -178,13 +180,13 @@ LDL 不自动除以 0.7。T2DM 使用 `t2dm.Yt2e` / `t2dm.t2e`，可用 `--event
 
 默认 `/mnt/d/analysis/grid/Yeval/<trait>/`：
 
-1. `comparison.png`：含 COJO 的整体方法比较。
-2. `combined_scores.png`：auto/fixed meta、四分数回归及 Disco 组合策略；与第一图共享的 bar 数值相同，两图有颜色图例。
-3. `distance_performance.png`：PRS-CSx 四面板。
-4. `paired_improvement.png`：DiscoDivas-tuned vs PRS-CSx，放在四面板之后。
-5. `distance_bins.png`：单独的经验距离分箱图；t2e 显示 ΔC。
+1. `Yeval.comparison.png`：含 COJO 的整体方法比较。
+2. `Yeval.combined_scores.png`：auto/fixed meta、四分数回归及 Disco 组合策略；与第一图共享的 bar 数值相同，两图有颜色图例。
+3. `Yeval.distance_performance.png`：PRS-CSx 四面板。
+4. `Yeval.paired_improvement.png`：DiscoDivas-tuned vs PRS-CSx，放在四面板之后。
+5. `Yeval.distance_bins.png`：单独的经验距离分箱图；t2e 显示 ΔC。
 
-`performance.tsv` 保存主指标、增益、旧 SSE 指标及 RMSE 等；`individual_posterior.tsv.gz` 保存全部个体后验 SD、model-based R²（有尺度时）、对角/交叉协方差贡献、组合权重及源人群距离。`distance_centers.tsv` 和 `fold_coefficients.tsv` 保留可复核定义。
+`Yeval.comparison.xlsx` 保存主指标、增益及 RMSE 等；`1csx.posterior.rds` 保存全部个体后验 SD、model-based R²（有尺度时）、对角/交叉协方差贡献、组合权重及源人群距离。参考中心保存在 `Yeval.distance_performance.xlsx`，逐折系数与入组计数保存在 `Yeval.models.xlsx`。
 
 默认每个祖源最多显示 5000 个真实个体点，全部估计保存在表中。抽样只用于显示，不根据结局或准确度选点。经验分箱使用全部合格样本，并根据事件数减少稀疏箱。
 
@@ -194,8 +196,18 @@ LDL 不自动除以 0.7。T2DM 使用 `t2dm.Yt2e` / `t2dm.t2e`，可用 `--event
 
 默认 GWAS `/mnt/f/gwas/4grid/common`；LD `/mnt/f/refLD/csx`；基因型沿用现有 hap/typ 路径；表型 `/mnt/d/data/ukb/phe/Rdata/all.rds`；PRS `/mnt/d/data/ukb/pgs/<trait>/`。T2DM AFA 仍映射 AFR。详细参数见各主入口 `--help`。
 
-`3grid.sh`、`f/3grid.*`、`f/0.arg.py` 等实验模块保留当前 GitHub 实现；本次没有重新对其性能作结论。
+`3grid.sh` 和 `f/3grid.*` 的结果读写已接入 RDS／XLSX；分析方法保持原样。本次用合成结果验证发布入口，没有重新评估其预测性能。
 
-验证包括：实际 1csx.sh 小数据端到端运行及缓存续跑；实际小规模 PRS-CSx MCMC；真实 PLINK 评分中的缺失基因型、等位基因翻转和字符串 ID；两个染色体独立后验合并；连续、二分类、生存结局的模拟端到端运行；独立重算 Prediction R²、AUC、C、训练折组合、协方差与遗传方差尺度。尚未在完整 UKB 数据上运行，真实数据上的 MCMC 收敛及个体可靠性校准仍需评估。
+验证包括：实际 1csx.sh 小数据端到端运行及缓存续跑；实际小规模 PRS-CSx MCMC；真实 PLINK 评分中的缺失基因型、等位基因翻转和字符串 ID；两个染色体独立后验合并；连续、二分类、生存结局的模拟端到端运行；独立重算 Prediction R²、AUC、C、训练折组合、协方差与遗传方差尺度。本次只检查现有 height、ldl、t2dm 数据的输入及迁移完整性，没有重跑这些模型；上述既有方法测试不替代真实数据上的 MCMC 收敛与个体可靠性校准评估。
 
 参考：PRS-CS https://doi.org/10.1038/s41467-019-09718-5；PRS-CSx https://doi.org/10.1038/s41588-022-01054-7；Ding et al. https://doi.org/10.1038/s41586-023-06079-4。
+
+## 结果文件与临时目录
+
+- `analysis/grid/Yeval/<trait>/`：每张 `Yeval.*.png` 对应同名 XLSX；`Yeval.models.xlsx` 保存逐折系数和入组计数，`report.html` 包含方法说明。
+- 个体评估结果使用 `1csx.posterior.rds`；可选的所有方法预测使用 `Yeval.predictions.rds`。工作簿仅包含汇总结果，个体散点的记录留在 RDS。
+- `data/ukb/pgs/<trait>/`：`1csx.scores.rds`、`1csx.posterior.rds`、`2disco.scores.rds`、`2disco.coefficients.rds` 和 `Yeval.cojo.rds` 保存可复用个体数据；`Yeval.cojo.xlsx` 保存变异匹配质量结果。
+- 新的 GRID 方法输出位于 `analysis/grid/3grid/<trait>/`：`3grid.model.xlsx` 为验证和系数表，`3grid.model.rds` 为模型，`3grid.conservation.rds` 和 `3grid.variant_predictions.rds` 为完整变异结果，`3grid.scores.rds` 为个体评分。
+- PLINK 评分、Disco 输入、PCA 交换文件、日志和锁位于 `/tmp/grid-cache/` 或 `/tmp/grid/Yeval/`；正式目录不保留这些临时副本。已有 PRS-CSx MCMC 后验和 SNP 权重仍保留供复用，不重新运行推断。
+- Python/R 结果读写共用 `../0f/results.py`、`../0f/results.R`。汇总工作簿保存精确的原始数值导出；个体记录不会进入 worksheet。
+- 旧评估未保存 `paired_improvement` 的 bootstrap 区间。整理时保留原 PNG，工作簿明确标记该限制；新运行会保存完整的配对比较结果，不从图片估算区间。

@@ -7,6 +7,7 @@
 | `phenotype.R` / `phenotype.sh` | 表型、基因型、GWAS 公用数据处理与配置 |
 | `association.R` | 关联模型 |
 | `prediction.R` | 预测模型 |
+| `results.R` / `results.py` | GRID、GU 共用的结果工作簿、个体 RDS 与临时交换数据 |
 | `plotting.R` | 分析图表与主题 |
 | `manhattan_plot.R` | GWAS Manhattan 图 |
 | `configure_ml.R` | R/reticulate 与机器学习环境 |

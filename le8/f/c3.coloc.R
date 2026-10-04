@@ -1038,7 +1038,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 			gpu <- old$GPU_coloc %||% list(results = tibble(), status = tibble())
 			write_xlsx2(list(
 				coloc_summary = old$summary, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
-				variant_posteriors = old$variants, regional = old$regional, GPU_results = gpu$results %||% tibble(),
+				GPU_results = gpu$results %||% tibble(),
 				GPU_status = gpu$status %||% tibble(), GPU_manifest = old$manifest %||% tibble(), causal_sets = if (length(lists)) stack(lists) else tibble(),
 				pgs_observed_coloc = tri
 			), "c3.out.xlsx")
@@ -1157,7 +1157,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 		saveRDS(out, cache, compress = "xz")
 		write_xlsx2(list(
 			coloc_summary = res, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
-			variant_posteriors = variants, regional = regional, GPU_results = gpu$results, GPU_status = gpu$status,
+			GPU_results = gpu$results, GPU_status = gpu$status,
 			GPU_manifest = mani, causal_sets = stack(lists), pgs_observed_coloc = tri
 		), "c3.out.xlsx")
 		finalize_outputs(LE8_JOB, outdir)
@@ -1200,7 +1200,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	saveRDS(out, cache, compress = "xz")
 	write_xlsx2(list(
 		coloc_summary = res, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
-		variant_posteriors = variants, regional = regional, GPU_results = gpu$results, GPU_status = gpu$status,
+		GPU_results = gpu$results, GPU_status = gpu$status,
 		GPU_manifest = mani, causal_sets = stack(lists), pgs_observed_coloc = tri
 	), "c3.out.xlsx")
 	finalize_outputs(LE8_JOB, outdir)

@@ -12,6 +12,7 @@ command -v python3 >/dev/null 2>&1 || {
 exec python3 - "$@" <<'PY'
 import codecs
 import collections
+from contextlib import contextmanager
 import decimal
 import gzip
 import html
@@ -33,8 +34,8 @@ from xml.etree import ElementTree as ET
 SOURCE = Path(os.environ.get('GITHUB_COPY_SOURCE_ROOT', '/mnt/d/analysis'))
 DEST = Path(os.environ.get('GITHUB_COPY_DEST_ROOT', '/mnt/d/github/analysis'))
 MANIFEST = 'github_files.lst'
-# 10 decimal MB; files exactly at the limit are allowed.
-MAX_FILE_BYTES = 10_000_000
+# 50 decimal MB; files exactly at the limit are allowed.
+MAX_FILE_BYTES = 50_000_000
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 MAX_XML_BYTES = 256 * 1024 * 1024
 
@@ -53,6 +54,28 @@ RASTER = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.tif', '.tiff', '.bmp'}
 
 class Rejected(Exception):
 	pass
+
+
+class RecoveryFailed(Exception):
+	pass
+
+
+@contextmanager
+def staging_directory():
+	stage = Path(tempfile.mkdtemp(prefix='.github_copy.stage.', dir='/tmp'))
+	keep = False
+	try:
+		yield stage
+	except RecoveryFailed:
+		# Preserve the only recovery copy if restoring a destination fails.
+		keep = True
+		raise
+	finally:
+		if not keep:
+			try:
+				shutil.rmtree(stage)
+			except OSError:
+				print(f'WARNING: could not remove temporary directory: {stage}', file=sys.stderr)
 
 
 def has_id(value):
@@ -152,7 +175,7 @@ def file_policy(path, details):
 	if path.suffix.lower() == '.rds':
 		raise Rejected('rds_file')
 	if details.st_size > MAX_FILE_BYTES:
-		raise Rejected('over_10_MB')
+		raise Rejected('over_50_MB')
 
 
 def text_handle(raw):
@@ -361,7 +384,7 @@ def check_pdf(path):
 		]
 	else:
 		raise Rejected('pdf_text_extractor_unavailable')
-	with tempfile.TemporaryFile() as output:
+	with tempfile.TemporaryFile(dir='/tmp') as output:
 		process = subprocess.run(
 			command, stdout=output, stderr=subprocess.DEVNULL, timeout=60
 		)
@@ -386,7 +409,7 @@ def content_check(path):
 		inner_suffix = Path(path.stem).suffix.lower()
 		if inner_suffix == '.rds':
 			raise Rejected('rds_file')
-		with tempfile.TemporaryFile() as expanded:
+		with tempfile.TemporaryFile(dir='/tmp') as expanded:
 			with gzip.open(path, 'rb') as handle:
 				while True:
 					chunk = handle.read(1024 * 1024)
@@ -457,18 +480,29 @@ def prepare_roots():
 	DEST.mkdir(parents=True, exist_ok=True)
 
 
-def atomic_text(path, text):
-	descriptor, temporary = tempfile.mkstemp(
-		prefix='.' + path.name + '.', dir=path.parent
-	)
-	try:
-		with os.fdopen(descriptor, 'w', encoding='utf-8', newline='\n') as handle:
-			handle.write(text)
+def write_manifest(path, text):
+	if path.is_symlink() or (path.exists() and not path.is_file()):
+		raise ValueError('unsafe manifest destination')
+	with staging_directory() as stage:
+		temporary, backup = stage / 'manifest', stage / 'backup'
+		temporary.write_text(text, encoding='utf-8', newline='\n')
 		os.chmod(temporary, 0o644)
-		os.replace(temporary, path)
-	finally:
-		if os.path.exists(temporary):
-			os.unlink(temporary)
+		existed = path.exists()
+		if existed:
+			shutil.copy2(path, backup)
+		try:
+			shutil.copy2(temporary, path)
+		except BaseException:
+			try:
+				if existed:
+					shutil.copy2(backup, path)
+				else:
+					path.unlink(missing_ok=True)
+			except BaseException:
+				raise RecoveryFailed(
+					f'manifest restoration failed; recovery files retained at {stage}'
+				) from None
+			raise
 
 
 def print_summary(projects, approved, excluded, reviews, totals):
@@ -550,13 +584,13 @@ def scan(projects):
 		+ str(SOURCE)
 		+ '.\n'
 		'# Project scope: ' + ','.join(projects) + '\n'
-		'# Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 10 MB, and UKB IDs (7 digits).\n'
+		'# Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 50 MB, and UKB IDs (7 digits).\n'
 		'# Log/done exclusions include gzip files; unreadable content is excluded.\n'
 		'# Images retained by request; visual review list is printed to the terminal.\n'
 		'# sync rechecks an exact staged snapshot before changing destination projects.\n'
 	)
 	print_summary(projects, approved, excluded, reviews, totals)
-	atomic_text(DEST / MANIFEST, header + ''.join(p + '\n' for p in approved))
+	write_manifest(DEST / MANIFEST, header + ''.join(p + '\n' for p in approved))
 	print(
 		f'SCAN OK: wrote {len(approved)} approved paths to {DEST / MANIFEST}',
 		flush=True,
@@ -612,12 +646,9 @@ def sync(arguments):
 	represented = sorted({p.split('/')[0] for p in files})
 	for project in projects:
 		check_target(project)
-	# Stage beside, never inside, the publication directory. Same filesystem
-	# allows checked bytes to be renamed into place instead of being recopied.
-	with tempfile.TemporaryDirectory(
-		prefix='.github_copy.stage.', dir=DEST.parent
-	) as directory:
-		stage = Path(directory)
+	# Keep all temporary data in /tmp. Publication uses copies because /tmp
+	# and DEST may be on different filesystems; retain backups for rollback.
+	with staging_directory() as stage:
 		payload, backup = stage / 'payload', stage / 'backup'
 		payload.mkdir()
 		backup.mkdir()
@@ -640,42 +671,63 @@ def sync(arguments):
 			if time.monotonic() - last_progress > 15:
 				print(f'  Staged and rechecked {index}/{len(files)} files.', flush=True)
 				last_progress = time.monotonic()
-		# Complete every check before touching existing destination projects.
-		# Retain originals until every selected replacement has succeeded.
-		backed_up, installed, removed = [], [], []
+		# Finish checking and backing up all affected paths before changing any.
+		for project in represented:
+			check_target(project)
+			target = DEST / project
+			if target.exists():
+				shutil.copytree(target, backup / project, symlinks=True)
+		artifacts = []
+		# Projects without approved entries retain results except exclusions.
+		for project in sorted(set(projects) - set(represented)):
+			check_target(project)
+			for folder, directories, filenames in os.walk(DEST / project):
+				directories[:] = [
+					name for name in directories
+					if not (Path(folder) / name).is_symlink()
+				]
+				for name in filenames:
+					target = Path(folder) / name
+					if excluded_artifact(target):
+						saved = backup / target.relative_to(DEST)
+						saved.parent.mkdir(parents=True, exist_ok=True)
+						shutil.copy2(target, saved, follow_symlinks=False)
+						artifacts.append((target, saved))
+		changed, removed = [], []
 		try:
 			for project in represented:
 				check_target(project)
 				target = DEST / project
+				# Track even a partial removal/copy so it is also rolled back.
+				changed.append(project)
 				if target.exists():
-					os.replace(target, backup / project)
-					backed_up.append(project)
-				os.replace(payload / project, target)
-				installed.append(project)
-			# A project with no approved entries keeps its results, but old
-			# logs, completion markers and unnamed PDFs must still be removed.
-			for project in sorted(set(projects) - set(represented)):
-				check_target(project)
-				for folder, directories, filenames in os.walk(DEST / project):
-					directories[:] = [
-						name
-						for name in directories
-						if not (Path(folder) / name).is_symlink()
-					]
-					for name in filenames:
-						target = Path(folder) / name
-						if excluded_artifact(target):
-							saved = backup / target.relative_to(DEST)
-							saved.parent.mkdir(parents=True, exist_ok=True)
-							os.replace(target, saved)
-							removed.append((target, saved))
+					shutil.rmtree(target)
+				shutil.copytree(payload / project, target)
+			for target, saved in artifacts:
+				removed.append((target, saved))
+				target.unlink()
 		except BaseException:
+			failed = []
 			for target, saved in reversed(removed):
-				os.replace(saved, target)
-			for project in reversed(installed):
-				os.replace(DEST / project, payload / project)
-			for project in reversed(backed_up):
-				os.replace(backup / project, DEST / project)
+				try:
+					target.unlink(missing_ok=True)
+					shutil.copy2(saved, target, follow_symlinks=False)
+				except BaseException:
+					failed.append(str(target.relative_to(DEST)))
+			for project in reversed(changed):
+				try:
+					target = DEST / project
+					if target.exists():
+						shutil.rmtree(target)
+					if (backup / project).exists():
+						shutil.copytree(backup / project, target, symlinks=True)
+				except BaseException:
+					failed.append(project)
+			if failed:
+				raise RecoveryFailed(
+					'restoration failed for ' + ', '.join(failed)
+					+ f'; recovery files retained at {stage}'
+				) from None
 			raise
 	print_summary(projects, files, excluded, reviews, totals)
 	print(f'SYNC OK: {len(represented)} projects rebuilt, {len(files)} files copied.')
@@ -695,15 +747,16 @@ def main():
   ./github_copy.sh sync [le8,grid,abm,abm_TF]
 
 scan recursively builds github_files.lst without copying analysis files.
-Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 10 MB
-(10,000,000 bytes), and files containing UKB IDs. Log/done exclusions include gzip.
+Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 50 MB
+(50,000,000 bytes), and files containing UKB IDs. Log/done exclusions include gzip.
 UKB IDs of 7 digits are checked in paths and content, regardless of header or row.
 Ambiguous 7-digit integers are conservatively excluded as possible IDs.
 Other file names and directories remain eligible for content inspection.
 Readable text, Excel, PDF and gzip text are inspected; unreadable content is excluded.
 Images are retained with a manual-review list printed to the terminal (Pillow required).
-Every admitted file is <=10 MB; there is no file-count or directory-depth cap.
+Every admitted file is <=50 MB; there is no file-count or directory-depth cap.
 sync rechecks staged contents, then rebuilds only projects with selected entries.
+Staging, scratch files and rollback backups live in /tmp; publication copies across filesystems.
 Excluded logs, completion markers and unnamed PDFs are skipped even in old lists.
 Projects without approved entries retain existing results except those artifacts.
 No Git commit or push is performed. PDF inspection uses pdftotext or Ghostscript.

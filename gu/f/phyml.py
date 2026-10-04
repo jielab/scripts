@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+sys.dont_write_bytecode = True
 
 if "gu_0_common" not in sys.modules:
 	_spec = spec_from_file_location("gu_0_common", Path(__file__).with_name("0.common.py"))
@@ -639,7 +640,6 @@ SUFFIXES = [
 	"_phyml_boot_trees.txt",
 	"_phyml_boot_stats.txt",
 	"_phyml_tree.png",
-	"_phyml_tree.pdf",
 	".phyml.log",
 	".phyml.complete.json",
 ]
@@ -1138,6 +1138,12 @@ def phyml_locus_cache_request(cmd, archaic_root):
 	)
 
 
+def phyml_scientific_output(name):
+	# Display files and path-bearing runtime receipts do not determine the fit.
+	path = Path(name)
+	return (path.suffix in ('.tsv', '.phy', '.txt') or name.endswith('.phyml.log')) and not name.endswith(('phylogeny_panel_b.tsv', '.phyml.run.status.tsv'))
+
+
 def phyml_locus_cache_outputs(out):
 	required = (
 		"gwas_loci.tsv",
@@ -1158,7 +1164,7 @@ def phyml_locus_cache_outputs(out):
 		str(p.relative_to(out)): phyml_locus_cache_digest(p)
 		for folder in ("final", "loci")
 		for p in sorted((out / folder).glob("*"))
-		if p.is_file() and not p.name.endswith(".lock") and ".failed." not in p.name
+		if p.is_file() and phyml_scientific_output(p.name) and ".failed." not in p.name
 	}
 
 
@@ -1194,7 +1200,7 @@ def successful(cmd, req):
 			if completion_error(out / "loci/haplotypes.phy", 100):
 				raise ValueError("incomplete tree")
 			for lineage in ("Neanderthal", "Denisovan"):
-				for suffix in (".png", ".pdf", ".full.png", ".full.pdf"):
+				for suffix in (".png", ".xlsx", ".full.png", ".full.xlsx"):
 					plot = out / "loci" / f"haplotypes.phy_phyml_tree.{lineage}.panelB{suffix}"
 					if not plot.is_file() or not plot.stat().st_size:
 						raise ValueError("missing plot")
@@ -1220,7 +1226,8 @@ def process(mode, cmd, archaic_root):
 		# analyses. Actual inputs/options and output integrity still must match.
 		saved = {k: v for k, v in data["request"].items() if k != "code"}
 		current = {k: v for k, v in req.items() if k != "code"}
-		return saved == current and data["outputs"] == phyml_locus_cache_outputs(cmd.parent)
+		outputs = {name: value for name, value in data["outputs"].items() if phyml_scientific_output(name)}
+		return saved == current and outputs == phyml_locus_cache_outputs(cmd.parent)
 	successful(cmd, req)
 	if mode == "adopt":
 		# Old runs have no source fingerprints. Only adopt sources older than

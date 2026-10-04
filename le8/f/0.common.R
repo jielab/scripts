@@ -35,8 +35,8 @@ le8_table_save <- function(value, path) {
 	invisible(path)
 }
 le8_table_archive_files <- function(directory) {
-	paths <- file.path(directory, c(le8_table_workbook_name(directory), if (basename(directory) == 'c2_cause') 'c2.dandelion.xlsx'))
-	paths[file.exists(paths)]
+	paths <- list.files(directory, pattern = '[.]xlsx$', full.names = TRUE)
+	paths[vapply(paths, function(path) 'le8/manifest.json' %in% utils::unzip(path, list = TRUE)$Name, logical(1))]
 }
 le8_table_archive_read <- function(path) {
 	connection <- unz(path, 'le8/manifest.json', open = 'r')
@@ -96,7 +96,7 @@ le8_table_archive_add <- function(path, entries, private_files) {
 	stage <- tempfile('le8-workbook-sources-', tmpdir = le8_table_tmpdir())
 	dir.create(file.path(stage, 'le8', 'exports'), recursive = TRUE)
 	on.exit(unlink(stage, recursive = TRUE), add = TRUE)
-	manifest <- list(format = 'le8-workbook-v1', files = list(), private_files = private_files)
+	manifest <- list(format = 'le8-workbook-v1', layout = 'topic-workbooks-v2', files = list(), private_files = private_files)
 	for (source in names(entries)) {
 		entry <- entries[[source]] ; bytes <- le8_table_bytes(entry)
 		part <- paste0('le8/exports/', entry$sha256, '.bin')
@@ -115,8 +115,17 @@ le8_table_archive_add <- function(path, entries, private_files) {
 		type <- if (extension == 'json') 'application/json' else 'application/octet-stream'
 		content <- sub('</Types>', paste0('<Default Extension="', extension, '" ContentType="', type, '"/></Types>'), content, fixed = TRUE)
 	}
+	# openxlsx reserves the .bin default for printer settings. Exact data
+	# exports need their own content type so Excel does not parse them as printers.
+	parts <- unique(vapply(manifest$files, `[[`, character(1), 'part'))
+	for (part in parts) {
+		override <- paste0('<Override PartName="/', part, '" ContentType="application/octet-stream"/>')
+		content <- sub('</Types>', paste0(override, '</Types>'), content, fixed = TRUE)
+	}
 	writeLines(content, content_path, useBytes = TRUE)
-	zip::zip_append(path, files = c('[Content_Types].xml', 'le8'), root = stage, compression_level = 1)
+	zip::zip_append(path, files = c('[Content_Types].xml', 'le8'), root = stage,
+		compression_level = 6, include_directories = FALSE)
+	if (any(grepl('/$', utils::unzip(path, list = TRUE)$Name))) stop('Unexpected directory entries in workbook: ', path)
 	check <- le8_table_archive_read(path)
 	stopifnot(identical(as.character(names(check$files)), as.character(names(entries))))
 	for (source in names(check$files)) invisible(le8_table_bytes(check$files[[source]]))
@@ -156,77 +165,381 @@ le8_table_sheet_names <- function(names) {
 	vapply(names, function(name) {
 		base <- sub('[.](csv|tsv)([.]gz)?$', '', basename(name))
 		base <- sub('^c[1-5][.]', '', base)
+		base <- sub('^out[.]', '', base)
+		base <- sub('^Fig[0-9]+[.][^.]+[.]', '', base)
+		base <- sub('^out[.]', '', base)
+		base <- sub('^(pgs_focus|focus|questions|final[.]questions)[.]', '', base)
+		base <- sub('^question_', '', base)
 		base <- sub('^dandelion[._]', '', base, ignore.case = TRUE)
 		base <- gsub('[^[:alnum:]_. -]', '_', base)
 		if (!nzchar(base)) base <- 'table'
 		candidate <- substr(base, 1, 31)
-		if (nchar(base) > 31 || tolower(candidate) %in% tolower(used))
-			candidate <- paste0(substr(base, 1, 22), '_', substr(digest::digest(name, algo = 'sha256'), 1, 8))
-		while (tolower(candidate) %in% tolower(used)) candidate <- paste0(substr(candidate, 1, 26), '_', length(used))
+		number <- 1L
+		while (tolower(candidate) %in% tolower(used)) {
+			number <- number + 1L
+			candidate <- paste0(substr(base, 1, 27), '_', number)
+		}
 		used <<- c(used, candidate)
 		candidate
 	}, character(1), USE.NAMES = FALSE)
 }
-le8_table_workbook_name <- function(directory) {
-	name <- basename(directory)
-	if (grepl('^c[1-5]_', name)) return(paste0(sub('_.*$', '', name), '.tables.xlsx'))
-	paste0(gsub('[^[:alnum:]_.-]', '_', name), '.tables.xlsx')
+
+
+# 🚩 Figure result workbooks
+le8_table_from_data <- function(x) {
+	file <- tempfile('le8-result-', tmpdir = le8_table_tmpdir(), fileext = '.csv')
+	on.exit(unlink(file), add = TRUE)
+	data.table::fwrite(as.data.frame(x), file, na = 'NA')
+	le8_table_entry(file, as.data.frame(x))
 }
+le8_table_plot_exports <- function(plots, directory, stem) {
+	for (i in seq_along(plots)) {
+		plot <- plots[[i]]
+		tables <- attr(plot, 'le8_result_tables')
+		if (is.null(tables)) {
+			tables <- c(list(plot$data), lapply(plot$layers, function(layer) layer$data))
+			tables <- Filter(function(x) le8_table_useful(x) && !le8_table_private(x) &&
+				!all(names(x) %in% c('x', 'y', 'xend', 'yend', 'label', 'colour', 'fill')), tables)
+			fingerprints <- vapply(tables, function(x) digest::digest(x, algo = 'sha256'), character(1))
+			tables <- tables[!duplicated(fingerprints)]
+		}
+		for (j in seq_along(tables)) {
+			x <- as.data.frame(tables[[j]])
+			if (!le8_table_useful(x)) next
+			if (le8_table_private(x)) stop('Individual data cannot be exported as figure results')
+			x$panel <- LETTERS[i]
+			name <- paste0(stem, '.panel_', LETTERS[i], if (length(tables) > 1L) paste0('.', j), '.csv')
+			data.table::fwrite(x, file.path(directory, name), na = 'NA')
+		}
+	}
+	invisible(NULL)
+}
+le8_table_administrative <- function(name) {
+	grepl('(^|[./_])(manifest|provenance|output_index|omission_audit|source_registry|sources|input_audit|input_features|input_feature_annotation_audit|analysis_scope|method_scope_audit|design_status|annotation_status|status|completed|panels|caption|claim_register|audit_findings|supplement_source_inventory|review_association_scope|review_interpretation)([./_]|$)|^outcome_audit[.]|^c4[.]focus[.]design[.]|^(final[.]questions[.]|question_)design[.]', name, ignore.case = TRUE)
+}
+le8_table_useful <- function(x) {
+	is.data.frame(x) && nrow(x) > 0 && ncol(x) > 0 &&
+		!all(tolower(names(x)) %in% c('note', 'status', 'detail', 'reason', 'message', 'caption', 'exit_code', 'source', 'path', 'file'))
+}
+le8_table_c3_results <- function(directory, public) {
+	if (basename(directory) != 'c3_coloc') return(public)
+	# The fitted object already retains every regional SNP and posterior. Export
+	# only the loci/variants drawn in the paired figures, without duplicating it.
+	cache <- file.path(directory, 'c3.res.rds')
+	large <- c('c3.out.xlsx', 'c3.regional_rows.csv', 'c3.variant_posteriors.csv')
+	if (any(large %in% names(public$files))) {
+		if (!file.exists(cache)) stop('Cannot replace full C3 exports without the fitted result: ', directory)
+		obj <- readRDS(cache)
+		if (!all(c('summary', 'regional', 'variants') %in% names(obj))) stop('Incomplete C3 result: ', cache)
+		x <- as.data.frame(obj$summary)
+		x <- x[x$status %in% 'ok', , drop = FALSE]
+		robust <- if ('PP.H4_robust_min' %in% names(x)) x$PP.H4_robust_min else x$PP.H4
+		robust[is.na(robust)] <- x$PP.H4[is.na(robust)]
+		x <- x[order(-robust, -x$PP.H4, na.last = TRUE), , drop = FALSE]
+		loci <- head(x, 4L)
+		key <- function(z) paste(z$feature, z$locus, sep = '\r')
+		regional <- as.data.frame(obj$regional)
+		regional <- regional[key(regional) %in% key(loci) & is.finite(regional$p) & regional$p > 0, , drop = FALSE]
+		variants <- as.data.frame(obj$variants)
+		variants <- variants[key(variants) %in% key(loci), , drop = FALSE]
+		if (nrow(variants)) {
+			variants <- variants[order(variants$feature, variants$locus, -variants$SNP.PP.H4), , drop = FALSE]
+			variants <- variants[ave(seq_len(nrow(variants)), key(variants), FUN = seq_along) <= 40L, , drop = FALSE]
+		}
+		tables <- list(regional_top_loci = regional, credible_set_variants = variants,
+			GPU_results = obj$GPU_coloc$results, GPU_status = obj$GPU_coloc$status)
+		for (name in names(tables)) if (is.data.frame(tables[[name]]) && ncol(tables[[name]]))
+			public$files[[paste0('c3.', name, '.csv')]] <- le8_table_from_data(tables[[name]])
+		public$files[intersect(large, names(public$files))] <- NULL
+	}
+	public$files[grep('^c3[.]CIGMA_|^qtl_cad_manifest[.]', names(public$files), value = TRUE)] <- NULL
+	public
+}
+le8_table_figure_pattern <- function(file) {
+	stem <- sub('[.]png$', '', basename(file))
+	key <- sub('^(c[1-5][.])?Fig[0-9]+[.]', '', stem)
+	module <- substr(stem, 1, 2)
+	patterns <- switch(module,
+		c1 = c(
+			mh = '(pwas|mwas)_(pgs_|incident_adj2|prevalent_adj2|birthline_attained_age_adj2)',
+			circular = 'circular_associations|mwas_(pgs_|incident_adj2|prevalent_adj2|birthline_attained_age_adj2)',
+			vc = '(pwas|mwas)_(pgs_|incident_adj2|prevalent_adj2|birthline_attained_age_adj2)',
+			measured_volcano = '(pwas|mwas)_(incident_adj2|prevalent_adj2)',
+			temporal_profiles = 'gradient|mock_trajectories', diagnosis_timed_profiles = 'mock_(trajectories|clusters)',
+			gradient_cluster = 'cluster_membership|cluster_selection|mock_(trajectories|clusters)',
+			gradient_cluster_diagnostics = 'cluster_membership|cluster_selection|mock_clusters',
+			quantile_top = 'quantile', enrich_sig = 'enrichment_(incident|prevalent)_sig',
+			temporal_evidence = 'directionality_triage|temporal_heterogeneity',
+			landmark_birthline_sensitivity = 'landmark_adj2|birthline_attained_age_adj2',
+			diagnosis_window_riskset = 'diagnosis_window_riskset', paired_temporal_validation = 'paired_pgs_measured|pgs_actual_concordance|prevalent_duration_adj2',
+			reverse_time_exploratory = 'prevalent_reverse_cox_adj2|prevalent_duration_adj2',
+			pgs_actual_concordance = 'pgs_actual_concordance|paired_pgs_measured',
+			L_VLDL_TG_pct_deep_dive = 'L_VLDL_TG_pct'
+		),
+		c2 = c(
+			instrument_diagnostics = 'instrument|pQTL|heritability', effect_concordance = 'cis_trans_comparison|MR_all',
+			mr_incident_prevalent = 'mr_incident_prevalent', mrlink2 = 'MRLink2_results|mrlink2[.]results',
+			bidirectional_mr = 'reverse_MR_all|MR_all', genetic_decomposition = 'individual_genetic_decomposition[.]csv|decomposition_calibration',
+			genetic_component_leadtime = 'genetic_component_leadtime', evidence_grades = 'evidence_grades|top_candidates',
+			dandelion_sensitivity = 'dandelion.*(targets|integration|sensitivity|scores)',
+			dandelion_mr_integration = 'dandelion.*(integration|MR_integration|targets)',
+			dandelion_network = 'dandelion.*(pairs|lead_snps|snp_gene_map|targets)',
+			prots.top = 'top_candidates|MR_best|observational|cis_trans_comparison',
+			sensitivity_architecture = 'heterogeneity|pleiotropy|leave_one|sensitivity|MR_all',
+			directionality_causal = 'directionality_causal', observational_mr_overview = 'mr_incident_prevalent|observational|MR_all',
+			qtl_variance_ranked = 'pQTL|heritability|instrument'
+		),
+		c3 = c(
+			posterior_evidence = 'coloc_summary|selected_mr|mr_locus_selection|same_locus|susie',
+			regional_top_loci = 'regional_top_loci', credible_sets = 'credible_set',
+			gpu_coloc_validation = 'GPU_', pgs_coloc_triangulation = 'pgs_|triangulation[.](features|loci)'
+		),
+		c4 = c(
+			supervised_connections = 'LE8_feature_associations|primary_pillar_assignment|supervised_module',
+			mediation = 'mediation', imaging_context = 'imaging_associations|imaging_fields',
+			lifestyle_omics_risk = 'lifestyle_omics_risk_display', sex_interaction = 'sex_interaction',
+			LE8_component_interactions = 'LE8_pairwise_interactions', spline_patterns = 'nonlin_(curves|tests)',
+			pass_fail_penalty = 'penalty_(summary|CV_by_fold|selected_gamma)',
+			proxy_heatmap = 'LE8_feature_associations|proxy_membership',
+			connection_bridge = 'genetic_omic_disease_bridges|matched_PGS_bridges',
+			connection_evidence = 'genetic_omic_disease_bridges|matched_PGS_scan|PRS_feature_associations',
+			network_globe = 'YS_edges|proxy_membership|supervised_module_membership',
+			selection_mediation = 'mediation|primary_pillar_assignment|proxy_membership',
+			imaging_atlas = 'imaging_associations|mock_brain_region_counts',
+			state_remodeling = 'state_network_(edges|counts|hubs)',
+			equal_budget = 'focus[.](metrics|contrasts|calibration|panel_members|pillar_counts|heterogeneity|proxy_accuracy)[.]'
+		),
+		c5 = c(cell.enrichment = 'cell[.](enrichment|coverage|panel_annotation)'),
+		NULL
+	)
+	if (module == 'c5') key <- sub('^c5[.]', '', stem)
+	if (key %in% names(patterns)) return(unname(patterns[key]))
+	if (grepl('^Fig[0-9S]+$', stem)) return(paste0('^', stem, '[_./]'))
+	if (grepl('^Fig6[.]question_LE8', stem)) return('final[.]questions[.](contrasts|proxy|pillars|prediction)[.]')
+	if (grepl('^Fig7[.]question_ABM', stem)) return('final[.]questions[.]abm_(metrics|coverage|paired|support)[.]')
+	if (grepl('^Fig8[.]question_genetic', stem)) return('final[.]questions[.](genetic|temporal|same_locus)[.]')
+	if (grepl('coverage', stem, ignore.case = TRUE)) return('coverage_curve|support_error')
+	if (stem == 'Fig_masked_reconstruction') return('masked_feature_metrics|masked_reconstruction')
+	if (stem == 'Fig_model_comparison') return('test_metrics|approach_comparison|paired_contrasts')
+	if (grepl('paired|prediction|benchmark', stem, ignore.case = TRUE)) return('paired_contrasts|test_metrics|approach_comparison')
+	if (grepl('support|error', stem, ignore.case = TRUE)) return('support_error|coverage_curve')
+	gsub('[.]', '[.]', key)
+}
+le8_table_result_groups <- function(names, directory) {
+	if (!length(names)) return(character())
+	module <- if (grepl('^c[1-5]_', basename(directory))) sub('_.*$', '', basename(directory)) else basename(directory)
+	# Rules are ordered by scientific specificity, not input order or table count.
+	rules <- switch(module,
+		c1 = c(
+			pgs.temporal = 'pgs_focus[.](windows|window_contrasts|landmarks|landmark_contrasts)[.]',
+			pgs.decomposition = 'pgs_focus[.](bootstrap|calibration|components|contrasts|folds|lifestyle|composition)[.]',
+			pgs.comparison = 'pgs_focus[.]',
+			cohort = 'cohort|endpoint_',
+			enrichment = 'enrich|mock_(function_terms|gene_universe|ppi_edges|tf_edges)',
+			pgs = 'pgs_',
+			temporal = 'birthline|landmark|window|duration|reverse_prevalent|directionality|time_heterogeneity|trajector|profiles',
+			association = 'pwas_|mwas_|assoc|prevalent|incident|attenuation'
+		),
+		c2 = c(
+			dandelion = 'dandelion|review_dan_', mrlink2 = 'mrlink2',
+			instruments = 'QTL_R2|instrument|heritability',
+			genetic_leadtime = 'genetic_leadtime', genetic_decomposition = 'decomp',
+			mr = 'MR_|reverse_MR|effect_forest|cis_local_vs_trans', evidence = 'evidence'
+		),
+		c4 = c(
+			validation.genetics = 'focus[.]PGS_',
+			validation.models = 'focus[.](baseline_hazards|model_coefficients|preprocessing|fit_diagnostics)[.]',
+			validation.panels = 'focus[.](panel_|membership|training_screen|domain_availability|inflammation_definition)',
+			validation = 'focus[.]', explain = 'explain[.]', cohort = 'cohort',
+			association = 'assoc|behavior_biology', connections = 'primary_assignment|genetic_omic_bridges',
+			splines = 'spline|nonlin|nadir', interactions = 'interaction|prediction_surfaces',
+			penalty = 'penalty', networks = 'state_network', imaging = 'imaging'
+		),
+		c5 = c(cellulation = 'cell'),
+		abm_reference = c(validation = 'test_|subgroup|development_metrics',
+			development = 'tuning|oof_fits|embedding|metric_features|mosaic_weights|token_membership'),
+		abm_tabicl = c(model = 'test_|tuning|learning_curve|feature_selection'),
+		attention = c(interventions = 'intervention'),
+		le8_annotations = c(protein_interactions = 'string_physical'),
+		Yin = c(connections = 'connection'), YinYang = c(connections = 'connection'),
+		NULL
+	)
+	if (module %in% c('final', 'shiny')) rules <- c(
+		catalogue = '^(tables|figures|status|question_sources)[.]',
+		abm = '(questions[.]|question_)abm_', cell = '(questions[.]|question_)cell',
+		dandelion = 'dandelion', nonlinear = 'nonlinear', mediation = 'mediation',
+		temporal = '(questions[.]|question_)temporal',
+		genetics = '(^loci[.]|[._](genetic|same_locus|mr_scope)[.])',
+		connections = '[._](members|modules|pillars|inflammation_definition)[.]',
+		validation = 'prediction|proxy|[._](contrasts|fit|heterogeneity|design)[.]',
+		overview = 'cohort|overview|association_counts|discovery_counts',
+		association = '^(candidates|effects)[.]'
+	)
+	group <- rep('results', length(names))
+	for (key in rev(names(rules))) group[grepl(rules[[key]], names, ignore.case = TRUE)] <- key
+	paste0(module, '.', group)
+}
+
+le8_table_figure_supplements <- function(figure, sources) {
+	# Figure numbers can change at publication. Match the scientific topic in
+	# explicit figure exports so their tables follow the corresponding image.
+	stem <- sub('[.]png$', '', basename(figure))
+	topic <- sub('^c[1-5][.]Fig[0-9]+[.]', '', stem)
+	module <- substr(stem, 1, 2)
+	if (!grepl('^c[1-5][.]Fig', stem)) return(character())
+	topic_alias <- switch(topic, enrich_sig = 'enrichment', diagnosis_timed_profiles = 'profiles', topic)
+	explicit <- paste0('^', module, '[.]Fig[0-9]+[.]', gsub('[.]', '[.]', topic_alias), '[.]')
+	extra <- switch(paste(module, topic, sep = '.'),
+		c1.enrich_sig = 'enrichment_(incident|prevalent)|mock_(function_terms|gene_universe|ppi_edges|tf_edges)',
+		c1.paired_temporal_validation = 'review_paired_associations|review_time_heterogeneity',
+		c1.temporal_evidence = 'out[.]directionality[.]',
+		c1.reverse_time_exploratory = 'out[.]reverse_prevalent[.]',
+		c2.instrument_diagnostics = 'out[.]QTL_R2[.]',
+		c2.mrlink2 = 'mrlink2_(job_audit|jobs)|out[.]MRLink2_(job_audit|jobs)',
+		c2.bidirectional_mr = 'out[.]MR_reverse[.]|reverse_MR_audit',
+		c2.genetic_decomposition = 'genetic_decomp_summary|review_decomp_folds',
+		c2.evidence_grades = 'evidence_overlap',
+		c2.effect_concordance = 'effect_forest|cis_local_vs_trans_distal',
+		c4.supervised_connections = 'out[.]primary_assignment[.]',
+		c4.connection_bridge = 'out[.]genetic_omic_bridges[.]',
+		c4.pass_fail_penalty = 'penalty_inner_CV',
+		c4.state_remodeling = 'state_network_counts',
+		NULL
+	)
+	sources[grepl(paste(c(explicit, extra), collapse = '|'), sources, ignore.case = TRUE)]
+}
+
 le8_table_workbook <- function(directory, public) {
 	if (!length(public$files) && !length(public$private_files)) return(invisible(character()))
-	for (source in names(public$files)) public$files[[source]] <- le8_table_materialize(public$files[[source]], source)
+	public <- le8_table_c3_results(directory, public)
+	if (basename(directory) == 'final') {
+		# These are copies of module sources, not new Final analysis results.
+		copied <- grepl('^[^.]+[.](prot|met|joint)[.]', names(public$files)) |
+			grepl('^final[.]questions[.]panome_', names(public$files))
+		public$files[copied] <- NULL
+	}
+	# Flatten old bundles once. Never embed a whole workbook inside another.
+	for (source in names(public$files)) {
+		if (basename(directory) == 'c3_coloc' && grepl('[.]xlsx$', source)) {
+			public$files[[source]] <- NULL
+			next
+		}
+		public$files[[source]] <- le8_table_materialize(public$files[[source]], source)
+	}
+	weights <- 'c2.genetic_score_weights.tsv'
+	if (weights %in% names(public$files)) {
+		public$private_files <- le8_table_private_save(public$files[[weights]], weights, directory, public$private_files)
+		public$files[[weights]] <- NULL
+	}
 	tables <- lapply(public$files, `[[`, 'data')
 	tables <- tables[vapply(tables, is.data.frame, logical(1))]
-	# Existing workbooks can contain tables which have no separate CSV export.
 	for (source in names(public$files)) if (length(public$files[[source]]$sheets)) {
-		entry <- public$files[[source]]
-		for (name in names(entry$sheets)) {
-			x <- entry$sheets[[name]]
-			# Avoid repeating a CSV table under its former workbook sheet name.
+		for (name in names(public$files[[source]]$sheets)) {
+			x <- public$files[[source]]$sheets[[name]]
+			if (!le8_table_useful(x) || le8_table_administrative(name)) next
 			same <- vapply(tables, function(y) identical(names(x), names(y)) && identical(dim(x), dim(y)) &&
 				isTRUE(all.equal(x, y, check.attributes = FALSE, tolerance = 0)), logical(1))
-			if (!any(same)) tables[[paste(source, name, sep = '/')]] <- x
+			if (any(same)) next
+			key <- paste0(sub('[.]xlsx$', '', source), '.', name, '.csv')
+			if (key %in% names(public$files)) next
+			public$files[[key]] <- le8_table_from_data(x)
+			tables[[key]] <- x
 		}
+		public$files[[source]] <- NULL
 	}
 	if (any(vapply(tables, le8_table_private, logical(1)))) stop('Private table in aggregate workbook: ', directory)
-	group <- function(names) {
-		files <- rep(le8_table_workbook_name(directory), length(names))
-		if (basename(directory) == 'c2_cause') {
-			dandelion <- grepl('(^|[/.:_])dandelion([._/]|$)|(^|/)review_dan_', tolower(names))
-			files[dandelion] <- 'c2.dandelion.xlsx'
-		}
-		files
+	visible <- vapply(tables, le8_table_useful, logical(1)) & !le8_table_administrative(names(tables))
+	# Shiny is a machine-readable catalogue, with no corresponding PNGs.
+	if (basename(directory) == 'shiny') visible <- vapply(tables, le8_table_useful, logical(1))
+	tables <- tables[visible]
+	figures <- sort(list.files(directory, pattern = '[.]png$'))
+	plans <- list()
+	for (figure in figures) {
+		selected <- names(tables)[startsWith(names(tables), paste0(sub('[.]png$', '', figure), '.panel_'))]
+		if (!length(selected)) selected <- names(tables)[grepl(le8_table_figure_pattern(figure), names(tables), ignore.case = TRUE)]
+		if (!length(selected)) stop('No analysis table mapped to figure: ', file.path(directory, figure))
+		plans[[sub('[.]png$', '.xlsx', figure)]] <- selected
 	}
-	workbooks <- group(names(tables)) ; archives <- group(names(public$files))
-	primary <- le8_table_workbook_name(directory)
-	written <- unique(c(primary, workbooks, archives))
-	for (file in written) le8_table_write_workbook(directory, tables[workbooks == file], file,
-		public$files[archives == file], if (file == primary) public$private_files else list())
-	invisible(written)
+	for (figure in figures) {
+		# Unplotted full results of a paginated topic get their own topic book;
+		# never copy them into every page just because the topic matches.
+		topic <- sub('^(c[1-5][.])?Fig[0-9]+[.]', '', figure)
+		if (sum(sub('^(c[1-5][.])?Fig[0-9]+[.]', '', figures) == topic) != 1L) next
+		remaining <- setdiff(names(tables), unique(unlist(plans)))
+		file <- sub('[.]png$', '.xlsx', figure)
+		plans[[file]] <- c(plans[[file]], le8_table_figure_supplements(figure, remaining))
+	}
+	remaining <- setdiff(names(tables), unique(unlist(plans)))
+	groups <- le8_table_result_groups(remaining, directory)
+	for (group in unique(groups)) {
+		plans[[paste0(group, '.xlsx')]] <- remaining[groups == group]
+	}
+	if (!length(plans)) {
+		# A non-applicable cell analysis has a scientific eligibility result.
+		eligibility <- 'c5.cellulation_status.csv'
+		if (eligibility %in% names(public$files)) {
+			tables[[eligibility]] <- public$files[[eligibility]]$data
+			plans[['c5.cellulation.xlsx']] <- eligibility
+		} else stop('No analysis results to publish: ', directory)
+	}
+	primary <- names(plans)[1]
+	owners <- setNames(rep(primary, length(public$files)), names(public$files))
+	for (file in rev(names(plans))) owners[intersect(plans[[file]], names(owners))] <- file
+	for (file in names(plans)) {
+		selected <- tables[plans[[file]]]
+		# Identical source aliases serve old internal consumers but need one sheet.
+		fingerprints <- vapply(selected, function(x) digest::digest(x, algo = 'sha256'), character(1))
+		selected <- selected[!duplicated(fingerprints)]
+		le8_table_write_workbook(directory, selected, file, public$files[owners == file],
+			if (file == primary) public$private_files else list())
+	}
+	invisible(names(plans))
 }
 le8_table_write_workbook <- function(directory, tables, filename, entries, private_files) {
-	sheets <- le8_table_sheet_names(names(tables))
-	index <- data.frame(table = as.character(names(tables)), worksheet = sheets,
-		rows = vapply(tables, nrow, integer(1)), columns = vapply(tables, ncol, integer(1)),
-		storage = rep('Excel worksheet and exact source export', length(tables)), stringsAsFactors = FALSE)
-	large <- index$rows > 1048575L | index$columns > 16384L
-	# Bound worksheet size; the workbook retains complete source exports.
-	remaining <- 3000000
-	for (i in seq_len(nrow(index))) {
-		cells <- as.double(index$rows[i]) * index$columns[i]
-		if (large[i] || cells > remaining) large[i] <- TRUE else remaining <- remaining - cells
+	if (length(tables) && all(grepl('[.]panel_', names(tables)))) {
+		# Panels with the same result schema share a worksheet, identified by
+		# the panel column; six survival panels need curves + contrasts, not 12 tabs.
+		groups <- vapply(tables, function(x) paste(names(x), collapse = '\r'), character(1))
+		merged <- list()
+		for (key in unique(groups)) {
+			x <- as.data.frame(data.table::rbindlist(tables[groups == key], use.names = TRUE))
+			name <- if (all(c('time', 'surv') %in% names(x))) 'curves' else
+				if (all(c('contrast', 'HR') %in% names(x))) 'contrasts' else 'panel_results'
+			if (name %in% names(merged)) name <- paste0(name, '_', length(merged) + 1L)
+			merged[[name]] <- x
+		}
+		tables <- merged
 	}
-	index$storage[large] <- 'Exact source export within this workbook (exceeds worksheet display limit)'
-	index$worksheet[large] <- NA_character_
-	undisplayed <- setdiff(names(entries), names(tables))
-	undisplayed <- undisplayed[!grepl('[.](xlsx|json)$', undisplayed)]
-	if (length(undisplayed)) index <- rbind(index, data.frame(table = undisplayed, worksheet = NA_character_,
-		rows = NA_integer_, columns = NA_integer_, storage = 'Exact reusable exchange within this workbook'))
+	if (length(tables) > 1L && !all(names(tables) %in% c('curves', 'contrasts'))) {
+		groups <- vapply(tables, function(x) paste(names(x), collapse = '\r'), character(1))
+		merged <- list()
+		for (key in unique(groups)) {
+			selected <- tables[groups == key]
+			name <- names(selected)[1]
+			if (length(selected) == 1L || 'result_table' %in% names(selected[[1]])) {
+				merged <- c(merged, selected)
+				next
+			}
+			x <- as.data.frame(data.table::rbindlist(selected, use.names = TRUE, idcol = 'result_table'))
+			x$result_table <- sub('[.](csv|tsv)([.]gz)?$', '', x$result_table)
+			name <- if ('beta_difference' %in% names(x)) 'contrasts' else
+				if ('attenuation_pct' %in% names(x)) 'attenuation' else
+				if ('adjusted_p' %in% names(x)) 'enrichment' else
+				if (all(c('beta', 'landmark') %in% names(x))) 'time_effects' else
+				if (any(c('p.value', 'pval', 'beta', 'Beta') %in% names(x))) 'associations' else
+				if ('metric' %in% names(x)) 'metrics' else 'results'
+			if (name %in% names(merged)) name <- paste0(name, '_', length(merged) + 1L)
+			merged[[name]] <- x
+		}
+		tables <- merged
+	}
+	sheets <- le8_table_sheet_names(names(tables))
+	if (!length(tables)) stop('Cannot publish an empty result workbook: ', filename)
+	cells <- sum(vapply(tables, function(x) as.double(nrow(x)) * ncol(x), numeric(1)))
+	if (cells > 3000000 || any(vapply(tables, function(x) nrow(x) > 1048575L || ncol(x) > 16384L, logical(1))))
+		stop('Result table too large for its figure workbook: ', filename, '; split by analysis scope')
 	wb <- openxlsx::createWorkbook()
-	openxlsx::addWorksheet(wb, '_tables')
-	openxlsx::writeData(wb, '_tables', index, withFilter = nrow(index) > 0)
-	openxlsx::freezePane(wb, '_tables', firstRow = TRUE)
-	for (i in which(!large)) {
+	for (i in seq_along(tables)) {
 		openxlsx::addWorksheet(wb, sheets[i])
 		x <- tables[[i]]
 		if (ncol(x)) {
@@ -240,15 +553,16 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 	temporary <- tempfile('le8-workbook-', tmpdir = le8_table_tmpdir(), fileext = '.xlsx')
 	on.exit(unlink(temporary), add = TRUE)
 	openxlsx::saveWorkbook(wb, temporary, overwrite = TRUE)
-	if (!identical(openxlsx::getSheetNames(temporary), c('_tables', sheets[!large]))) stop('Workbook verification failed: ', target)
+	if (!identical(openxlsx::getSheetNames(temporary), sheets)) stop('Workbook verification failed: ', target)
 	le8_table_archive_add(temporary, entries, private_files)
 	if (!file.copy(temporary, target, overwrite = TRUE)) stop('Cannot publish ', target)
 	if (!identical(unname(tools::md5sum(temporary)), unname(tools::md5sum(target)))) stop('Workbook copy verification failed: ', target)
 	invisible(target)
 }
 le8_table_stores <- function(root) {
-	paths <- list.files(root, pattern = '[.]tables[.]xlsx$', recursive = TRUE, full.names = TRUE)
-	paths[basename(paths) == vapply(dirname(paths), le8_table_workbook_name, character(1)) & !grepl('/(_history|_source_figures|_previous)/', paths)]
+	paths <- list.files(root, pattern = '[.]xlsx$', recursive = TRUE, full.names = TRUE)
+	paths <- paths[!grepl('/(_history|_source_figures|_previous)/', paths)]
+	unlist(lapply(unique(dirname(paths)), le8_table_archive_files), use.names = FALSE)
 }
 le8_tables_pack <- function(root, clean = TRUE) {
 	root <- normalizePath(root, winslash = '/', mustWork = TRUE)
@@ -259,7 +573,10 @@ le8_tables_pack <- function(root, clean = TRUE) {
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
 	for (directory in directories) {
 		old_workbooks <- le8_table_archive_files(directory)
-		public <- le8_table_load(directory) ; changed <- FALSE
+		public <- le8_table_load(directory)
+		changed <- any(vapply(old_workbooks, function(path) !identical(le8_table_archive_read(path)$layout, 'topic-workbooks-v2'), logical(1)))
+		paired <- sub('[.]png$', '.xlsx', list.files(directory, pattern = '[.]png$'))
+		changed <- changed || any(!file.exists(file.path(directory, paired)))
 		files <- paths[dirname(paths) == directory]
 		files <- setdiff(files, old_workbooks)
 		if (Sys.getenv('LE8_TABLE_WORKSPACE') == '1') {
@@ -298,13 +615,14 @@ le8_tables_pack <- function(root, clean = TRUE) {
 			unlink(setdiff(old_workbooks, file.path(directory, written)))
 		}
 		if (clean && length(files)) unlink(files)
-		message('Consolidated ', length(public$files), ' aggregate and ', length(public$private_files), ' named private datasets: ', directory)
+		message('Packed result workbooks: ', directory)
 		invisible(gc())
 	}
 	invisible(length(directories))
 }
 le8_tables_restore <- function(root) {
 	paths <- le8_table_stores(root)
+	paths <- paths[!duplicated(dirname(paths))]
 	for (path in paths) {
 		x <- le8_table_load(dirname(path))
 		for (name in names(x$files)) le8_table_restore_entry(x$files[[name]], dirname(path), name)
@@ -354,6 +672,13 @@ le8_tables_share <- function(root, destination) {
 		directory <- dirname(tables$path[i])
 		selected[[directory]][[basename(path)]] <- entry
 	}
+	for (i in seq_len(nrow(figures))) {
+		path <- resolve(figures$path[i])
+		if (!grepl('[.](png|jpg|jpeg)$', path, ignore.case = TRUE)) stop('Unexpected viewer image: ', path)
+		if (!identical(digest::digest(file = path, algo = 'sha256'), figures$sha256[i])) stop('Viewer image changed: ', path)
+		target <- file.path(destination, figures$path[i]) ; dir.create(dirname(target), recursive = TRUE, showWarnings = FALSE)
+		if (!file.copy(path, target, overwrite = TRUE)) stop('Cannot copy viewer image: ', path)
+	}
 	for (directory in names(selected)) {
 		entries <- selected[[directory]]
 		for (name in names(entries)) {
@@ -364,13 +689,6 @@ le8_tables_share <- function(root, destination) {
 		target <- file.path(destination, directory) ; dir.create(target, recursive = TRUE, showWarnings = FALSE)
 		le8_table_workbook(target, list(files = entries, private_files = list()))
 		message('Shared aggregate tables: ', directory)
-	}
-	for (i in seq_len(nrow(figures))) {
-		path <- resolve(figures$path[i])
-		if (!grepl('[.](png|jpg|jpeg)$', path, ignore.case = TRUE)) stop('Unexpected viewer image: ', path)
-		if (!identical(digest::digest(file = path, algo = 'sha256'), figures$sha256[i])) stop('Viewer image changed: ', path)
-		target <- file.path(destination, figures$path[i]) ; dir.create(dirname(target), recursive = TRUE, showWarnings = FALSE)
-		if (!file.copy(path, target, overwrite = TRUE)) stop('Cannot copy viewer image: ', path)
 	}
 	invisible(destination)
 }
@@ -405,9 +723,9 @@ le8_analysis_options <- function(outcome = Y) list(
 le8_completed_results <- function(root, traits, layers, modules) {
 	stores <- new.env(parent = emptyenv())
 	table_entry <- function(path) {
-		store <- file.path(dirname(path), le8_table_workbook_name(dirname(path)))
-		if (!file.exists(store)) return(NULL)
-		if (!exists(store, envir = stores, inherits = FALSE)) assign(store, le8_table_load(dirname(path)), envir = stores)
+		store <- dirname(path)
+		if (!length(le8_table_archive_files(store))) return(NULL)
+		if (!exists(store, envir = stores, inherits = FALSE)) assign(store, le8_table_load(store), envir = stores)
 		entry <- get(store, envir = stores)$files[[basename(path)]]
 		if (is.null(entry)) NULL else le8_table_materialize(entry, basename(path))
 	}
@@ -425,7 +743,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 		c2_cause = c("c2.MR_all.csv", "c2.evidence_grades.csv"),
 		c3_coloc = c("c3.coloc_summary.csv", "c3.credible_set_audit.csv"),
 		c4_connect = c("c4.LE8_feature_associations.csv", "c4.proxy_membership_YS_YSP_NS.csv", "c4.sex_interaction.csv"),
-		c4_panel_validation = c("c4.focus.metrics.csv", "c4.focus.panel_members.csv", "c4.tables.xlsx")
+		c4_panel_validation = c("c4.focus.metrics.csv", "c4.focus.panel_members.csv")
 	)
 	rows <- list()
 	for (y in traits) for (b in layers) for (m in intersect(modules, names(required))) {
@@ -3596,7 +3914,7 @@ le8_render_c3 <- function(obj, layer, outdir, rawdir) {
 	lists <- obj$causal_lists %||% list()
 	le8_figure_workbook(list(
 		coloc_summary = obj$summary, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
-		variant_posteriors = obj$variants, regional = obj$regional, GPU_results = gpu$results, GPU_status = gpu$status,
+		GPU_results = gpu$results, GPU_status = gpu$status,
 		GPU_manifest = obj$manifest, causal_sets = if (length(lists)) stack(lists) else tibble(), pgs_observed_coloc = tri
 	), "c3.out.xlsx", obj$review %||% list())
 }
@@ -3697,8 +4015,8 @@ LE8_ASSAY_BUDGETS <- c(5, 10, 50)
 
 
 # 0.common.R
-# Presentation policy: retain all available views and source layouts. Grouping
-# and pagination never authorize deletion of a scientific view or old version.
+# Preserve scientific views while grouping panels and retaining one final
+# PNG/workbook pair per page. Temporary source layouts stay under /tmp.
 if (!exists(".le8_figure_queue", inherits = FALSE)) .le8_figure_queue <- new.env(parent = emptyenv())
 
 le8_figure_rule <- function(file) {
@@ -3753,6 +4071,7 @@ le8_figure_order <- function(module, groups) {
 			'genetic_decomposition', 'genetic_component_leadtime', 'evidence_grades',
 			'dandelion_sensitivity', 'dandelion_mr_integration'
 		),
+		c3 = c('posterior_evidence', 'regional_top_loci', 'credible_sets', 'gpu_coloc_validation', 'pgs_coloc_triangulation'),
 		c4 = c('supervised_connections', 'mediation', 'imaging_context', 'lifestyle_omics_risk', 'state_remodeling', 'sex_interaction', 'LE8_component_interactions', 'spline_patterns', 'pass_fail_penalty'),
 		final = c(
 			'prediction_benchmark', 'score_concordance', 'prediction_sensitivity',
@@ -3769,6 +4088,11 @@ le8_refresh_figure_files <- function(rawdir, incoming = NULL) {
 	mf <- file.path(rawdir, 'figure_manifest.csv')
 	old <- if (file.exists(mf)) as.data.frame(data.table::fread(mf)) else data.frame()
 	fresh <- if (!is.null(incoming)) as.data.frame(data.table::fread(file.path(incoming, 'figure_manifest.csv'))) else old[FALSE, ]
+	normalize_group <- function(x) {
+		if (nrow(x)) x$group <- sub('^(c[1-5][.])?Fig[0-9]+[.]', '', x$group)
+		x
+	}
+	old <- normalize_group(old) ; fresh <- normalize_group(fresh)
 	retained <- if (nrow(old)) old[!old$group %in% fresh$group & file.exists(file.path(rawdir, old$file)), , drop = FALSE] else old
 	# PGS manifests use `source`; grouped figures add `sources` and `policy`.
 	# Align by name and retain all metadata when refreshing mixed/older outputs.
@@ -3783,14 +4107,30 @@ le8_refresh_figure_files <- function(rawdir, incoming = NULL) {
 	}
 	sources <- c(file.path(rawdir, retained$file), if (nrow(fresh)) file.path(incoming, fresh$file) else character())
 	stopifnot(all(file.exists(sources)))
+	# An earlier PGS refresh registered the same PNG under two figure numbers.
+	# Deduplicate only byte-identical images in the same theme, retaining pages.
+	signatures <- paste(revised$group, vapply(sources, function(path) digest::digest(file = path, algo = 'sha256'), character(1)))
+	keep <- !duplicated(signatures) ; revised <- revised[keep, , drop = FALSE] ; sources <- sources[keep]
 	prefix <- if (grepl('^Fig', revised$file[1])) 'final' else sub('[.].*$', '', revised$file[1])
 	ix <- le8_figure_order(prefix, revised$group) ; revised <- revised[ix, , drop = FALSE] ; sources <- sources[ix]
 	revised$file <- paste0(if (prefix == 'final') '' else paste0(prefix, '.'), 'Fig', seq_len(nrow(revised)), '.', revised$group, '.png')
 	stage <- tempfile('.renumber-', tmpdir = '/tmp') ; dir.create(stage)
 	on.exit(unlink(stage, recursive = TRUE), add = TRUE)
 	stopifnot(all(file.copy(sources, file.path(stage, revised$file))))
+	old_tables <- character()
+	for (i in seq_along(sources)) {
+		stem <- sub('[.]png$', '', basename(sources[i]))
+		tables <- list.files(dirname(sources[i]), pattern = '[.]csv$', full.names = TRUE)
+		tables <- tables[startsWith(basename(tables), paste0(stem, '.panel_'))]
+		if (!length(tables)) next
+		names <- paste0(sub('[.]png$', '', revised$file[i]), substring(basename(tables), nchar(stem) + 1L))
+		stopifnot(all(file.copy(tables, file.path(stage, names), overwrite = TRUE)))
+		if (dirname(sources[i]) == rawdir) old_tables <- c(old_tables, tables)
+	}
 	# Stage every source before overwriting names that may be reused by another theme.
-	stopifnot(all(file.copy(file.path(stage, revised$file), file.path(rawdir, revised$file), overwrite = TRUE)))
+	staged <- list.files(stage, full.names = TRUE)
+	stopifnot(all(file.copy(staged, file.path(rawdir, basename(staged)), overwrite = TRUE)))
+	unlink(setdiff(old_tables, file.path(rawdir, basename(staged))))
 	stale <- if (nrow(old)) setdiff(old$file, revised$file) else character()
 	if (length(stale)) unlink(file.path(rawdir, stale))
 	data.table::fwrite(revised, mf)
@@ -3980,6 +4320,7 @@ le8_flush_figures <- function(rawdir) {
 					tag_levels = "A", theme = ggplot2::theme(plot.caption = ggplot2::element_text(size = 9, hjust = 0), plot.tag = ggplot2::element_text(face = "bold"))
 				)
 			ggplot2::ggsave(file.path(staging, file), p, width = composition$width, height = composition$height, dpi = dpi, bg = "white", limitsize = FALSE)
+			le8_table_plot_exports(lapply(page, `[[`, 'plot'), staging, sub('[.]png$', '', file))
 			manifest[[length(manifest) + 1L]] <- data.frame(
 				file = file, group = group, panels = n, sources = paste(unique(vapply(page, `[[`, character(1), "source")), collapse = ";"),
 				policy = composition$policy

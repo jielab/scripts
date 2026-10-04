@@ -6,6 +6,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
+sys.dont_write_bytecode = True
+
 if "grid_0_common" not in sys.modules:
 	_spec = spec_from_file_location("grid_0_common", Path(__file__).with_name("0.common.py"))
 	_common = module_from_spec(_spec)
@@ -15,7 +17,7 @@ if "grid_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from grid_0_common import load_module
+from grid_0_common import load_module, read_result_table, write_rds, write_result_workbook
 
 
 # 🚩 inputs: grid_inputs
@@ -784,7 +786,7 @@ POPS = ["AFR", "EAS", "EUR", "SAS"]
 
 
 def read_population_scores(path):
-	return pd.read_csv(path, sep="\t", compression="infer", dtype={"eid": str, "IID": str, "#IID": str, "ID_2": str})
+	return read_result_table(path, dtype={"eid": str, "IID": str, "#IID": str, "ID_2": str})
 
 
 def mix_population_scores_main():
@@ -837,7 +839,29 @@ def mix_population_scores_cli():
 	mix_population_scores_main()
 
 
+
+# 🚩 Formal GRID results
+
+def publish_grid_results_cli():
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--work", type=Path, required=True)
+	parser.add_argument("--output", type=Path, required=True)
+	args = parser.parse_args()
+	model = args.work / "grid/model"
+	args.output.mkdir(parents=True, exist_ok=True)
+	write_result_workbook({
+		"validation": pd.read_csv(model / "model_cv.tsv", sep="\t"),
+		"coefficients": pd.read_csv(model / "coefficients.tsv", sep="\t"),
+	}, args.output / "3grid.model.xlsx")
+	write_rds(json.loads((model / "transport_model.json").read_text()), args.output / "3grid.model.rds")
+	for source, name in [("variant_conservation.tsv.gz", "conservation"), ("pair_predictions.tsv.gz", "variant_predictions")]:
+		write_rds(read_result_table(model / source), args.output / f"3grid.{name}.rds")
+	write_rds(read_result_table(args.work / "scores/grid.tsv.gz", dtype={"eid": str}), args.output / "3grid.scores.rds")
+	print(f"Published GRID results: {args.output}")
+
+
 COMMANDS = {
+	"publish": publish_grid_results_cli,
 	"inputs": grid_inputs_cli,
 	"ld": extract_ld_scores_cli,
 	"transport": build_transport_table_cli,

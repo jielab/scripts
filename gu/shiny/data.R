@@ -7,12 +7,16 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x) || !nzchar(x)) y else x
 
-default_final <- Sys.getenv("GU_FINAL_DIR", file.path(Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu"), "final"))
-default_db <- normalizePath(file.path(default_final, "gu.sqlite"), mustWork = FALSE)
-db_path <- Sys.getenv("GU_SQLITE", unset = default_db)
-if (!file.exists(db_path)) {
-	stop("GU SQLite database not found: ", db_path, "\nRun: ./gu.sh final")
+published_root <- Sys.getenv("GU_PUBLISHED_ROOT", Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu"))
+if (!nzchar(Sys.getenv("GU_SQLITE"))) {
+	common_python <- normalizePath(file.path(app_dir, '..', 'f', '0.common.py'))
+	workspace <- system2('python3', c(shQuote(common_python), 'results', 'restore', '--published', shQuote(published_root)), stdout = TRUE)
+	if (!is.null(attr(workspace, 'status')) || length(workspace) != 1L) stop('Cannot prepare GU result workspace')
+	Sys.setenv(GU_ANALYSIS_ROOT = workspace, GU_FINAL_DIR = file.path(workspace, 'final'))
 }
+default_final <- Sys.getenv('GU_FINAL_DIR', file.path(published_root, 'final'))
+db_path <- Sys.getenv('GU_SQLITE', file.path(default_final, 'gu.sqlite'))
+if (!file.exists(db_path)) stop('GU results not found; run ./gu.sh final')
 db_path <- normalizePath(db_path, mustWork = TRUE)
 normalize_root <- dirname(db_path)
 .gu_resolve_artifact <- function(path) {

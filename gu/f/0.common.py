@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+sys.dont_write_bytecode = True
 
 
 def load_module(filename):
@@ -23,7 +24,7 @@ def load_module(filename):
 
 
 # 🚩 comm
-"""Compatibility helpers for GU TSV files with very wide fields."""
+"""Readers and writers for temporary GU tables with wide fields."""
 
 
 import csv
@@ -461,7 +462,288 @@ def vcf_gt_fix_cli():
 	vcf_gt_fix_main()
 
 
+# 🚩 Published results and temporary algorithm workspace
+import hashlib
+import shutil
+import subprocess
+import fcntl
+from contextlib import ExitStack
+
+
+RESULT_NAMES = {"phyml": "phyml.haplotypes.rds", "ibdmix": "ibdmix.tracts.rds", "trace": "trace.segments.rds", "as3": "as3.tracts.rds"}
+
+
+def gu_result_digest(path):
+	digest = hashlib.sha256()
+	with Path(path).open('rb') as handle:
+		for block in iter(lambda: handle.read(1024 * 1024), b''):
+			digest.update(block)
+	return digest.digest()
+
+
+def gu_work_root(published):
+	key = hashlib.sha256(str(Path(published).resolve()).encode()).hexdigest()[:16]
+	return Path('/tmp/gu-cache') / key / 'analysis'
+
+
+def gu_result_r(*arguments):
+	environment = os.environ.copy()
+	for name in ('R_HOME', 'R_LIBS', 'R_LIBS_USER', 'R_LIBS_SITE', 'R_ENVIRON_USER'):
+		environment.pop(name, None)
+	with tempfile.TemporaryDirectory(prefix = 'gu-results-code-', dir = '/tmp') as directory:
+		stage = Path(directory)
+		for source in (Path(__file__).with_suffix('.R'), Path(__file__).with_name('phyml.R'), Path(__file__).parents[2] / '0f/results.R'):
+			shutil.copy2(source, stage / source.name)
+		environment['GU_RESULTS_R'] = str(stage / 'results.R')
+		environment['GU_PHYML_R'] = str(stage / 'phyml.R')
+		subprocess.run(['/usr/bin/Rscript', str(stage / '0.common.R'), *map(str, arguments)], env = environment, check = True)
+
+
+def gu_run_specs(work, output, methods, run_only = None):
+	specs = []
+	for method in methods:
+		if method not in RESULT_NAMES:
+			continue
+		root = work / method
+		if not root.is_dir():
+			continue
+		for target in ([run_only.parent] if run_only is not None else sorted(root.iterdir())):
+			if not target.is_dir() or target.name in ('tmp', 'log', 'inputs'):
+				continue
+			for run in ([run_only] if run_only is not None else sorted(target.iterdir())):
+				if not run.is_dir() or run.name in ('tmp', 'log', 'inputs'):
+					continue
+				files, figures = [], []
+				for directory, folders, names in os.walk(run, followlinks = False):
+					folders[:] = [name for name in folders if name not in ('log', 'logs', 'tmp', 'mask', 'genotype', '__pycache__')]
+					for name in folders:
+						path = Path(directory) / name
+						if path.is_symlink():
+							files.append({'name': path.relative_to(run).as_posix(), 'link': os.readlink(path)})
+					for name in names:
+						path = Path(directory) / name
+						relative = path.relative_to(run).as_posix()
+						if name.startswith(('.published-', '.result-')) or (path.suffix in ('.log', '.err', '.cmd', '.lock', '.pdf', '.xlsx') and not name.endswith('.phyml.log')) or '.tmp' in name or '.part.' in name:
+							continue
+						if path.suffix == '.png':
+							if method != 'phyml' or '.panelB' not in name:
+								raise ValueError(f'Add the numerical table mapping for figure: {path}')
+							stem = name.split('_phyml_tree.', 1)[1].replace('.panelB', '')
+							prefix = '' if Path(relative).parent.as_posix() == 'loci' else Path(relative).parent.name + '.'
+							info = path.stat()
+							figures.append({'source': relative, 'name': f'phyml.{prefix}{stem}', 'modified': info.st_mtime, 'size': info.st_size})
+							continue
+						if path.is_symlink():
+							files.append({'name': relative, 'link': os.readlink(path)})
+						else:
+							info = path.stat()
+							files.append({'name': relative, 'modified': info.st_mtime, 'size': info.st_size})
+				if not files:
+					continue
+				destination = output / run.relative_to(work) / RESULT_NAMES[method]
+				specs.append({'method': method, 'source': str(run), 'source_root': str(work), 'destination': str(destination), 'files': files, 'figures': figures})
+	return specs
+
+
+def gu_review_specs(work, output):
+	directory = work / 'final/review'
+	files = []
+	for name in (
+		'phyml_locus_report.tsv', 'phyml_haplotype_report.tsv', 'phyml_copy_validation.tsv', 'phyml_lineage_trees.tsv',
+		'loci_review.tsv', 'population_concordance.tsv', 'candidate_copy_support.tsv', 'strict_support_summary.tsv',
+		'selected_ibdmix_calls.tsv', 'locus_tag_summary.tsv', 'lead_comparison.tsv', 'haplotype_tag_candidates.tsv',
+		'tag_population_metrics.tsv', 'best_tag_by_population.tsv', 'best_haplotypes.tsv', 'gwas_lookup.tsv',
+	):
+		path = directory / name
+		if path.is_file():
+			info = path.stat()
+			files.append({'name': name, 'modified': info.st_mtime, 'size': info.st_size})
+	return [{'method': 'validation', 'source': str(directory), 'source_root': str(work),
+		'destination': str(output / 'final/gu.validation.rds'), 'files': files, 'figures': []}] if files else []
+
+
+def gu_publish_results(work, output, methods, run_only = None):
+	work, output = Path(work).resolve(), Path(output).resolve()
+	with ExitStack() as locks, tempfile.TemporaryDirectory(prefix = 'gu-publish-', dir = '/tmp') as temporary:
+		stage = Path(temporary)
+		specs = gu_run_specs(work, stage, methods, run_only)
+		if 'final' in methods:
+			specs.extend(gu_review_specs(work, stage))
+		pending = []
+		for spec in specs:
+			lock_path = Path(spec['source']) / ('.gwas.lock' if spec['method'] == 'phyml' else '.run.lock')
+			if lock_path.is_file():
+				lock = locks.enter_context(lock_path.open('r'))
+				try:
+					fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+				except BlockingIOError:
+					print('Result publication deferred for active run:', spec['source'], file = sys.stderr)
+					continue
+			marker = Path(spec['source']) / '.published-content'
+			signature = hashlib.sha256(json.dumps([str(output), spec['files'], spec['figures']], sort_keys = True).encode()).hexdigest()
+			existing = output / Path(spec['destination']).relative_to(stage)
+			if existing.is_file() and marker.is_file() and marker.read_text() == signature:
+				continue
+			spec['signature'] = signature
+			pending.append(spec)
+		specs = pending
+		specification = stage / 'jobs.json'
+		specification.write_text(json.dumps(specs))
+		gu_result_r('pack', specification)
+		for spec in specs:
+			for figure in spec['figures']:
+				destination = Path(spec['destination']).parent / figure['name']
+				shutil.copy2(Path(spec['source']) / figure['source'], destination)
+				if not destination.with_suffix('.xlsx').is_file():
+					raise ValueError(f'Missing numerical results: {destination}')
+		if 'final' in methods and (work / 'final/gu.sqlite').is_file():
+			gu_result_r('database-pack', work / 'final/gu.sqlite', stage / 'final/gu.results.rds')
+			gu_publish_summary(work, stage)
+		for source in stage.rglob('*'):
+			if not source.is_file() or source == specification:
+				continue
+			destination = output / source.relative_to(stage)
+			destination.parent.mkdir(parents = True, exist_ok = True)
+			shutil.copy2(source, destination)
+			if gu_result_digest(source) != gu_result_digest(destination):
+				raise IOError(f'Result publication verification failed: {destination}')
+		for spec in specs:
+			(Path(spec['source']) / '.published-content').write_text(spec['signature'])
+
+
+def gu_publish_summary(work, stage):
+	# Final summary tables contain substantial overlap with the participant RDS.
+	# Publish only independent aggregate evidence needed for inspection.
+	module = spec_from_file_location('gu_shared_results', Path(__file__).parents[2] / '0f/results.py')
+	results = module_from_spec(module)
+	module.loader.exec_module(results)
+	import pandas as pd
+	root = work / 'final/normalize/summary'
+	validation = {}
+	for name in ('phyml_locus_report', 'phyml_haplotype_report'):
+		path = work / 'final/review' / (name + '.tsv')
+		if not path.is_file():
+			continue
+		frame = pd.read_csv(path, sep = '\t', low_memory = False, float_precision = 'round_trip')
+		if frame.empty:
+			continue
+		if name == 'phyml_haplotype_report':
+			columns = ['locus_id', 'hap_id', 'lineage', 'role', 'n_copies', 'n_individuals', 'archaic', 'prop_match',
+				'candidate_start', 'candidate_end', 'call', 'superpopulation_copy_counts', 'ibdmix_status',
+				'ibdmix_supported_individuals', 'ibdmix_support_fraction', 'trace_status', 'trace_supported_individuals', 'trace_support_fraction']
+			frame = frame[[column for column in columns if column in frame]]
+		validation[name.removeprefix('phyml_').removesuffix('_report')] = frame
+	if validation:
+		results.write_workbook(validation, stage / 'final/gu.validation.xlsx')
+	groups = {'gu.loci': ['locus_evidence', 'locus_method_support'], 'gu.segments': ['segment_catalog'], 'gu.trajectory': ['locus_trajectory']}
+	for name, names in groups.items():
+		tables = {}
+		for table in names:
+			path = root / (table + '.tsv.gz')
+			if path.is_file() and path.stat().st_size:
+				frame = pd.read_csv(path, sep = '\t', low_memory = False, float_precision = 'round_trip')
+				frame = frame.loc[:, ~frame.columns.str.contains(r'(?:file|path)$')]
+				if not frame.empty:
+					tables[table.removeprefix('locus_')] = frame
+		if tables:
+			if name == 'gu.trajectory':
+				for chromosome, frame in tables['trajectory'].groupby('chr', sort = False):
+					results.write_workbook({'trajectory': frame}, stage / 'final' / f'gu.trajectory.chr{chromosome}.xlsx')
+			else:
+				results.write_workbook(tables, stage / 'final' / (name + '.xlsx'))
+
+
+def gu_restore_results(published):
+	published = Path(published).resolve()
+	work = gu_work_root(published)
+	work.mkdir(parents = True, exist_ok = True, mode = 0o700)
+	with (work.parent / 'restore.lock').open('a') as lock:
+		fcntl.flock(lock, fcntl.LOCK_EX)
+		jobs = []
+		markers = []
+		for method, name in RESULT_NAMES.items():
+			for source in sorted((published / method).glob('*/*/' + name)):
+				stat = source.stat()
+				key = f'{stat.st_size}:{stat.st_mtime_ns}'
+				target = work / source.parent.relative_to(published)
+				marker = target / '.published-result'
+				if marker.is_file() and marker.read_text() == key:
+					continue
+				jobs.append({'source': str(source), 'target': str(target)})
+				markers.append((marker, key))
+		review = published / 'final/gu.validation.rds'
+		if review.is_file():
+			stat = review.stat(); key = f'{stat.st_size}:{stat.st_mtime_ns}'
+			target = work / 'final/review'; marker = target / '.published-result'
+			if not marker.is_file() or marker.read_text() != key:
+				jobs.append({'source': str(review), 'target': str(target)})
+				markers.append((marker, key))
+		with tempfile.NamedTemporaryFile(mode = 'w', suffix = '.json', dir = '/tmp') as handle:
+			json.dump(jobs, handle); handle.flush()
+			if jobs:
+				gu_result_r('restore', handle.name)
+		for job in jobs:
+			target = Path(job['target'])
+			origin = target / '.result-source-root'
+			gu_rebase_paths(target, Path(origin.read_text().strip()) if origin.is_file() else published, work)
+
+		for marker, key in markers:
+			marker.write_text(key)
+		source = published / 'final/gu.results.rds'
+		if source.is_file():
+			stat = source.stat(); key = f'{stat.st_size}:{stat.st_mtime_ns}'
+			marker = work / 'final/.published-database'
+			if not marker.is_file() or marker.read_text() != key:
+				gu_result_r('database-restore', source, work / 'final/gu.sqlite')
+				marker.write_text(key)
+		gu_link_phyml(work)
+	return work
+
+
+def gu_rebase_paths(target, published, work):
+	old, new = str(published).encode(), str(work).encode()
+	for directory, folders, names in os.walk(target, followlinks = False):
+		for name in [*names, *[name for name in folders if (Path(directory) / name).is_symlink()]]:
+			path = Path(directory) / name
+			if name == '.result-source-root':
+				continue
+			if path.is_symlink():
+				link = os.readlink(path)
+				if link.startswith(str(published) + '/'):
+					path.unlink(); path.symlink_to(str(work) + link[len(str(published)):])
+			elif path.suffix == '.json' or (target.name == 'review' and path.suffix == '.tsv'):
+				data = path.read_bytes()
+				if old in data:
+					stat = path.stat(); path.write_bytes(data.replace(old, new)); os.utime(path, ns = (stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def gu_link_phyml(work):
+	directory = work / 'final/normalize'
+	directory.mkdir(parents = True, exist_ok = True)
+	link = directory / 'phyml'
+	if not link.exists() and not link.is_symlink():
+		link.symlink_to(work / 'phyml', target_is_directory = True)
+
+
+def results_cli():
+	parser = argparse.ArgumentParser()
+	parser.add_argument('action', choices = ['work-root', 'restore', 'publish'])
+	parser.add_argument('--published', type = Path, required = True)
+	parser.add_argument('--work', type = Path)
+	parser.add_argument('--run', type = Path)
+	parser.add_argument('--method', choices = [*RESULT_NAMES, 'final', 'all'], default = 'all')
+	args = parser.parse_args()
+	if args.action == 'work-root':
+		print(gu_work_root(args.published))
+	elif args.action == 'restore':
+		print(gu_restore_results(args.published))
+	else:
+		methods = [*RESULT_NAMES, 'final'] if args.method == 'all' else [args.method]
+		gu_publish_results(args.work or gu_work_root(args.published), args.published, methods, args.run)
+
+
 SUBCOMMANDS = {
+	"results": results_cli,
 	"genetic-cache": genetic_cache_cli,
 	"batches": make_batches_cli,
 	"sample-map": make_sample_map_cli,
