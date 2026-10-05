@@ -1335,6 +1335,32 @@ def call(cmd, env, dry=False):
 		subprocess.run(list(map(str, cmd)), env=env, check=True)
 
 
+# Shared public configuration; explicit CLI > environment > fixed default.
+def shared_analysis_settings(values, environ=None):
+	env = os.environ if environ is None else environ
+	spec = {
+		"group_file": ("LE8_GROUP_FILE", ""),
+		"group_col": ("LE8_GROUP_COLUMN", env.get("PGS_GROUP_COLUMN", "")),
+		"end_date": ("DATE_FOLLOW_END", "2023-04-01"),
+		"diagnosis_col": ("LE8_Y_DATE", ""),
+		"outer_roster": ("LE8_OUTER_ROSTER", ""),
+		"shared_covariates": ("LE8_VARS_ADJ", ""),
+	}
+	resolved, sources = {}, {}
+	for key, (name, default) in spec.items():
+		explicit = getattr(values, key, None)
+		value = str(explicit) if explicit is not None else env.get(name, default)
+		resolved[key] = value
+		sources[key] = dict(source="cli" if explicit is not None else name if name in env else "default", value=value)
+		if explicit is not None and name in env and value != env[name]:
+			sources[key]["overridden_environment"] = env[name]
+			print(f"[LE8] {key}: explicit CLI overrides {name}", file=sys.stderr)
+	if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", resolved["end_date"]):
+		raise ValueError("Administrative end date must be YYYY-MM-DD")
+	datetime.strptime(resolved["end_date"], "%Y-%m-%d")
+	return resolved, sources, {spec[k][0]: v for k, v in resolved.items()}
+
+
 def parser():
 	p = argparse.ArgumentParser(
 		description=__doc__,
@@ -1374,7 +1400,13 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 	)
 	p.add_argument("--ukb-phe", type=Path, default=None)
 	p.add_argument("--cores", type=int, default=None)
-	p.add_argument("--seed", type=int, default=2026)
+	p.add_argument("--seed", type=int, default=int(os.getenv("SEED", "2026")))
+	p.add_argument("--group-file", type=Path)
+	p.add_argument("--group-col", "--group-column", dest="group_col")
+	p.add_argument("--end-date")
+	p.add_argument("--Y-date", "--diagnosis-col", dest="diagnosis_col")
+	p.add_argument("--outer-roster", type=Path, help="Shared eid,role CSV/TSV; roles training/test")
+	p.add_argument("--vars.adj", dest="shared_covariates")
 	p.add_argument("--r-bin", default=os.getenv("R_BIN", "Rscript"))
 	p.add_argument("--replace", choices=["TRUE", "FALSE"], default="FALSE")
 	p.add_argument("--memory-limit-gb", type=int, default=None)
@@ -1419,8 +1451,11 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 		"shiny-review",
 	]:
 		p.add_argument("--" + flag, action="store_true")
-	for name in ["atlas", "universe", "panels", "cigma-manifest", "cigma-results"]:
+	for name in ["atlas", "universe", "panels", "contrasts", "cigma-manifest", "cigma-results", "cigma-cells"]:
 		p.add_argument("--" + name, type=Path)
+	p.add_argument("--matched-draws", type=int, default=0)
+	p.add_argument("--allow-untested-cigma", action="store_true")
+	p.add_argument("--no-plots", action="store_true", help="C5 only: omit annotation plots")
 	p.add_argument("--max-table-mb", type=int, default=128)
 	p.add_argument("--port", type=int, default=int(os.getenv("LE8_SHINY_PORT", "3839")))
 	p.add_argument("--host", default=os.getenv("LE8_SHINY_HOST", "127.0.0.1"))
@@ -1430,6 +1465,18 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 def dispatch_main(argv=None):
 	p = parser()
 	a, extra = p.parse_known_args(argv)
+	try:
+		shared, config_sources, shared_env = shared_analysis_settings(a)
+	except ValueError as exc:
+		p.error(str(exc))
+	if a.matched_draws != 0 and a.matched_draws < 100:
+		p.error("--matched-draws must be 0 or >=100")
+	if (a.universe is None) != (a.panels is None):
+		p.error("Provide --universe and --panels together")
+	if a.cigma_manifest and a.cigma_results:
+		p.error("Choose --cigma-manifest OR --cigma-results")
+	if a.cigma_cells and not a.cigma_results:
+		p.error("--cigma-cells requires --cigma-results")
 	traits = a.Y.split(",")
 	layers = a.biom.split(",")
 	if any(not re.fullmatch(r"[A-Za-z0-9_]+", x) for x in traits) or len(traits) != len(
@@ -1495,6 +1542,8 @@ def dispatch_main(argv=None):
 		LE8_SHINY_HOST=a.host,
 		LE8_SHINY_MAX_TABLE_MB=str(a.max_table_mb),
 	)
+	env.update(shared_env)
+	env["LE8_SHARED_CONFIG_SOURCES"] = json.dumps(config_sources, sort_keys=True)
 	if extra or a.ukb_phe:
 		env["LE8_RESUME_COMPLETED"] = "FALSE"
 	if a.ukb_phe:
@@ -1543,6 +1592,52 @@ def dispatch_main(argv=None):
 		call(cmd, env, a.dry_run)
 		indexed = True
 
+	abm_commands = []
+	if "c1_abm" in modules:
+		py = os.getenv("ABM_PYTHON") or sys.executable
+		more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
+		for Y in traits:
+			for layer in layers:
+				selected = "tabicl" if a.abm_backend == "tf" else a.abm_backend
+				for kind in (
+					["reference", "tabicl"] if selected == "both" else [selected]
+				):
+					worker = HERE / "c1.abm.py"
+					args = [
+						"--backend",
+						kind,
+						"--Y",
+						Y,
+						"--biom",
+						layer,
+						"--analysis-root",
+						str(a.analysis_root),
+						"--seed",
+						str(a.seed),
+					]
+					for key in ["group_file", "group_col", "end_date", "diagnosis_col", "outer_roster"]:
+						if shared[key]:
+							args += ["--" + key.replace("_", "-"), shared[key]]
+					if shared["shared_covariates"]:
+						args += ["--covariates", shared["shared_covariates"]]
+					if a.ukb_phe:
+						args += ["--ukb-phe", str(a.ukb_phe)]
+					if a.cores:
+						args += ["--cores", str(a.cores)]
+					if a.replace == "TRUE":
+						args += ["--replace"]
+					for key in ["memory_limit_gb", "memory_swap_gb"]:
+						v = getattr(a, key)
+						if v is not None:
+							args += ["--" + key.replace("_", "-"), str(v)]
+					abm_commands.append([py, worker, *args, "--r-bin", a.r_bin, *more])
+		# Fail before costly native C1 scans, using the selected ABM interpreter.
+		# Explicit evaluate/project/device/download actions must execute only once.
+		management = {"evaluate", "project", "--check-device", "--download-model", "--dry-run", "--help", "-h"}
+		if a.preflight or not management.intersection(more):
+			for cmd in abm_commands:
+				call([*cmd, "--preflight"], env, a.dry_run)
+
 	for module in modules:
 		if module == "share":
 			if modules != ["share"]:
@@ -1553,40 +1648,9 @@ def dispatch_main(argv=None):
 		elif module in NATIVE:
 			call(["bash", engine, module, *base, *native, *extra], env, a.dry_run)
 		elif module == "c1_abm":
-			py = os.getenv("ABM_PYTHON") or sys.executable
-			more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
-			for Y in traits:
-				for layer in layers:
-					selected = "tabicl" if a.abm_backend == "tf" else a.abm_backend
-					for kind in (
-						["reference", "tabicl"] if selected == "both" else [selected]
-					):
-						worker = HERE / "c1.abm.py"
-						args = [
-							"--backend",
-							kind,
-							"--Y",
-							Y,
-							"--biom",
-							layer,
-							"--analysis-root",
-							str(a.analysis_root),
-							"--seed",
-							str(a.seed),
-						]
-						if a.ukb_phe:
-							args += ["--ukb-phe", str(a.ukb_phe)]
-						if a.cores:
-							args += ["--cores", str(a.cores)]
-						if a.replace == "TRUE":
-							args += ["--replace"]
-						if a.preflight:
-							args += ["--preflight"]
-						for key in ["memory_limit_gb", "memory_swap_gb"]:
-							v = getattr(a, key)
-							if v is not None:
-								args += ["--" + key.replace("_", "-"), str(v)]
-						call([py, worker, *args, *more], env, a.dry_run)
+			if not a.preflight:
+				for cmd in abm_commands:
+					call(cmd, env, a.dry_run)
 		elif module == "c4_explain":
 			if a.preflight:
 				call(
@@ -1606,27 +1670,14 @@ def dispatch_main(argv=None):
 					a.dry_run,
 				)
 		elif module == "c5_cellulation":
-			if a.preflight:
-				call(
-					[
-						sys.executable,
-						"-c",
-						"import numpy,pandas,scipy; print('Cell annotation Python dependencies available; no CIGMA job executed')",
-					],
-					env,
-					a.dry_run,
-				)
-				continue
-			cmd = [sys.executable, HERE / "c5.cellulation.py", *base]
+			cmd = [sys.executable, HERE / "c5.cellulation.py", *base,
+				"--seed", str(a.seed), "--matched-draws", str(a.matched_draws)]
+			for flag in ["preflight", "allow_untested_cigma", "no_plots"]:
+				if getattr(a, flag):
+					cmd += ["--" + flag.replace("_", "-")]
 			if a.replace == "TRUE":
 				cmd += ["--replace"]
-			for key in [
-				"atlas",
-				"universe",
-				"panels",
-				"cigma_manifest",
-				"cigma_results",
-			]:
+			for key in ["atlas", "universe", "panels", "contrasts", "cigma_manifest", "cigma_results", "cigma_cells"]:
 				if getattr(a, key) is not None:
 					cmd += ["--" + key.replace("_", "-"), str(getattr(a, key))]
 			call(cmd, env, a.dry_run)

@@ -930,14 +930,11 @@ plot_c2_fig1 <- function(mr, assoc, layer) {
 		scale_color_manual(values = c(`TRUE` = "#D95F02", `FALSE` = "#4C78A8"), guide = "none") +
 		labs(title = "d. Effect estimates; × denotes no valid instrument result", x = "Effect per native exposure GWAS unit (scale in result table)", y = NULL) +
 		forest_theme(8)
-	best <- mr0 |>
-		group_by(exposure) |>
-		slice_min(pval, n = 1, with_ties = FALSE) |>
-		ungroup() |>
+	best <- le8_select_mr(mr0,layer) |>
 		left_join(assoc |> select(exposure = term, obs_beta = beta, obs_se = std.error, obs_p = p.value), by = "exposure") |>
 		mutate(concordance = case_when(
-			FDR_all < .05 & sign(b) == sign(obs_beta) ~ "FDR-significant, concordant",
-			FDR_all < .05 & sign(b) != sign(obs_beta) ~ "FDR-significant, discordant", TRUE ~ "No FDR MR support"
+			FDR_all < le8_evidence_policy()$mr_fdr & sign(b) == sign(obs_beta) ~ "FDR-significant, concordant",
+			FDR_all < le8_evidence_policy()$mr_fdr & sign(b) != sign(obs_beta) ~ "FDR-significant, discordant", TRUE ~ "No FDR MR support"
 		))
 	counts <- bind_rows(
 		tibble(anchor = local_name, venn_membership_counts(top_local, distal_sig, obs_sig)),
@@ -1404,55 +1401,37 @@ run_reverse_mr_stage <- function(iv_list, ygfile, layer) {
 }
 
 plot_bidirectional_mr <- function(forward, reverse, layer) {
-	fw <- forward |>
-		filter(is.finite(pval)) |>
-		group_by(exposure) |>
-		slice_min(pval, n = 1, with_ties = FALSE) |>
-		ungroup() |>
-		transmute(feature = exposure, forward_beta = b, forward_p = pval, forward_FDR = FDR_all)
-	rv <- if (nrow(reverse) && all(c("feature", "b", "pval", "FDR_reverse", "n_IV") %in% names(reverse))) reverse |>
-		filter(is.finite(pval)) |>
-		transmute(feature, reverse_beta = b, reverse_p = pval, reverse_FDR = FDR_reverse, n_reverse_IV = n_IV) else
-		tibble(feature = character(), reverse_beta = numeric(), reverse_p = numeric(), reverse_FDR = numeric(), n_reverse_IV = integer())
-	z <- full_join(fw, rv, by = "feature") |> mutate(
-		class = case_when(
-			is.finite(forward_FDR) & forward_FDR < .05 & is.finite(reverse_FDR) & reverse_FDR < .05 ~ "Bidirectional genetic support",
-			is.finite(forward_FDR) & forward_FDR < .05 ~ "Omic -> disease only",
-			is.finite(reverse_FDR) & reverse_FDR < .05 ~ "Disease liability -> omic only", TRUE ~ "No FDR support"
-		),
-		x = sign(forward_beta) *  - log10(pmax(forward_p, 1e-300)), y = sign(reverse_beta) *  - log10(pmax(reverse_p, 1e-300)),
-		label_p = pmin(forward_p, reverse_p, na.rm = TRUE), label_p = ifelse(is.finite(label_p), label_p, NA_real_)
-	)
+	z <- le8_bidirectional_evidence(forward,reverse,layer) |> mutate(
+		x=sign(forward_beta)*-log10(pmax(forward_p,1e-300)),y=sign(reverse_beta)*-log10(pmax(reverse_p,1e-300)),
+		label_p=pmin(forward_p,reverse_p,na.rm=TRUE),label_p=ifelse(is.finite(label_p),label_p,NA_real_),
+		panel=paste(scope,analysis))
 	pa <- if (!nrow(z)) blank_plot("Bidirectional MR", "No reverse-direction estimate") else ggplot(z, aes(x, y, color = class)) +
 		geom_hline(yintercept = 0, color = "grey80") +
 		geom_vline(xintercept = 0, color = "grey80") +
-		geom_point(alpha = .72, size = 2) +
+		geom_point(alpha = .72, size = 2, na.rm=TRUE) +
+		facet_wrap(~panel) +
 		geom_text_repel(data = z |> filter(class != "No FDR support", is.finite(label_p)) |> slice_min(label_p, n = 20), aes(label = feature), size = 2.8, max.overlaps = Inf) +
 		labs(
-			title = "a. Forward and reverse-direction MR", subtitle = "Axes are signed -log10(P); reverse MR estimates disease liability, not post-diagnosis treatment effects",
+			title = "a. MR by prespecified instrument class", subtitle = "Axes are signed -log10(P); reverse MR estimates disease liability, not post-diagnosis treatment effects",
 			x = "Omic -> disease MR", y = "Disease liability -> omic MR", color = NULL
 		) +
 		theme_5c(9) +
 		theme(legend.position = "top")
-	cnt <- z |> count(class, name = "biomarkers")
+	cnt <- z |> count(panel,class, name = "biomarkers")
 	pb <- if (!nrow(cnt)) blank_plot("b. Direction classes") else ggplot(cnt, aes(biomarkers, fct_reorder(class, biomarkers), fill = class)) +
 		geom_col(width = .68, show.legend = FALSE) +
 		geom_text(aes(label = biomarkers), hjust =  - .12, fontface = "bold") +
 		scale_x_continuous(expand = expansion(mult = c(0, .20))) +
-		labs(title = "b. Genetic direction classes", x = "Biomarkers", y = NULL) +
+		labs(title = "b. Genetic direction classes", x = "Biomarkers", y = NULL) + facet_wrap(~panel) +
 		theme_5c(9)
 	pa | pb
 }
 
 
-le8_combine_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble()) {
+le8_combine_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble(), layer) {
 	d <- as_tibble(c1$directionality %||% tibble()) ; if (!nrow(d)) return(tibble())
-	mb <- mr |>
-		filter(is.finite(pval)) |>
-		group_by(exposure) |>
-		slice_min(pval, n = 1, with_ties = FALSE) |>
-		ungroup() |>
-		transmute(term = exposure, MR_analysis = analysis, MR_beta = b, MR_p = pval, MR_FDR = FDR_all)
+	mb <- le8_select_mr(mr,layer) |>
+		transmute(term=exposure,MR_analysis=analysis,MR_beta=b,MR_p=pval,MR_FDR=FDR_all)
 	tg <- as_tibble(dan$targets %||% tibble())
 	if (nrow(tg) && !"dpg_class" %in% names(tg)) tg$dpg_class <- "DANDELION prioritized target"
 	if (nrow(tg) && !"consolidation_eligible" %in% names(tg)) {
@@ -1475,8 +1454,8 @@ le8_combine_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble
 		left_join(rv, by = "term") |>
 		left_join(dg, by = "term") |>
 		mutate(
-			MR_support = is.finite(MR_FDR) & MR_FDR < .05,
-			reverse_MR_support = is.finite(reverse_MR_FDR) & reverse_MR_FDR < .05,
+			MR_support = is.finite(MR_FDR) & MR_FDR < le8_evidence_policy()$mr_fdr,
+			reverse_MR_support = is.finite(reverse_MR_FDR) & reverse_MR_FDR < le8_evidence_policy()$mr_fdr,
 			DANDELION_sensitivity = is.finite(DANDELION_p),
 			DANDELION_support = DANDELION_sensitivity & replace_na(DANDELION_primary, FALSE),
 			reactive_warning = coalesce(reactive_compatible, FALSE),
@@ -2324,12 +2303,11 @@ grade_c2_evidence <- function(mr, layer, mrlink2 = list(results = tibble())) {
 				0 ~ "unavailable", n_IV == 1 ~ "single IV", n_IV <= 5 ~ "oligogenic (2-5 IVs)", n_IV <= 10 ~ "multi-IV (6-10)",
 			TRUE ~ "many-IV (>10)"
 		), evidence_grade = case_when(
-			!is.finite(pval) ~ "U: unavailable", FDR_all <
-				0.05 & n_IV == 1 ~ "S: single-IV support", FDR_all < 0.05 & heterogeneity_tested & egger_tested & !heterogeneous &
-				!egger_warning ~ "A: diagnostics-compatible", FDR_all < 0.05 & coalesce(heterogeneous, FALSE) & coalesce(
+			!is.finite(pval) ~ "U: unavailable", FDR_all < le8_evidence_policy()$mr_fdr & n_IV == 1 ~ "S: single-IV support", FDR_all < le8_evidence_policy()$mr_fdr & heterogeneity_tested & egger_tested & !heterogeneous &
+				!egger_warning ~ "A: diagnostics-compatible", FDR_all < le8_evidence_policy()$mr_fdr & coalesce(heterogeneous, FALSE) & coalesce(
 				weighted_median_concordant,
 				FALSE
-			) ~ "B: heterogeneous", FDR_all < 0.05 ~ "C: sensitivity unresolved", pval < 0.05 ~ "D: nominal only",
+			) ~ "B: heterogeneous", FDR_all < le8_evidence_policy()$mr_fdr ~ "C: sensitivity unresolved", pval < 0.05 ~ "D: nominal only",
 			TRUE ~ "E: not detected"
 		), grade_reason = case_when(
 			n_IV == 1 ~ "Wald estimate; Egger, weighted-median and heterogeneity tests unavailable",
@@ -2403,7 +2381,7 @@ run_mrlink2_step <- function(...) {
 
 integrate_c2_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble()) {
 	# Do not pick whichever of cis or trans has the smaller P as causal evidence.
-	z <- le8_combine_directionality(mr[mr$analysis %in% c("cis", "local"), , drop = FALSE], c1, dan, reverse_mr)
+	z <- le8_combine_directionality(mr, c1, dan, reverse_mr, layer)
 	if (nrow(z)) {
 		if ("causal_interpretation" %in% names(z))
 			z$causal_interpretation <- gsub("no causal support", "not established / not detected", z$causal_interpretation,
@@ -2579,6 +2557,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		"c2.Fig13.genetic_component_leadtime.png", 17, 11,
 		outdir = outdir
 	)
+	write_raw_csv(le8_bidirectional_evidence(mr,reverse_mr,layer),"c2.bidirectional_mr.csv",rawdir)
 	save_plot(plot_bidirectional_mr(mr, reverse_mr, layer), "c2.Fig11.bidirectional_mr.png", 16, 8.5, outdir = outdir)
 	fig1 <- plot_c2_fig1(mr, assoc, layer) ; save_c2_plot(fig1$plot, "c2.Fig1.prots.top.png", 17, 13.5, outdir = outdir)
 	save_c2_plot(plot_qtl_variance(mr, layer), "c2.Fig2.pQTL_R2.png", 15.5, 10.5, outdir = outdir)
@@ -2586,7 +2565,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	write_raw_csv(fig3$wide, "c2.cis_trans_comparison.csv", le8_job_dir(outdir, "c2_cause"))
 	le8_emit_restored_c2(mr, assoc, layer, outdir)
 	save_plot(plot_c2_fig4(mr, layer), "c2.Fig4.sensitivity_architecture.png", 15.5, 11.5, outdir = outdir)
-	best <- fig1$best |> mutate(y =  - log10(pmax(pval, 1e-300)), direction = case_when(FDR_all < .05 & b > 0 ~ "Positive", FDR_all < .05 & b < 0 ~ "Inverse", TRUE ~ "NS"), label = ifelse(min_rank(pval) <= 25, exposure, NA_character_))
+	best <- fig1$best |> mutate(y =  - log10(pmax(pval, 1e-300)), direction = case_when(FDR_all < le8_evidence_policy()$mr_fdr & b > 0 ~ "Positive", FDR_all < le8_evidence_policy()$mr_fdr & b < 0 ~ "Inverse", TRUE ~ "NS"), label = ifelse(min_rank(pval) <= 25, exposure, NA_character_))
 	top_r2 <- mr |>
 		filter(is.finite(r2_median), n_IV > 0) |>
 		mutate(
@@ -2597,7 +2576,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	arch <- mr |>
 		filter(is.finite(median_F), is.finite(r2_median)) |>
 		mutate(
-			evidence = case_when(FDR_all < .05 ~ "MR FDR < 0.05", Q_p < .05 ~ "Heterogeneous", TRUE ~ "Other"),
+			evidence = case_when(FDR_all < le8_evidence_policy()$mr_fdr ~ "MR meets configured FDR", Q_p < .05 ~ "Heterogeneous", TRUE ~ "Other"),
 			label = ifelse(min_rank(pval) <= 15, exposure, NA_character_)
 		)
 

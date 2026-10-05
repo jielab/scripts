@@ -629,7 +629,7 @@ bbc_date_cols <- grep("^date_", names(bbc_raw), value = TRUE)
 bbc_dates <- bbc_raw[, c("eid", bbc_date_cols), drop = FALSE]
 uacr <- derive_ukb_uacr(bbc_raw)
 bbc_main <- bbc_raw[, setdiff(names(bbc_raw), bbc_date_cols), drop = FALSE]
-bbc_main <- clean_biom(bbc_main, miss_col = 0.2)
+bbc_main <- clean_biom(bbc_main, miss_col = 0.2, nonnegative = TRUE)
 bbc <- Reduce(function(x, y) merge(x, y, by = "eid", all = TRUE, sort = FALSE),
 					list(bbc_main, bbc_dates, uacr))
 saveRDS(bbc, paste0(indir, "/Rdata/bbc.rds"))
@@ -639,7 +639,8 @@ cat("UACR assessed from numeric values:",
 prot <- fread(paste0(indir, "/rap/raw/prot.tab.gz"), sep = "\t",
 					header = TRUE) %>% as.data.frame()
 names(prot)[ - 1] <- toupper(names(prot)[ - 1])
-prot <- clean_biom(prot, miss_col = 0.2)
+# Olink NPX is a signed log2 scale, not an absolute concentration.
+prot <- clean_biom(prot, miss_col = 0.2, nonnegative = FALSE)
 saveRDS(prot, paste0(indir, "/Rdata/prot.rds"))
 
 fn <- fread(paste0(indir, "/common/met.lst"), sep = "\t",
@@ -655,7 +656,7 @@ for (i in seq_len(nrow(col2calc))) {
 	met[, (col2calc$V2[i]) := eval(parse(text = col2calc$V1[i]))]
 }
 setnames(met, old = col2rename$V1, new = col2rename$V2, skip_absent = TRUE)
-met <- clean_biom(as.data.frame(met))
+met <- clean_biom(as.data.frame(met), nonnegative = TRUE)
 saveRDS(met, paste0(indir, "/Rdata/met.rds"))
 
 # Imaging uses a reusable raw reader; keep the established cleaned img.rds too.

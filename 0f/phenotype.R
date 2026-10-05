@@ -178,15 +178,23 @@ drop_10pct <- function(dat1, vars, imp = FALSE, mis_rate = 0.1, rowmax = mis_rat
 	return(list(dat = dat1, vars = new_vars))
 }
 
-clean_biom <- function(dat, eid_col = "eid", miss_col = 0.1, miss_row = 0.1, var_thr = 1e-6, imp = TRUE) {
+clean_biom <- function(dat, eid_col = "eid", miss_col = 0.1, miss_row = 0.1, var_thr = 1e-6, imp = TRUE, nonnegative = FALSE) {
 	dat <- as.data.frame(dat)
 	stopifnot(eid_col %in% names(dat))
+	stopifnot(is.logical(nonnegative), length(nonnegative) == 1L, !is.na(nonnegative))
 	bio_cols <- setdiff(names(dat), eid_col)
 	dat[bio_cols] <- lapply(dat[bio_cols], function(x) {
 		x <- suppressWarnings(as.numeric(x))
 		x[!is.finite(x)] <- NA_real_
 		x
 	})
+	# Concentrations cannot be negative; signed scales such as Olink NPX can.
+	negative_rows <- list()
+	if (nonnegative) {
+		negative_rows <- lapply(dat[bio_cols], function(x) which(!is.na(x) & x < 0))
+		for (cc in bio_cols) dat[[cc]][negative_rows[[cc]]] <- NA_real_
+		message("Negative biomarker values set to NA: ", sum(lengths(negative_rows)))
+	}
 	dat[[eid_col]] <- as.character(dat[[eid_col]])
 	bio_cols <- setdiff(names(dat), eid_col)
 	missv <- colMeans(is.na(dat[bio_cols]))
@@ -195,6 +203,7 @@ clean_biom <- function(dat, eid_col = "eid", miss_col = 0.1, miss_row = 0.1, var
 	message("Cols kept after miss_col: ", length(keep_cols), " / ", length(missv))
 	bio_cols <- setdiff(names(dat), eid_col)
 	keep_row <- rowMeans(is.na(dat[bio_cols])) <= miss_row
+	retained_rows <- which(keep_row)
 	dat <- dat[keep_row, , drop = FALSE]
 	message("Rows kept after miss_row: ", nrow(dat))
 	bio_cols <- setdiff(names(dat), eid_col)
@@ -207,6 +216,13 @@ clean_biom <- function(dat, eid_col = "eid", miss_col = 0.1, miss_row = 0.1, var
 		bio_cols <- setdiff(names(dat), eid_col)
 		datDrop <- drop_10pct(dat, vars = bio_cols, imp = TRUE, mis_rate = 0.1)
 		dat <- datDrop$dat
+	}
+	# Invalid observations remain NA even when ordinary missing values are imputed.
+	if (nonnegative) {
+		for (cc in setdiff(names(dat), eid_col)) {
+			dat[[cc]][retained_rows %in% negative_rows[[cc]]] <- NA_real_
+			dat[[cc]][!is.na(dat[[cc]]) & dat[[cc]] < 0] <- NA_real_
+		}
 	}
 	dat
 }

@@ -29,6 +29,63 @@ C1 使用 ABM（agent-based modeling）命名。模型运行、注释及图形�
 
 分析缓存检查代码、输入文件及相关设置；输入或方法变化时重新计算。同一结果根目录下，不同 `Y/biom` 的命令可以同时计算；相同 `Y/biom` 的命令排队，避免重写同一组结果。读取结果快照和发布结果时使用短期共享目录锁，每个分析任务只发布自己的疾病/数据层。`final,shiny` 等汇总任务等待正在运行的分析结束，再合并已有疾病/数据层；已有 Shiny 服务时不重复启动。测试请使用独立的 `--analysis-root`，不要将缩小特征数或 bootstrap 次数的测试结果发布到正式目录。
 
+默认分析包含 reference ABM；新环境使用 `./install.sh --abm` 安装其依赖，单独 `./install.sh` 只安装报告依赖。Conda 配方现已列入 `pyreadr`、LightGBM 和 sklearn 等默认 ABM 依赖。只补本次 RDS 读取依赖可运行 `/home/huangj/anaconda3/envs/le8/bin/python3 -m pip install 'pyreadr>=0.5,<1'`；使用其他环境时换成实际的 `ABM_PYTHON`。
+
+选择 ABM 训练时，调度器会在原生 C1 扫描前，使用实际 ABM Python、R 路径及后端参数执行预检；读取器和树模型包会实际导入，缺包或动态库加载失败会立即报错。独立预检可运行 `./le8.sh c1_abm --Y cvd_cad --biom met --preflight`，不会读取整个人群或拟合模型。
+
+本次 `pyreadr` 失败留下的代谢组 C1 已恢复到 `/mnt/d/analysis/le8/cvd_cad/met/c1_correlate`，MWAS、PGS 和汇总 RDS 校验值均未改变，20 张 PNG 已配套工作簿。原诊断目录 `/tmp/le8-run-2k8coq7z` 保留。可继续用原命令 `./le8.sh --Y cvd_cad --biom met`；保持默认 `--replace FALSE`，程序按数值方法及输入签名复用扫描缓存，必要时重建图表。这次修复没有改动 R 分析方法或重新拟合 C1。 新增真实 RDS 读取、缺依赖提前退出及调度顺序回归检查，当前 Python/C5/dispatcher 共 65 项通过。
+
+真实代谢组 ABM 在训练和外部预测的输入阶段统一将负值设为缺失（包括 `Non_HDL_C`），再执行 `log1p` 等变换；不把负值当成零，也不在全体数据上插补。默认输入是 `rap/met.tab.gz`，仅修改 `Rdata/met.rds` 不会影响这一入口。蛋白组 Olink NPX 为有符号的 log₂ 尺度，保留负值，默认 `--transform none`。reference selective、attention 与 TabICL 共用输入规则；质控阈值、插补和标准化参数仍只在训练数据内拟合。`0f/phenotype.R` 的 `clean_biom(nonnegative = TRUE)` 用于 met、bbc，清理发生于缺失率筛选之前，原负值位置在 KNN 插补后仍保留 NA；prot 和影像保持其原有尺度。
+
+原始代谢物映射改为一次构建 DataFrame，避免逐列插入造成的碎片化；RDS 读取将 R `NA_real_` 的特殊 NaN 位模式统一为标准缺失值，保留有限数值（包括用作类别编码的极小值）。输入日志记录变换定义域诊断，selective 日志显示读取、样本质控和每折开始/完成；依赖预检通过并不表示真实数据训练已完成。 公共入口的 ABM 签名使用正式结果根目录作为身份，临时工作区变化不会使同一分析失效；数据、代码或科学参数变化仍会阻止错误复用。
+
+## 2026-10-05 实现审计修复（A01–A08）
+
+本轮按 `LE8_implementation_audit_20261005.md` 修复公共配置、比较定义和证据链。没有删除旧结果，也没有启动真实 UKB 全量重跑。改变这些定义后，应让对应模块检查并更新受影响的缓存；不要把旧结果仅改标签后当成新版结果。
+
+- **A01：共同配置与家庭隔离。** `--group-file` / `LE8_GROUP_FILE` 接收 `eid,group`；`--group-col` / `LE8_GROUP_COLUMN` 指定表型家系列。CSV/TSV 的 ID 与组号按字符串读取，缺失、重复及文件/列冲突报错。ABM reference、attention 和 TabICL 共用配置解析；截止日期为 `--end-date` / `DATE_FOLLOW_END`，诊断日期为 `--Y-date` / `LE8_Y_DATE`。优先级是显式公共 CLI > 环境 > 默认值；覆盖环境时输出提示并记录来源。`--abm-args` 的显式后端参数仍可覆盖公共参数，实际值写入模型 manifest。默认 ABM 协变量含 center，而 R basic 默认不含；需要一致时显式传 `--vars.adj`，实际设计仍以各模型输出为准。
+- **共同外层人员。** `--outer-roster` / `LE8_OUTER_ROSTER` 接收 `eid,role`，角色仅为 `training,test`，连接后的分析人员必须完整覆盖，家系不得跨角色。C4/Final 内部把 test 标为 validation；ABM 继续在 training 家庭内部划分 build/tune/calibration。模型保存实际家系来源、覆盖、日期、协变量、角色数、人员/结局/组学 hash；这些信息随现有 workbook/RDS 保存，不新增散落的来源文件。不同模块的排除规则仍可能改变实际测试人员，跨模块配对前需核对最终人员及结局，不能仅凭同 seed 宣称配对。
+- **A02：真正的 LE8 replacement。** 基本背景、实测 LE8 和疾病 PRS 分开定义。replacement 从最终风险设计中排除被替代领域的原始测量、积分及已登记的确定性派生项，并在拟合前和实际系数列上断言。默认替代全部八领域；`C4_REPLACE_COMPONENTS=bmi.pts,bp.pts` 可指定部分替代，并记录保留/移除领域。自定义表型派生列通过 `C4_LE8_MEASURE_MAP` 的 `component,variable` 映射补充。原 additive 分支的背景定义保持一致。
+- **A03：两种重建评价分开。** `posthoc_panel_reconstruction` 是另外拟合的 panel OLS；`deployed_concept_fidelity` 直接评价进入风险模型的冻结 `cz` 测试预测，输出 R²、RMSE、校准截距/斜率及家庭 bootstrap 区间。R² 使用 Yin 训练均值作参照，两类表均记录目标尺度、队列和缺失处理。新增 fidelity 图及对应工作簿内容，Final 也读取该结果。区间不包含重新选择/拟合模型的不确定性；LP 分量加和检查保留。
+- **A04–A05：统一主分析与证据政策。** 正向 MR 主类固定 protein cis / metabolite local；trans/distal 单列，失败/未检验保留，不按跨类别最小 P 选择主结果。C3、共享 helper、C4 候选集及 Final 使用同一政策：`C3_H4`（默认 0.70）、`C3_MR_FDR`（默认 0.05）、完整先验/覆盖以及 `LE8_EVIDENCE_LEVEL=region_or_signal`（默认）或 `signal_only`。政策及 hash 进入结果和缓存；已保存的新格式 C3 结果与当前政策不一致时拒绝混合汇总。逐位点/信号证据保留，区域支持不标为已证明因果。
+- **A07：统一聚类。** 观察数据和每次家庭 bootstrap 均调用 `fit_le8_modules()`，复用 discovery/replication profile、方向规则、候选 K、最小模块大小和无可行 K 处理。使用 `cluster::silhouette()`，singleton 为 0。少量特征、单模块、无可行 K 和 B=0 有独立状态；稳定性仍是给定 assay roster 的条件稳定性。
+
+### A06：变异身份与参考规范化
+
+保留 orientation matching key，同时输出 `BUILD,REF,ALT,variant_id,normalization_status,normalization_proof_hash`。不同 build 和同坐标不同 ALT 不混并；冲突重复记录不会按最强 P 保留一条。普通 SNV 仍可按效应方向匹配，但只有验证过 REF/ALT 的条目才标为真实参考规范化身份。
+
+有真实上游规范化证明时，在 `LE8_GWAS_MANIFEST` 对应行指定 `normalization_proof` JSON 路径。证明需包含 `file_sha256,reference_sha256,tool,tool_version,build,reference_checked,left_aligned,multiallelic_split`，后三项为 true；程序验证数据文件 hash、build 和效应等位基因一致性。证明应来自实际的参考校验、左对齐与多等位拆分过程，不能从排序的 EA/NEA 反推。
+
+没有证明时，可在 manifest 提供 `reference_fasta`，或设置 `LE8_REFERENCE_FASTA_37` / `LE8_REFERENCE_FASTA_38`，并提供 FASTA 的 `.fai`。C3 对实际读取的区域运行 `bcftools norm --check-ref e -f ... -m -any`；只处理具有明确且一致 REF/ALT 的标量关联，不猜参考等位基因。无法确认的 INDEL 标为 `indel_normalization_unverified` 并从共定位对齐中排除；不会要求无差别重跑全部 GWAS。规范化后的工具变量使用同一身份匹配。
+
+### A08：C5 公共入口
+
+以下参数由公共入口验证，并且只转发给 C5：`--contrasts`、`--matched-draws`、`--cigma-cells`、`--allow-untested-cigma`、`--no-plots`。C5 使用公共 `--seed`（或 `SEED`），来源路径在写入时统一为正式路径，避免临时工作区改写破坏输出 hash 和缓存复用。`--matched-draws` 为 0 或至少 100；`--cigma-cells` 配合 `--cigma-results`；原生 manifest 与导入结果互斥。`--preflight` 检查显式输入路径与 contrasts 表结构；`--dry-run` 显示实际命令。
+
+```sh
+./le8.sh c5_cellulation --Y cvd_cad --biom prot \
+  --universe /path/universe.csv --atlas /path/atlas.csv --panels /path/panels.csv \
+  --contrasts /path/contrasts.csv --matched-draws 1000 --seed 2026
+```
+
+contrasts 表必须有 `model,reference`，对比双方的实际 assay 数及 fold 必须一致，模型名与解析后的 panel 名一致。未提供 contrasts 时明确记录 `not_requested`，不解释成检验阴性。原生 CIGMA 仍需其真实输入；注释完成不代表 CIGMA 已运行。
+
+### 可复现验收
+
+按本次审计“将前次测试套件纳入当前代码版本”的要求，长期回归源码保存在 `tests/`；合成输入、拟合、图片、日志、备份和缓存仍只放 `/tmp`。前次交付中仅适用于安装器/旧宿主打补丁的检查已移除，科学检查改为导入当前整合代码；通过数按本次实际运行计数。
+
+在已经安装 LE8 依赖的环境执行：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python tests/check_c1.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_c5.py tests/test_audit.py
+Rscript tests/audit_acceptance.R
+```
+
+本轮结果：C1 17 项、Python/C5/dispatcher 58 项、R 18 组验收通过。R 包括实际嵌套 concept 拟合、replacement 风险模型系数、真实 bcftools INDEL 规范化、规范化证明失效、COJO 身份继承、prepared pair 与 `coloc.abf` 数值一致，以及 20 次家庭聚类 bootstrap。
+
+另通过公共 `le8.sh` 完成单结局/蛋白层的隔离 smoke：C1 使用 2,400 人合成数据、家庭文件及自定义截止日期（质控后 2,383 人）；C5 使用显式同预算比较，均完成正常结果打包；实际公共入口与直接调用的配置签名及全部输出 hash 一致。新增 C4 保真度图和 Final/Shiny 索引也完成隔离导出。Python/R 语法与 shell 解析通过。这些是当前代码的合成/入口验证，不是全量 UKB、真实 GPU、TabICL 权重或原生 CIGMA 的验证。
+
 ## 分开分析，最后汇总
 
 可以在不同终端运行以下命令，使用同一个默认结果目录：
@@ -98,8 +155,8 @@ Rscript shiny/app.R
 ./le8.sh shiny --no-reindex --analysis-root /mnt/d/analysis/le8
 ```
 
-运行 `./le8.sh` 默认只执行 C1–C5（包含 reference ABM 和 C4 面板验证），完成后退出。汇总与查看单独使用 `./le8.sh final,shiny`；只生成汇总而不启动服务，可加 `--prepare-only`。测试、临时验证、备份和 Python 缓存均放在 `/tmp`，不保留在代码目录。
+运行 `./le8.sh` 默认只执行 C1–C5（包含 reference ABM 和 C4 面板验证），完成后退出。汇总与查看单独使用 `./le8.sh final,shiny`；只生成汇总而不启动服务，可加 `--prepare-only`。临时验证输出、备份和 Python 缓存均放在 `/tmp`；本次审计要求纳入版本的回归源码见 `tests/`。
 
-测试覆盖包括安装后的 C1/C5 检查、七类遗传/反向疾病模拟、家系隔离与嵌套选择防泄漏、模型重载、原生 MR-link-2、DANDELION、CPU/GPU 后验一致性、SuSiE 多信号和输入不匹配。实际 UKB 验证使用独立目录中的缩小样本/特征子集；不等于全队列结果已经验证。SuSiE 的真实分析仍需提供与各 GWAS 的 `ancestry` 一致的 LD 元数据，未知效应尺度或缺失强信号不会升级为完整 MR–coloc 支持。Final 默认展示 10-assay 预算，若未运行该预算则展示最近的已配置预算，选择不依据预测结果。
+当前测试范围与实测通过数见上方“可复现验收”。SuSiE 的真实分析仍需提供与各 GWAS 的 `ancestry` 一致的 LD 元数据；未知效应尺度、缺失强信号或未完成的分析不会升级为完整 MR–coloc 支持。Final 默认展示 10-assay 预算，若未运行该预算则展示最近的已配置预算，选择不依据预测结果。
 
 可选扩展的边界：本版未启用组织 eQTL/sQTL 扩展或 SuSiE 信号 LBF 的 GPU 批处理；GPU 主线比较的是相同区域边际 BF。风险尺度因果中介和年龄断点搜索也未启用，现有输出分别为描述性路径乘积和基线年龄平滑曲线。原生 CIGMA 仍需匹配的单细胞表达和基因型输入。

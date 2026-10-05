@@ -132,6 +132,8 @@ focus_stage_signature <- function(name, layer, inputs) {
 }
 
 focus_split <- function(dat, evar, seed = SEED) {
+	shared <- le8_outer_roles(dat)
+	if (!is.null(shared)) return(shared)
 	group <- le8_participant_groups(dat)
 	ifelse(le8_group_folds(group,5,seed)==1L,"validation","training")
 }
@@ -157,7 +159,9 @@ focus_proxy_accuracy <- function(train, test, features, components, covars, mode
 		base <- predict_one(covars)
 		full <- predict_one(unique(c(covars, features)))
 		only <- predict_one(features)
-		tibble(model, component = cmp, N = nrow(te), R2_omics = 1 - sum((y - only) ^ 2) / den, R2_basic = 1 - sum((y -
+		tibble(model, evaluation="posthoc_panel_reconstruction", target_scale="measured LE8 domain points",
+			training="OLS refit in common Yin training cohort", missing="finite target labels; training-fitted predictor imputation",
+			cohort_hash=le8_hash_object(sort(te$eid)), component = cmp, N = nrow(te), R2_omics = 1 - sum((y - only) ^ 2) / den, R2_basic = 1 - sum((y -
 			base) ^ 2) / den, R2_basic_omics = 1 - sum((y - full) ^ 2) / den, delta_R2 = (sum((y - base) ^ 2) - sum((y -
 			full) ^ 2)) / den, note = "Common Yin-trained held-out LE8 reconstruction; not intervention response")
 	})
@@ -310,7 +314,7 @@ focus_plot <- function(metrics, contrasts, proxy, pillars, rd) {
 			high = "#24748A", midpoint = 0
 		) +
 		labs(
-			title = "c. LE8 reconstruction in held-out participants", x = NULL,
+			title = "c. Posthoc panel reconstruction in held-out participants", x = NULL,
 			y = NULL, fill = "Incremental R²"
 		) +
 		theme_5c(8) +
@@ -335,6 +339,7 @@ focus_plot <- function(metrics, contrasts, proxy, pillars, rd) {
 focus_write_outputs <- function(tables, rd) {
 	for (nm in setdiff(names(tables), "PGS")) write_raw_csv(tables[[nm]], paste0("c4.focus.", nm, ".csv"), rd)
 	focus_plot(tables$metrics, tables$contrasts, tables$proxy_accuracy, tables$pillar_counts, rd)
+	c4_plot_deployed_fidelity(tables$deployed_concept_fidelity,rd)
 	sheets <- tables[setdiff(names(tables), "PGS")]
 	if (is.list(tables$PGS))
 		for (nm in names(tables$PGS)) sheets[[paste0("PGS_", nm)]] <- tables$PGS[[nm]]
@@ -342,6 +347,81 @@ focus_write_outputs <- function(tables, rd) {
 }
 
 # 🚩 Nested LE8 concepts and fixed-budget disease selection
+c4_le8_measure_map <- function() {
+	# Raw inputs, scores, treatment corrections and deterministic derived measurements.
+	groups <- list(
+		diet=c("diet","diet.pts","diet_score","diet.score","fruit","vegetable","fish","wholegrain","refinedgrain","processedmeat","unprocessedmeat","sugarydrinks"),
+		pa=c("pa","pa.pts","ipaq","ipaq.c","met_minutes","moderate_pa","vigorous_pa","walking"),
+		smoke=c("smoke","smoke.c","smoke.pts","smoking","smoking_status","pack_years","cotinine"),
+		bmi=c("bmi","bmi.pts","weight","height","waist","whr","obesity"),
+		nonhdl=c("nonhdl","nonhdl.pts","tc","hdl","ldl","cholesterol","hdl_cholesterol","ldl_cholesterol","lipid_medication","statin"),
+		hba1c=c("hba1c","hba1c_ngsp","hba1c.pts","glucose","diabetes","diabetes_medication"),
+		bp=c("bp","bp.pts","sbp","dbp","hypertension","antihypertensive","bp_medication"),
+		sleep=c("sleep","sleep.pts","sleep_duration","sleep.duration"))
+	z <- bind_rows(lapply(names(groups),function(x) tibble(component=paste0(x,".pts"),variable=groups[[x]])))
+	file <- Sys.getenv("C4_LE8_MEASURE_MAP","")
+	if (nzchar(file)) {
+		custom <- as_tibble(fread(file))
+		if (!all(c("component","variable") %in% names(custom)) || anyNA(custom[,c("component","variable")]) || any(!custom$component %in% paste0(names(groups),".pts"))) stop("C4_LE8_MEASURE_MAP requires known component,variable columns")
+		z <- bind_rows(z,select(custom,component,variable))
+	}
+	distinct(z)
+}
+c4_replacement_background <- function(background_basic, background_measured_LE8, background_PRS, replaced, map=c4_le8_measure_map()) {
+	if (!length(replaced) || any(!replaced %in% unique(map$component))) stop("Invalid replacement domains")
+	forbidden <- unique(c(map$variable[map$component %in% replaced],"le8","le8.pts","le8_score","le4","le4.pts","le4_score"))
+	if (length(intersect(background_PRS,forbidden))) stop("Disease PRS conflicts with LE8 measurement namespace")
+	list(background=setdiff(unique(c(background_basic,background_measured_LE8,background_PRS)),forbidden),
+		forbidden=forbidden,replaced=replaced,retained=setdiff(unique(map$component),replaced))
+}
+c4_assert_replacement <- function(variables, forbidden) {
+	bad <- variables[vapply(variables,function(v) any(v==forbidden | startsWith(v,paste0(forbidden,"__"))),logical(1))]
+	if (length(bad)) stop("Replaced LE8 measurements remain in design matrix: ",paste(bad,collapse=","))
+	invisible(TRUE)
+}
+c4_deployed_concept_fidelity <- function(cz, train, test, components, model, B=200L, seed=2026L) {
+	if (cz$status!="ok") return(tibble())
+	if (!identical(as.character(cz$test$eid),as.character(test$eid))) stop("Concept/test roster mismatch")
+	map_dfr(components,function(cmp) {
+		column <- paste0("concept_",make.names(cmp))
+		if (!column %in% cz$features) return(tibble(model,component=cmp,evaluation="deployed_concept_fidelity",status="concept_unavailable"))
+		y <- test[[cmp]]; pred <- cz$test[[column]]
+		ok <- is.finite(y) & is.finite(pred); mu <- mean(train[[cmp]][is.finite(train[[cmp]])])
+		metric <- function(ix) {
+			a <- y[ix]; b <- pred[ix]; den <- sum((a-mu)^2)
+			fit <- if (length(ix)>2 && sd(b)>0) lm.fit(cbind(1,b),a)$coefficients else c(NA_real_,NA_real_)
+			c(R2=if(den>0) 1-sum((a-b)^2)/den else NA_real_,RMSE=sqrt(mean((a-b)^2)),calibration_intercept=unname(fit[1]),calibration_slope=unname(fit[2]))
+		}
+		ix <- which(ok)
+		if (length(ix)<3 || !is.finite(mu)) return(tibble(model,component=cmp,evaluation="deployed_concept_fidelity",status="insufficient held-out labels"))
+		est <- metric(ix); groups <- test$.group[ix] %||% test$eid[ix]
+		set.seed(seed); boot <- if (B>0) replicate(B,metric(ix[le8_group_bootstrap(groups)])) else matrix(numeric(),4,0)
+		rows <- tibble(model,component=cmp,evaluation="deployed_concept_fidelity",status="ok",N=length(ix),
+			metric=names(est),estimate=unname(est),lower=NA_real_,upper=NA_real_,bootstrap_valid=0L,bootstrap_requested=B,
+			target_scale="measured LE8 domain points",training="nested cross-fitted concepts; frozen full-training test map",
+			missing="finite held-out target/prediction pairs; no target imputation",R2_reference="Yin training target mean",
+			cohort_hash=le8_hash_object(sort(test$eid[ix])),uncertainty="family bootstrap of frozen held-out predictions; excludes model refitting uncertainty")
+		for (j in seq_along(est)) {
+			v <- boot[j,is.finite(boot[j,])]; rows$bootstrap_valid[j] <- length(v)
+			if (length(v)>=max(20,ceiling(.8*B))) { rows$lower[j] <- quantile(v,.025); rows$upper[j] <- quantile(v,.975) }
+		}
+		rows
+	})
+}
+c4_plot_deployed_fidelity <- function(d, rd) {
+	if (!is.data.frame(d) || !all(c('status','metric','estimate','lower','upper','model','component') %in% names(d))) return(invisible(NULL))
+	d <- d |> filter(status=='ok',is.finite(estimate))
+	if (!nrow(d)) return(invisible(NULL))
+	p <- ggplot(d,aes(estimate,component,color=model)) +
+		geom_errorbarh(aes(xmin=lower,xmax=upper),height=.12,position=position_dodge(width=.6),na.rm=TRUE) +
+		geom_point(position=position_dodge(width=.6)) + facet_wrap(~metric,scales='free_x',ncol=2) +
+		labs(title='Held-out fidelity of the deployed LE8 concepts',x='Frozen concept metric (95% family bootstrap interval)',y=NULL,color=NULL,
+			caption='Uses the exact concept predictions supplied to the risk model. Post-hoc panel OLS reconstruction is reported separately. Intervals exclude model-refitting uncertainty.') + theme_5c(9) + theme(legend.position='bottom')
+	le8_queue_figure(p,file.path(rd,'c4.Fig17.deployed_concept_fidelity.png'),16,10,220)
+	le8_flush_figures(rd)
+	invisible(p)
+}
+
 c4_concept_transform <- function(train,test,features,components,lambda=10) {
 	tr <- matrix(NA_real_,nrow(train),length(components),dimnames=list(NULL,paste0("concept_",make.names(components))))
 	te <- matrix(NA_real_,nrow(test),length(components),dimnames=list(NULL,colnames(tr)))
@@ -493,7 +573,10 @@ run_c4_panel_validation <- function(layer) {
 		write_raw_csv(tibble(stage="common disease PRS roster",N_before=nrow(dat),N_after=sum(ok),source=if(nzchar(prs_file)) prs_file else "explicit baseline column"),"c4.focus.PRS_roster.csv",rd)
 		dat <- dat[ok,,drop=FALSE]
 	}
-	clinical_core <- unique(c(clinical,prs_columns))
+	measure_map <- c4_le8_measure_map()
+	background_basic <- setdiff(clinical,unique(c(measure_map$variable,"le8","le8.pts","le8_score","le4","le4.pts","le4_score")))
+	background_PRS <- prs_columns
+	background_measured_LE8 <- setdiff(clinical,background_basic)
 	dat$.group <- le8_participant_groups(dat)
 	rm(ph, biom)
 	invisible(gc())
@@ -527,7 +610,8 @@ run_c4_panel_validation <- function(layer) {
 	components <- intersect(requested_components, names(train))
 	basic <- intersect(vars.basic, names(train))
 	clinical_no_prs <- unique(c(clinical,components))
-	clinical <- unique(c(clinical_core,components))
+	background_measured_LE8 <- unique(c(background_measured_LE8,components))
+	clinical <- unique(c(background_basic,background_measured_LE8,background_PRS))
 	message("C4 focus: training=", nrow(train), ", validation=", nrow(test), ", Yang=", nrow(yang))
 	data.table::fwrite(bind_rows(
 		tibble(eid = train$eid, group = train$.group, role = "incident_training", proxy_half=train$.le8_proxy_half), tibble(eid = test$eid, group = test$.group, role = "incident_validation",proxy_half=NA_integer_),
@@ -614,8 +698,12 @@ run_c4_panel_validation <- function(layer) {
 	}
 	concept_designs <- Filter(function(x) isTRUE(x$concept) && is.null(x$extra) && x$cohort=="Yin",designs)
 	for (ds in concept_designs) {
-		ds$name <- sub("^YSconcept","YSconceptReplacement",ds$name); ds$background <- clinical_core
-		ds$paradigm <- "Molecular LE8 replacement; measured domain points omitted"
+		ds$name <- sub("^YSconcept","YSconceptReplacement",ds$name)
+		replacement <- c4_replacement_background(background_basic,background_measured_LE8,background_PRS,
+			le8_csv_env("C4_REPLACE_COMPONENTS",paste(unique(measure_map$component),collapse=",")),measure_map)
+		ds$background <- replacement$background; ds$forbidden <- replacement$forbidden
+		ds$replaced <- replacement$replaced; ds$retained <- replacement$retained
+		ds$paradigm <- paste0("Molecular LE8 replacement; replaced=",paste(ds$replaced,collapse=";"),"; retained=",paste(ds$retained,collapse=";"))
 		designs[[length(designs)+1L]] <- ds
 	}
 	panel_audit <- focus_panel_audit(designs, membership, components)
@@ -634,7 +722,7 @@ run_c4_panel_validation <- function(layer) {
 		contrasts <- tables$contrasts
 		pr <- tables$proxy_accuracy
 	} else {
-		metrics <- boot <- proxy <- members <- calibration <- decision <- coefficients <- preprocessing <- diagnostics <- baseline_hazards <- cv_curves <- penalties <- concept_coefficients <- concept_preprocessing <- concept_folds <- concept_status <- list()
+		metrics <- boot <- proxy <- members <- calibration <- decision <- coefficients <- preprocessing <- diagnostics <- baseline_hazards <- cv_curves <- penalties <- concept_coefficients <- concept_preprocessing <- concept_folds <- concept_status <- deployed_fidelity <- list()
 		mi <- 0L
 		for (ds in designs) {
 			message("C4 focus: fit ", ds$name)
@@ -650,15 +738,18 @@ run_c4_panel_validation <- function(layer) {
 				concept_coefficients[[ds$name]] <- cz$coefficients |> mutate(model=ds$name)
 				concept_preprocessing[[ds$name]] <- cz$preprocess |> mutate(model=ds$name)
 				concept_folds[[ds$name]] <- cz$fold_panels |> mutate(model=ds$name)
+				deployed_fidelity[[ds$name]] <- c4_deployed_concept_fidelity(cz,train,test,components,ds$name,B,SEED+612)
 			}
+			if (!is.null(ds$forbidden)) c4_assert_replacement(c(background,risk_features),ds$forbidden)
 			obj <- le8_fit_budget_model(risk_train, risk_test, background, risk_features, tvar, evar, solver = solver, seed = SEED+27)
+			if (!is.null(ds$forbidden) && obj$status=="ok") c4_assert_replacement(obj$coefficient$variable,ds$forbidden)
 			if (isTRUE(ds$concept) && obj$status=="ok") obj$N_selected <- length(ds$features)
 			diagnostics[[length(diagnostics) + 1L]] <- tibble(
 				model = ds$name, status = obj$status, fit_method = obj$fit_method %||%
 					solver, tie_method=obj$tie_method %||% NA_character_, condition_number = obj$condition_number %||% NA_real_, lambda = obj$lambda %||% NA_real_,
 				warnings = obj$warnings %||% "", N_train=obj$N_train %||% nrow(train), events_train=obj$events_train %||% sum(train[[evar]]),
 				design_rank=obj$design_rank %||% NA_integer_, molecular_lp_sd_train=obj$molecular_lp_sd_train %||% NA_real_,
-				molecular_lp_sd_test=obj$molecular_lp_sd_test %||% NA_real_, background=paste(background,collapse=";"), disease_PRS=if(length(prs_columns)) paste(prs_columns,collapse=";") else "unavailable: no declared disease PRS"
+				molecular_lp_sd_test=obj$molecular_lp_sd_test %||% NA_real_, background=paste(background,collapse=";"), replaced_domains=paste(ds$replaced,collapse=";"), retained_domains=paste(ds$retained,collapse=";"), disease_PRS=if(length(prs_columns)) paste(prs_columns,collapse=";") else "unavailable: no declared disease PRS"
 			)
 			members[[length(members) + 1L]] <- tibble(model = ds$name, feature = if (length(ds$features))
 				ds$features else NA_character_, budget = ds$budget, status = obj$status)
@@ -718,7 +809,7 @@ run_c4_panel_validation <- function(layer) {
 		contrasts <- focus_contrasts(met, bo, budgets)
 		heterogeneity <- focus_heterogeneity(contrasts, bo)
 		tables <- list(
-			metrics = met, contrasts = contrasts, heterogeneity = heterogeneity, proxy_accuracy = pr,
+			metrics = met, contrasts = contrasts, heterogeneity = heterogeneity, proxy_accuracy = pr, deployed_concept_fidelity=bind_rows(deployed_fidelity),
 			panel_members = bind_rows(members), pillar_counts = pillars, membership = membership, inflammation_definition = inflammatory$audit,
 			design_status = bind_rows(design_status), training_screen = screen, calibration = bind_rows(calibration),
 			decision = bind_rows(decision), model_coefficients = bind_rows(coefficients), preprocessing = bind_rows(preprocessing),
@@ -730,7 +821,7 @@ run_c4_panel_validation <- function(layer) {
 				paste(nrow(train), "incident participants"), paste(
 					nrow(yang),
 					"additional prevalent donors for proxy learning only"
-				), paste(nrow(test), "incident participants; shared 80/20 split algorithm with Final"),
+				), paste(nrow(test), "incident participants; common frozen roster within C4; cross-module pairing only with LE8_OUTER_ROSTER"),
 				paste0("ceil(budget * ", fraction, ") YS; remainder disease-ranked outside YS"), "Post hoc hypothesis development after inspecting earlier results; frozen-fit internal bootstrap, requires new external validation"
 			))
 		)
@@ -1684,71 +1775,71 @@ make_genetic_edges <- function(disc, rep, disease, membership) {
 		arrange(desc(replicated), desc(bridge_score))
 }
 
+fit_le8_modules <- function(disc, rep, roster=NULL, max_features=C4_MODULE_MAX, k_max=C4_MODULE_K_MAX) {
+	p <- disc |> select(feature,component,z_disc=r) |>
+		inner_join(rep |> select(feature,component,z_rep=r),by=c("feature","component")) |>
+		mutate(same_direction=is.finite(z_disc)&is.finite(z_rep)&sign(z_disc)==sign(z_rep),
+			z_joint=ifelse(same_direction,(z_disc+z_rep)/sqrt(2),.25*(z_disc+z_rep)),
+			strength=pmax(abs(z_disc),abs(z_rep),na.rm=TRUE))
+	if (is.null(roster)) roster <- p |> group_by(feature) |> summarise(strength=max(strength),.groups="drop") |>
+		arrange(desc(strength),feature) |> slice_head(n=max_features) |> pull(feature)
+	pw <- p |> filter(feature %in% roster) |> select(feature,component,z_joint) |>
+		pivot_wider(names_from=component,values_from=z_joint,values_fill=0)
+	if (!length(roster) || !nrow(pw) || !all(roster %in% pw$feature)) return(list(status="unavailable_profile",membership=tibble(),metrics=tibble(),profile=p,k=NA_integer_))
+	X <- as.matrix(pw[match(roster,pw$feature),setdiff(names(pw),"feature"),drop=FALSE]); rownames(X) <- roster
+	X[!is.finite(X)] <- 0; X <- t(scale(t(X))); X[!is.finite(X)] <- 0
+	n <- nrow(X); D <- dist(X); min_size <- max(3L,ceiling(.03*n))
+	ks <- if (n>=3L && k_max>=2L) seq.int(2L,min(k_max,n-1L)) else integer()
+	hc <- if (n>1L) hclust(D,method="ward.D2") else NULL
+	metrics <- bind_rows(lapply(ks,function(k) {
+		cl <- cutree(hc,k); size <- min(table(cl))
+		tibble(k,silhouette=mean(cluster::silhouette(cl,D)[,"sil_width"]),min_module_n=size,minimum_required=min_size,feasible=size>=min_size)
+	}))
+	eligible <- if(nrow(metrics)) metrics |> filter(feasible,is.finite(silhouette)) |> arrange(desc(silhouette),k) else tibble()
+	k <- if(nrow(eligible)) eligible$k[1] else 1L
+	status <- if(nrow(eligible)) "ok" else if(n<3L) "too_few_features_single_module" else "no_feasible_K_single_module"
+	cl <- if(k==1L) rep(1L,n) else cutree(hc,k)
+	if (!nrow(metrics)) metrics <- tibble(k=1L,silhouette=NA_real_,min_module_n=n,minimum_required=min_size,feasible=FALSE)
+	list(status=status,k=k,membership=tibble(feature=roster,module=unname(cl)),
+		metrics=metrics |> mutate(selected_k=.env$k,fit_status=status),profile=p |> filter(feature %in% roster))
+}
 supervised_modules <- function(disc, rep, sets, participants = NULL, components = NULL, covars = NULL) {
-	p <- disc |>
-		select(feature, component, z_disc = r) |>
-		inner_join(rep |> select(feature, component, z_rep = r), by = c("feature", "component")) |>
-		mutate(same_direction = is.finite(z_rep) & sign(z_disc) == sign(z_rep), z_joint = ifelse(same_direction, (z_disc + z_rep) / sqrt(2), .25 * (z_disc + z_rep)), strength = pmax(abs(z_disc), abs(z_rep), na.rm = TRUE))
-	if (!nrow(p)) return(list(membership = tibble(), metrics = tibble(), profile = tibble(), YS_core = character()))
-	keep <- p |>
-		group_by(feature) |>
-		summarise(strength = max(strength, na.rm = TRUE), .groups = "drop") |>
-		arrange(desc(strength)) |>
-		slice_head(n = C4_MODULE_MAX) |>
-		pull(feature)
-	pw <- p |>
-		filter(feature %in% keep) |>
-		select(feature, component, z_joint) |>
-		pivot_wider(names_from = component, values_from = z_joint, values_fill = 0)
-	rn <- pw$feature ; X <- as.matrix(pw[, - 1, drop = FALSE]) ; rownames(X) <- rn ; X[!is.finite(X)] <- 0
-	X <- t(scale(t(X))) ; X[!is.finite(X)] <- 0
-	n <- nrow(X) ; ks <- if (n >= 4) 2 : min(C4_MODULE_K_MAX, n - 1) else integer() ; D <- as.matrix(dist(X))
-	sil_one <- function(cl) {
-		mean(vapply(seq_len(n), function(i) {
-			same <- which(cl == cl[i] & seq_len(n) != i) ; a <- if (length(same)) mean(D[i, same]) else 0 ; other <- setdiff(unique(cl), cl[i]) ; if (!length(other)) return(0) ; b <- min(vapply(other, function(g) mean(D[i, cl == g]), numeric(1))) ; if (max(a, b) == 0) 0 else (b - a) / max(a, b)
-		}, numeric(1)), na.rm = TRUE)
-	}
-	hc <- if (n>1) hclust(as.dist(D), method = "ward.D2") else NULL
-	metrics <- if (length(ks)) map_dfr(ks, function(k) {
-		cl <- cutree(hc, k) ; tibble(k, silhouette = sil_one(cl), min_module_n = min(table(cl)))
-	}) else tibble(k = 1L, silhouette = NA_real_, min_module_n = n)
-	eligible <- metrics |> filter(min_module_n >= max(3L, ceiling(.03 * n))) ; if (!nrow(eligible)) eligible <- metrics |> slice(1)
-	k <- eligible |>
-		arrange(desc(silhouette), k) |>
-		slice(1) |>
-		pull(k) ; orig <- if (k == 1) rep(1L, n) else cutree(hc, k)
-	stable <- rep(NA_real_,n); boot_k <- integer(); valid_boot <- 0L
-	if (k>1 && C4_MODULE_BOOT>0 && !is.null(participants) && ncol(X)>1) {
-		set.seed(SEED+404); hit <- numeric(n)
+	fit <- fit_le8_modules(disc,rep)
+	if (!nrow(fit$membership)) return(list(membership=tibble(),metrics=fit$metrics,profile=fit$profile,YS_core=character(),status=fit$status))
+	rn <- fit$membership$feature; orig <- fit$membership$module; n <- length(rn); k <- fit$k
+	stable <- rep(NA_real_,n); boot_k <- integer(); valid_boot <- 0L; records <- list()
+	if (k>1 && C4_MODULE_BOOT>0 && !is.null(participants)) {
+		if (!".le8_proxy_half" %in% names(participants)) stop("Module bootstrap needs original discovery/replication roles")
 		groups <- le8_participant_groups(participants)
+		if (any(vapply(split(participants$.le8_proxy_half,groups),function(x) length(unique(x))>1L,logical(1)))) stop("Families cross proxy halves")
+		set.seed(SEED+404); hit <- numeric(n)
 		for (b in seq_len(C4_MODULE_BOOT)) {
-			ix <- le8_group_bootstrap(groups)
-			pm <- le8_proxy_map(participants[ix,,drop=FALSE],rn,components,covars)
-			if (!nrow(pm)) next
-			pw2 <- pm |> mutate(component=sub("\\.pts$","",component)) |> select(feature,component,r) |> pivot_wider(names_from=component,values_from=r,values_fill=0)
-			if (!all(colnames(X) %in% names(pw2))) next
-			xb <- as.matrix(pw2[match(rn,pw2$feature),colnames(X),drop=FALSE]); xb[!is.finite(xb)] <- 0
-			xb <- t(scale(t(xb))); xb[!is.finite(xb)] <- 0
-			db <- as.matrix(dist(xb)); hb <- hclust(as.dist(db),method="ward.D2")
-			oldD <- D; D <- db
-			scores <- vapply(ks,function(kk) sil_one(cutree(hb,kk)),numeric(1)); D <- oldD
-			kb <- ks[which.max(scores)]; cb <- cutree(hb,kb); boot_k <- c(boot_k,kb)
+			# Resample whole families inside each original half; reproduce both scans and profile rules.
+			parts <- lapply(c("discovery","replication"),function(h) {
+				ix <- which(participants$.le8_proxy_half==h)
+				participants[ix[le8_group_bootstrap(groups[ix])],,drop=FALSE]
+			})
+			bd <- proxy_scan(parts[[1]],rn,components,covars,"discovery")
+			br <- proxy_scan(parts[[2]],rn,components,covars,"replication")
+			fb <- if(nrow(bd)&&nrow(br)) fit_le8_modules(bd,br,roster=rn) else list(status="unavailable_profile",k=NA_integer_)
+			records[[b]] <- tibble(replicate=b,status=fb$status,k=fb$k)
+			if (!identical(fb$status,"ok")) next
+			cb <- fb$membership$module; boot_k <- c(boot_k,fb$k)
 			hit <- hit + vapply(seq_len(n),function(j) {
 				a <- which(orig==orig[j]); bb <- which(cb==cb[j]); length(intersect(a,bb))/length(union(a,bb))
 			},numeric(1)); valid_boot <- valid_boot+1L
 		}
 		if (valid_boot>=max(20,ceiling(.8*C4_MODULE_BOOT))) stable <- hit/valid_boot
 	}
-	membership <- tibble(feature = rn, module = orig, module_stability = stable,
-		stability_status=ifelse(is.finite(stable),"participant/family bootstrap co-clustering Jaccard conditional on feature roster","stability_not_estimated"),
-		bootstrap_valid=valid_boot,bootstrap_requested=C4_MODULE_BOOT,
-		K_stability=if (length(boot_k)) mean(boot_k==k) else NA_real_) |>
-		left_join(sets$primary |> select(feature, primary_component, strict_YS, YS_model, FDR_disc, FDR_rep), by = "feature") |>
-		mutate(YS_core = coalesce(strict_YS, FALSE) & is.finite(module_stability) & module_stability >= C4_MODULE_STABILITY)
-	prof <- p |>
-		filter(feature %in% rn) |>
-		left_join(membership |> select(feature, module, module_stability, YS_core, primary_component), by = "feature")
-	list(membership = membership, metrics = metrics |> mutate(selected_k = .env$k), profile = prof, YS_core = membership |> filter(YS_core) |> pull(feature))
+	membership <- fit$membership |> mutate(module_stability=stable,fit_status=fit$status,
+		stability_status=ifelse(is.finite(stable),"family bootstrap of identical discovery/replication module algorithm; conditional on feature roster",
+			if(C4_MODULE_BOOT==0) "not_requested_B0" else if(k==1) "single_module_not_estimable" else "insufficient_valid_bootstrap"),
+		bootstrap_valid=valid_boot,bootstrap_requested=C4_MODULE_BOOT,K_stability=if(length(boot_k)) mean(boot_k==k) else NA_real_) |>
+		left_join(sets$primary |> select(feature,primary_component,strict_YS,YS_model,FDR_disc,FDR_rep),by="feature") |>
+		mutate(YS_core=coalesce(strict_YS,FALSE)&is.finite(module_stability)&module_stability>=C4_MODULE_STABILITY)
+	prof <- fit$profile |> left_join(membership |> select(feature,module,module_stability,YS_core,primary_component),by="feature")
+	list(membership=membership,metrics=fit$metrics,profile=prof,bootstrap=bind_rows(records),status=fit$status,
+		YS_core=membership |> filter(YS_core) |> pull(feature))
 }
 
 plot_supervised_atlas <- function(modules, sets, med, layer, outdir) {
@@ -2215,6 +2306,7 @@ run_c4_layer <- function(layer = c("protein", "metabolite")) {
 	rm(biom, dat0) ; invisible(gc())
 	dat$.group <- le8_participant_groups(dat)
 	fold <- stratified_split(dat, evar)
+	dat$.le8_proxy_half <- fold
 	scan_cache <- file.path(rawdir, "c4.LE8_proxy_scan.rds") ; scan_stage <- read_stage_cache(scan_cache)
 	if (is.null(scan_stage)) {
 		disc <- proxy_scan(dat[fold == "discovery", ], features, comps, covs, "discovery")
@@ -2267,6 +2359,7 @@ run_c4_layer <- function(layer = c("protein", "metabolite")) {
 	age_models <- c4_age_shape(dat,features,covs,layer,rawdir)
 	scan <- bind_rows(disc, rep) ; sets <- make_proxy_sets(disc, rep, disease, ann)
 	modules <- supervised_modules(disc, rep, sets, dat, comps, covs)
+	write_raw_csv(modules$bootstrap,"c4.supervised_module_bootstrap.csv",rawdir)
 	write_raw_csv(scan, "c4.LE8_feature_associations.csv", rawdir) ; write_raw_csv(sets$primary, "c4.primary_pillar_assignment.csv", rawdir) ; write_raw_csv(sets$membership, "c4.proxy_membership_YS_YSP_NS.csv", rawdir) ; write_raw_csv(sets$YS_edges, "c4.YS_edges.csv", rawdir)
 	write_raw_csv(modules$membership, "c4.supervised_module_membership.csv", rawdir) ; write_raw_csv(modules$metrics, "c4.supervised_module_selection.csv", rawdir)
 	genetic_cache <- file.path(rawdir, "c4.PRS_proxy_scan.rds") ; genetic_stage <- read_stage_cache(genetic_cache)

@@ -81,10 +81,20 @@ def write_csv(d, path):
     atomic_text(d.to_csv(index=False, na_rep=""), path)
 
 
+def provenance_path(path):
+    """Stable published identity while reading the disposable table workspace."""
+    p = Path(path).resolve()
+    work, published = os.getenv("LE8_ANALYSIS_ROOT"), os.getenv("LE8_PUBLISHED_ROOT")
+    if work and published:
+        try: return str(Path(published).resolve() / p.relative_to(Path(work).resolve()))
+        except ValueError: pass
+    return str(p)
+
+
 def stamp(path):
     if path is None: return None
     p = Path(path).resolve()
-    return dict(path=str(p), sha256=sha(p)) if p.is_file() else dict(path=str(p), missing=True)
+    return dict(path=provenance_path(p), sha256=sha(p)) if p.is_file() else dict(path=provenance_path(p), missing=True)
 
 
 def read_table(path, sheet=None, header_row=0):
@@ -303,6 +313,9 @@ def annotate(universe, atlas, panels, outdir, prefix="cell", contrasts=None,
             left, right = pair["model"], pair["reference"]
             if left not in msets or right not in msets: raise ValueError("Unknown contrast model/reference")
             if budgets[left] != budgets[right]: raise ValueError("Panel contrast requires equal actual assay counts")
+            if "fold" in p:
+                fa=set(p.loc[p.model.eq(left),"fold"].astype(str)); fb=set(p.loc[p.model.eq(right),"fold"].astype(str))
+                if fa != fb: raise ValueError("Panel contrast requires the same fold")
             A, B = msets[left], msets[right]
             for cell, target in {"__ANY_LABEL__": labelled, **cellsets}.items():
                 z = conditional_panel_test(A, B, target)
@@ -312,6 +325,8 @@ def annotate(universe, atlas, panels, outdir, prefix="cell", contrasts=None,
     con = pd.DataFrame(ct, columns=["model","reference","cell_type","delta","null_center","p","exclusive_genes",
         "assay_budget","genes_a","genes_b","shared_genes","inference"])
     con["FDR_all_contrasts"] = bh(con.p)
+    write_csv(pd.DataFrame([dict(analysis="same_budget_contrasts",status="completed" if contrasts is not None and len(con) else "no_estimable_contrasts" if contrasts is not None else "not_requested",
+        comparisons=len(con),reason="Explicit, prespecified same-budget/same-fold contrast table required")]),outdir/f"{prefix}.contrast_status.csv")
     cov = pd.DataFrame(coverage, columns=["model","assays","mapped_assays","unique_genes","cell_labelled_genes",
         "labelled_gene_fraction","labelled_assay_fraction","background_genes","interpretation"])
     for name, table in [("all_assay_annotation", all_annotations), ("panel_annotation",ann), ("coverage",cov),
@@ -854,7 +869,7 @@ def import_cellage(repo,output):
 
 def default_resources(root,atlas):
     """Use the repository's existing native-table resolver before older Final exports."""
-    scratch=Path(tempfile.gettempdir())/"le8-c5-inputs"/hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
+    scratch=Path(tempfile.gettempdir())/"le8-c5-inputs"/hashlib.sha256(provenance_path(root).encode()).hexdigest()[:16]
     scratch.mkdir(parents=True,exist_ok=True)
     messages=[]
     try:
@@ -883,17 +898,17 @@ def evidence_long(root,universe,out):
     records=[]; inventory=[]
     for domain,relative,idcol,value,pcol,qcol,context in specs:
         path=root/"prot"/relative
-        if not path.is_file(): inventory.append(dict(domain=domain,path=str(path),status="not_published_at_canonical_path")); continue
+        if not path.is_file(): inventory.append(dict(domain=domain,path=provenance_path(path),status="not_published_at_canonical_path")); continue
         d=read_table(path)
-        if idcol not in d: inventory.append(dict(domain=domain,path=str(path),status="schema_mismatch")); continue
+        if idcol not in d: inventory.append(dict(domain=domain,path=provenance_path(path),status="schema_mismatch")); continue
         filehash=sha(path)
         for i,row in enumerate(d.to_dict("records")):
             records.append(dict(feature=row[idcol],evidence_domain=domain,
                 context=row.get(context,""),value=row.get(value,""),p=row.get(pcol,""),q=row.get(qcol,""),
                 locus=row.get("locus",""),locus_class=row.get("locus_class",row.get("analysis","")),
                 signal_id=row.get("signal_id",""),row_status=row.get("status",""),
-                source_path=str(path.resolve()),source_row=i+2,source_sha256=filehash))
-        inventory.append(dict(domain=domain,path=str(path),status="read",rows=len(d),sha256=filehash))
+                source_path=provenance_path(path),source_row=i+2,source_sha256=filehash))
+        inventory.append(dict(domain=domain,path=provenance_path(path),status="read",rows=len(d),sha256=filehash))
     cols=["feature","evidence_domain","context","value","p","q","locus","locus_class","signal_id","row_status","source_path","source_row","source_sha256"]
     d=pd.DataFrame(records,columns=cols).merge(u,left_on="feature",right_on="assay",how="left")
     write_csv(d,out/"c5.evidence_long.csv")
@@ -916,9 +931,10 @@ def main_driver(argv):
     for name in ["atlas","universe","panels","contrasts","cigma-manifest","cigma-results","cigma-cells"]:
         ap.add_argument("--"+name,type=Path)
     ap.add_argument("--replace",action="store_true"); ap.add_argument("--no-plots",action="store_true")
-    ap.add_argument("--matched-draws",type=int,default=0); ap.add_argument("--seed",type=int,default=2026)
+    ap.add_argument("--matched-draws",type=int,default=0); ap.add_argument("--seed",type=int,default=int(os.getenv("SEED","2026")))
     ap.add_argument("--python",default=os.getenv("C5_CIGMA_PYTHON",sys.executable))
     ap.add_argument("--allow-untested-cigma",action="store_true")
+    ap.add_argument("--preflight",action="store_true")
     a=ap.parse_args(argv)
     if (a.universe is None)!=(a.panels is None): ap.error("Provide --universe and --panels together")
     if a.cigma_manifest and a.cigma_results: ap.error("Choose a native manifest OR precomputed CIGMA results")
@@ -926,6 +942,15 @@ def main_driver(argv):
     if a.matched_draws and a.matched_draws<100: ap.error("Use >=100 matched draws, or 0 to disable")
     if a.panels and ("," in a.Y or a.biom!="prot"): ap.error("Explicit panels require one --Y and --biom prot")
     if (a.cigma_manifest or a.cigma_results) and "," in a.Y: ap.error("Attach CIGMA resources to one outcome per invocation")
+    for name in ["atlas","universe","panels","contrasts","cigma_manifest","cigma_results","cigma_cells"]:
+        value=getattr(a,name)
+        if value is not None and not value.is_file(): ap.error(f"Missing --{name.replace('_','-')}: {value}")
+    if a.preflight:
+        if a.contrasts:
+            require(read_table(a.contrasts),["model","reference"],"contrasts")
+        print(canonical_json(dict(status="preflight_ok",seed=a.seed,matched_draws=a.matched_draws,
+            contrasts="requested" if a.contrasts else "not_requested",cigma="input_supplied" if a.cigma_manifest or a.cigma_results else "not_requested")))
+        return 0
     explicit_atlas=a.atlas is not None; a.atlas=a.atlas or default_cell_atlas()
     rc=0
     for trait in a.Y.split(","):
@@ -936,7 +961,7 @@ def main_driver(argv):
             if layer=="prot" and a.universe is None: resources,notes=default_resources(root,a.atlas)
             signature=dict(version=VERSION,trait=trait,layer=layer,code=sha(Path(__file__)),
                 inputs=[stamp(x) for x in resources+[a.contrasts,a.cigma_results,a.cigma_cells]],
-                seed=a.seed,matched_draws=a.matched_draws,plots=not a.no_plots)
+                seed=a.seed,matched_draws=a.matched_draws,plots=not a.no_plots,allow_untested_cigma=a.allow_untested_cigma)
             # Include result provenance and cell table; changes invalidate reuse.
             if a.cigma_results:
                 signature["cigma_meta"]=stamp(a.cigma_results.parent/"cigma.provenance.json")
@@ -1029,7 +1054,7 @@ def command_line(argv=None):
     if cmd=="annotate":
         for k in ["universe","atlas","panels","outdir"]: ap.add_argument("--"+k,type=Path,required=True)
         ap.add_argument("--prefix",default="c5.cell"); ap.add_argument("--contrasts",type=Path)
-        ap.add_argument("--matched-draws",type=int,default=0); ap.add_argument("--seed",type=int,default=2026)
+        ap.add_argument("--matched-draws",type=int,default=0); ap.add_argument("--seed",type=int,default=int(os.getenv("SEED","2026")))
         ap.add_argument("--no-plots",action="store_true"); a=ap.parse_args(argv)
         if not re.fullmatch(r"[A-Za-z0-9_.-]+",a.prefix): ap.error("Invalid file prefix")
         if a.matched_draws and a.matched_draws<100: ap.error("Use >=100 matched draws or 0")
@@ -1052,7 +1077,7 @@ def command_line(argv=None):
             d=read_table(a.table,a.sheet,a.header_row); print(canonical_json(dict(columns=list(d),rows=len(d),preview=d.head(3).to_dict("records"))))
     elif cmd=="cigma":
         for k in ["manifest","outdir"]: ap.add_argument("--"+k,type=Path,required=True)
-        ap.add_argument("--validate-only",action="store_true"); ap.add_argument("--seed",type=int,default=2026)
+        ap.add_argument("--validate-only",action="store_true"); ap.add_argument("--seed",type=int,default=int(os.getenv("SEED","2026")))
         ap.add_argument("--allow-untested-cigma",action="store_true")
         a=ap.parse_args(argv); return run(a.manifest,a.outdir,a.validate_only,a.seed,a.allow_untested_cigma)
     elif cmd=="prepare-pseudobulk":

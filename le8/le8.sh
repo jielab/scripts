@@ -22,6 +22,7 @@ Participant tables use descriptive names such as test_individuals.rds; no workbo
 Examples:
   cd /mnt/d/scripts/le8
   ./install.sh                         # lightweight report + Shiny dependencies
+  ./install.sh --abm                   # reference ABM dependencies for default analysis
   ./le8.sh final,shiny --Y cvd_cad,ra --biom prot,met
   ./le8.sh final --index-only --Y cvd_cad,ra --biom prot,met
   ./le8.sh shiny --no-reindex --port 3839
@@ -69,11 +70,20 @@ Main options (defaults are set below in this script):
   --index-only           Build index without report figures or R
   --prepare-only         Prepare without launching the Shiny server
   --no-reindex           Read the existing Shiny index
-  --preflight            Check dependencies / inputs
+  --preflight            Check dependencies / inputs (ABM checked before native scans)
   --dry-run              Print planned commands
   --shiny-review         Validate prepared sources and exit
   --out DIR              Must be <analysis-root>/final
-  --atlas, --universe, --panels, --cigma-manifest, --cigma-results FILE
+  --group-file FILE      Shared eid,group mapping (LE8_GROUP_FILE)
+  --group-col COLUMN     Shared phenotype family column (LE8_GROUP_COLUMN)
+  --end-date YYYY-MM-DD  Administrative cutoff (DATE_FOLLOW_END)
+  --Y-date COLUMN       Outcome diagnosis date, shared with ABM
+  --outer-roster FILE    Shared eid,role table (training/test), for paired comparisons
+  --atlas, --universe, --panels, --contrasts FILE
+  --matched-draws N      C5 matched draws: 0 or >=100
+  --cigma-manifest, --cigma-results, --cigma-cells FILE
+  --allow-untested-cigma C5 explicit version override
+  --no-plots            C5 only: skip annotation plots
   --abm-root, --abm-tf-root DIR  Explicit external import sources
   --max-table-mb N        128
   --share-out ZIP        Portable viewer package (default: ../le8-share.zip)
@@ -105,7 +115,7 @@ le8_main() {
 	# Shared defaults, deliberately visible at the public entry point.
 	local modules=c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
-	local seed=2026 replace=FALSE r_bin=${R_BIN:-Rscript}
+	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
 	local backend=reference cores="" ukb_phe="" memory_limit="" memory_swap=""
 	local -a extra=() args=()

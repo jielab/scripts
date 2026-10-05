@@ -21,7 +21,7 @@ c3_file_stamp <- function(paths) {
 		ctime = as.numeric(info$ctime)
 	)
 }
-c3_select_mr <- function(mr, layer, fdr = 0.05, max_features = 200L) {
+c3_select_mr <- function(mr, layer, fdr = le8_evidence_policy()$mr_fdr, max_features = 200L) {
 	required <- c("exposure", "analysis", "pval", "FDR_all", "instrument_snps", "instrument_positions")
 	if (!all(required %in% names(mr)))
 		stop("C3 requires C2 MR results with FDR_all and retained instrument IDs/positions; rerun C2.", call. = FALSE)
@@ -59,7 +59,7 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 	iv <- read_stage_cache(cache)
 	if (is.data.frame(iv)) {
 		message("  QTL instrument cache hit: ", nrow(iv), " records")
-		return(iv)
+		return(le8_normalize_variants(iv,le8_gwas_metadata(qfile)))
 	}
 	# Positions in C2 are from marginal QTL records, already on the QTL build.  Query indexed intervals first;
 	# missing/legacy coordinates get one ID scan.
@@ -82,8 +82,8 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 	}
 	if (!nrow(q))
 		q <- tibble(SNP = character(), CHR = character(), POS = numeric(), P = numeric())
-	q <- q |>
-		distinct(SNP, .keep_all = TRUE)
+	if (anyDuplicated(q$SNP)) stop("Ambiguous retained instrument ID in full QTL: ",qfile)
+	q <- le8_normalize_variants(q,le8_gwas_metadata(qfile))
 	iv <- wanted |>
 		inner_join(q, by = "SNP")
 	lost <- setdiff(wanted$SNP, iv$SNP)
@@ -96,7 +96,7 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 	write_stage_cache(iv, cache)
 	iv
 }
-c3_locus_settings <- function() list(window = WINDOW_BP, min_snps = MIN_SNPS, p12 = C3_P12, susie = Sys.getenv(
+c3_locus_settings <- function() list(policy=le8_evidence_policy(),window = WINDOW_BP, min_snps = MIN_SNPS, p12 = C3_P12, susie = Sys.getenv(
 	"C3_RUN_SUSIE",
 	"FALSE"
 ), susie_max = Sys.getenv("C3_SUSIE_MAX_SNPS", "5000"), ld = c3_file_stamp(Sys.getenv(
@@ -111,13 +111,13 @@ c3_cached_locus <- function(cache, legacy_files, feature, layer, chr, pos, cls, 
 }
 
 
-C3_MR_FDR <- as.numeric(Sys.getenv("C3_MR_FDR", unset = "0.05"))
+C3_MR_FDR <- le8_evidence_policy()$mr_fdr
 if (!LE8_REUSE_RESULTS) suppressPackageStartupMessages(pacman::p_load(coloc))
 MAX_FEATURES <- as.integer(Sys.getenv("C3_MAX_FEATURES", unset = "0"))
 MAX_LOCI_PER_FEATURE <- as.integer(Sys.getenv("C3_MAX_LOCI_PER_FEATURE", unset = "0"))
 WINDOW_BP <- as.numeric(Sys.getenv("COLOC_WINDOW_BP", unset = "500000"))
 MIN_SNPS <- as.integer(Sys.getenv("C3_MIN_NSNP", unset = "50"))
-H4_STRONG <- as.numeric(Sys.getenv("C3_H4", unset = "0.70"))
+H4_STRONG <- le8_evidence_policy()$posterior
 C3_P12 <- c(conservative = 1e-06, default = 1e-05, liberal = 1e-04)
 
 run_gpu_coloc_step <- function(layer, rawdir, manifest, ygfile, outtype, gpudir = le8_cache_dir("gpu_coloc", basename(dirname(rawdir)))) {
@@ -267,8 +267,7 @@ plot_coloc_results_legacy <- function(res, regional, variants, layer, outdir) {
 	}
 	top <- ok |>
 		slice_head(n = 50) |>
-		mutate(label = paste(feature, locus, sep = " | "), label = factor(label, levels = rev(label)), tier = case_when(PP.H4 >=
-			0.8 ~ "Strong", PP.H4 >= H4_STRONG ~ "Probable", PP.H4 >= 0.5 ~ "Suggestive", TRUE ~ "Weak"))
+		mutate(label = paste(feature, locus, sep = " | "), label = factor(label, levels = rev(label)), tier = ifelse(le8_coloc_pass(pick(everything())),"Policy-supported region","Below/incomplete evidence policy"))
 	p1 <- ggplot(top, aes(PP.H4, label)) +
 		geom_segment(aes(x = 0, xend = PP.H4, y = label, yend = label, color = tier),
 			linewidth = 0.75
@@ -279,8 +278,7 @@ plot_coloc_results_legacy <- function(res, regional, variants, layer, outdir) {
 			linetype = 2, color = "grey45"
 		) +
 		scale_color_manual(values = c(
-			Strong = "#1B9E77", Probable = "#66A61E",
-			Suggestive = "#E6AB02", Weak = "grey70"
+			`Policy-supported region` = "#1B9E77", `Below/incomplete evidence policy` = "grey70"
 		)) +
 		scale_x_continuous(limits = c(0, 1), labels = label_percent()) +
 		labs(
@@ -403,7 +401,7 @@ plot_coloc_results <- function(res, regional, variants, layer, outdir) {
 		slice_head(n = 30) |>
 		mutate(
 			label = paste(feature, str_replace(locus, "^chr", "chr"), sep = " | "), label = factor(label, levels = rev(label)),
-			robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, lo = pmin(PP.H4_p12_conservative, PP.H4_p12_default,
+			robust = le8_coloc_pass(pick(everything())), lo = pmin(PP.H4_p12_conservative, PP.H4_p12_default,
 				PP.H4_p12_liberal,
 				na.rm = TRUE
 			), hi = pmax(PP.H4_p12_conservative, PP.H4_p12_default, PP.H4_p12_liberal,
@@ -530,7 +528,7 @@ plot_coloc_results <- function(res, regional, variants, layer, outdir) {
 	} else p4a <- blank_plot("a. Variant-level shared-signal posterior", "No variant posterior was available")
 	cs <- ok |>
 		filter(is.finite(credible_set_n), credible_set_n > 0, is.finite(PP.H4)) |>
-		mutate(robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, degenerate = credible_set_n == 1 & coalesce(
+		mutate(robust = le8_coloc_pass(pick(everything())), degenerate = credible_set_n == 1 & coalesce(
 			lead_shared_pp,
 			0
 		) > 0.999, label = ifelse(feature %in% loc$feature | degenerate & PP.H4 >= H4_STRONG, paste(feature,
@@ -622,7 +620,7 @@ credible_set_audit <- function(res, variants = tibble()) {
 	by_locus <- ok |>
 		select(feature, locus, n_snps, PP.H4, PP.H4_robust_min, lead_shared_pp, credible_set_n) |>
 		left_join(locus, by = c("feature", "locus")) |>
-		mutate(robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, one_snp_concentration = credible_set_n ==
+		mutate(robust = le8_coloc_pass(pick(everything())), one_snp_concentration = credible_set_n ==
 			1 & coalesce(lead_shared_pp, lead_pp, 0) > 0.999, audit_flag = case_when(
 			one_snp_concentration ~ "verify LD/harmonization: one-SNP posterior concentration",
 			!is.finite(credible_set_n) | credible_set_n < 1 ~ "missing credible set", TRUE ~ "ok"
@@ -858,6 +856,7 @@ c3_prepare_locus_pair <- function(qtl_file,ygwas_file,chr,start,end,outcome_type
 	if (any(is.na(c(mq$build,my$build)))) stop("Unknown genome build; supply formatter .grch QC or LE8_GWAS_MANIFEST")
 	if (as.character(mq$build)!=as.character(my$build)) stop("Discovery builds differ; coordinate harmonization required before extraction")
 	q <- read_sumstat_region(qtl_file,chr,start,end); y <- read_sumstat_region(ygwas_file,chr,start,end)
+	q <- le8_normalize_variants(q,mq); y <- le8_normalize_variants(y,my)
 	d <- harmonize_sumstats(q,y)
 	if (!nrow(d)) stop("No allele-aligned overlapping variants")
 	if (any(d$POS_x != d$POS_y | d$CHR_x != d$CHR_y,na.rm=TRUE)) stop("Variant coordinates disagree after matching")
@@ -872,9 +871,12 @@ c3_prepare_locus_pair <- function(qtl_file,ygwas_file,chr,start,end,outcome_type
 		z$variant_key[i] %in% d$SNP
 	}
 	lead_coverage <- c(QTL=lead_retained(q),outcome=lead_retained(y))
-	pair <- tibble(variant=d$SNP,lbf1=xb,lbf2=yb)
+	pair <- tibble(variant=d$SNP,lbf1=xb,lbf2=yb,build=as.character(mq$build),
+		variant_id=d$variant_id,REF=d$REF,ALT=d$ALT,normalization_status=d$normalization_status,
+		normalization_proof_hash=d$normalization_proof_hash)
 	key <- digest::digest(paste(pair$variant,collapse="\n"),algo="sha256",serialize=FALSE)
-	list(data=d,x=x,y=yy,pair=pair,hash=key,build=mq$build,ancestry=c(mq$ancestry,my$ancestry),n_qtl=nrow(q),n_outcome=nrow(y),lead_coverage=lead_coverage,
+	list(data=d,x=x,y=yy,pair=pair,hash=key,
+		identity_qc=bind_rows(q |> count(normalization_status,name="variants") |> mutate(input="QTL"),y |> count(normalization_status,name="variants") |> mutate(input="outcome")),build=mq$build,ancestry=c(mq$ancestry,my$ancestry),n_qtl=nrow(q),n_outcome=nrow(y),lead_coverage=lead_coverage,
 		beta_scale_status=if (outcome_type!="cc" || identical(my$beta_scale,"log_odds")) "verified" else "log-odds assumption unverified")
 }
 
@@ -905,6 +907,8 @@ coloc_one_locus <- function(
 	if (nrow(d)<MIN_SNPS) return(fail("insufficient dense overlap"))
 	s$snp_hash <- prepared$hash; s$genome_build <- as.character(prepared$build)
 	s$beta_scale_status <- prepared$beta_scale_status
+	s$variant_identity_status <- if(all(prepared$pair$normalization_status=="reference_checked_left_aligned_split")) "reference_validated" else "SNV orientation matching; unverified INDELs excluded"
+	s$unverified_indels_excluded <- sum(prepared$identity_qc$variants[prepared$identity_qc$normalization_status=="indel_normalization_unverified"])
 	s$n_qtl_raw <- prepared$n_qtl; s$n_outcome_raw <- prepared$n_outcome
 	s$qtl_strong_lead_retained <- prepared$lead_coverage[["QTL"]]
 	s$outcome_strong_lead_retained <- prepared$lead_coverage[["outcome"]]
@@ -1274,8 +1278,8 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 		mutate(PP4_rank_fraction = ifelse(status == "ok" & sum(status == "ok") > 0, rank( - PP.H4,
 			ties.method = "min",
 			na.last = "keep"
-		) / sum(status == "ok"), NA_real_), tier = case_when(status != "ok" ~ "Not tested", PP.H4 >=
-			0.8 ~ "Tier 1", PP.H4 >= H4_STRONG ~ "Tier 2", PP.H4 >= 0.5 ~ "Tier 3", TRUE ~ "Tier 4"))
+		) / sum(status == "ok"), NA_real_), tier = case_when(status != "ok" ~ "Not tested", le8_coloc_pass(pick(everything())) ~ "Policy-supported region", TRUE ~ "Below/incomplete evidence policy"),
+		policy_coloc_pass=le8_coloc_pass(pick(everything())),policy_h4=le8_evidence_policy()$posterior,policy_fdr=le8_evidence_policy()$mr_fdr,policy_hash=le8_evidence_policy()$hash,policy_level=le8_evidence_policy()$level)
 	aud <- credible_set_audit(res, variants)
 	write_raw_csv(res, "c3.coloc_summary.csv", rawdir)
 	write_raw_csv(variants, "c3.variant_posteriors.csv", rawdir)

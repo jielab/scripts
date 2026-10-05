@@ -538,16 +538,18 @@ def reference_parser():
 	p.add_argument("--met-map")
 	p.add_argument("--id-col", default="eid")
 	p.add_argument("--baseline-col", default="date_attend")
-	p.add_argument("--diagnosis-col")
+	p.add_argument("--diagnosis-col", default=None)
 	p.add_argument("--death-col", default="date_death")
 	p.add_argument("--lost-col", default="date_lost")
-	p.add_argument("--end-date", default="2023-04-01")
+	p.add_argument("--end-date", default=None)
 	p.add_argument("--disease-evidence-col", default="")
 	p.add_argument("--healthy-date-cols", default="")
-	p.add_argument("--covariates", default="age,sex,tdi,PC1,PC2,center")
+	p.add_argument("--covariates", default=None)
 	p.add_argument("--residualize", default=None)
 	p.add_argument("--categorical", default=None)
-	p.add_argument("--group-col", default="")
+	p.add_argument("--group-col", default=None)
+	p.add_argument("--group-file", default=None)
+	p.add_argument("--outer-roster", default=None)
 	p.add_argument("--split-file", default="")
 	p.add_argument("--module-file", default="")
 	p.add_argument("--transform", choices=["none", "log1p"], default=None)
@@ -674,6 +676,21 @@ def reference_parser():
 
 
 def configure(a):
+	import runpy
+	shared_module = runpy.run_path(str(HERE / "0.common.py"), run_name="le8_config")
+	settings, sources, _ = shared_module["shared_analysis_settings"](a)
+	inherited = json.loads(os.getenv("LE8_SHARED_CONFIG_SOURCES", "{}"))
+	for key, value in settings.items():
+		setattr(a, key, value)
+		if inherited.get(key, {}).get("value") == value:
+			sources[key] = inherited[key]
+	a.covariates = a.covariates if a.covariates is not None else (a.shared_covariates or "age,sex,tdi,PC1,PC2,center")
+	a.shared_config_sources = sources
+	a.group_source_column = a.group_col
+	if a.group_file:
+		a.group_col = ".le8_family"
+	if a.demo and a.outer_roster:
+		raise ValueError("Demo cannot use a real outer roster")
 	a.outcome_type = getattr(a, "outcome_type", "survival")
 	for field, cast in [
 		("panel_sizes", int),
@@ -819,6 +836,31 @@ def abm_cache_dir(out, *parts):
 	return cache
 
 
+def preflight_inputs(a):
+	paths = [] if a.demo else [a.phe_file, a.omics_file]
+	paths += [getattr(a, name, None) for name in ("split_file", "module_file", "group_file", "outer_roster") if getattr(a, name, None)]
+	if a.biom == "met" and a.met_input == "raw" and not a.demo:
+		paths.append(a.met_map)
+	missing = [str(v) for v in paths if not Path(v).is_file()]
+	if missing:
+		raise FileNotFoundError("Missing inputs: " + ", ".join(missing))
+	dependencies = ["threadpoolctl"]
+	if any(Path(v).suffix.lower() == ".rds" for v in paths):
+		dependencies.append("pyreadr")
+	if any(Path(v).suffix.lower() == ".parquet" for v in paths):
+		dependencies.append("pyarrow")
+	if getattr(a, "tree", None) == "lightgbm":
+		dependencies.append("lightgbm")
+	for name in dependencies:
+		try:
+			importlib.import_module(name)
+		except (ImportError, OSError) as exc:
+			raise RuntimeError(
+				f"ABM dependency {name} cannot load in {sys.executable}: {exc}. "
+				f"Install in this interpreter: {shlex.quote(sys.executable)} -m pip install {name}"
+			) from exc
+
+
 def reference_main():
 	a = configure(reference_parser().parse_args())
 	if a.cores < 1:
@@ -869,28 +911,7 @@ def reference_main():
 		print(json.dumps(dict(output=str(out), config=vars(a)), indent=2))
 		return
 	if a.preflight:
-		import importlib.util
-
-		paths = [] if a.demo else [a.phe_file, a.omics_file]
-		if a.module_file:
-			paths.append(a.module_file)
-		if a.split_file:
-			paths.append(a.split_file)
-		if a.biom == "met" and a.met_input == "raw" and not a.demo:
-			paths.append(a.met_map)
-		missing = [v for v in paths if not Path(v).is_file()]
-		if missing:
-			raise FileNotFoundError("Missing inputs: " + ", ".join(missing))
-		if any(
-			str(v).lower().endswith(".rds") for v in paths
-		) and not importlib.util.find_spec("pyreadr"):
-			raise RuntimeError(
-				"RDS needs pyreadr for lossless binary reading; install requirements.txt"
-			)
-		if a.tree == "lightgbm" and not importlib.util.find_spec("lightgbm"):
-			raise RuntimeError(
-				"LightGBM missing; install requirements.txt or explicitly choose --tree hist"
-			)
+		preflight_inputs(a)
 
 		device_for(a.device)
 		log(
@@ -1055,8 +1076,7 @@ def tabicl_main():
 			tabicl_evaluate(out)
 		return
 	info = verify_model(a.model_path)
-	if not a.demo and any(not Path(x).is_file() for x in [a.phe_file, a.omics_file]):
-		raise FileNotFoundError("TF phenotype/omics input missing")
+	preflight_inputs(a)
 	if a.preflight:
 		print("TF dependencies/weights/input paths checked; no model fitted")
 		return
@@ -1454,7 +1474,7 @@ def outcomes(p, a):
 	if a.disease_evidence_col:
 		evidence = pd.to_numeric(p[a.disease_evidence_col], errors="raise")
 		unknown = evidence.gt(0) & diagnosis.isna()
-	valid = baseline.notna() & (censor > baseline)
+	valid = baseline.notna() & (censor >= baseline)
 	healthy = pd.Series(True, index=p.index)
 	for col in words(a.healthy_date_cols):
 		d = parsed_date(p[col], col)
@@ -1468,7 +1488,10 @@ def outcomes(p, a):
 	)
 	p["time"] = (censor.where(~event, diagnosis) - baseline).dt.days / 365.25
 	p["event"] = event.astype(int)
-	p["eligible"] = valid & ~prevalent & ~unknown & healthy
+	p["prevalent"] = prevalent
+	p["censor_date"] = censor
+	p["endpoint_valid"] = valid & ~prevalent & ~unknown
+	p["eligible"] = p.endpoint_valid & healthy & (p.time > 0)
 	return p, dict(
 		joined=len(p),
 		eligible=int(p.eligible.sum()),
@@ -1593,6 +1616,25 @@ class MetadataDesign:
 		}
 
 
+def molecular_scale_transform(raw, transform):
+	"""Fixed elementwise transform; fitted QC/imputation stays within training folds."""
+	x = np.asarray(raw, dtype="float32")
+	x = np.where(np.isfinite(x), x, np.nan)
+	if transform == "log1p":
+		invalid = x <= -1
+		if np.any(invalid):
+			raise ValueError(
+				f"log1p requires x > -1; {int(invalid.sum())} values outside its domain "
+				f"(minimum {float(np.nanmin(x)):.8g}). Check input scale/mapping; "
+				"use --transform none only for inputs that should remain on their supplied scale."
+			)
+		# Biological input QC is applied before this purely mathematical transform.
+		return np.log1p(x)
+	if transform != "none":
+		raise ValueError(f"Unknown molecular transform: {transform}")
+	return x
+
+
 class MolecularPreprocessor:
 	def __init__(
 		self, max_missing=0.2, residual_cols=(), categorical=(), transform="none"
@@ -1603,15 +1645,7 @@ class MolecularPreprocessor:
 		self.transform_name = transform
 
 	def scale_transform(self, x):
-		x = np.asarray(x, dtype="float32")
-		x = np.where(np.isfinite(x), x, np.nan)
-		if self.transform_name == "log1p":
-			if np.any(x < 0):
-				raise ValueError(
-					"log1p requires nonnegative measured abundances; use --transform none for pretransformed data"
-				)
-			x = np.log1p(x)
-		return x
+		return molecular_scale_transform(x, self.transform_name)
 
 	def fit(self, x, p, allowed=None):
 		x = self.scale_transform(x)
@@ -3236,9 +3270,11 @@ def validate_ids(frame, id_col):
 	return frame
 
 
-def read_table(path, id_col="eid", columns=None, r_bin="Rscript"):
+def read_table(path, id_col="eid", columns=None, r_bin="Rscript", string_columns=()):
 	path = Path(path)
 	if path.suffix.lower() == ".rds":
+		import pyreadr
+
 		if shutil.which(r_bin):
 			# R selects columns before serialization, avoiding a second full RDS in Python.
 			with tempfile.TemporaryDirectory(prefix="abm_rds_") as tmp:
@@ -3250,18 +3286,17 @@ def read_table(path, id_col="eid", columns=None, r_bin="Rscript"):
 				subprocess.run(
 					[r_bin, str(bridge), str(path), str(out), str(cols)], check=True
 				)
-				import pyreadr
-
 				frame = pyreadr.read_r(str(out))[None].reset_index(drop=True)
 		else:
-			import pyreadr
-
 			objects = pyreadr.read_r(str(path))
 			if len(objects) != 1 or not isinstance(
 				next(iter(objects.values())), pd.DataFrame
 			):
 				raise ValueError(f"{path}: expected a single R data.frame")
 			frame = next(iter(objects.values()))
+		# R NA_real_ can arrive as a signaling NaN. Canonicalize missing payloads
+		# before NumPy/sklearn reductions, preserving all finite values and dtypes.
+		frame = frame.mask(frame.isna(), np.nan)
 	elif path.suffix.lower() == ".parquet":
 		frame = pd.read_parquet(path, columns=columns)
 	else:
@@ -3271,7 +3306,7 @@ def read_table(path, id_col="eid", columns=None, r_bin="Rscript"):
 		if header.duplicated().any():
 			raise ValueError(f"Duplicate header in {path}")
 		frame = pd.read_csv(
-			path, sep=sep, dtype={id_col: str}, usecols=columns, low_memory=False
+			path, sep=sep, dtype={c: str for c in (id_col, *string_columns)}, usecols=columns, low_memory=False
 		)
 	if columns:
 		missing = set(columns) - set(frame)
@@ -3295,6 +3330,13 @@ def numeric(frame, columns, context):
 	result = np.column_stack(values)
 	result[~np.isfinite(result)] = np.nan
 	return result
+
+
+def molecular_input_qc(raw, biom, demo=False):
+	"""Treat negative metabolite concentrations as missing; preserve signed NPX."""
+	if biom == "met" and not demo:
+		return np.where(raw < 0, np.nan, raw)
+	return raw
 
 
 def safe_expression(expression, frame):
@@ -3349,7 +3391,7 @@ def map_metabolites(frame, mapping, id_col):
 		spec = spec.iloc[1:].copy()
 	if spec.isna().any().any() or spec.feature.duplicated().any():
 		raise ValueError("met.lst must contain unique, nonempty feature names")
-	result = pd.DataFrame({id_col: frame[id_col]})
+	mapped = {id_col: frame[id_col].to_numpy()}
 	audit = []
 	for row in spec.itertuples():
 		expr, feature = row.expression.strip(), row.feature.strip()
@@ -3362,7 +3404,7 @@ def map_metabolites(frame, mapping, id_col):
 			values = np.broadcast_to(values, (len(frame),)).copy()
 			invalid = ~np.isfinite(values)
 			values[invalid] = np.nan
-			result[feature] = values.astype("float32")
+			mapped[feature] = values.astype("float32")
 			audit.append(
 				dict(
 					feature=feature,
@@ -3380,6 +3422,7 @@ def map_metabolites(frame, mapping, id_col):
 					reason=str(exc),
 				)
 			)
+	result = pd.DataFrame(mapped, index=frame.index)
 	if result.shape[1] < 4:
 		raise ValueError(
 			"Fewer than three metabolites map; check raw baseline fields and met.lst"
@@ -3396,8 +3439,8 @@ def phenotype_columns(a):
 			cols += [a.disease_evidence_col]
 	else:
 		cols += [a.target_col]
-	if a.group_col:
-		cols += [a.group_col]
+	if a.group_source_column:
+		cols += [a.group_source_column]
 	return list(dict.fromkeys(cols))
 
 
@@ -3447,11 +3490,62 @@ def generate_demo(a):
 			+ rng.normal(size=n)
 		)
 	if a.group_col:
-		p[a.group_col] = np.arange(n) // 2
+		p[a.group_source_column or a.group_col] = (np.arange(n) // 2).astype(str)
 	features = [f"F{j:04d}" for j in range(nf)]
 	omics = pd.DataFrame(x, columns=features)
 	omics.insert(0, a.id_col, p[a.id_col])
 	return p, omics
+
+
+def attach_shared_groups(p, a):
+	p = validate_ids(p.copy(), a.id_col)
+	if a.group_file:
+		m = read_table(a.group_file, "eid", r_bin=a.r_bin, string_columns=("group",))
+		if "group" not in m or m["group"].isna().any() or m["group"].astype(str).str.strip().eq("").any():
+			raise ValueError("LE8_GROUP_FILE requires complete eid,group columns")
+		g = p[a.id_col].map(m.set_index("eid")["group"].astype(str))
+		if g.isna().any():
+			raise ValueError("Family mapping does not cover every ABM input participant")
+		if a.group_source_column:
+			old = p[a.group_source_column]
+			if old.isna().any() or not old.astype(str).eq(g).all():
+				raise ValueError("Conflicting family definitions in group file and phenotype column")
+		p[a.group_col] = g
+	if a.group_col:
+		g = p[a.group_col]
+		if g.isna().any() or g.astype(str).str.strip().eq("").any():
+			raise ValueError("Incomplete family column")
+		p[a.group_col] = g.astype(str)
+	return p
+
+
+def shared_outer_roles(p, a):
+	if not getattr(a, "outer_roster", ""):
+		return None
+	m = read_table(a.outer_roster, "eid", r_bin=a.r_bin)
+	if "role" not in m or not set(m.role) <= {"training", "test"}:
+		raise ValueError("Shared outer roster requires eid,role with training/test")
+	role = p[a.id_col].map(m.set_index("eid").role)
+	if role.isna().any() or set(role) != {"training", "test"}:
+		raise ValueError("Outer roster must cover input participants and both roles")
+	groups = s6_groups(p, a)
+	if pd.DataFrame(dict(group=groups, role=role.to_numpy())).groupby("group").role.nunique().max() > 1:
+		raise ValueError("Families cross shared outer roles")
+	return role.to_numpy()
+
+
+def cohort_manifest(p, a):
+	columns = [a.id_col] + ([a.group_col] if a.group_col else []) + [x for x in ["split", "role"] if x in p]
+	return dict(group_source=a.group_file or a.group_source_column or "participant IDs",
+		group_coverage=1.0, participants=len(p), groups=len(set(s6_groups(p, a))),
+		end_date=a.end_date, diagnosis_col=a.diagnosis_col, covariates=words(a.covariates),
+		role_counts=p["role" if "role" in p else "split"].value_counts().to_dict(),
+		roster_sha256=digest(p[columns].astype(str).to_dict("list")),
+		outcome_sha256=digest(p[[a.id_col,"time","event"]].astype(str).to_dict("list")),
+		test_roster_sha256=digest(sorted(p.loc[p.split.eq("test"), a.id_col].astype(str))),
+		outer_roster_supplied=bool(a.outer_roster),
+		pairing_status="Shared assignment; verify post-QC test IDs and endpoints" if a.outer_roster else "Independent module split; not a paired cross-module comparison",
+		covariates_sha256=digest(p[[a.id_col]+[c for c in words(a.covariates) if c in p]].astype(str).to_dict("list")))
 
 
 def prepare(a, out):
@@ -3459,7 +3553,7 @@ def prepare(a, out):
 	if a.demo:
 		p, omics = generate_demo(a)
 	else:
-		p = read_table(a.phe_file, a.id_col, phenotype_columns(a), a.r_bin)
+		p = read_table(a.phe_file, a.id_col, phenotype_columns(a), a.r_bin, string_columns=([a.group_source_column] if a.group_source_column else []))
 		omics = read_table(a.omics_file, a.id_col, r_bin=a.r_bin)
 		if a.biom == "met" and a.met_input == "raw":
 			omics, mapping_audit = map_metabolites(omics, a.met_map, a.id_col)
@@ -3476,6 +3570,7 @@ def prepare(a, out):
 	if omics.empty:
 		raise ValueError("No matched phenotype/omics IDs")
 	p = p.set_index(a.id_col).loc[omics[a.id_col]].reset_index()
+	p = attach_shared_groups(p, a)
 	features = [
 		c for c in omics if c != a.id_col and c not in words(a.exclude_features)
 	]
@@ -3486,7 +3581,21 @@ def prepare(a, out):
 			"Metadata/outcome columns in omics matrix: " + ", ".join(sorted(collision))
 		)
 	x = numeric(omics, features, "omics")
-	# Retain original missingness. Scale transforms are part of train-fitted preprocessing.
+	negative = np.sum(x < 0, axis=0)
+	x = molecular_input_qc(x, a.biom, a.demo)
+	negative_to_missing = int(negative.sum()) if a.biom == "met" and not a.demo else 0
+	domain_invalid = np.sum(x <= -1, axis=0)
+	if a.transform == "log1p" and domain_invalid.any():
+		bad = [f"{name} ({int(n)})" for name, n in zip(features, domain_invalid) if n]
+		raise ValueError("log1p requires x > -1; invalid input features: " + ", ".join(bad))
+	transform_audit = dict(transform=a.transform, negative_values=int(negative.sum()),
+		negative_features={name:int(n) for name,n in zip(features,negative) if n},
+		negative_to_missing_values=negative_to_missing,
+		log1p_domain_invalid_values=int(domain_invalid.sum()))
+	log("DONE", "input_domain", f"transform={a.transform}; negative_values={int(negative.sum())}; "
+		f"negative_features={int(np.count_nonzero(negative))}; negative_to_missing={negative_to_missing}; "
+		f"log1p_domain_invalid={int(domain_invalid.sum())}")
+	# Preserve missing observations and invalid concentrations for train-only imputation.
 	p.to_csv(out / "phenotype.csv", index=False)
 	np.save(out / "raw.npy", x)
 	(out / "features.txt").write_text("\n".join(features) + "\n")
@@ -3502,6 +3611,7 @@ def prepare(a, out):
 			features=len(features),
 			source="SYNTHETIC" if a.demo else upstream,
 			met_input=a.met_input,
+			transform_audit=transform_audit,
 			missing_fraction=float(np.mean(~np.isfinite(x))),
 		),
 	)
@@ -4514,6 +4624,8 @@ REFERENCE_PRIMARY = "abm_transformer"
 
 
 def split_people(p, a):
+	if a.outer_roster and not a.split_file:
+		return s6_split(p, a)
 	if a.split_file:
 		table = read_table(a.split_file, a.id_col)
 		if "split" not in table or not set(table.split) <= {
@@ -4549,6 +4661,9 @@ def split_people(p, a):
 		build, tune = divide(bt, 0.25, a.seed + 2)
 		part = np.full(len(p), "test", object)
 		part[build], part[tune], part[cal] = "build", "tune", "calibration"
+	outer = shared_outer_roles(p, a)
+	if outer is not None and not np.array_equal(part == "test", outer == "test"):
+		raise ValueError("--split-file conflicts with shared outer test roster")
 	if set(part) != {"build", "tune", "calibration", "test"}:
 		raise ValueError("All four outer partitions are required")
 	if a.group_col:
@@ -4590,6 +4705,21 @@ def unknown_rows(p, designs):
 	return unknown
 
 
+def published_run_paths(value):
+	"""Use the published identity when a transaction moves between scratch folders."""
+	work = os.getenv("LE8_ANALYSIS_ROOT", "").rstrip("/")
+	published = os.getenv("LE8_PUBLISHED_ROOT", "").rstrip("/")
+	if os.getenv("LE8_TABLE_WORKSPACE") != "1" or not work or not published:
+		return value
+	if isinstance(value, dict):
+		return {k: published_run_paths(v) for k, v in value.items()}
+	if isinstance(value, (list, tuple)):
+		return [published_run_paths(v) for v in value]
+	if isinstance(value, str) and (value == work or value.startswith(work + "/")):
+		return published + value[len(work):]
+	return value
+
+
 def runtime_manifest(a):
 	deps = {}
 	for name in [
@@ -4607,20 +4737,22 @@ def runtime_manifest(a):
 		except importlib.metadata.PackageNotFoundError:
 			deps[name] = "not_installed"
 	paths = [] if a.demo else [a.phe_file, a.omics_file]
-	paths += [s for s in [a.split_file, a.module_file] if s]
+	paths += [s for s in [a.split_file, a.module_file, a.group_file, a.outer_roster] if s]
 	if a.biom == "met" and a.met_input == "raw" and not a.demo:
 		paths.append(a.met_map)
 	config = {
-		k: v for k, v in vars(a).items() if k not in ["resume", "replace", "train_only"]
+		k: v for k, v in vars(a).items() if k not in ["resume", "replace", "train_only", "shared_config_sources"]
 	}
 	data = dict(
 		version=VERSION,
 		config=config,
 		dependencies=deps,
 		inputs=fingerprints(paths, a.full_input_hash),
-		code=fingerprints([Path(__file__)], True),
+		code=fingerprints([Path(__file__), HERE / "0.common.py"], True),
 	)
+	data = published_run_paths(data)
 	data["signature"] = digest(data)
+	data["configuration_sources"] = published_run_paths(a.shared_config_sources)
 	return data
 
 
@@ -4644,7 +4776,7 @@ def reference_train(a, out):
 	eligible = p.eligible.to_numpy(bool)
 	raw, p = raw[eligible], p.loc[eligible].reset_index(drop=True)
 	p["split"] = split_people(p, a)
-	p[[a.id_col, "split"]].to_csv(out / "split_before_qc.csv", index=False)
+	p[[a.id_col, "split"] + ([a.group_col] if a.group_col else [])].to_csv(out / "split_before_qc.csv", index=False)
 	build = p.split.eq("build").to_numpy()
 	proto = MolecularPreprocessor(
 		a.feature_missing, words(a.residualize), words(a.categorical), a.transform
@@ -4674,7 +4806,10 @@ def reference_train(a, out):
 		raise ValueError("Too few people after QC / calibration-audit separation")
 	p["role"] = p.split
 	p.loc[calfit, "role"], p.loc[cala, "role"] = "calibration_fit", "calibration_audit"
-	p[[a.id_col, "split", "role"]].to_csv(out / "split.csv", index=False)
+	p[[a.id_col, "split", "role"] + ([a.group_col] if a.group_col else [])].to_csv(out / "split.csv", index=False)
+	manifest["cohort"] = cohort_manifest(p,a)
+	manifest["cohort"]["omics_sha256"] = hashlib.sha256(np.ascontiguousarray(raw).view(np.uint8)).hexdigest()
+	dump(out / "manifest.json",manifest)
 	if a.shuffle_development_outcomes:
 		rng = np.random.default_rng(a.seed + 912)
 		for role in ["build", "tune", "calibration_fit", "calibration_audit"]:
@@ -5436,6 +5571,7 @@ def reference_project(
 	absent = set(bundle["features"]) - set(omics)
 	omics = omics.reindex(columns=[idcol] + bundle["features"])
 	raw = numeric(omics, bundle["features"], "projection")
+	raw = molecular_input_qc(raw, cfg["biom"], cfg.get("demo", False))
 	x, observed = bundle["prep"].transform(raw, p)
 	info, detail = predict_bundle(bundle, x, observed, p, device_for(device))
 	output = Path(output)
@@ -5729,7 +5865,7 @@ def manifest(a, out, model_info):
 	paths += [
 		v
 		for v in [
-			a.split_file,
+			a.split_file, a.group_file, a.outer_roster,
 			(
 				a.met_map
 				if a.biom == "met" and a.met_input == "raw" and not a.demo
@@ -5747,7 +5883,7 @@ def manifest(a, out, model_info):
 			for name in ["torch", "tabicl", "scikit-learn", "numpy", "pandas"]
 		},
 		inputs=fingerprints(paths, a.full_input_hash),
-		code=fingerprints([Path(__file__)], True),
+		code=fingerprints([Path(__file__), HERE / "0.common.py"], True),
 	)
 	value["signature"] = digest(value)
 	dump(out / "manifest.json", value)
@@ -5784,6 +5920,7 @@ def cohort(a, out):
 		}
 	).to_csv(out / "sample_qc.csv", index=False)
 	raw, p = raw[qc], p.loc[qc].reset_index(drop=True)
+	p.attrs["omics_sha256"] = hashlib.sha256(np.ascontiguousarray(raw).view(np.uint8)).hexdigest()
 	masks = {
 		name: p.split.eq(name).to_numpy()
 		for name in ["build", "tune", "calibration", "test"]
@@ -5830,6 +5967,10 @@ def decision_threshold(y, w, risk):
 def tabicl_train(a, out, model_info):
 	manifest(a, out, model_info)
 	p, x, c, observed, y, w, masks, prep, clinical, km, features = cohort(a, out)
+	record = json.loads((Path(out)/"manifest.json").read_text())
+	record["cohort"] = cohort_manifest(p,a)
+	record["cohort"]["omics_sha256"] = p.attrs["omics_sha256"]
+	dump(Path(out)/"manifest.json",record)
 	build, tune, cal, test = [
 		masks[s] for s in ["build", "tune", "calibration", "test"]
 	]
@@ -6048,6 +6189,7 @@ def tabicl_project(a, out):
 			raise ValueError("Query families overlap labeled context")
 	m = m.reindex(columns=[idcol] + b["features"])
 	raw = numeric(m, b["features"], "TF projection")
+	raw = molecular_input_qc(raw, cfg["biom"], cfg.get("demo", False))
 	x, observed = b["prep"].transform(raw, p)
 	z = x[:, b["selected"]]
 	c = b["clinical"].transform(p)
@@ -6209,13 +6351,8 @@ class S6Preprocessor:
         self.max_missing, self.residual_cols = missing, residual_cols
         self.categorical, self.transform_name = categorical, transform
     def scale_transform(self, raw):
-        x = np.asarray(raw, dtype=np.float32)
-        x = np.where(np.isfinite(x), x, np.nan)
-        if self.transform_name == "log1p":
-            if np.any(x < 0):
-                raise ValueError("log1p requires nonnegative inputs")
-            x = np.log1p(x)
-        return x
+        return molecular_scale_transform(raw, self.transform_name)
+
     def fit(self, raw, p, allowed=None):
         x = self.scale_transform(raw)
         with warnings.catch_warnings():
@@ -6399,12 +6536,18 @@ def s6_split(p, a):
     if a.split_file:
         return split_people(p, a)
     groups = s6_groups(p, a)
-    levels = sorted(set(groups), key=lambda v: s6_seed(v, a.seed + 1051))
-    edges = np.rint(np.cumsum(a.selective_split) * len(levels)).astype(int)
+    outer = shared_outer_roles(p, a)
+    levels = sorted(set(groups if outer is None else groups[outer == "training"]), key=lambda v: s6_seed(v, a.seed + 1051))
+    fractions = np.asarray(getattr(a, "selective_split", [.30, .10, .10, .50]), float)
+    if outer is not None:
+        fractions = np.r_[fractions[:3] / fractions[:3].sum(), 0.0]
+    edges = np.rint(np.cumsum(fractions) * len(levels)).astype(int)
     lookup, start = {}, 0
     for role, end in zip(["build", "tune", "calibration", "test"], edges):
         lookup.update({g: role for g in levels[start:end]})
         start = end
+    if outer is not None:
+        lookup.update({g: "test" for g in groups[outer == "test"]})
     part = np.asarray([lookup[g] for g in groups])
     if len(set(part)) != 4:
         raise ValueError("All four partitions need independent groups")
@@ -6626,6 +6769,7 @@ def s6_crossfit_gate(raw, p, features, a, out=None):
             pilot = others[np.asarray([g not in gate_groups for g in groups[others]])]
             if set(groups[recipient]) & (set(groups[pilot]) | set(groups[gate_idx])):
                 raise AssertionError("Recipient/family leakage in gain-gate fitting")
+            s6_log("START", "selective_crossfit", f"repeat={repeat+1}; fold={fold+1}; pilot={len(pilot)}; gate={len(gate_idx)}; recipients={len(recipient)}")
             teacher = S6Teacher().fit(raw[pilot], p.iloc[pilot], features, a,
                                      a.seed + 3000 + 31*repeat + fold)
             gp = teacher.predict(raw[gate_idx], p.iloc[gate_idx])
@@ -6963,7 +7107,12 @@ def s6_fit(raw,p,features,a,out):
         for role in parts:
             if role=="test":continue
             ix=parts[role];p.loc[ix,["time","event"]]=p.loc[rng.permutation(ix),["time","event"]].to_numpy()
-    p[[a.id_col,"split","role"]].to_csv(out/"split.csv",index=False)
+    p[[a.id_col,"split","role"] + ([a.group_col] if a.group_col else [])].to_csv(out/"split.csv",index=False)
+    if (out/"manifest.json").is_file():
+        record = json.loads((out/"manifest.json").read_text())
+        record["cohort"] = cohort_manifest(p, a)
+        record["cohort"]["omics_sha256"] = hashlib.sha256(np.ascontiguousarray(raw).view(np.uint8)).hexdigest()
+        s6_json(out/"manifest.json", record)
     # Outcome dates/labels are not gate features; predict functions explicitly
     # select only user-declared covariates, technical fields, molecular X and IDs.
     gate,build_values=s6_crossfit_gate(raw[parts["build"]],p.iloc[parts["build"]],features,a,out)
@@ -7240,7 +7389,9 @@ def s6_figures(out):
 def s6_train_from_host(a,out):
     out=Path(out)
     prepared=abm_cache_dir(out,"input");prepared.mkdir(parents=True,exist_ok=True)
+    s6_log("START","input",f"biom={a.biom}; transform={a.transform}")
     p=prepare(a,prepared);raw=np.load(prepared/"raw.npy")
+    s6_log("DONE","input",f"participants={len(p)}; features={raw.shape[1]}")
     features=(prepared/"features.txt").read_text().splitlines()
     p,audit=outcomes(p,a)
     eligible=p.eligible.to_numpy(bool)
@@ -7258,6 +7409,7 @@ def s6_train_from_host(a,out):
     pd.DataFrame({a.id_col:p[a.id_col],"split":p.split,"missing_fraction":missing,"included":good}).to_csv(out/"sample_qc.csv",index=False)
     # Freeze the sample-QC denominator; keep full input feature names for projection.
     raw=raw[good];p=p.loc[good].reset_index(drop=True)
+    s6_log("DONE","sample_qc",f"participants={len(p)}; retained_features={int(keep.sum())}")
     s6_json(out/"manifest.json",runtime_manifest(a))
     return s6_fit(raw,p,features,a,out)
 
@@ -7276,6 +7428,7 @@ def s6_project_from_host(out,phe_file,omics_file,output,r_bin="Rscript",met_inpu
         raise ValueError("Projection includes development participants/families; use untouched external participants")
     m=m.reindex(columns=[idcol]+bundle["features"])
     raw=numeric(m,bundle["features"],"selective projection")
+    raw=molecular_input_qc(raw,cfg["biom"],cfg.get("demo",False))
     result=s6_predict(bundle,raw,p)
     Path(output).parent.mkdir(parents=True,exist_ok=True)
     result.to_csv(output,index=False)
@@ -7316,16 +7469,7 @@ def s6_bind_host():
         if a.dry_run:
             print(json.dumps(dict(output=str(out),config=vars(a)),indent=2));return
         if a.preflight:
-            import importlib.util
-            paths=[] if a.demo else [a.phe_file,a.omics_file]
-            paths += [s for s in [a.split_file,a.module_file] if s]
-            if a.biom=="met" and a.met_input=="raw" and not a.demo:paths.append(a.met_map)
-            absent=[v for v in paths if not Path(v).is_file()]
-            if absent:raise FileNotFoundError("Missing inputs: "+", ".join(absent))
-            if any(str(v).lower().endswith(".rds") for v in paths) and not importlib.util.find_spec("pyreadr"):
-                raise RuntimeError("RDS inputs need the existing pyreadr dependency")
-            if a.tree=="lightgbm" and not importlib.util.find_spec("lightgbm"):
-                raise RuntimeError("LightGBM unavailable; explicitly choose --tree hist")
+            preflight_inputs(a)
             print("Selective preflight passed; no data/model training performed.");return
         from threadpoolctl import threadpool_limits
         out.mkdir(parents=True,exist_ok=True)

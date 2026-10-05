@@ -540,12 +540,14 @@ if (.final_mode == "reference") {
 
 	# 🚩 Fixed outer split and score fitting
 	make_outer_split <- function(dat, evar = NULL, test_frac = FINAL_TEST_FRAC, seed = SEED) {
+		shared <- le8_outer_roles(dat)
+		if (!is.null(shared)) return(shared)
+		groups <- le8_participant_groups(dat); families <- sort(unique(groups))
+		if (length(families)<2L || !is.finite(test_frac) || test_frac<=0 || test_frac>=1) stop("Invalid outer split fraction or insufficient families")
 		set.seed(seed)
-		if (!is.null(evar) && evar %in% names(dat)) {
-			strata <- split(seq_len(nrow(dat)), as.character(dat[[evar]]), drop = TRUE)
-			val <- unlist(lapply(strata, function(ii) sample(ii, max(1L, round(length(ii) * test_frac)))), use.names = FALSE)
-		} else val <- sample(seq_len(nrow(dat)), max(1L, round(nrow(dat) * test_frac)))
-		ifelse(seq_len(nrow(dat)) %in% val, "validation", "training")
+		n_test <- max(1L,min(length(families)-1L,round(length(families)*test_frac)))
+		held <- families[sample.int(length(families),n_test)]
+		ifelse(groups %in% held,"validation","training")
 	}
 
 	fit_glmnet_score <- function(dat, vars, tvar, evar, split, label, inner = INNER, alpha = 1,
@@ -1715,12 +1717,8 @@ if (.final_mode == "reference") {
 				prevalent_score = prevalent_score, duration_score = duration_score, landmark5_score = landmark5_score
 			) else
 			tibble(feature = character(), temporal_class = character(), reactive_compatible = logical(), distal_support = logical(), FDR_landmark5 = numeric(), prevalent_score = numeric(), duration_score = numeric(), landmark5_score = numeric())
-		m0 <- c2$MR %||% tibble() ; m <- if (nrow(m0)) m0 |>
-			filter(is.finite(pval)) |>
-			group_by(exposure) |>
-			slice_min(pval, n = 1, with_ties = FALSE) |>
-			ungroup() |>
-			transmute(feature = exposure, MR_analysis = analysis, MR_beta = b, MR_p = pval, MR_FDR = FDR_all) else tibble(feature = character())
+		m0 <- c2$MR %||% tibble() ; m <- if(nrow(m0)) le8_select_mr(m0,layer) |>
+			transmute(feature=exposure,MR_analysis=analysis,MR_beta=b,MR_p=pval,MR_FDR=FDR_all) else tibble(feature=character())
 		r0 <- c2$MR_reverse %||% tibble() ; rmr <- if (nrow(r0)) r0 |>
 			filter(is.finite(pval)) |>
 			transmute(feature, reverse_MR_beta = b, reverse_MR_p = pval, reverse_MR_FDR = FDR_reverse) else tibble(feature = character())
@@ -1739,9 +1737,11 @@ if (.final_mode == "reference") {
 			tibble(feature = character(), DANDELION_p = numeric(), DANDELION_loci = integer(), DANDELION_sensitivity = logical(), DANDELION_primary = logical())
 		co0 <- as_tibble(c3$summary %||% tibble())
 		if (nrow(co0) && !"PP.H4_robust_min" %in% names(co0)) co0$PP.H4_robust_min <- NA_real_
+		same_region <- le8_same_locus_evidence(m0,co0,layer)
+		region <- if(nrow(same_region)) same_region |> group_by(feature) |> summarise(same_region_eligible=any(eligible %in% TRUE),.groups="drop") else tibble(feature=character(),same_region_eligible=logical())
 		co <- if (nrow(co0) && all(c("feature", "PP.H4") %in% names(co0))) co0 |>
 			filter(status == "ok") |>
-			mutate(.robust = PP.H4_robust_min) |>
+			mutate(.robust = PP.H4_robust_min,policy_coloc_pass=le8_coloc_pass(pick(everything()))) |>
 			group_by(feature) |>
 			slice_max(.robust, n = 1, with_ties = FALSE) |>
 			ungroup() |>
@@ -1750,9 +1750,9 @@ if (.final_mode == "reference") {
 		st <- if (nrow(stability) && all(c("feature", "selection_frequency") %in% names(stability))) stability |>
 			group_by(feature) |>
 			summarise(max_selection_frequency = max(selection_frequency, na.rm = TRUE), .groups = "drop") else tibble(feature = character(), max_selection_frequency = numeric())
-		z <- Reduce(function(x, y) full_join(x, y, by = "feature"), list(a, g, di, m, rmr, dd, co, cx, st)) ; if (!nrow(z)) return(tibble())
+		z <- Reduce(function(x, y) full_join(x, y, by = "feature"), list(a, g, di, m, rmr, dd, co, region, cx, st)) ; if (!nrow(z)) return(tibble())
 		defaults <- list(
-			obs_FDR = NA_real_, obs_p = NA_real_, MR_p = NA_real_, MR_FDR = NA_real_, DANDELION_sensitivity = FALSE,
+			same_region_eligible=FALSE, policy_coloc_pass=FALSE, obs_FDR = NA_real_, obs_p = NA_real_, MR_p = NA_real_, MR_FDR = NA_real_, DANDELION_sensitivity = FALSE,
 			DANDELION_primary = FALSE, PP.H4 = NA_real_, PP.H4_robust_min = NA_real_, strict_YS = FALSE,
 			max_selection_frequency = NA_real_, reactive_compatible = FALSE, distal_support = FALSE, reverse_MR_FDR = NA_real_,
 			prevalent_score = NA_real_, duration_score = NA_real_, landmark5_score = NA_real_,
@@ -1764,12 +1764,12 @@ if (.final_mode == "reference") {
 				C1 = as.integer(is.finite(obs_FDR) & obs_FDR < .05),
 				PGS_tested = is.finite(pgs_p), C1_PGS = ifelse(PGS_tested, as.integer(pgs_FDR < .05), NA_integer_),
 				PGS_observed_sign_match = PGS_tested & is.finite(obs_beta) & sign(pgs_beta) == sign(obs_beta),
-				C2_MR = if (u2$available) as.integer(is.finite(MR_FDR) & MR_FDR < .05) else NA_integer_,
-				C2_REVERSE_MR = if (u2$available) as.integer(is.finite(reverse_MR_FDR) & reverse_MR_FDR < .05) else NA_integer_,
+				C2_MR = if (u2$available) as.integer(is.finite(MR_FDR) & MR_FDR < le8_evidence_policy()$mr_fdr) else NA_integer_,
+				C2_REVERSE_MR = if (u2$available) as.integer(is.finite(reverse_MR_FDR) & reverse_MR_FDR < le8_evidence_policy()$mr_fdr) else NA_integer_,
 				C2_DANDELION = if (u2$available) as.integer(coalesce(DANDELION_primary, FALSE)) else NA_integer_,
 				C2_DANDELION_sensitivity = if (u2$available) as.integer(coalesce(DANDELION_sensitivity, FALSE)) else NA_integer_,
 				C2 = if (u2$available) as.integer(coalesce(C2_MR, 0L) == 1L | coalesce(C2_DANDELION, 0L) == 1L) else NA_integer_,
-				C3 = if (u3$available) as.integer(is.finite(PP.H4_robust_min) & PP.H4_robust_min >= .7) else NA_integer_,
+				C3 = if (u3$available) as.integer(coalesce(policy_coloc_pass,FALSE)) else NA_integer_,
 				C4 = if (u4$available) as.integer(coalesce(strict_YS, FALSE)) else NA_integer_,
 				C5 = as.integer(is.finite(max_selection_frequency) & max_selection_frequency >= .6),
 				FINAL_available = is.finite(max_selection_frequency), reactive_compatible = coalesce(reactive_compatible, FALSE),
@@ -1778,13 +1778,13 @@ if (.final_mode == "reference") {
 				evidence_count = rowSums(cbind(C1, C2, C3, C4, ifelse(FINAL_available, C5, NA_integer_)), na.rm = TRUE),
 				causal_locus_evidence = coalesce(C2_MR, 0L) == 1L | coalesce(C2_DANDELION, 0L) == 1L | coalesce(C3, 0L) == 1L,
 				evidence_grade = case_when(
-					coalesce(C2_MR, 0L) == 1L & coalesce(C3, 0L) == 1L & C1 == 1 ~ "A",
+					same_region_eligible %in% TRUE & C1 == 1 ~ "A",
 					causal_locus_evidence & (C1 == 1 | distal_support) ~ "B",
 					evidence_count >= 2 ~ "C", TRUE ~ "D"
 				),
 				consolidation_role = case_when(
 					evidence_grade %in% c("A", "B") & reactive_compatible ~ "Causal + reactive mixed biomarker",
-					evidence_grade == "A" ~ "High-priority causal candidate",
+					evidence_grade == "A" ~ "Cis/local region-supported candidate",
 					coalesce(C2_REVERSE_MR, 0L) == 1L & !causal_locus_evidence ~ "Disease-liability-responsive biomarker",
 					distal_support & !causal_locus_evidence ~ "Distal predictive biomarker",
 					reactive_compatible & !causal_locus_evidence ~ "Reactive/diagnostic-compatible biomarker",
@@ -1870,7 +1870,7 @@ if (.final_mode == "reference") {
 			req <- unique(scan(incfile, what = "character", quiet = TRUE)) ; biom_vars <- intersect(biom_vars, req) ; biom <- biom[, c("eid", biom_vars), drop = FALSE]
 		}
 		all0 <- read_all() ; prs_vars <- character() # Disease PRS requires an explicit manifest in joint Final; no ambiguous name matching
-		need <- unique(c("eid", "ethnic.c", le8_custom_covars, vars.basic, vars.le8, prs_vars, "birth_date", "date_attend", "date_lost", "date_death", paste0("fod_icd10_", Y)))
+		need <- unique(c("eid", "ethnic.c", le8_custom_covars, vars.basic, vars.le8, prs_vars, "birth_date", "date_attend", "date_lost", "date_death", paste0("fod_icd10_",Y), le8_y_date(Y), Sys.getenv("LE8_GROUP_COLUMN",Sys.getenv("PGS_GROUP_COLUMN",""))))
 		dat_all <- all0[, intersect(need, names(all0)), drop = FALSE] |>
 			filter_analysis_cohort() |>
 			make_outcome(Y) |>
@@ -1907,14 +1907,14 @@ if (.final_mode == "reference") {
 			intersect(biom_vars) else character()
 		c2f <- u2$file ; c2 <- u2$data ; m2 <- c2$MR %||% tibble()
 		mrset <- if (nrow(m2) && truthy(Sys.getenv("FINAL_GENETIC_EVIDENCE_INDEPENDENT", unset = "FALSE"))) m2 |>
-			filter(is.finite(FDR_all), FDR_all < .05) |>
+			filter(is.finite(FDR_all), FDR_all < le8_evidence_policy()$mr_fdr) |>
 			arrange(pval) |>
 			pull(exposure) |>
 			unique() |>
 			intersect(biom_vars) else character()
 		local_class <- if (layer == "protein") "cis" else "local"
 		local_mrset <- if (nrow(m2) && truthy(Sys.getenv("FINAL_GENETIC_EVIDENCE_INDEPENDENT", unset = "FALSE"))) m2 |>
-			filter(analysis == local_class, is.finite(FDR_all), FDR_all < .05) |>
+			filter(analysis == local_class, is.finite(FDR_all), FDR_all < le8_evidence_policy()$mr_fdr) |>
 			arrange(pval) |>
 			pull(exposure) |>
 			unique() |>
@@ -1940,7 +1940,7 @@ if (.final_mode == "reference") {
 		if (nrow(co3) && !"PP.H4_robust_min" %in% names(co3)) co3$PP.H4_robust_min <- NA_real_
 		if (nrow(co3) && !"status" %in% names(co3)) co3$status <- "ok"
 		colocset <- if (nrow(co3) && truthy(Sys.getenv("FINAL_GENETIC_EVIDENCE_INDEPENDENT", unset = "FALSE"))) co3 |>
-			filter(status == "ok", PP.H4_robust_min >= .7) |>
+			filter(le8_coloc_pass(pick(everything()))) |>
 			pull(feature) |>
 			unique() |>
 			intersect(biom_vars) else character()
@@ -5089,10 +5089,6 @@ if (.final_mode == "reference") {
 		grades <- read("grades", "c2", "c2.evidence_grades.csv")
 		dan <- read("dandelion_audit", "c2", "c2.dandelion_input_audit.csv")
 		co <- read("coloc", "c3", "c3.coloc_summary.csv")
-		# Reuse the project's strict overlap helper without sourcing any model worker.
-		helper <- parse(file.path(Sys.getenv("LE8_FDIR", unset = "."), "0.common.R"))
-		for (ex in helper) if (is.call(ex) && identical(ex[[1]], as.name("<-")) && identical(ex[[2]], as.name("le8_same_locus_evidence")))
-			eval(ex)
 		same <- le8_same_locus_evidence(mr, co, if (layer == "prot")
 			"protein" else "metabolite")
 		tables$same_region <- same
@@ -5105,6 +5101,7 @@ if (.final_mode == "reference") {
 		fm <- read("focus_metrics", "focus", "c4.focus.metrics.csv")
 		fc <- read("focus_contrasts", "focus", "c4.focus.contrasts.csv")
 		fp <- read("focus_proxy_accuracy", "focus", "c4.focus.proxy_accuracy.csv")
+		fd <- read("deployed_concept_fidelity", "focus", "c4.focus.deployed_concept_fidelity.csv")
 		fpc <- read("focus_pillars", "focus", "c4.focus.pillar_counts.csv")
 		read("focus_design", "focus", "c4.focus.design.csv")
 		read("focus_members", "focus", "c4.focus.panel_members.csv")
@@ -5406,7 +5403,7 @@ if (.final_mode == "reference") {
 				provenance[[i]]$title <- if (provenance[[i]]$panel == "A")
 					"Yin/Yang proxy discovery" else "Held-out LE8 reconstruction"
 			}
-			captions["Fig3"] <- paste(captions["Fig3"], "Panels A/B use only outer-training donors for discovery and fit; Yang donors contribute to proxy learning. Incremental R² is measured beyond basic covariates on held-out incident participants, and is not intervention responsiveness.")
+			captions["Fig3"] <- paste(captions["Fig3"], "Panels A/B use only outer-training donors for discovery and fit; Yang donors contribute to proxy learning. Post-hoc OLS incremental R² describes panel reconstruction beyond basic covariates. Fidelity of the frozen deployed concepts is exported separately with R², RMSE and calibration; neither estimates intervention responsiveness.")
 		}
 		if (pub_ok(fm, c("stratum", "landmark", "budget", "AUC", "paradigm")) && pub_ok(fc, c(
 			"stratum", "landmark",
@@ -5516,7 +5513,7 @@ if (.final_mode == "reference") {
 					filter(analysis == primary) |>
 					group_by(exposure) |>
 					summarise(MR = if (all(!is.finite(FDR_all)))
-						NA else any(FDR_all < 0.05, na.rm = TRUE), .groups = "drop") |>
+						NA else any(FDR_all < le8_evidence_policy()$mr_fdr, na.rm = TRUE), .groups = "drop") |>
 					rename(feature = exposure) else tibble(feature = character(), MR = logical())
 			ys <- if (pub_ok(membership, c("feature", "in_YS")))
 				membership |>
@@ -5702,7 +5699,7 @@ if (.final_mode == "reference") {
 			list(sources = source_audit, figure_status = bind_rows(status), panels = manifest, supplements = bind_rows(supp)),
 			tables[c(
 				"cohort", "prediction_design", "dandelion_audit", "imaging_status", "bridges", "matched_pgs",
-				"cigma_status", "cigma_annotation", "focus_metrics", "focus_contrasts", "focus_proxy_accuracy", "focus_pillars",
+				"cigma_status", "cigma_annotation", "focus_metrics", "focus_contrasts", "focus_proxy_accuracy", "deployed_concept_fidelity", "focus_pillars",
 				"focus_design", "focus_members", "paired", "same_region", "publication_evidence", "panel_members",
 				"enrich_prev"
 			)]

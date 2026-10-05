@@ -83,6 +83,7 @@ ROLES = {
 	"focus_contrasts": ("c4_connect", "c4.focus.contrasts.csv"),
 	"focus_pillars": ("c4_connect", "c4.focus.pillar_counts.csv"),
 	"focus_proxy": ("c4_connect", "c4.focus.proxy_accuracy.csv"),
+	"deployed_concept_fidelity": ("c4_connect", "c4.focus.deployed_concept_fidelity.csv"),
 	"explain_contrasts": ("c4_connect", "c4.explain.contrasts.csv"),
 	"focus_members": ("c4_connect", "c4.focus.panel_members.csv"),
 	"focus_coefficients": ("c4_connect", "c4.focus.model_coefficients.csv"),
@@ -453,7 +454,7 @@ class Report:
 							int(lo),
 							int(hi),
 							str(rr.feature),
-							float(rr["PP.H4_robust_min"]),
+							str(rr.get("policy_coloc_pass", "")).lower() in {"true", "1"},
 						)
 					)
 			windows = []
@@ -468,7 +469,7 @@ class Report:
 						windows[-1]["end"] = max(windows[-1]["end"], hi)
 						windows[-1]["features"].add(feat)
 						windows[-1]["entries"] += 1
-						windows[-1]["robust_entries"] += int(pp >= 0.70)
+						windows[-1]["robust_entries"] += int(pp)
 					else:
 						windows.append(
 							dict(
@@ -477,7 +478,7 @@ class Report:
 								end=hi,
 								features={feat},
 								entries=1,
-								robust_entries=int(pp >= 0.70),
+								robust_entries=int(pp),
 							)
 						)
 			for win in windows:
@@ -1205,7 +1206,9 @@ class Report:
 						textcoords="offset points",
 						fontsize=8,
 					)
-				ax.axhline(0.7, linestyle="--", linewidth=0.7)
+				if "policy_h4" in z:
+					for cutoff in pd.to_numeric(z.policy_h4, errors="coerce").dropna().unique():
+						ax.axhline(cutoff, linestyle="--", linewidth=0.7)
 				ax.set_xlim(-0.03, 1.04)
 				ax.set_ylim(-0.03, 1.02)
 				ax.set_xlabel("Default-prior PP(H4)")
@@ -1305,7 +1308,7 @@ class Report:
 					"Do ten assays reconstruct LE8 domains?",
 					z,
 					proxy,
-					"Held-out proxy reconstruction, not intervention response.",
+					"Post-hoc OLS panel reconstruction beyond basic covariates; deployed concept fidelity is evaluated separately.",
 					[f"{first}.prot.focus_proxy"],
 				)
 			)
@@ -1336,6 +1339,19 @@ class Report:
 						[f"{first}.prot.focus_proxy"],
 					)
 				)
+		z = self.get(first, "prot", "deployed_concept_fidelity")
+		if has(z, "component", "model", "metric", "estimate", "status"):
+			z = z[z.metric.eq("R2") & z.status.eq("ok")].copy()
+			if len(z):
+				def fidelity(ax, z):
+					grid = z.pivot_table(index="component", columns="model", values="estimate", aggfunc="first")
+					im = ax.imshow(np.ma.masked_invalid(grid.to_numpy()), aspect="auto")
+					ax.set_xticks(range(len(grid.columns)), grid.columns, rotation=35, ha="right")
+					ax.set_yticks(range(len(grid.index)), grid.index)
+					ax.figure.colorbar(im, ax=ax, label="Deployed concept R²")
+				f3.append(self.panel("Fig3_deployed_fidelity", "Do the deployed concepts predict measured LE8 domains?",
+					z, fidelity, "Exact frozen concepts used by the risk models; R² uses the Yin training mean. RMSE, calibration and family-bootstrap intervals are in the fidelity table.",
+					[f"{first}.prot.deployed_concept_fidelity"]))
 		self.compose(
 			"Fig3",
 			"LE8 supervision, coverage and effective panel size",
@@ -2790,6 +2806,8 @@ class Questions:
 			("cohort", "c1_correlate", "c1.cohort.csv"),
 			("mediation", "c4_connect", "c4.mediation_all.csv"),
 			("modules", "c4_connect", "c4.supervised_module_membership.csv"),
+			("deployed_concept_fidelity", "c4_connect", "c4.focus.deployed_concept_fidelity.csv"),
+			("bidirectional_mr", "c2_cause", "c2.bidirectional_mr.csv"),
 			("nonlinear", "c4_connect", "c4.nonlin_tests.csv"),
 			("nonlinear_curves", "c4_connect", "c4.nonlin_curves.csv"),
 			("same_locus", "c3_coloc", "c3.same_locus_evidence.csv"),
@@ -2868,7 +2886,7 @@ class Questions:
 			"temporal",
 			"cohort",
 			"mediation",
-			"modules",
+			"modules", "deployed_concept_fidelity", "bidirectional_mr",
 			"nonlinear",
 			"nonlinear_curves",
 			"same_locus",

@@ -283,7 +283,7 @@ le8_table_figure_pattern <- function(file) {
 		c2 = c(
 			instrument_diagnostics = 'instrument|pQTL|heritability', effect_concordance = 'cis_trans_comparison|MR_all',
 			mr_incident_prevalent = 'mr_incident_prevalent', mrlink2 = 'MRLink2_results|mrlink2[.]results',
-			bidirectional_mr = 'reverse_MR_all|MR_all', genetic_decomposition = 'individual_genetic_decomposition[.]csv|decomposition_calibration',
+			bidirectional_mr = 'bidirectional_mr|reverse_MR_all|MR_all', genetic_decomposition = 'individual_genetic_decomposition[.]csv|decomposition_calibration',
 			genetic_component_leadtime = 'genetic_component_leadtime', evidence_grades = 'evidence_grades|top_candidates',
 			dandelion_sensitivity = 'dandelion.*(targets|integration|sensitivity|scores)',
 			dandelion_mr_integration = 'dandelion.*(integration|MR_integration|targets)',
@@ -299,6 +299,7 @@ le8_table_figure_pattern <- function(file) {
 			gpu_coloc_validation = 'GPU_', pgs_coloc_triangulation = 'pgs_|triangulation[.](features|loci)'
 		),
 		c4 = c(
+			deployed_concept_fidelity = 'deployed_concept_fidelity',
 			supervised_connections = 'LE8_feature_associations|primary_pillar_assignment|supervised_module',
 			mediation = 'mediation', imaging_context = 'imaging_associations|imaging_fields',
 			lifestyle_omics_risk = 'lifestyle_omics_risk_display', sex_interaction = 'sex_interaction',
@@ -378,7 +379,7 @@ le8_table_result_groups <- function(names, directory) {
 		temporal = '(questions[.]|question_)temporal',
 		genetics = '(^loci[.]|[._](genetic|same_locus|mr_signal_evidence|mr_scope|susie_pairs|susie_diagnostics|decomposition)[.])',
 		connections = '[._](members|modules|pillars|inflammation_definition|concept_coefficients|concept_status|concept_fold_panels)[.]',
-		validation = 'prediction|proxy|[._](contrasts|fit|heterogeneity|design)[.]',
+		validation = 'prediction|proxy|deployed_concept_fidelity|[._](contrasts|fit|heterogeneity|design)[.]',
 		overview = 'cohort|overview|association_counts|discovery_counts',
 		association = '^(candidates|effects)[.]'
 	)
@@ -728,8 +729,18 @@ if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] %in%
 
 # 🚩 Analysis settings and reusable results
 # Shared R configuration, input preparation, caching and plotting for C1--C5/Final.
-le8_y_date <- function(outcome = Y) Sys.getenv('LE8_Y_DATE', paste0('fod_icd10_', outcome))
+le8_y_date <- function(outcome = Y) { value <- Sys.getenv('LE8_Y_DATE', ''); if(nzchar(value)) value else paste0('fod_icd10_', outcome) }
+le8_follow_end <- function() {
+	value <- Sys.getenv("DATE_FOLLOW_END","2023-04-01")
+	date <- tryCatch(as.Date(value),error=function(e) as.Date(NA))
+	if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$",value) || is.na(date) || format(date,"%Y-%m-%d")!=value) stop("DATE_FOLLOW_END must be YYYY-MM-DD")
+	date
+}
 le8_analysis_options <- function(outcome = Y) list(
+	end_date=as.character(le8_follow_end()),
+	group_column=Sys.getenv("LE8_GROUP_COLUMN",Sys.getenv("PGS_GROUP_COLUMN","")),
+	group_hash=if(nzchar(Sys.getenv("LE8_GROUP_FILE",""))) unname(tools::md5sum(Sys.getenv("LE8_GROUP_FILE"))) else "participant IDs",
+	outer_roster_hash=if(nzchar(Sys.getenv("LE8_OUTER_ROSTER",""))) unname(tools::md5sum(Sys.getenv("LE8_OUTER_ROSTER"))) else "not paired across modules",
 	y_date = le8_y_date(outcome), vars_adj = unique(Filter(nzchar, trimws(strsplit(Sys.getenv("LE8_VARS_ADJ", ""), "[,[:space:]]+")[[1]]))),
 	white_only = Sys.getenv('LE8_WHITE_ONLY', 'TRUE'), baseline_contract = get0('LE8_BASELINE_VERSION', ifnotfound = '2026-09-21.baseline-med-source-v3'),
 	baseline_med_columns = Sys.getenv('LE8_BASELINE_MED_COLUMNS', ''),
@@ -742,6 +753,24 @@ le8_code_fingerprint <- function() {
 	f <- tempfile(); on.exit(unlink(f), add=TRUE)
 	base::saveRDS(get0(".le8_loaded_code",ifnotfound=tools::md5sum(code)), f, version=2, compress=FALSE)
 	unname(tools::md5sum(f))
+}
+
+# One policy for all locus evidence consumers; region evidence is never causal proof.
+le8_evidence_policy <- function() {
+	p <- list(version="locus-policy-v2",posterior=as.numeric(Sys.getenv("C3_H4","0.70")),
+		mr_fdr=as.numeric(Sys.getenv("C3_MR_FDR","0.05")),prior_complete_required=TRUE,
+		level=Sys.getenv("LE8_EVIDENCE_LEVEL","region_or_signal"))
+	if (!is.finite(p$posterior) || p$posterior<=0 || p$posterior>=1 || !is.finite(p$mr_fdr) || p$mr_fdr<=0 || p$mr_fdr>=1 || !p$level %in% c("region_or_signal","signal_only")) stop("Invalid evidence policy")
+	p$hash <- digest::digest(p,algo="sha256"); p
+}
+
+le8_module_policy <- function(module) {
+	prefix <- switch(module,c1_correlate="^C1_",c2_cause="^(C2_|DANDELION_|MRLINK2_)",c3_coloc="^(C3_|COLOC_|LE8_REFERENCE_|LE8_GWAS_MANIFEST)",
+		c4_connect="^C4_",c4_panel_validation="^C4_",final_prediction="^FINAL_","^$")
+	env <- Sys.getenv(); settings <- env[grepl(prefix,names(env))]
+	paths <- unname(settings[file.exists(settings)])
+	list(settings=settings,files=if(length(paths)) tools::md5sum(paths) else character(),
+		evidence=if(module %in% c("c2_cause","c3_coloc","c4_connect","c4_panel_validation","final_prediction")) le8_evidence_policy() else NULL)
 }
 
 le8_completed_results <- function(root, traits, layers, modules) {
@@ -779,7 +808,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 			meta <- x$meta
 			if (!identical(meta$trait, y) || !identical(meta$layer, if (b == "prot") "protein" else "metabolite") || !(identical(meta$module, m) || (m == "c4_panel_validation" && identical(meta$module, "c4_focus"))))
 				stop("Cached trait/layer/module mismatch: ", f)
-			settings_match <- identical(meta$analysis_options, le8_analysis_options(y)) && identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026")))
+			settings_match <- identical(meta$module_policy,le8_module_policy(m)) && identical(meta$analysis_options, le8_analysis_options(y)) && identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026")))
 			generated <- meta$generated
 			version <- if (is.null(meta$code_version)) "saved fitted result" else meta$code_version
 			present <- function(paths) all(vapply(paths, function(path) {
@@ -792,7 +821,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 			if (present(manifest)) {
 				mf <- read_export(manifest)
 				if ('group' %in% names(mf) && m %in% c('c4_connect', 'c4_panel_validation'))
-					mf <- mf[(mf$group == 'equal_budget') == (m == 'c4_panel_validation'), , drop = FALSE]
+					mf <- mf[(mf$group %in% c('equal_budget','deployed_concept_fidelity')) == (m == 'c4_panel_validation'), , drop = FALSE]
 				figures_ok <- "file" %in% names(mf) && nrow(mf) > 0 && present(file.path(d, mf$file))
 			}
 			reusable <- all(required[[m]] %in% names(x)) && present(files[grepl("[.]csv$", files)])
@@ -808,7 +837,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 				shared_manifest <- file.path(shared, "figure_manifest.csv")
 				if (present(shared_manifest)) {
 					views <- read_export(shared_manifest)
-					if ('group' %in% names(views)) views <- views[views$group != 'equal_budget', , drop = FALSE]
+					if ('group' %in% names(views)) views <- views[!views$group %in% c('equal_budget','deployed_concept_fidelity'), , drop = FALSE]
 					complete <- complete && "file" %in% names(views) && nrow(views) > 0 && present(file.path(shared, views$file))
 				} else complete <- FALSE
 			}
@@ -902,15 +931,28 @@ le8_participant_groups <- function(d) {
 	column <- Sys.getenv("LE8_GROUP_COLUMN", Sys.getenv("PGS_GROUP_COLUMN", ""))
 	file <- Sys.getenv("LE8_GROUP_FILE", "")
 	if (nzchar(file)) {
-		m <- le8_validate_ids(as.data.frame(data.table::fread(file)), "group mapping")
+		m <- le8_validate_ids(as.data.frame(data.table::fread(file, colClasses="character")), "group mapping")
 		if (!"group" %in% names(m)) stop("LE8_GROUP_FILE requires eid,group (kinship connected components)")
+		if (anyNA(m$group) || any(!nzchar(trimws(m$group)))) stop("Incomplete group file")
 		g <- as.character(m$group[match(d$eid, m$eid)])
+		if (nzchar(column) && (!column %in% names(d) || anyNA(d[[column]]) || any(as.character(d[[column]]) != g, na.rm=TRUE))) stop("Conflicting family definitions in file and phenotype column")
 	} else if (nzchar(column)) {
 		if (!column %in% names(d)) stop("Required group column missing: ", column)
 		g <- as.character(d[[column]])
 	} else if (".group" %in% names(d)) g <- as.character(d$.group) else g <- d$eid
 	if (anyNA(g) || any(!nzchar(trimws(g)))) stop("Incomplete participant group mapping")
 	g
+}
+le8_outer_roles <- function(d, file = Sys.getenv("LE8_OUTER_ROSTER", "")) {
+	if (!nzchar(file)) return(NULL)
+	d <- le8_validate_ids(d)
+	m <- le8_validate_ids(as.data.frame(data.table::fread(file, colClasses="character")), "outer roster")
+	if (!"role" %in% names(m) || anyNA(m$role) || !all(m$role %in% c("training","test"))) stop("Outer roster requires eid,role with training/test")
+	role <- m$role[match(d$eid,m$eid)]
+	if (anyNA(role) || !setequal(role,c("training","test"))) stop("Outer roster must cover participants and both roles")
+	g <- le8_participant_groups(d)
+	if (any(vapply(split(role,g),function(x) length(unique(x))>1L,logical(1)))) stop("Families cross shared outer roles")
+	ifelse(role=="test","validation","training")
 }
 le8_group_folds <- function(group, k = 5L, seed = 2026L) {
 	group <- as.character(group); u <- sort(unique(group))
@@ -1408,7 +1450,7 @@ helper_dirs <- unique(c(Sys.getenv("LE8_SHARED_HELPERS", unset = ""), file.path(
 for (f0 in unique(unlist(lapply(helper_dirs, function(d0) file.path(d0, helper_names))))) {
 	if (file.exists(f0)) try(source(f0), silent = TRUE)
 }
-if (!exists("date_follow_end")) date_follow_end <- as.Date(Sys.getenv("DATE_FOLLOW_END", unset = "2023-04-01"))
+date_follow_end <- le8_follow_end()
 if (!exists("vars.basic")) stop("vars.basic was not loaded from scripts/0f/phenotype.R.", call. = FALSE)
 if (!exists("vars.le8")) stop("vars.le8 was not loaded from scripts/0f/phenotype.R.", call. = FALSE)
 if (!exists("names.le8")) stop("names.le8 was not loaded from scripts/0f/phenotype.R.", call. = FALSE)
@@ -1442,7 +1484,7 @@ read_all <- function(select_vars = NULL) {
 	x <- readRDS(required_file(file.path(indir, "Rdata/all.rds"), "UKB phenotype all.rds"))
 	x <- le8_select_phenotypes(x)
 	x <- le8_rebuild_baseline(x, out.base)
-	if (!is.null(select_vars)) x <- x[, intersect(unique(c(select_vars, le8_custom_covars)), names(x)), drop = FALSE]
+	if (!is.null(select_vars)) x <- x[, intersect(unique(c(select_vars, le8_custom_covars, paste0("fod_icd10_",Y), Sys.getenv("LE8_GROUP_COLUMN",Sys.getenv("PGS_GROUP_COLUMN","")))), names(x)), drop = FALSE]
 	x
 }
 read_prot <- function(required = TRUE) {
@@ -1539,12 +1581,12 @@ cache_valid <- function(path) {
 .le8_loaded_code <- tools::md5sum(list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE))
 le8_stage_fingerprint <- function() {
 	code <- list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE)
-	env <- Sys.getenv(); env <- env[grepl("^(C[1-5]_|PGS_|RUN_|LE8_(GWAS|PQTL|MQTL|LD|GROUP|GRCH|REFGEN|ENDPOINT|BASELINE)|FINAL_CONNECTION|DATE_FOLLOW_END)",names(env))]
+	env <- Sys.getenv(); env <- env[grepl("^(C[1-5]_|PGS_|RUN_|LE8_(GWAS|PQTL|MQTL|LD|GROUP|GRCH|REFGEN|ENDPOINT|BASELINE|OUTER|Y_DATE|VARS_ADJ|VARIANT|REFERENCE|EVIDENCE)|FINAL_CONNECTION|DATE_FOLLOW_END)",names(env))]
 	files <- unique(c(file.path(get0("indir",ifnotfound=""),"Rdata",c("all.rds","prot.rds","met.rds","prot.pgs.rds","met.pgs.rds")),
 		unname(env[file.exists(env)]),get0(".le8_stage_source_files",ifnotfound=character()),file.path(get0("indir",ifnotfound=""),"rap/vip.tab.gz")))
 	for (mf in env[grepl("MANIFEST$",names(env)) & file.exists(env)]) {
 		m <- tryCatch(data.table::fread(mf,showProgress=FALSE),error=function(e) NULL)
-		if (!is.null(m)) for (nm in intersect(c("file","path","weights_file","ld_file"),names(m))) {
+		if (!is.null(m)) for (nm in intersect(c("file","path","weights_file","ld_file","normalization_proof","reference_fasta"),names(m))) {
 			v <- as.character(m[[nm]]); relative <- !grepl("^/|^[A-Za-z]:",v)
 			v[relative] <- file.path(dirname(mf),v[relative]); files <- unique(c(files,v))
 		}
@@ -1653,7 +1695,7 @@ quiet_package_call <- function(expr) {
 module_meta <- function(layer, module = LE8_JOB, extra = list()) {
 	c(list(
 		module = module, layer = layer, trait = Y, generated = format(Sys.time(), "%F %T %z"),
-		seed = SEED, R_runtime = R.version.string, biom = BIOM, code_signature=le8_code_fingerprint(), source_signature=le8_stage_fingerprint(), analysis_options = le8_analysis_options()
+		seed = SEED, R_runtime = R.version.string, biom = BIOM, configuration_sources=jsonlite::fromJSON(Sys.getenv("LE8_SHARED_CONFIG_SOURCES","{}")), module_policy=le8_module_policy(module), code_signature=le8_code_fingerprint(), source_signature=le8_stage_fingerprint(), analysis_options = le8_analysis_options()
 	), extra)
 }
 finalize_outputs <- function(module, outdir = getwd()) {
@@ -2010,10 +2052,79 @@ le8_variant_key <- function(z) {
 	snv <- nchar(z$EA)==1 & nchar(z$NEA)==1 & !is.na(z$EA) & !is.na(z$NEA)
 	a <- chartr("ATCG","TAGC",z$EA); b <- chartr("ATCG","TAGC",z$NEA)
 	pair[snv] <- pmin(pair[snv],paste(pmin(a[snv],b[snv]),pmax(a[snv],b[snv]),sep=":"))
-	key <- paste(.norm_chr_value(z$CHR),format(z$POS,scientific=FALSE,trim=TRUE),pair,sep=":")
+	build <- if("BUILD" %in% names(z)) as.character(z$BUILD) else rep("unknown",nrow(z))
+	build[is.na(build)|!nzchar(build)] <- "unknown"
+	key <- paste(build,.norm_chr_value(z$CHR),format(z$POS,scientific=FALSE,trim=TRUE),pair,sep=":")
 	missing <- is.na(z$CHR)|!is.finite(z$POS)|is.na(z$EA)|is.na(z$NEA)
-	key[missing] <- paste(z$SNP[missing],z$EA[missing],z$NEA[missing],sep=":")
+	key[missing] <- paste(build[missing],z$SNP[missing],z$EA[missing],z$NEA[missing],sep=":")
 	key
+}
+.le8_identity_hashes <- new.env(parent=emptyenv())
+le8_file_sha256 <- function(file) {
+	if (!file.exists(file)) stop("Missing identity/proof input: ",file)
+	info <- file.info(file); key <- paste(normalizePath(file),info$size,as.numeric(info$mtime),sep="|")
+	if (!exists(key,envir=.le8_identity_hashes,inherits=FALSE)) assign(key,digest::digest(file=file,algo="sha256"),envir=.le8_identity_hashes)
+	get(key,envir=.le8_identity_hashes,inherits=FALSE)
+}
+le8_variant_identity <- function(z, metadata=le8_gwas_metadata(z$source_file[1])) {
+	z$BUILD <- rep(as.character(metadata$build),nrow(z))
+	z$variant_id <- rep(NA_character_,nrow(z)); z$normalization_status <- rep("orientation_key_only",nrow(z))
+	z$normalization_proof_hash <- rep(NA_character_,nrow(z))
+	if (!nrow(z)) return(z)
+	sequence <- !is.na(z$REF)&!is.na(z$ALT)&grepl("^[ACGT]+$",z$REF)&grepl("^[ACGT]+$",z$ALT)&z$REF!=z$ALT
+	indel <- nchar(z$EA)!=1L | nchar(z$NEA)!=1L
+	z$normalization_status[indel %in% TRUE] <- "indel_normalization_unverified"
+	proof <- metadata$normalization_proof
+	if (!is.null(proof) && !is.na(proof) && nzchar(proof)) {
+		if (is.na(metadata$build) || !nzchar(metadata$build)) stop("Normalization proof requires genome build")
+		a <- jsonlite::fromJSON(proof)
+		if (!all(c("file_sha256","reference_sha256","tool","tool_version","build","reference_checked","left_aligned","multiallelic_split") %in% names(a)) ||
+			!isTRUE(a$reference_checked) || !isTRUE(a$left_aligned) || !isTRUE(a$multiallelic_split) ||
+			!identical(as.character(a$build),as.character(metadata$build)) || !nzchar(a$tool) || !nzchar(a$tool_version) ||
+			!grepl("^[a-fA-F0-9]{64}$",a$reference_sha256) || !identical(tolower(a$file_sha256),le8_file_sha256(z$source_file[1]))) stop("Invalid or stale GWAS normalization proof")
+		alleles_match <- (z$EA==z$ALT & z$NEA==z$REF) | (z$EA==z$REF & z$NEA==z$ALT)
+		if (any(sequence & !alleles_match,na.rm=TRUE)) stop("Effect alleles conflict with proven REF/ALT identity")
+		ok <- (sequence & alleles_match & is.finite(z$POS) & !is.na(z$CHR)) %in% TRUE
+		z$variant_id[ok] <- paste(z$BUILD[ok],z$CHR[ok],format(z$POS[ok],scientific=FALSE,trim=TRUE),z$REF[ok],z$ALT[ok],sep=":")
+		z$normalization_status[ok] <- "reference_checked_left_aligned_split"
+		z$normalization_proof_hash[ok] <- le8_file_sha256(proof)
+	}
+	z
+}
+le8_normalize_variants <- function(z, metadata) {
+	if (!nrow(z)) return(z)
+	fasta <- metadata$reference_fasta
+	if (is.null(fasta) || is.na(fasta) || !nzchar(fasta)) fasta <- Sys.getenv(paste0("LE8_REFERENCE_FASTA_",metadata$build),"")
+	if (!nzchar(fasta) || all(z$normalization_status=="reference_checked_left_aligned_split")) return(z)
+	if (!file.exists(fasta) || !file.exists(paste0(fasta,".fai"))) stop("Variant normalization needs an indexed reference FASTA")
+	if (!nzchar(Sys.which("bcftools"))) stop("Variant normalization needs bcftools")
+	# Only explicit REF/ALT biallelic associations can be normalized. EA/NEA sorting is not REF inference.
+	valid <- !is.na(z$REF)&!is.na(z$ALT)&grepl("^[ACGT]+$",z$REF)&grepl("^[ACGT]+$",z$ALT)&
+		((z$EA==z$ALT&z$NEA==z$REF)|(z$EA==z$REF&z$NEA==z$ALT))&is.finite(z$POS)
+	ix <- which(valid %in% TRUE & z$normalization_status!="reference_checked_left_aligned_split")
+	if (!length(ix)) return(z)
+	fai <- data.table::fread(paste0(fasta,".fai"),header=FALSE,colClasses=c(V1="character"))
+	contig <- as.character(fai$V1[match(.norm_chr_value(z$CHR[ix]),.norm_chr_value(fai$V1))])
+	if (anyNA(contig)) stop("Reference lacks requested chromosome")
+	tmp <- tempfile("le8-normalize-",tmpdir="/tmp"); dir.create(tmp); on.exit(unlink(tmp,recursive=TRUE),add=TRUE)
+	input <- file.path(tmp,"input.vcf"); output <- file.path(tmp,"normalized.vcf")
+	header <- c("##fileformat=VCFv4.2",paste0("##contig=<ID=",fai$V1,",length=",fai$V2,">"),"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO")
+	writeLines(header,input)
+	data.table::fwrite(data.frame(contig,z$POS[ix],paste0("row",ix),z$REF[ix],z$ALT[ix],".",".","."),input,sep="\t",append=TRUE,col.names=FALSE,quote=FALSE)
+	rc <- system2(Sys.which("bcftools"),c("norm","--check-ref","e","-f",shQuote(fasta),"-m","-any","-Ov","-o",shQuote(output),shQuote(input)),stdout=file.path(tmp,"stdout"),stderr=file.path(tmp,"stderr"))
+	if (rc!=0L) stop("Reference validation/normalization failed: ",paste(readLines(file.path(tmp,"stderr"),warn=FALSE),collapse="; "))
+	r <- data.table::fread(output,skip="#CHROM",check.names=FALSE)
+	ids <- as.integer(sub("^row","",r$ID))
+	if (!setequal(ids,ix) || anyDuplicated(ids)) stop("Normalization lost or ambiguously split scalar associations")
+	effect_alt <- z$EA[ids]==z$ALT[ids]
+	z$CHR[ids] <- .norm_chr_value(r[["#CHROM"]]); z$POS[ids] <- r$POS
+	z$REF[ids] <- r$REF; z$ALT[ids] <- r$ALT
+	z$EA[ids] <- ifelse(effect_alt,r$ALT,r$REF); z$NEA[ids] <- ifelse(effect_alt,r$REF,r$ALT)
+	z$variant_id[ids] <- paste(z$BUILD[ids],z$CHR[ids],format(z$POS[ids],scientific=FALSE,trim=TRUE),z$REF[ids],z$ALT[ids],sep=":")
+	z$normalization_status[ids] <- "reference_checked_left_aligned_split"
+	z$normalization_proof_hash[ids] <- le8_hash_object(list(reference=le8_file_sha256(fasta),tool=system2(Sys.which("bcftools"),"--version-only",stdout=TRUE),build=metadata$build))
+	z$variant_key <- le8_variant_key(z)
+	z
 }
 .le8_sumstat_qc <- new.env(parent=emptyenv()); .le8_sumstat_qc$rows <- list()
 standardize_sumstat <- function(d, N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA"))),
@@ -2027,6 +2138,8 @@ standardize_sumstat <- function(d, N_default = suppressWarnings(as.numeric(Sys.g
 		EA = .pick_col(nms, c("EA", "A1", "ALT", "ALLELE1", "EFFECT_ALLELE", "EFFECTALLELE")),
 		NEA = .pick_col(nms, c("NEA", "A2", "REF", "ALLELE0", "OTHER_ALLELE", "REFERENCE_ALLELE", "NONEFFECTALLELE")),
 		REF_A = .pick_col(nms, c("REFA")),
+		REF = .pick_col(nms, c("REF", "REFERENCE_ALLELE")),
+		ALT = .pick_col(nms, c("ALT", "ALTERNATE_ALLELE")),
 		EAF = .pick_col(nms, c("EAF", "FREQ", "FREQ_GENO", "A1FREQ", "EFFECT_ALLELE_FREQUENCY")),
 		BETA = if (joint) .pick_col(nms, c("BJ", "BETAJ", "BETA", "B", "EFFECT"), prefer = c("BJ", "BETAJ")) else .pick_col(nms, c("BETA", "B", "EFFECT", "LOG_ODDS", "LOGOR", "BJ")),
 		SE = if (joint) .pick_col(nms, c("BJ_SE", "SEJ", "SE", "STDERR", "SEBETA"), prefer = c("BJ_SE", "SEJ")) else .pick_col(nms, c("SE", "STDERR", "SEBETA", "BJ_SE")),
@@ -2043,6 +2156,7 @@ standardize_sumstat <- function(d, N_default = suppressWarnings(as.numeric(Sys.g
 	ans <- tibble(
 		SNP = as.character(getv("SNP")), CHR = .norm_chr_value(getv("CHR")),
 		POS = suppressWarnings(as.numeric(getv("POS"))), EA = ea, NEA = nea,
+		REF=toupper(as.character(getv("REF"))), ALT=toupper(as.character(getv("ALT"))),
 		EAF = suppressWarnings(as.numeric(getv("EAF"))), BETA = suppressWarnings(as.numeric(getv("BETA"))),
 		SE = suppressWarnings(as.numeric(getv("SE"))), P = suppressWarnings(as.numeric(getv("P"))),
 		N = suppressWarnings(as.numeric(getv("N"))), source_file = source_file, joint = joint
@@ -2053,6 +2167,7 @@ standardize_sumstat <- function(d, N_default = suppressWarnings(as.numeric(Sys.g
 	ans$P[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] <- 2 * pnorm(abs(ans$BETA[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] /
 		ans$SE[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1]), lower.tail = FALSE)
 	ans <- ans |> filter(!is.na(SNP), SNP!="",is.finite(BETA),is.finite(SE),SE>0) |> distinct()
+	ans <- le8_variant_identity(ans,le8_gwas_metadata(source_file))
 	ans$variant_key <- le8_variant_key(ans)
 	dup <- unique(ans$variant_key[duplicated(ans$variant_key)])
 	remove <- integer(); conflicting <- character(); redundant <- 0L
@@ -2170,7 +2285,9 @@ recover_qtl_alleles <- function(iv, full_file) {
 	if (!nrow(full)) return(iv)
 	a <- full |> transmute(SNP,
 		EA_full = toupper(EA), NEA_full = toupper(NEA),
-		EAF_full = EAF, CHR_full = CHR, POS_full = POS
+		EAF_full = EAF, CHR_full = CHR, POS_full = POS,
+		BUILD_full=BUILD,REF_full=REF,ALT_full=ALT,variant_id_full=variant_id,
+		normalization_status_full=normalization_status,normalization_proof_hash_full=normalization_proof_hash
 	)
 	out <- iv |>
 		mutate(EA_joint = toupper(EA), NEA_joint = toupper(NEA)) |>
@@ -2188,7 +2305,8 @@ recover_qtl_alleles <- function(iv, full_file) {
 			# The joint file may be GRCh37 while the full QTL has already been
 			# lifted to GRCh38. Once the stable ID and alleles agree, the full
 			# QTL is authoritative for downstream cis/local coordinates.
-			CHR = CHR_full, POS = POS_full
+			CHR = CHR_full, POS = POS_full, BUILD=BUILD_full, REF=REF_full, ALT=ALT_full,
+			variant_id=variant_id_full,normalization_status=normalization_status_full,normalization_proof_hash=normalization_proof_hash_full
 		) |>
 		select( - ends_with("_full"), - EA_joint, - NEA_joint, - same_to_full, - reverse_to_full, - allele_ok)
 	ambiguous <- out$SNP[duplicated(out$SNP)|duplicated(out$SNP,fromLast=TRUE)]
@@ -2203,10 +2321,15 @@ harmonize_sumstats <- function(x, y, drop_palindromic = TRUE) {
 	if (anyDuplicated(x$variant_key) || anyDuplicated(y$variant_key)) stop("Conflicting duplicate variant identities before harmonization")
 	x$rsid_x <- x$SNP; y$rsid_y <- y$SNP
 	x$SNP <- x$variant_key; y$SNP <- y$variant_key
-	valid <- function(z) z[!is.na(z$EA)&!is.na(z$NEA)&grepl("^[ACGT]+$",z$EA)&grepl("^[ACGT]+$",z$NEA)&z$EA!=z$NEA,,drop=FALSE]
+	valid <- function(z) {
+		normalized <- if("normalization_status" %in% names(z)) z$normalization_status %in% "reference_checked_left_aligned_split" else rep(FALSE,nrow(z))
+		ok <- !is.na(z$EA)&!is.na(z$NEA)&grepl("^[ACGT]+$",z$EA)&grepl("^[ACGT]+$",z$NEA)&z$EA!=z$NEA &
+			((nchar(z$EA)==1L & nchar(z$NEA)==1L) | normalized)
+		z[ok %in% TRUE,,drop=FALSE]
+	}
 	x <- valid(x); y <- valid(y)
 	d <- inner_join(x |> select(SNP, CHR_x = CHR, POS_x = POS, EA_x = EA, NEA_x = NEA, EAF_x = EAF, BETA_x = BETA, SE_x = SE, P_x = P, N_x = N, everything()),
-		y |> select(SNP, CHR_y = CHR, POS_y = POS, EA_y = EA, NEA_y = NEA, EAF_y = EAF, BETA_y = BETA, SE_y = SE, P_y = P, N_y = N, rsid_y),
+		y |> select(SNP, CHR_y = CHR, POS_y = POS, EA_y = EA, NEA_y = NEA, EAF_y = EAF, BETA_y = BETA, SE_y = SE, P_y = P, N_y = N, rsid_y, any_of(c("BUILD","REF","ALT","variant_id","normalization_status","normalization_proof_hash"))),
 		by = "SNP", suffix = c("", ".dup")
 	)
 	if (!nrow(d)) return(d)
@@ -3299,7 +3422,48 @@ le8_assay_genes <- function(features) {
 	}
 	out
 }
-le8_same_locus_evidence <- function(mr, coloc, layer) {
+le8_coloc_pass <- function(z, policy=le8_evidence_policy()) {
+	if (!nrow(z)) return(logical())
+	if ("policy_hash" %in% names(z) && any(!is.na(z$policy_hash) & nzchar(z$policy_hash) & z$policy_hash!=policy$hash)) stop("Stored C3 evidence uses a different policy; use its original settings or refresh affected C3 evidence before consolidation")
+	if (!all(c("status","PP.H4_robust_min","prior_complete") %in% names(z))) return(rep(FALSE,nrow(z)))
+	pass <- z$status %in% "ok" & z$prior_complete %in% TRUE & is.finite(z$PP.H4_robust_min) & z$PP.H4_robust_min>=policy$posterior
+	if ("prior_status" %in% names(z)) pass <- pass & !z$prior_status %in% c("prior_incomplete","coverage_incomplete")
+	if (policy$level=="signal_only") pass <- pass & if("MR_signal_status" %in% names(z)) z$MR_signal_status %in% "all_instrument_signals_supported" else FALSE
+	pass
+}
+le8_mr_class <- function(layer, scope="primary") {
+	if (!layer %in% c("protein","prot","metabolite","met")) stop("Unknown MR layer")
+	if (!scope %in% c("primary","secondary")) stop("Unknown MR scope")
+	if(layer %in% c("protein","prot")) { if(scope=="primary") "cis" else "trans" } else if(scope=="primary") "local" else "distal"
+}
+le8_select_mr <- function(mr, layer, scope="primary") {
+	if (!nrow(mr)) return(mr)
+	if (!all(c("exposure","analysis") %in% names(mr))) stop("MR results lack exposure/analysis")
+	z <- dplyr::distinct(mr[mr$analysis %in% le8_mr_class(layer,scope),,drop=FALSE])
+	if (anyDuplicated(z$exposure)) stop("Multiple MR estimates in one prespecified analysis class; resolve method identity, do not select by P")
+	z
+}
+le8_bidirectional_evidence <- function(forward, reverse, layer, policy=le8_evidence_policy()) {
+	rv <- if(nrow(reverse) && all(c("feature","b","pval","FDR_reverse","n_IV") %in% names(reverse))) reverse |>
+		dplyr::transmute(feature,reverse_beta=b,reverse_p=pval,reverse_FDR=FDR_reverse,n_reverse_IV=n_IV) else
+		tibble::tibble(feature=character(),reverse_beta=numeric(),reverse_p=numeric(),reverse_FDR=numeric(),n_reverse_IV=integer())
+	if (anyDuplicated(rv$feature)) stop("Duplicate reverse MR estimates")
+	features <- union(forward$exposure,rv$feature)
+	dplyr::bind_rows(lapply(c("primary","secondary"),function(scope) {
+		fw <- le8_select_mr(forward,layer,scope)
+		if(nrow(fw)) fw <- fw |> dplyr::transmute(feature=exposure,forward_beta=b,forward_p=pval,forward_FDR=FDR_all,forward_present=TRUE) else
+			fw <- tibble::tibble(feature=character(),forward_beta=numeric(),forward_p=numeric(),forward_FDR=numeric(),forward_present=logical())
+		dplyr::left_join(tibble::tibble(feature=features),fw,by="feature") |> dplyr::left_join(rv,by="feature") |>
+			dplyr::mutate(scope=.env$scope,analysis=le8_mr_class(layer,.env$scope),policy_fdr=policy$mr_fdr,
+				forward_status=dplyr::case_when(is.na(forward_present)~"not_tested",!is.finite(forward_p)~"failed_or_not_estimable",TRUE~"tested"),
+				reverse_status=dplyr::case_when(is.na(n_reverse_IV)~"not_tested",!is.finite(reverse_p)~"failed_or_not_estimable",TRUE~"tested"),
+				forward_support=is.finite(forward_FDR)&forward_FDR<policy$mr_fdr,
+				reverse_support=is.finite(reverse_FDR)&reverse_FDR<policy$mr_fdr,
+				class=dplyr::case_when(forward_support & reverse_support~"Bidirectional genetic support",forward_support~"Omic -> disease only",
+					reverse_support~"Disease liability -> omic only",forward_status!="tested"|reverse_status!="tested"~"Incomplete/untested evidence",TRUE~"No FDR support"))
+	}))
+}
+le8_same_locus_evidence <- function(mr, coloc, layer, policy=le8_evidence_policy()) {
 	empty <- tibble::tibble(
 		feature = character(), locus = character(), locus_class = character(),
 		MR_FDR = numeric(), coloc_robust_min = numeric(), instrument_overlap = logical(),
@@ -3309,8 +3473,8 @@ le8_same_locus_evidence <- function(mr, coloc, layer) {
 	need_m <- c("exposure", "analysis", "FDR_all", "instrument_chr", "instrument_pos_min", "instrument_pos_max")
 	need_c <- c("feature", "locus", "chr", "start", "end", "status", "PP.H4_robust_min", "locus_class")
 	if (!all(need_m %in% names(mr)) || !all(need_c %in% names(coloc))) return(empty)
-	primary <- if (layer == "protein") "cis" else "local"
-	m <- mr[mr$analysis == primary & is.finite(mr$FDR_all), , drop = FALSE]
+	primary <- le8_mr_class(layer)
+	m <- le8_select_mr(mr,layer)
 	c <- coloc[coloc$locus_class == primary & coloc$status == "ok", , drop = FALSE]
 	if (!nrow(m) || !nrow(c)) return(empty)
 	z <- dplyr::inner_join(c, m, by = c("feature" = "exposure"))
@@ -3345,18 +3509,19 @@ le8_same_locus_evidence <- function(mr, coloc, layer) {
 	z$MR_signal_coverage <- if ("MR_signal_coverage" %in% names(z)) z$MR_signal_coverage else NA_real_
 	z$resolved_signal_pass <- is.na(z$MR_signal_status) | z$MR_signal_status=="all_instrument_signals_supported"
 	z$input_scale_verified <- if ("beta_scale_status" %in% names(z)) z$beta_scale_status %in% "verified" else FALSE
+	z$posterior_pass <- le8_coloc_pass(z,policy)
 	z |> dplyr::transmute(feature, locus, locus_class, region_IV_coverage, IV_coverage,input_scale_verified,
 		signal_support=ifelse(!is.na(MR_signal_status),MR_signal_status,ifelse(IV_coverage<1,"partial_signal_support","region_only; independent signals unresolved")),
-		MR_signal_coverage,
+		MR_signal_coverage, prior_complete=if("prior_complete" %in% names(z)) prior_complete else FALSE,
+		policy_h4=policy$posterior,policy_fdr=policy$mr_fdr,policy_hash=policy$hash,policy_level=policy$level,
 		MR_FDR = FDR_all,
 		coloc_robust_min = PP.H4_robust_min, instrument_overlap,
-		eligible = resolved_signal_pass & input_scale_verified & instrument_overlap & is.finite(IV_coverage) & IV_coverage==1 & is.finite(FDR_all) & FDR_all < .05 &
-			is.finite(PP.H4_robust_min) & PP.H4_robust_min >= .7,
+		eligible = resolved_signal_pass & input_scale_verified & instrument_overlap & is.finite(IV_coverage) & IV_coverage==1 & is.finite(FDR_all) & FDR_all < policy$mr_fdr & posterior_pass,
 		claim = "Same cis/local region MR + ABF support; not a resolved causal signal or causal proof"
 	)
 }
-le8_same_locus_candidates <- function(mr, coloc, layer) {
-	z <- le8_same_locus_evidence(mr, coloc, layer)
+le8_same_locus_candidates <- function(mr, coloc, layer, policy=le8_evidence_policy()) {
+	z <- le8_same_locus_evidence(mr, coloc, layer, policy)
 	unique(z$feature[z$eligible %in% TRUE])
 }
 # Optional additions fail locally and leave the already-produced core outputs.
@@ -3371,19 +3536,12 @@ le8_optional <- function(label, expr) {
 		list(status = tibble::tibble(status = "failed", message = conditionMessage(e)))
 	})
 }
-# Honor an explicit administrative end; an unconfigured run retains the
-# project's source-defined date instead of guessing a more recent cutoff.
-if (nzchar(Sys.getenv("DATE_FOLLOW_END", unset = ""))) {
-	.le8_end <- as.Date(Sys.getenv("DATE_FOLLOW_END"))
-	if (is.na(.le8_end)) stop("DATE_FOLLOW_END must be YYYY-MM-DD")
-	date_follow_end <- .le8_end
-}
-
 le8_gwas_metadata <- function(file) {
 	out <- list(
 		N = NA_real_, N_case = NA_real_, N_control = NA_real_, sdY = NA_real_,
 		type = NA_character_, beta_scale = NA_character_, build = NA_character_, ancestry = NA_character_,
-		source = "unprovided", discovery_overlap = "unknown"
+		source = "unprovided", discovery_overlap = "unknown",
+		normalization_proof=NA_character_, reference_fasta=NA_character_
 	)
 	if (length(file) != 1L || is.na(file) || !nzchar(file)) return(out)
 	f <- Sys.getenv("LE8_GWAS_MANIFEST", unset = "")
@@ -3403,6 +3561,7 @@ le8_gwas_metadata <- function(file) {
 	for (n in intersect(names(out), names(m))) out[[n]] <- m[[n]][idx]
 	for (n in c("N", "N_case", "N_control", "sdY")) out[[n]] <- suppressWarnings(as.numeric(out[[n]]))
 	if (!is.finite(out$N) && is.finite(out$N_case) && is.finite(out$N_control)) out$N <- out$N_case + out$N_control
+	for (nm in c("normalization_proof","reference_fasta")) if (!is.na(out[[nm]]) && nzchar(out[[nm]]) && !grepl("^/|^[A-Za-z]:",out[[nm]])) out[[nm]] <- file.path(dirname(f),out[[nm]])
 	out$source <- f ; out
 }
 get_case_fraction <- function(outcome = Y) {
