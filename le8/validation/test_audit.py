@@ -17,6 +17,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 
 def module(name, file):
+	if name in sys.modules:
+		return sys.modules[name]
 	spec = importlib.util.spec_from_file_location(name, ROOT / 'f' / file)
 	value = importlib.util.module_from_spec(spec)
 	sys.modules[name] = value
@@ -134,6 +136,18 @@ class AuditRegression(TestCase):
 			self.assertIn('hist',cmd)
 		self.assertIn('c1_correlate',calls[8])
 		for check,run in zip(calls[:8],calls[9:]): self.assertEqual(check,run+['--preflight'])
+
+	def test_public_abm_defaults_to_cuda_transformer_with_explicit_overrides(self):
+		for backend,extra in [('reference',''),('both',''),('reference','--abm-design selective --device cpu')]:
+			calls=[]
+			with mock.patch.object(shared,'call',lambda cmd,env,dry: calls.append(list(map(str,cmd)))):
+				shared.dispatch_main(['c1_abm','--Y','cad','--biom','prot','--analysis-root',str(self.path),
+					'--abm-backend',backend,'--abm-args',extra,'--dry-run'])
+			for cmd in calls:
+				kind=cmd[cmd.index('--backend')+1]
+				a=abm.reference_parser().parse_args(cmd[cmd.index('--backend')+2:])
+				self.assertEqual(a.device,'cpu' if extra else 'cuda')
+				self.assertEqual(a.abm_design,'selective' if extra or kind=='tabicl' else 'selective_attention')
 
 	def test_abm_management_commands_execute_once(self):
 		for action in ['evaluate','project','--check-device','--download-model']:

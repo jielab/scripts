@@ -12,7 +12,7 @@ le8_usage() {
 	cat <<'HELP'
 Usage: ./le8.sh [module[,module...]] [options]
 
-No module list: C1 + reference ABM -> C2 -> C3 -> C4 (connect/panel validation) -> C5.
+No module list: C1 + CUDA selective-attention ABM -> C2 -> C3 -> C4 (connect/panel validation) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results keep their original methods/scope; --replace TRUE requests new fits.
 Result workbooks and named participant RDS files restore numerical inputs in /tmp.
@@ -61,7 +61,7 @@ Main options (defaults are set below in this script):
   --host ADDRESS         127.0.0.1
   --memory-limit-gb N    Explicit process-tree RAM cap; 0 disables it
   --memory-swap-gb N     Explicit swap cap
-  --abm-backend METHOD   reference | tabicl | both (default reference)
+  --abm-backend METHOD   reference | tabicl | both (default reference: selective_attention on CUDA)
   --abm-args STRING      Extra backend arguments, parsed without shell evaluation
   --run-abm              Include ABM with an explicit module list
   --skip-abm             Skip ABM in the default C1-C5 sequence
@@ -100,6 +100,8 @@ LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_explain --Y cvd_
 Final report files overwrite the fixed final/ destination.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
+ABM requires CUDA by default and checks GPU forward/backward before native scans.
+Explicit CPU testing: --abm-args '--device cpu'; legacy CPU baseline: --abm-args '--abm-design selective --device cpu'.
 
 Additional module entry points:
   python f/c1.abm.py annotations --help

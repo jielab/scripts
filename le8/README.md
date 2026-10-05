@@ -18,7 +18,7 @@ C1 使用 ABM（agent-based modeling）命名。模型运行、注释及图形�
 
 ## 2026-10-05 方法更新
 
-- C1 保留常规关联及 PGS 分析，reference ABM 更新为 selective Yang pipeline：开发集内选择、校准和冻结门控，验证集评估覆盖率与风险增益。默认 C1–C5 流程包含 reference ABM，无需添加 `--run-abm --abm-backend reference`；TabICLv2 仍可通过 `--abm-backend tabicl` 或 `both` 选择。显式选择 `c1_abm` 也会执行训练；已有匹配结果按缓存规则复用。
+- C1 保留常规关联及 PGS 分析，默认 reference ABM 使用 `selective_attention`：真实 Transformer 与个体检索模型在 CUDA 上训练和预测，开发集内选择、校准和冻结门控，验证集评估覆盖率与风险增益。默认 C1–C5 流程包含该 ABM，无需额外参数；结果独立保存在 `c1_correlate/abm_selective_attention`。TabICLv2 仍可通过 `--abm-backend tabicl` 或 `both` 选择。已有匹配结果按缓存规则复用，旧 CPU selective 结果保留在原目录。
 - C2 将交叉拟合的遗传预测部分 G 与残差 R 同时放入调整模型，直接检验二者差异；残差不解释为纯环境作用。MR 使用边际效应、独立工具和坐标/等位基因身份；冲突重复变异排除并记录质量控制。MR-link-2 按完整预定检验家族校正。DANDELION 原生结果、全局多重校正、逐位点剔除结果分别展示；真实 WES 与 GWAS 基因适配证据分开。冻结的 Yang 状态投影及近远期风险属于补充分析。
 - C3 固定同一组、有序且方向一致的变异供 CPU/GPU 比较，稳定计算 H3，并保留先验敏感性与输入条件。未通过敏感性检查的 H4 不标记为稳健共定位。SuSiE 的可信集与各 MR 工具逐一对应，只有部分工具信号获得支持时标记 partial_signal_support，不升级整个 MR 汇总结果。SuSiE 可选分支要求有符号 LD、参考样本量、版本和祖源元数据；缺失条件时给出不可用状态。
 - C4 分开基本调整的总连接与条件特异性，允许一项分子连接多个 LE8 域。YS 按无疾病结局参与的连接强度和冗余排序；固定预算下比较 YS、NS、YSplus、原始分子及嵌套交叉拟合的概念表示。保存临床与分子线性预测值贡献、惩罚路径和非零系数，避免把零分子贡献解释为模型优势。路径乘积及其有符号比例只作描述；bootstrap 不足时不输出推断。模块稳定性是固定候选分子集合下的重聚类稳定性。
@@ -31,7 +31,7 @@ C1 使用 ABM（agent-based modeling）命名。模型运行、注释及图形�
 
 默认分析包含 reference ABM；新环境使用 `./install.sh --abm` 安装其依赖，单独 `./install.sh` 只安装报告依赖。Conda 配方现已列入 `pyreadr`、LightGBM 和 sklearn 等默认 ABM 依赖。只补本次 RDS 读取依赖可运行 `/home/huangj/anaconda3/envs/le8/bin/python3 -m pip install 'pyreadr>=0.5,<1'`；使用其他环境时换成实际的 `ABM_PYTHON`。
 
-选择 ABM 训练时，调度器会在原生 C1 扫描前，使用实际 ABM Python、R 路径及后端参数执行预检；读取器和树模型包会实际导入，缺包或动态库加载失败会立即报错。独立预检可运行 `./le8.sh c1_abm --Y cvd_cad --biom met --preflight`，不会读取整个人群或拟合模型。
+选择 ABM 训练时，调度器会在原生 C1 扫描前，使用实际 ABM Python、R 路径及后端参数执行预检；读取器和树模型包会实际导入，并执行 CUDA 矩阵前向/反向计算。默认 `--device cuda`，缺包、CUDA 不可用或 GPU 内核失败立即报错，不自动回退 CPU。日志显示实际 Python、PyTorch/CUDA 版本及 GPU 名称。独立预检可运行 `./le8.sh c1_abm --Y cvd_cad --biom prot --preflight`，不会读取整个人群或拟合模型。显式 CPU 测试用 `--abm-args '--device cpu'`；旧 CPU 基线用 `--abm-args '--abm-design selective --device cpu'`。数据预处理、sklearn/LightGBM 基线和统计汇总仍使用 CPU；保存的神经模型权重转到 CPU 以便跨设备加载，运行中的 Transformer 预测保持请求的设备。
 
 本次 `pyreadr` 失败留下的代谢组 C1 已恢复到 `/mnt/d/analysis/le8/cvd_cad/met/c1_correlate`，MWAS、PGS 和汇总 RDS 校验值均未改变，20 张 PNG 已配套工作簿。原诊断目录 `/tmp/le8-run-2k8coq7z` 保留。可继续用原命令 `./le8.sh --Y cvd_cad --biom met`；保持默认 `--replace FALSE`，程序按数值方法及输入签名复用扫描缓存，必要时重建图表。这次修复没有改动 R 分析方法或重新拟合 C1。 新增真实 RDS 读取、缺依赖提前退出及调度顺序回归检查，当前 Python/C5/dispatcher 共 65 项通过。
 

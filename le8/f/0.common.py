@@ -1431,7 +1431,7 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 		dest="abm_backend",
 		choices=["reference", "tabicl", "tf", "both"],
 		default="reference",
-		help="Unified ABM backends; reference defaults to selective training, with optional attention comparator, tf is an alias for tabicl",
+		help="Unified ABM backends; reference defaults to selective_attention on CUDA, tf is an alias for tabicl",
 	)
 	p.add_argument(
 		"--abm-args",
@@ -1601,7 +1601,7 @@ def dispatch_main(argv=None):
 		py = os.getenv("ABM_PYTHON") or sys.executable
 		more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
 		mode_parser = argparse.ArgumentParser(add_help=False)
-		mode_parser.add_argument("--abm-design", default="selective")
+		mode_parser.add_argument("--abm-design")
 		mode, _ = mode_parser.parse_known_args(more)
 		if mode.abm_design == "selective_attention" and a.abm_backend != "reference":
 			raise ValueError("selective_attention requires --abm-backend reference; tabicl/both are incompatible")
@@ -1615,6 +1615,10 @@ def dispatch_main(argv=None):
 					args = [
 						"--backend",
 						kind,
+						"--device",
+						"cuda",
+						"--abm-design",
+						"selective_attention" if kind == "reference" else "selective",
 						"--Y",
 						Y,
 						"--biom",

@@ -425,7 +425,7 @@ def run(kind=None, argv=None):
 		raise ValueError("Invalid process-tree memory cap")
 	selected = "tabicl" if a.backend == "tf" else a.backend
 	mode_parser = argparse.ArgumentParser(add_help=False)
-	mode_parser.add_argument("--abm-design", default="selective")
+	mode_parser.add_argument("--abm-design")
 	mode, _ = mode_parser.parse_known_args(rest)
 	if mode.abm_design == "selective_attention" and selected != "reference":
 		raise ValueError("selective_attention requires --backend reference; tabicl/both are incompatible")
@@ -450,7 +450,7 @@ def run(kind=None, argv=None):
 				return code
 		return 0
 	kind = selected
-	defaults = ["--device", "auto", "--cores", "16"]
+	defaults = ["--device", "cuda", "--cores", "16"]
 	if kind == "reference":
 		defaults += ["--quality-teacher", "all"]
 	if any(x in rest for x in ["--help", "-h"]):
@@ -663,7 +663,8 @@ def reference_parser():
 	p.add_argument(
 		"--experiments", default="transformer,mlp,direct,no_pretrain,uniform,metric"
 	)
-	p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+	p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="cuda",
+		help="Neural execution device; default CUDA is required, CPU must be selected explicitly")
 	p.add_argument("--check-device", action="store_true")
 	p.add_argument("--tokens", type=int, default=48)
 	p.add_argument("--width", type=int, default=64)
@@ -704,6 +705,7 @@ def reference_parser():
 	)
 	s6_options(p)
 	s7_options(p)
+	p.set_defaults(abm_design="selective_attention")
 	return p
 
 
@@ -909,23 +911,7 @@ def reference_main():
 	# Imports occur after thread limits have been set.
 
 	if a.check_device:
-		import torch, json
-
-		print(
-			json.dumps(
-				{
-					"torch": torch.__version__,
-					"cuda_available": torch.cuda.is_available(),
-					"cuda_version": torch.version.cuda,
-					"gpu": (
-						torch.cuda.get_device_name(0)
-						if torch.cuda.is_available()
-						else None
-					),
-				},
-				indent=2,
-			)
-		)
+		check_execution_device(a.device)
 		return
 
 	from threadpoolctl import threadpool_limits
@@ -947,7 +933,7 @@ def reference_main():
 	if a.preflight:
 		preflight_inputs(a)
 
-		device_for(a.device)
+		check_execution_device(a.device)
 		log(
 			"DONE",
 			"preflight",
@@ -1041,6 +1027,7 @@ def tabicl_parser():
 	p = reference_parser()
 	p.description = __doc__
 	p.set_defaults(
+		abm_design="selective",
 		epochs=10,
 		patience=3,
 		learning_rate=1e-5,
@@ -1089,11 +1076,7 @@ def tabicl_main():
 	from threadpoolctl import threadpool_limits
 
 	if a.check_device:
-		print(
-			json.dumps(
-				dict(torch=torch.__version__, cuda_available=torch.cuda.is_available())
-			)
-		)
+		check_execution_device(a.device)
 		return
 	if importlib.metadata.version("tabicl") != "2.2.0":
 		raise RuntimeError("This adapter requires tabicl==2.2.0")
@@ -1112,6 +1095,7 @@ def tabicl_main():
 	info = verify_model(a.model_path)
 	preflight_inputs(a)
 	if a.preflight:
+		check_execution_device(a.device)
 		print("TF dependencies/weights/input paths checked; no model fitted")
 		return
 	out.mkdir(parents=True, exist_ok=True)
@@ -1912,9 +1896,28 @@ def device_for(request):
 		return "cuda" if torch.cuda.is_available() else "cpu"
 	if request == "cuda" and not torch.cuda.is_available():
 		raise RuntimeError(
-			"CUDA requested but unavailable. Run --check-device or use --device cpu."
+			f"CUDA requested but unavailable in {sys.executable}; refusing CPU fallback. "
+			"Check ABM_PYTHON and --check-device; use --device cpu only for an explicit CPU run."
 		)
 	return request
+
+
+def check_execution_device(request):
+	"""Exercise the selected worker's CUDA kernels before loading cohort data."""
+	device = device_for(request)
+	if device == "cuda":
+		try:
+			probe = torch.ones((16, 16), device=device, requires_grad=True)
+			(probe @ probe).square().mean().backward()
+			torch.cuda.synchronize()
+		except Exception as exc:
+			raise RuntimeError(f"CUDA forward/backward failed in {sys.executable}; refusing CPU fallback: {exc}") from exc
+	info = dict(python=sys.executable, device=device, torch=torch.__version__,
+		cuda_version=torch.version.cuda,
+		gpu=torch.cuda.get_device_name(0) if device == "cuda" else None,
+		forward_backward="passed" if device == "cuda" else "explicit CPU execution")
+	log("DONE", "device_check", json.dumps(info))
+	return device
 
 
 def token_partition(x, features, count, seed, module_file=""):
@@ -8336,7 +8339,8 @@ class S7AttentionLearner:
 		self.network.load_state_dict(best[1]);self.selected_epoch,self.temperature=best[2:]
 		# Refresh only from the selected checkpoint, never from the last rejected epoch.
 		if self.mode=='retrieval':self.refresh_memory(train,b,y,w,multiplier,folds)
-		self.network.cpu().eval();self.device='cpu'
+		# Offload idle weights, but keep subsequent neural predictions on the requested device.
+		self.network.cpu().eval()
 		changed=sum(not torch.equal(initial[k],v.detach().cpu()) for k,v in self.network.state_dict().items())
 		self.fit_status=dict(architecture='S7RowEncoder_ContextStack_'+self.mode,
 			trainable_parameters=sum(p.numel() for p in self.network.parameters() if p.requires_grad),
@@ -8377,6 +8381,10 @@ class S7AttentionLearner:
 		state['state_dict']={k:v.detach().cpu().clone() for k,v in self.network.state_dict().items()}
 		state['device']='cpu'
 		return state
+
+	def __getstate__(self):
+		# Portable artifacts must load without CUDA even when live inference uses it.
+		return {**vars(self), 'network': copy.deepcopy(self.network).cpu(), 'device': 'cpu'}
 
 	@classmethod
 	def restore_state(cls,state,device='cpu'):
@@ -8520,6 +8528,7 @@ def s7_state_hash(value):
 	"""Content identity independent of Torch storage addresses and query device."""
 	if isinstance(value,torch.Tensor):return joblib.hash(value.detach().cpu().numpy())
 	if isinstance(value,nn.Module):return s7_state_hash(value.state_dict())
+	if isinstance(value,S7AttentionLearner):return s7_state_hash({k:v for k,v in vars(value).items() if k!='device'})
 	if type(value).__module__ == 'c1_abm' and hasattr(value,'__dict__'):return s7_state_hash(vars(value))
 	if isinstance(value,dict):return digest({str(k):s7_state_hash(v) for k,v in sorted(value.items(),key=lambda p:str(p[0]))})
 	if isinstance(value,(list,tuple)):return digest([s7_state_hash(v) for v in value])
@@ -8927,8 +8936,9 @@ def s7_train_from_host(a,out):
 def s7_main(a):
 	from threadpoolctl import threadpool_limits
 	a=s7_validate(a);a.device=device_for(a.device);torch.set_num_threads(a.cores)
-	if a.check_device:print(json.dumps(dict(device=a.device,CUDA=torch.cuda.is_available())));return
+	if a.check_device:check_execution_device(a.device);return
 	preflight_inputs(a)
+	a.device=check_execution_device(a.device)
 	if a.preflight:print('S7 dependencies, configuration and requested device checked; no training performed');return
 	out=output_directory(a)
 	if a.dry_run:print(json.dumps(dict(output=str(out),config=vars(a)),indent=2));return

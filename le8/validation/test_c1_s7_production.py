@@ -313,7 +313,9 @@ def test_T44_T46_mode_paths_and_signature():
 	a=config();b=config('--seed','7');c=config('--horizon','6')
 	assert len({m.runtime_manifest(v)['signature'] for v in (a,b,c)})==3
 	assert m.output_directory(a).name=='abm_selective_attention'
-	old=m.configure(m.reference_parser().parse_args([]))
+	default=m.configure(m.reference_parser().parse_args([]))
+	assert default.abm_design=='selective_attention' and default.device=='cuda'
+	old=m.configure(m.reference_parser().parse_args(['--abm-design','selective','--device','cpu']))
 	assert old.abm_design=='selective' and m.output_directory(old).name=='abm_reference'
 
 
