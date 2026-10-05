@@ -1016,7 +1016,256 @@ def prepare_yap2018_mpb_cli():
 	prepare_yap2018_mpb_run(p.parse_args())
 
 
+# 🚩 Format-time rsID mapping (shared indexed reference and queried-position cache)
+import csv
+from itertools import groupby
+from decimal import Decimal, InvalidOperation
+
+
+def is_rsid(value):
+	return value.startswith("rs") and value[2:].isdigit()
+
+
+def rsid_open(path):
+	return gzip.open(path, "rt") if str(path).endswith((".gz", ".bgz")) else open(path)
+
+
+def rsid_indexed_reference(source, directory):
+	"""Publish one BGZF/tabix copy; never alter the supplied dbSNP file."""
+	source = Path(source)
+	for suffix in (".tbi", ".csi"):
+		index = Path(str(source) + suffix)
+		if index.exists() and index.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+			subprocess.run(["tabix", "-l", str(source)], check=True, stdout=subprocess.DEVNULL)
+			return source
+	target = directory / "dbsnp.tsv.gz"
+	with (directory / "reference.lock").open("w") as lock:
+		fcntl.flock(lock, fcntl.LOCK_EX)
+		if target.exists() and Path(str(target) + ".tbi").exists():
+			return target
+		print(f"Prepare shared dbSNP BGZF/tabix reference (once): {target}", file=sys.stderr, flush=True)
+		temp = directory / f"reference.tmp.{os.getpid()}.gz"
+		try:
+			with temp.open("wb") as out:
+				if str(source).endswith((".gz", ".bgz")):
+					with subprocess.Popen(["gzip", "-cd", "--", str(source)], stdout=subprocess.PIPE) as unzip:
+						result = subprocess.run(["bgzip", "-@", "2", "-c"], stdin=unzip.stdout, stdout=out)
+						unzip.stdout.close()
+						if unzip.wait() or result.returncode:
+							raise RuntimeError("dbSNP decompression/compression failed")
+				else:
+					with source.open("rb") as inp:
+						subprocess.run(["bgzip", "-@", "2", "-c"], stdin=inp, stdout=out, check=True)
+			subprocess.run(["tabix", "-s", "1", "-b", "2", "-e", "2", str(temp)], check=True)
+			temp.replace(target)
+			Path(str(temp) + ".tbi").replace(Path(str(target) + ".tbi"))
+		finally:
+			temp.unlink(missing_ok=True)
+			Path(str(temp) + ".tbi").unlink(missing_ok=True)
+	return target
+
+
+def rsid_fill_cache(conn, reference, regions):
+	"""Cache exact requested positions, including absent ones, in one transaction."""
+	contigs = subprocess.check_output(["tabix", "-l", str(reference)], text=True).splitlines()
+	labels = {}
+	for name in contigs:
+		try:
+			ch = chromosome(name)
+		except ValueError:
+			continue
+		if ch in labels:
+			raise ValueError(f"Ambiguous dbSNP chromosome aliases: {labels[ch]}, {name}")
+		labels[ch] = name
+	query = "SELECT w.chr,w.pos FROM wanted w LEFT JOIN loci l USING(chr,pos) WHERE l.pos IS NULL ORDER BY w.chr,w.pos"
+	missing = 0
+	with open(regions, "w") as out:
+		for ch, pos in conn.execute(query):
+			missing += 1
+			if ch in labels:
+				out.write(f"{labels[ch]}\t{pos}\t{pos}\n")
+	if not missing:
+		return
+	print(f"Query dbSNP for {missing:,} new positions; subsequent traits reuse this cache", file=sys.stderr, flush=True)
+	with conn:
+		conn.execute("INSERT OR IGNORE INTO loci SELECT chr,pos,'[]' FROM wanted")
+		if not Path(regions).stat().st_size:
+			return
+		with subprocess.Popen(["tabix", "--cache", "64", "-R", str(regions), str(reference)],
+				stdout=subprocess.PIPE, text=True) as query_process:
+			try:
+				def entries():
+					for line in query_process.stdout:
+						fields = line.rstrip("\r\n").split("\t")
+						if len(fields) < 5:
+							raise ValueError("dbSNP must have CHR POS rsID REF ALT columns")
+						ch, pos, snp, ref, alt = fields[:5]
+						yield (chromosome(ch), int(pos)), (snp, ref.upper(), alt.upper())
+				for (ch, pos), group in groupby(entries(), key=lambda row: row[0]):
+					hits = set()
+					for _, (snp, ref, alts) in group:
+						if is_rsid(snp):
+							for alt in alts.split(","):
+								if ref != alt and set(ref + alt) <= set("ACGT"):
+									a, b = sorted((ref, alt))
+									hits.add((a, b, snp))
+					conn.execute("UPDATE loci SET hits=? WHERE chr=? AND pos=?", (json.dumps(sorted(hits)), ch, pos))
+				if query_process.wait():
+					raise RuntimeError("tabix dbSNP query failed")
+			except BaseException:
+				query_process.kill()
+				raise
+
+
+def format_rsids_main():
+	parser = argparse.ArgumentParser(description="Resolve non-rsID standardized GWAS rows using position and both alleles")
+	for name in ("input", "output", "audit", "unresolved", "dbsnp", "cache"):
+		parser.add_argument("--" + name, required=True)
+	parser.add_argument("--grch", choices=("37", "38"), required=True)
+	parser.add_argument("--unmatched", choices=("drop", "keep"), default="drop")
+	parser.add_argument("--hm3-file")
+	parser.add_argument("--p-hm3", type=float, default=0.001)
+	args = parser.parse_args()
+	if Path(args.input).resolve() == Path(args.output).resolve():
+		parser.error("--output must differ from --input")
+	# Collect disk-backed distinct positions without retaining a multi-million-row
+	# GWAS in RAM. Existing rsIDs need no mapping reference.
+	conn = sqlite3.connect(":memory:")
+	conn.execute("PRAGMA temp_store=FILE")
+	conn.execute("CREATE TEMP TABLE wanted(chr INTEGER,pos INTEGER,PRIMARY KEY(chr,pos)) WITHOUT ROWID")
+	with rsid_open(args.input) as source:
+		reader = csv.DictReader(source, delimiter="\t")
+		if not {"SNP", "CHR", "POS", "EA", "NEA", "P"} <= set(reader.fieldnames or []):
+			raise ValueError("rsID mapping requires standardized SNP/CHR/POS/EA/NEA/P columns")
+		batch = []
+		for row in reader:
+			if not is_rsid(row["SNP"]):
+				batch.append((chromosome(row["CHR"]), int(row["POS"])))
+			if len(batch) >= 10000:
+				conn.executemany("INSERT OR IGNORE INTO wanted VALUES (?,?)", batch)
+				batch.clear()
+		conn.executemany("INSERT OR IGNORE INTO wanted VALUES (?,?)", batch)
+	conn.commit()
+	lock = None
+	try:
+		if conn.execute("SELECT EXISTS(SELECT 1 FROM wanted)").fetchone()[0]:
+			directory = Path(args.cache) / ("v1.GRCh" + args.grch) / signature(args.dbsnp)
+			directory.mkdir(parents=True, exist_ok=True)
+			reference = rsid_indexed_reference(args.dbsnp, directory)
+			lock = (directory / "positions.lock").open("w")
+			fcntl.flock(lock, fcntl.LOCK_EX)
+			conn.execute("ATTACH DATABASE ? AS cache", (str(directory / "positions.sqlite3"),))
+			conn.execute("CREATE TABLE IF NOT EXISTS cache.loci(chr INTEGER,pos INTEGER,hits TEXT NOT NULL,PRIMARY KEY(chr,pos)) WITHOUT ROWID")
+			with tempfile.TemporaryDirectory(prefix="rsid-query-") as work:
+				rsid_fill_cache(conn, reference, Path(work) / "regions.tsv")
+			# Shared lock allows mapping readers to run together; writers wait until
+			# every reader finishes. A transaction avoids per-row filesystem probes.
+			fcntl.flock(lock, fcntl.LOCK_SH)
+			conn.execute("PRAGMA cache.mmap_size=2147483648")
+			conn.execute("BEGIN")
+		hm3 = None
+		if args.hm3_file:
+			with open(args.hm3_file) as source:
+				hm3 = {line.split()[0] for line in source if line.strip()}
+		counts = dict(input=0, existing_rsid=0, mapped=0, unmatched=0, ambiguous=0, filtered_non_hm3=0, output=0)
+		previous, matches = None, {}
+		with rsid_open(args.input) as source, open(args.output, "w") as out, gzip.open(args.unresolved, "wt") as unresolved:
+			reader = csv.DictReader(source, delimiter="\t")
+			writer = csv.DictWriter(out, fieldnames=reader.fieldnames, delimiter="\t", lineterminator="\n")
+			rejected = csv.DictWriter(unresolved, fieldnames=[*reader.fieldnames, "RSID_REASON"], delimiter="\t", lineterminator="\n")
+			writer.writeheader()
+			rejected.writeheader()
+			for row in reader:
+				counts["input"] += 1
+				if is_rsid(row["SNP"]):
+					counts["existing_rsid"] += 1
+				else:
+					key = (chromosome(row["CHR"]), int(row["POS"]))
+					if key != previous:
+						matches = {}
+						record = conn.execute("SELECT hits FROM cache.loci WHERE chr=? AND pos=?", key).fetchone()
+						if record is None:
+							raise RuntimeError(f"Incomplete rsID cache at {key}")
+						for a, b, snp in json.loads(record[0]):
+							matches.setdefault((a, b), set()).add(snp)
+						previous = key
+					alleles = tuple(sorted((row["EA"].upper(), row["NEA"].upper())))
+					candidates = matches.get(alleles, set())
+					if len(candidates) == 1:
+						row["SNP"] = next(iter(candidates))
+						counts["mapped"] += 1
+					else:
+						reason = "ambiguous" if candidates else "unmatched"
+						counts[reason] += 1
+						rejected.writerow(dict(row, RSID_REASON=reason))
+						if args.unmatched == "drop":
+							continue
+				if hm3 is not None and row["SNP"] not in hm3:
+					try:
+						keep = 0 <= float(row["P"]) < args.p_hm3
+					except ValueError:
+						keep = False
+					if not keep:
+						counts["filtered_non_hm3"] += 1
+						continue
+				writer.writerow(row)
+				counts["output"] += 1
+		with open(args.audit, "w") as out:
+			out.write("status\trows\n")
+			for key, value in counts.items():
+				out.write(f"{key}\t{value}\n")
+		print("Format rsIDs: " + json.dumps(counts), file=sys.stderr, flush=True)
+		if counts["input"] and not counts["output"]:
+			raise ValueError("No variants remain after rsID/HM3 matching; verify --grch and --dbsnp (see QC)")
+	finally:
+		conn.close()
+		if lock:
+			lock.close()
+
+
+def sample_info_main():
+	parser = argparse.ArgumentParser(description="Validate per-trait sample sizes before GWAS dispatch")
+	for name in ("input", "names", "output"):
+		parser.add_argument("--" + name, required=True)
+	parser.add_argument("--grch", choices=("auto", "37", "38"), default="auto")
+	args = parser.parse_args()
+	def positive(value):
+		try:
+			n = Decimal(value)
+		except (InvalidOperation, TypeError):
+			raise ValueError(f"Invalid sample size: {value!r}") from None
+		if not n.is_finite() or n <= 0 or n != n.to_integral_value():
+			raise ValueError(f"Expected positive integer sample size: {value!r}")
+		return int(n)
+	metadata = {}
+	with open(args.input, encoding="utf-8-sig") as source:
+		for raw in csv.DictReader(source, delimiter="\t"):
+			row = {k.lower(): (v or "").strip() for k, v in raw.items()}
+			trait = row.get("phenocode", row.get("gwas", ""))
+			if not trait or trait in metadata:
+				raise ValueError(f"Missing or duplicate trait in sample info: {trait!r}")
+			metadata[trait] = row
+	rows = []
+	for trait in Path(args.names).read_text().splitlines():
+		if trait not in metadata:
+			raise ValueError(f"No sample size metadata for {trait}")
+		row = metadata[trait]
+		value = row.get("num_samples") or row.get("n")
+		n = positive(value) if value else positive(row.get("num_cases")) + positive(row.get("num_controls"))
+		build = row.get("grch", "")
+		if build and build not in ("37", "38"):
+			raise ValueError(f"Invalid grch metadata for {trait}: {build!r}")
+		if build and args.grch != "auto" and build != args.grch:
+			raise ValueError(f"{trait}: metadata GRCh{build} conflicts with --grch {args.grch}; use --grch auto for mixed builds")
+		rows.append((trait, n, build))
+	with open(args.output, "w") as out:
+		for trait, n, build in rows:
+			out.write(f"{trait}\t{n}\t{build}\n")
+
+
 SUBCOMMANDS = {
+	"format-rsids": format_rsids_main,
+	"sample-info": sample_info_main,
 	"liftover": gwas_liftover_cli,
 	"h2": gwas_h2_cli,
 	"magma-ids": gwas_magma_ids_cli,

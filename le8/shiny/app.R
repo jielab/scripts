@@ -198,8 +198,8 @@ plot_effects <- function(d, title) {
 # Question-led Final dashboard. All controls filter frozen aggregate estimates.
 question_names <- c("overview", "prediction", "contrasts", "proxy", "members", "pillars",
 	"heterogeneity", "inflammation_definition", "design", "fit", "abm_metrics", "abm_coverage",
-	"abm_paired", "abm_support", "genetic", "temporal", "cohort", "mediation", "modules",
-	"nonlinear", "nonlinear_curves", "same_locus", "cell", "cell_status", "mr_scope", "dandelion", "sources")
+	"abm_paired", "abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision", "genetic", "temporal", "cohort", "mediation", "modules",
+	"nonlinear", "nonlinear_curves", "same_locus", "susie_pairs", "susie_diagnostics", "mr_signal_evidence", "cell", "cell_status", "cell_contrasts", "cell_evidence", "concept_coefficients", "concept_status", "concept_fold_panels", "mr_scope", "dandelion", "dandelion_lolo", "dandelion_native", "state_projection", "decomposition", "age_models", "sources")
 
 question_ui <- function(id) {
 	ns <- NS(id)
@@ -214,9 +214,9 @@ question_ui <- function(id) {
 				h4("研究人群"), DTOutput(ns("cohort")),
 				p("prot 与 met 的样本量可能不同；以下比较只在各自原生验证方案内进行。顶部 scope / adjustment 只过滤 biomarker 证据，不改变冻结的预测模型。")),
 			tabPanel("1 · LE8 supervision", value = "supervision",
-				p("NS：训练集中按疾病关联选择；YS：在LE8代理候选内按同一疾病规则选择；YSplus：加入非YS候选的扩展panel；YSbalanced：按代理强度均衡可用pillars。实际组成见 biom 清单，不强制填满缺乏支持的pillar。"),
+				p("NS：训练集多变量疾病模型选择；YS：只按重复验证的 LE8 代理强度选择；YSplus：总预算内按 80% YS 加 20% 疾病候选；YSbalanced：按代理强度均衡可用 pillars。YSconcept 用同一最终 assay panel 预测 LE8 概念，再进入可加的风险模型。实际组成见 biom 清单，不强制填满缺乏支持的pillar。"),
 				fluidRow(column(2, selectInput(ns("budget"), "相同 biom 数量", choices = c(5, 10, 50), selected = 10)),
-					column(3, selectInput(ns("family"), "Panel 方法", c("YS" = "YS", "YS + plus（YSP 扩展）" = "YSplus", "LE8 pillar 均衡" = "YSbalanced"))),
+					column(3, selectInput(ns("family"), "Panel 方法", c("YS" = "YS", "YS + plus（YSP 扩展）" = "YSplus", "LE8 pillar 均衡" = "YSbalanced", "LE8 概念模型" = "YSconcept", "LE8 概念替代" = "YSconceptReplacement", "LE8 概念＋补充指标" = "YSconceptPlus"))),
 					column(2, selectInput(ns("donors"), "Proxy discovery 人群", c("Yin + Yang" = "YinYang", "Yin" = "Yin"))),
 					column(2, selectInput(ns("landmark"), "Landmark（年）", c(0, 2, 5))),
 					column(3, selectInput(ns("stratum"), "验证人群", c("All", "Low baseline inflammation", "High baseline inflammation")))),
@@ -230,18 +230,23 @@ question_ui <- function(id) {
 					tabPanel("YinYang − Yin", plotOutput(ns("yin_plot"), height = 360), DTOutput(ns("yin"))),
 					tabPanel("炎症分层与异质性", DTOutput(ns("inflammation")), DTOutput(ns("heterogeneity")),
 						p("低/高基线炎症由训练数据冻结阈值定义。低炎症组不等于已确立的 non-inflammatory CAD；看组间 ΔAUC 的直接差异及其 FDR。")),
-					tabPanel("模型与研究设计", DTOutput(ns("design")), DTOutput(ns("fit"))))),
+					tabPanel("模型与研究设计", DTOutput(ns("design")), DTOutput(ns("fit"))),
+					tabPanel("LE8 概念风险模型", DTOutput(ns("concept_status")), DTOutput(ns("concept_coefficients")), DTOutput(ns("concept_fold_panels"))))),
 			tabPanel("2 · ABM 分层", value = "abm",
-				fluidRow(column(3, selectInput(ns("backend"), "独立运行方案", c("Reference / Transformer" = "reference", "TabICLv2" = "tabicl"))),
-					column(4, selectInput(ns("abm_model"), "主模型", "abm_transformer")),
+				fluidRow(column(3, selectInput(ns("backend"), "独立运行方案", c("Reference / Selective" = "reference", "TabICLv2" = "tabicl"))),
+					column(4, selectInput(ns("abm_model"), "主模型", "elasticnet_weighted")),
 					column(3, selectInput(ns("abm_metric"), "覆盖率曲线指标", c("IPCW AUC（越高越好）" = "AUC_IPCW", "IPCW Brier（越低越好）" = "Brier_IPCW", "相对 elastic net 的 AUC 差" = "delta_AUC_vs_elasticnet", "相对 elastic net 的 Brier 改善" = "Brier_gain_vs_elasticnet")))),
 				uiOutput(ns("abm_note")),
 				fluidRow(column(6, plotOutput(ns("abm_plot"), height = 380)), column(6, plotOutput(ns("coverage_plot"), height = 380))),
 				DTOutput(ns("abm_metrics")),
 				p("supported / rejected 由开发集冻结的规则分层，再对测试人群评价；它与外层验证互补。图中是固定时间窗的 AUC，不是 survival C-index。覆盖率曲线展示所有阈值，不自动选测试集上的最佳点。"),
 				h4("同一人群上的配对比较"), DTOutput(ns("abm_paired")),
-				h4("是否只是筛出了低风险人群？"), DTOutput(ns("abm_support")),
-				p("同时查看事件率、绝对误差及相对于同组 elastic net 的 Brier 改善。基线风险降低本身会降低 Brier，不能单独证明 twin 更可靠。")),
+				h4("是否只是筛出了低风险人群？"), DTOutput(ns("abm_support")), DTOutput(ns("abm_risk_gain")),
+				selectInput(ns("abm_selector"), "覆盖率曲线的冻结规则", c("预测增益"="gain", "仅支持度"="support_only", "绝对误差"="absolute_error", "临床低风险"="clinical_lowrisk", "随机对照"="random")),
+				tabsetPanel(tabPanel("筛选训练与匹配对照", DTOutput(ns("abm_training"))),
+					tabPanel("Gate 与独立审计", DTOutput(ns("abm_gate")), DTOutput(ns("abm_audit"))),
+					tabPanel("决策曲线数据", DTOutput(ns("abm_decision")))) ,
+				p("同时查看事件率、绝对误差及相对于同组 elastic net 的 Brier 改善。基线风险降低本身会降低 Brier。筛选后训练应与 target_tuned 和随机筛选对照比较，不能只比较入选者与全人群。")),
 			tabPanel("3 · 遗传 / 实测 / 时间", value = "genetic",
 				fluidRow(column(4, selectInput(ns("anchor"), "预设案例（点击同步 biomarker 明细）", choices = character())),
 					column(5, selectInput(ns("genetic_screen"), "证据筛选", c("全部同人群比较" = "all", "实测 P≥0.05，PGS FDR<0.05" = "discordant", "G−R 差异 FDR<0.05" = "difference")))),
@@ -256,9 +261,13 @@ question_ui <- function(id) {
 					tabPanel("LE8 → omics → Y", DTOutput(ns("modules")), DTOutput(ns("mediation")),
 						p("当前 mediation 是基线线性×Cox系数乘积的关联分解；尚未识别因果中介比例。")),
 					tabPanel("MR + 同位点 coloc", DTOutput(ns("same_locus")), DTOutput(ns("mr_scope")), DTOutput(ns("dandelion"))),
+					tabPanel("SuSiE 多信号", DTOutput(ns("susie_pairs")), DTOutput(ns("susie_diagnostics")), DTOutput(ns("mr_signal_evidence"))),
+					tabPanel("DANDELION 诊断", DTOutput(ns("dandelion_native")), DTOutput(ns("dandelion_lolo"))),
+					tabPanel("状态与年龄", DTOutput(ns("state_projection")), DTOutput(ns("age_models"))),
+					tabPanel("C2 G/R 分解", DTOutput(ns("decomposition"))),
 					tabPanel("非线性 / breakpoints", DTOutput(ns("nonlinear")),
 						p("当前表检验 spline 非线性。nadir 是拟合曲线的最低点，不是断点；年龄阈值与出生队列变化须另行拟合、给出阈值区间并处理年龄–时期–队列不可识别性。")),
-					tabPanel("Cellulation", DTOutput(ns("cell_status")), DTOutput(ns("cell")),
+					tabPanel("Cellulation", DTOutput(ns("cell_status")), DTOutput(ns("cell")), DTOutput(ns("cell_contrasts")), DTOutput(ns("cell_evidence")),
 						p("Cell-expression 富集使用完整 assay 背景；不等于蛋白释放来源或细胞衰老时钟。CIGMA 状态以完成的结果为准。")))),
 			tabPanel("下载 / 来源", value = "sources",
 				selectInput(ns("download_kind"), "当前疾病 / omics 的完整证据表", choices = question_names),
@@ -382,12 +391,15 @@ question_server <- function(id, catalogue, context, select_feature) {
 		output$heterogeneity <- renderDT(make_dt(filtered(filtered(data("heterogeneity"), "model", selected_model()), "landmark", as.numeric(input$landmark)), select = "none"))
 		output$inflammation <- renderDT(make_dt(data("inflammation_definition"), select = "none"))
 		output$design <- renderDT(make_dt(data("design"), select = "none"))
+		for (key in c("concept_status","concept_coefficients","concept_fold_panels","cell_contrasts","cell_evidence","abm_training","abm_gate","abm_risk_gain","abm_audit","abm_decision","susie_pairs","susie_diagnostics","mr_signal_evidence","dandelion_native","dandelion_lolo","state_projection","decomposition","age_models")) local({
+			k <- key; output[[k]] <- renderDT(make_dt(data(k),select="none"))
+		})
 		output$fit <- renderDT(make_dt(panel_filter(data("fit"), FALSE), select = "none"))
 
 		abm <- reactive(filtered(data("abm_metrics"), "backend", input$backend))
 		observeEvent(list(input$backend, context()$Y, context()$layer, catalogue()), {
 			m <- unique(abm()$model)
-			default <- if (input$backend == "reference") "abm_transformer" else "tabicl_finetuned"
+			default <- if (input$backend == "reference") "elasticnet_weighted" else "tabicl_finetuned"
 			updateSelectInput(session, "abm_model", choices = m, selected = if (default %in% m) default else head(m, 1))
 		}, ignoreNULL = FALSE)
 		pm <- reactive(filtered(abm(), "model", c(input$abm_model, "elasticnet", "clinical")))
@@ -405,7 +417,7 @@ question_server <- function(id, catalogue, context, select_feature) {
 				facet_wrap( ~ layer) + theme_bw(base_size = 12) + labs(x = "Frozen support strata", y = "IPCW AUC", title = "所有人 / supported / rejected") + theme(legend.position = "bottom")
 		})
 		output$coverage_plot <- renderPlot({
-			d <- filtered(filtered(data("abm_coverage"), "backend", input$backend), "model", c(input$abm_model, "elasticnet", "clinical"))
+			d <- filtered(filtered(filtered(data("abm_coverage"), "backend", input$backend), "model", c(input$abm_model, "elasticnet", "clinical")), "selector", input$abm_selector)
 			k <- input$abm_metric
 			if (!nrow(d) || !k %in% names(d)) return(empty_plot("No frozen coverage curve for this backend"))
 			d$value <- d[[k]]
@@ -678,7 +690,7 @@ server <- function(input, output, session) {
 				d <- head(d, 30)
 				g <- rbind(data.frame(locus = d$locus, value = d$PP_H4, prior = "Reported default"), data.frame(
 					locus = d$locus,
-					value = d$PP_H4_robust_min, prior = "Minimum across reported priors"
+					value = d$PP_H4_robust_min, prior = "Minimum across all required priors"
 				))
 				g$locus <- factor(g$locus, levels = rev(unique(g$locus)))
 				ggplot(g, aes(value, locus, shape = prior)) +

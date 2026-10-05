@@ -3,17 +3,18 @@
 suppressPackageStartupMessages({
 	.c2_fdir <- Sys.getenv("LE8_FDIR", unset = file.path(Sys.getenv("DIRSCRIPT"), "f"))
 	source(file.path(.c2_fdir, "0.common.R"))
+	source(file.path(.c2_fdir, "c1.correlate.R"))
 
 	# c2 helpers
 	# c2.cause.R
 	# C2 individual-level decomposition of an observed omic trait into a simple
-	# COJO-weighted PGS component and a non-genetic residual.
+	# COJO-weighted inherited component and an unexplained residual.
 	#
 	# Auto-discovered inputs:
 	#   <UKB_PHE>/Rdata/prot.pgs.rds  (eid, FEATURE.pgs, ...)
 	#   <UKB_PHE>/Rdata/met.pgs.rds   (eid, FEATURE.pgs, ...)
 	# C2_GENETIC_SCORE_FILE is an optional explicit override. This is an
-	# exploratory in-sample decomposition, not external/cross-fitted prediction.
+	# cross-fitted association decomposition, not an identified causal partition.
 
 	find_c2_score_file <- function(layer) {
 		explicit <- Sys.getenv("C2_GENETIC_SCORE_FILE", unset = "")
@@ -26,15 +27,14 @@ suppressPackageStartupMessages({
 		x <- if (grepl("\\.rds$", file, ignore.case = TRUE)) readRDS(file) else
 			data.table::fread(file, showProgress = FALSE, check.names = FALSE)
 		x <- as_tibble(x)
-		if (!"eid" %in% names(x)) stop("PGS file must contain eid: ", file, call. = FALSE)
-		x
+		le8_validate_ids(x, paste("PGS", file))
 	}
 
 	map_c2_score_columns <- function(features, nms) {
 		one <- function(f) {
 			z <- c(
 				paste0(f, ".pgs"), paste0(f, "_pgs"), paste0(f, ".PGS"),
-				paste0(f, "_PGS"), paste0(f, "_GRS"), paste0("GRS_", f), f
+				paste0(f, "_PGS"), paste0(f, "_GRS"), paste0("GRS_", f)
 			)
 			hit <- z[z %in% nms] ; if (length(hit)) hit[[1]] else NA_character_
 		}
@@ -88,7 +88,7 @@ suppressPackageStartupMessages({
 	}
 
 	component_association <- function(dd, x, covars, tvar, evar, prevalent = FALSE) {
-		covars <- intersect(covars, names(dd))
+		if (length(setdiff(covars,names(dd)))) stop("Required component covariates missing")
 		if (prevalent) {
 			need <- unique(c(".prevalent", x, covars)) ; z <- dd[, need, drop = FALSE]
 			z <- z[complete.cases(z), , drop = FALSE] ; events <- sum(z$.prevalent == 1)
@@ -121,31 +121,26 @@ suppressPackageStartupMessages({
 	}
 
 	joint_component_association <- function(dd, covars, tvar, evar, prevalent = FALSE) {
-		covars <- intersect(covars, names(dd)) ; xs <- c(".genetic_z", ".residual_z")
-		if (prevalent) {
-			need <- unique(c(".prevalent", xs, covars)) ; z <- dd[, need, drop = FALSE]
-			z <- z[complete.cases(z), , drop = FALSE]
-			fit <- if (nrow(z) >= 500 && sum(z$.prevalent == 1) >= 20)
-				tryCatch(glm(reformulate(c(xs, covars), ".prevalent"), z, family = binomial()), error = function(e) NULL) else NULL
-		} else {
-			need <- unique(c(tvar, evar, xs, covars)) ; z <- dd[, need, drop = FALSE]
-			z <- z[complete.cases(z), , drop = FALSE]
-			z <- z[is.finite(z[[tvar]]) & z[[tvar]] > 0 & z[[evar]] %in% c(0, 1), , drop = FALSE]
-			ff <- as.formula(paste0(
-				"Surv(", bt(tvar), ",", bt(evar), ") ~ ",
-				paste(bt(c(xs, covars)), collapse = " + ")
-			))
-			fit <- if (nrow(z) >= 500 && sum(z[[evar]] == 1) >= 20)
-				tryCatch(coxph(ff, z, ties = "efron"), error = function(e) NULL) else NULL
-		}
-		if (is.null(fit)) return(tibble(component = xs, beta = NA_real_, se = NA_real_, p = NA_real_))
-		sm <- coef(summary(fit))
-		tibble(
-			component = xs,
-			beta = vapply(xs, function(x) if (x %in% rownames(sm)) sm[x, if (prevalent) "Estimate" else "coef"] else NA_real_, numeric(1)),
-			se = vapply(xs, function(x) if (x %in% rownames(sm)) sm[x, if (prevalent) "Std. Error" else "se(coef)"] else NA_real_, numeric(1)),
-			p = vapply(xs, function(x) if (x %in% rownames(sm)) sm[x, "Pr(>|z|)"] else NA_real_, numeric(1))
-		)
+		xs <- c(".genetic_z", ".residual_z")
+		need <- c(xs,covars,if (prevalent) ".prevalent" else c(tvar,evar))
+		if (length(setdiff(need,names(dd)))) stop("Missing joint-model columns: ",paste(setdiff(need,names(dd)),collapse=","))
+		z <- dd[complete.cases(dd[,need,drop=FALSE]),,drop=FALSE]
+		if (!prevalent) z <- z[is.finite(z[[tvar]]) & z[[tvar]]>0 & z[[evar]] %in% 0:1,,drop=FALSE]
+		events <- sum(z[[if (prevalent) ".prevalent" else evar]]==1)
+		empty <- tibble(component=xs,beta=NA_real_,se=NA_real_,p=NA_real_,N=nrow(z),events,
+			beta_difference=NA_real_,difference_se=NA_real_,difference_p=NA_real_,difference_lo=NA_real_,difference_hi=NA_real_,cov_GR=NA_real_)
+		if (nrow(z)<200 || events<20) return(empty)
+		cv <- covars[vapply(z[covars],function(x) length(unique(x))>1L,logical(1))]
+		form <- as.formula(paste(if (prevalent) ".prevalent" else paste0("Surv(",bt(tvar),",",bt(evar),")"),"~",paste(bt(c(xs,cv)),collapse="+")))
+		fit <- tryCatch(if (prevalent) glm(form,z,family=binomial()) else if (".group" %in% names(z) && anyDuplicated(z$.group)) coxph(form,z,ties="efron",cluster=z$.group,robust=TRUE) else coxph(form,z,ties="efron"),error=function(e) NULL)
+		if (is.null(fit) || (prevalent && !isTRUE(fit$converged))) return(empty)
+		V0 <- if (prevalent && ".group" %in% names(z) && anyDuplicated(z$.group)) sandwich::vcovCL(fit,cluster=z$.group) else vcov(fit)
+		V <- V0[xs,xs,drop=FALSE]; b <- coef(fit)[xs]; se <- sqrt(diag(V)); delta <- unname(b[1]-b[2])
+		dse <- sqrt(V[1,1]+V[2,2]-2*V[1,2])
+		ans <- tibble(component=xs,beta=unname(b),se=unname(se),p=2*pnorm(abs(b/se),lower.tail=FALSE),N=nrow(z),events,
+			beta_difference=delta,difference_se=dse,difference_p=2*pnorm(abs(delta/dse),lower.tail=FALSE),
+			difference_lo=delta-1.96*dse,difference_hi=delta+1.96*dse,cov_GR=V[1,2])
+		attr(ans,"vcov") <- V; ans
 	}
 
 
@@ -621,14 +616,14 @@ le8_result_update <- function(base, updates) {
 	base
 }
 LE8_JOB <- "c2_cause"
-C2_CODE_VERSION <- "2026-09-05.5c-audit-v1"
+C2_CODE_VERSION <- "2026-10-05.full-family-v2"
 C2_FEATURE_SCOPE <- Sys.getenv("C2_FEATURE_SCOPE", unset = "all_qtl")
 if (!C2_FEATURE_SCOPE %in% c("all_qtl", "observational_top")) stop("C2_FEATURE_SCOPE must be all_qtl or observational_top")
 MAX_FEATURES <- as.integer(Sys.getenv("C2_MAX_FEATURES", unset = if (C2_FEATURE_SCOPE == "all_qtl") "0" else "500"))
 if (!is.finite(MAX_FEATURES) || MAX_FEATURES < 0) stop("C2_MAX_FEATURES must be nonnegative; 0 means all mapped QTL traits")
 C2_STAGE_VERSION <- paste0("2026-10-02.ungated-", C2_FEATURE_SCOPE, "-", MAX_FEATURES)
 TOP_FOREST <- as.integer(Sys.getenv("C2_TOP_FOREST", unset = "32"))
-N_DEFAULT <- as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000"))
+N_DEFAULT <- suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA")))
 normalize_c2_mode <- function(x, name) {
 	x <- str_to_lower(str_trim(as.character(x)[1])) ; x <- case_when(
 		x == "top" ~ "Top", x %in% c("all", "true", "1", "yes", "y") ~ "All",
@@ -650,7 +645,7 @@ DANDELION_FDR <- as.numeric(Sys.getenv("C2_DANDELION_FDR", unset = "0.10"))
 DANDELION_CIS_BP <- as.numeric(Sys.getenv("C2_DANDELION_CIS_BP", unset = "5000000"))
 DANDELION_GWS <- as.numeric(Sys.getenv("C2_DANDELION_GWS", unset = "5e-8"))
 DANDELION_LEAD_BP <- as.numeric(Sys.getenv("C2_DANDELION_LEAD_BP", unset = "5000000"))
-DANDELION_MAX_SNPS <- as.integer(Sys.getenv("C2_DANDELION_MAX_SNPS", unset = "100"))
+DANDELION_MAX_SNPS <- as.integer(Sys.getenv("C2_DANDELION_MAX_SNPS", unset = "0"))
 DANDELION_MAX_GENE2 <- as.integer(Sys.getenv("C2_DANDELION_MAX_GENE2", unset = "0")) # 0 = all available
 DANDELION_ALLOW_MAGMA <- truthy(Sys.getenv("C2_DANDELION_ALLOW_MAGMA", unset = "TRUE"))
 DANDELION_MAX_TARGET_FRACTION <- as.numeric(Sys.getenv("C2_DANDELION_MAX_TARGET_FRACTION", unset = "0.25"))
@@ -718,7 +713,7 @@ select_c2_top_candidates <- function(layer, assoc, mr, universe) {
 }
 
 le8_execute_mrlink2 <- function(layer, rawdir, jobs, ygfile, mode = RUN_MRlink2) {
-	linkdir <- le8_cache_dir("mrlink2", basename(dirname(rawdir)), str_to_lower(mode)) ; dir.create(linkdir, recursive = TRUE, showWarnings = FALSE)
+	linkdir <- le8_cache_dir("mrlink2", basename(dirname(rawdir)), str_to_lower(mode), substr(le8_stage_fingerprint(),1,16)) ; dir.create(linkdir, recursive = TRUE, showWarnings = FALSE)
 	complete_file <- file.path(linkdir, "mrlink2.complete")
 	if (mode == "None") {
 		message("C2/", layer, ": MR-link-2 not run (RUN_MRlink2=None)")
@@ -782,10 +777,21 @@ mrlink2_file_bounds <- function(file, preferred_chr = NA_character_) {
 build_mrlink2_jobs <- function(iv_list, annotation, layer, ygfile) {
 	primary <- if (layer == "protein") "cis" else "local"
 	fallback_bp <- as.numeric(Sys.getenv(if (layer == "protein") "C2_CIS_WINDOW_BP" else "C2_LOCAL_WINDOW_BP", unset = "1000000"))
+	base <- if(layer=="protein") dir.X else dir.met.gwas
+	for (feature in setdiff(annotation$feature,names(iv_list))) {
+		fs<-find_qtl_files(feature,base,layer)
+		if(!is.na(fs$full)) iv_list[[feature]]<-list(instruments=tibble(),files=fs)
+	}
 	jobs <- imap_dfr(iv_list, function(obj, feature) {
 		iv <- obj$instruments
-		if (!nrow(iv)) return(tibble())
-		lead_pool <- iv |> filter(analysis == primary, is.finite(POS), !is.na(CHR), is.finite(P))
+		lead_pool <- if(nrow(iv)) iv |> filter(analysis == primary, is.finite(POS), !is.na(CHR), is.finite(P)) else tibble()
+		if (!nrow(lead_pool)) {
+			a<-annotation[annotation$feature==feature,,drop=FALSE]
+			if(layer=="protein" && nrow(a) && is.finite(a$start[1]) && is.finite(a$end[1]) && !is.na(a$chr[1])) {
+				lead_pool<-read_sumstat_region(obj$files$full,a$chr[1],max(1,a$start[1]-fallback_bp),a$end[1]+fallback_bp)
+			} else if(!is.na(obj$files$cis) && file.exists(obj$files$cis)) lead_pool<-read_sumstat(obj$files$cis)
+			if(nrow(lead_pool)) lead_pool<-lead_pool |> filter(is.finite(P),is.finite(POS),!is.na(CHR))
+		}
 		# MR-link-2 is a cis/local method.  Do not relabel a trans/distal-only
 		# exposure as cis merely to force a job through the runner.
 		if (!nrow(lead_pool)) return(tibble())
@@ -922,7 +928,7 @@ plot_c2_fig1 <- function(mr, assoc, layer) {
 		geom_point(data = ev |> filter(!available), shape = 4, size = 2.2, color = "grey72") +
 		facet_grid(. ~ evidence, scales = "free_x") +
 		scale_color_manual(values = c(`TRUE` = "#D95F02", `FALSE` = "#4C78A8"), guide = "none") +
-		labs(title = "d. Effect estimates; × denotes no valid instrument result", x = "Effect per 1-SD higher omic trait", y = NULL) +
+		labs(title = "d. Effect estimates; × denotes no valid instrument result", x = "Effect per native exposure GWAS unit (scale in result table)", y = NULL) +
 		forest_theme(8)
 	best <- mr0 |>
 		group_by(exposure) |>
@@ -1015,12 +1021,25 @@ plot_c2_fig4 <- function(mr, layer) {
 	(pa | pb) / pc + plot_layout(heights = c(1, .72))
 }
 
+c2_mrlink_family <- function(d, planned = tibble()) {
+	if (!nrow(d)) return(d)
+	pick <- function(pattern) grep(pattern,names(d),ignore.case=TRUE,value=TRUE)[1]
+	tc <- pick("^(trait|exposure)$"); pc <- pick("^(p\\(alpha\\)|p_alpha)$")
+	if (is.na(tc)||is.na(pc)) return(d)
+	d$feature_id <- as.character(d[[tc]]); d$p_raw <- as.numeric(d[[pc]])
+	n <- max(nrow(d),nrow(planned)); d$family_n <- n
+	d$FDR_all <- p.adjust(d$p_raw,"BH",n=n); d$Bonferroni_all <- p.adjust(d$p_raw,"bonferroni",n=n)
+	d$effect_measure <- "native MR-link-2 alpha (normalized regional scale)"
+	d$run_id <- C2_CODE_VERSION; d
+}
+
 read_mrlink2_results <- function(rawdir, mode = RUN_MRlink2) {
-	linkdir <- le8_cache_dir("mrlink2", basename(dirname(rawdir)), str_to_lower(mode))
+	linkdir <- le8_cache_dir("mrlink2", basename(dirname(rawdir)), str_to_lower(mode), substr(le8_stage_fingerprint(),1,16))
 	f <- file.path(linkdir, "mrlink2.all.tsv") ; s <- file.path(linkdir, "mrlink2.status.tsv")
 	ans <- list(results = tibble(), status = tibble(), mode = mode)
 	if (file.exists(f) && file.size(f) > 0) ans$results <- tryCatch(as_tibble(data.table::fread(f, showProgress = FALSE, check.names = FALSE)), error = function(e) tibble())
 	if (file.exists(s) && file.size(s) > 0) ans$status <- tryCatch(as_tibble(data.table::fread(s, showProgress = FALSE, check.names = FALSE)), error = function(e) tibble())
+	ans$results <- c2_mrlink_family(ans$results,ans$status)
 	ans
 }
 
@@ -1036,12 +1055,10 @@ plot_mrlink2_results <- function(x, outdir) {
 			trait_col <- pick_col_local(names(d), c("^TRAIT$", "^EXPOSURE$"))
 			z_all <- tibble(
 				trait = char_or_na(trait_col), region = char_or_na(rc), alpha = num_or_na(ac), se = num_or_na(sc), p = num_or_na(pc),
-				sigma_y = num_or_na(yc), p_sigma_y = num_or_na(ypc), n_overlap = num_or_na(nc)
+				sigma_y = num_or_na(yc), p_sigma_y = num_or_na(ypc), n_overlap = num_or_na(nc),
+				FDR_all = d$FDR_all, Bonferroni_all = d$Bonferroni_all, family_n = d$family_n
 			) |>
 				filter(!is.na(trait), trait != "", is.finite(alpha), is.finite(se), se > 0, is.finite(p)) |>
-				group_by(trait) |>
-				slice_min(p, n = 1, with_ties = FALSE) |>
-				ungroup() |>
 				arrange(p)
 			if (!nrow(z_all)) {
 				pa <- blank_plot("a. MR-link-2 regional causal effects", "Mapped columns contained no finite estimates")
@@ -1055,17 +1072,17 @@ plot_mrlink2_results <- function(x, outdir) {
 				if (!is.finite(robust_lim) || robust_lim <= 0) robust_lim <- max(abs(c(z$lo, z$hi)), na.rm = TRUE)
 				z <- z |> mutate(
 					lo_plot = pmax(lo, - robust_lim), hi_plot = pmin(hi, robust_lim), clipped = lo <  - robust_lim | hi > robust_lim,
-					trait = factor(trait, levels = rev(trait))
+					trait = paste(trait, region, sep=" | "), trait = factor(trait, levels = rev(unique(trait)))
 				)
 				pa <- ggplot(z, aes(alpha, trait)) +
 					geom_vline(xintercept = 0, color = "grey60") +
 					geom_errorbarh(aes(xmin = lo_plot, xmax = hi_plot), height = .08) +
-					geom_point(aes(color = p < .05 / max(1, nrow(z))), size = 2) +
+					geom_point(aes(color = Bonferroni_all < .05), size = 2) +
 					geom_point(data = z |> filter(clipped), aes(x = ifelse(alpha >= 0, robust_lim, - robust_lim), y = trait), shape = 17, size = 2.1, color = "grey35", inherit.aes = FALSE) +
 					scale_color_manual(values = c(`TRUE` = "#D95F02", `FALSE` = "#4C78A8"), guide = "none") +
 					coord_cartesian(xlim = c( - robust_lim, robust_lim)) +
 					labs(
-						title = "a. MR-link-2 regional causal effects", subtitle = "LD-aware estimate per trait; triangles mark CIs clipped at the robust display limit",
+						title = "a. MR-link-2 regional causal effects", subtitle = "All prespecified region/parameter records; triangles mark CIs clipped at the robust display limit",
 						x = expression(alpha), y = NULL
 					) +
 					forest_theme(8)
@@ -1073,7 +1090,7 @@ plot_mrlink2_results <- function(x, outdir) {
 				sy <- compressed_tail_scale(zb$score, 10, 4)
 				pb <- ggplot(zb, aes(alpha, score_plot)) +
 					geom_vline(xintercept = 0, color = "grey60") +
-					geom_hline(yintercept =  - log10(.05 / max(1, nrow(zb))), linetype = 2, color = "grey55") +
+					geom_hline(yintercept =  - log10(.05 / max(zb$family_n)), linetype = 2, color = "grey55") +
 					geom_point(color = "#6A3D9A", size = 2, alpha = .78) +
 					ggrepel::geom_text_repel(aes(label = label), size = 2.45, seed = 41, max.overlaps = 15, na.rm = TRUE) +
 					scale_y_continuous(breaks = sy$breaks, labels = sy$labels) +
@@ -1137,7 +1154,7 @@ find_magma_gene_file <- function(ygfile) {
 	explicit_candidates <- file.path(magma_dir, paste0(trait, ".genes.out"))
 	discovered <- if (!is.na(magma_dir) && dir.exists(magma_dir)) list.files(magma_dir, pattern = "(genes\\.out|gene\\.out)$", full.names = TRUE, ignore.case = TRUE) else character()
 	fs <- unique(c(explicit_candidates, discovered)) ; fs <- fs[file.exists(fs) & !grepl("(gsa|sets)\\.out$", fs, ignore.case = TRUE)]
-	if (length(fs)) return(normalizePath(fs[[which.max(file.info(fs)$mtime)]], winslash = "/", mustWork = FALSE))
+	if (file.exists(explicit_candidates)) return(normalizePath(explicit_candidates,winslash="/",mustWork=TRUE))
 	NA_character_
 }
 
@@ -1212,10 +1229,11 @@ distance_prune_leads <- function(z, window = DANDELION_LEAD_BP, max_n = DANDELIO
 }
 
 find_disease_lead_candidates <- function(ygfile) {
-	explicit <- Sys.getenv("C2_DANDELION_SNP_FILE", unset = "") ; cand <- character()
-	if (nzchar(explicit)) cand <- c(cand, explicit)
-	d <- dirname(ygfile) ; cand <- c(cand, list.files(d, pattern = "(jma\\.cojo$|\\.clumped$|lead.*\\.(txt|tsv|csv)$|indep.*\\.(txt|tsv|csv)$)", full.names = TRUE, ignore.case = TRUE))
-	unique(cand[file.exists(cand)])
+	explicit <- Sys.getenv("C2_DANDELION_SNP_FILE", "")
+	if (nzchar(explicit)) { if (!file.exists(explicit)) stop("Disease lead file missing"); return(explicit) }
+	stem <- sub("[.]gz$","",ygfile)
+	cand <- paste0(stem,c(".jma.cojo",".clumps",".clumped"))
+	cand[file.exists(cand)]
 }
 
 find_disease_leads <- function(ygfile) {
@@ -1235,7 +1253,7 @@ build_trans_p_matrix <- function(gene2, lead, base) {
 	snps <- lead$SNP
 	rows <- parallel_map(gene2, function(g) {
 		fs <- find_qtl_files(g, base, "protein") ; f <- fs$full
-		if (is.na(f) || !file.exists(f)) return(list(p = setNames(rep(NA_real_, length(snps)), snps), file = NA_character_, n = 0L, error = "full QTL missing"))
+		if (is.na(f) || !file.exists(f) || grepl("thin|sig.only|hm3",basename(f),ignore.case=TRUE)) return(list(p = setNames(rep(NA_real_, length(snps)), snps), file = NA_character_, n = 0L, error = "full QTL missing"))
 		err <- NA_character_ ; z <- tryCatch(read_sumstat_snps(f, snps, N_DEFAULT), error = function(e) {
 			err <<- conditionMessage(e) ; tibble()
 		})
@@ -1526,56 +1544,13 @@ plot_c2_directionality <- function(z, anchors = unique(trimws(strsplit(Sys.geten
 # MR sensitivity, calibrated PGS decomposition and DANDELION analysis
 
 le8_oof_decompose <- function(d, feature, gcol, covars, k = 5, seed = 2026) {
-	d <- as.data.frame(d)
-	d$.omic <- as.numeric(d[[feature]])
-	d$.grs <- as.numeric(d[[gcol]])
-	set.seed(seed)
-	ord <- order(as.character(d$eid))
-	fold <- integer(nrow(d))
-	fold[ord] <- sample(rep(seq_len(k), length.out = nrow(d)))
-	for (nm in c(".omic_z", ".genetic_z", ".residual_z", ".full_prediction", ".reduced_prediction")) d[[nm]] <- NA_real_
-	reports <- list()
-	for (f in seq_len(k)) {
-		train <- d[fold != f & !is.na(d$.prevalent) & d$.prevalent == 0 & complete.cases(d[, c(
-			".omic", ".grs",
-			covars
-		), drop = FALSE]), , drop = FALSE]
-		test <- which(fold == f & complete.cases(d[, c(".omic", ".grs", covars), drop = FALSE]))
-		if (nrow(train) < 200 || !length(test) || sd(train$.omic) <= 0 || sd(train$.grs) <= 0)
-			next
-		om <- mean(train$.omic)
-		os <- sd(train$.omic)
-		gm <- mean(train$.grs)
-		gs <- sd(train$.grs)
-		train$.y <- (train$.omic - om) / os
-		train$.g <- (train$.grs - gm) / gs
-		full <- tryCatch(lm(reformulate(c(".g", covars), ".y"), train), error = function(e) NULL)
-		reduced <- tryCatch(lm(reformulate(covars, ".y"), train), error = function(e) NULL)
-		if (is.null(full) || is.null(reduced) || !is.finite(coef(full)[".g"]))
-			next
-		te <- d[test, , drop = FALSE]
-		te$.g <- (te$.grs - gm) / gs
-		bg <- unname(coef(full)[".g"])
-		d$.omic_z[test] <- (te$.omic - om) / os
-		d$.genetic_z[test] <- bg * te$.g
-		d$.residual_z[test] <- d$.omic_z[test] - d$.genetic_z[test]
-		d$.full_prediction[test] <- tryCatch(as.numeric(predict(full, te)), error = function(e) rep(NA_real_, length(test)))
-		d$.reduced_prediction[test] <- tryCatch(as.numeric(predict(reduced, te)), error = function(e) rep(
-			NA_real_,
-			length(test)
-		))
-		reports[[length(reports) + 1L]] <- tibble(feature,
-			fold = f, N_train = nrow(train), N_test = length(test),
-			genetic_beta = bg, omic_mean = om, omic_sd = os, pgs_mean = gm, pgs_sd = gs, calibration_rule = "baseline disease-free training fold; future outcomes not consulted"
-		)
-	}
-	d$.calibration_fold <- factor(fold)
-	ii <- !is.na(d$.prevalent) & d$.prevalent == 0 & is.finite(d$.full_prediction) & is.finite(d$.reduced_prediction) &
-		is.finite(d$.omic_z)
-	mse0 <- sum((d$.omic_z[ii] - d$.reduced_prediction[ii]) ^ 2)
-	r2 <- if (mse0 > 0)
-		1 - sum((d$.omic_z[ii] - d$.full_prediction[ii]) ^ 2) / mse0 else NA_real_
-	list(data = d, folds = bind_rows(reports), partial_R2 = r2, N_calibration = sum(ii))
+	d <- le8_validate_ids(as.data.frame(d)); d$.group <- le8_participant_groups(d)
+	d$.m <- as.numeric(d[[feature]]); d$.g <- as.numeric(d[[gcol]]); d$.prev <- d$.prevalent
+	z <- pgs_calibrate(d,covars,k,seed)
+	d <- z$data; d$.omic_z <- d$.M; d$.genetic_z <- d$.G; d$.residual_z <- d$.R
+	d$.full_prediction <- d$.pred; d$.reduced_prediction <- d$.pred0; d$.calibration_fold <- factor(d$.fold)
+	folds <- as_tibble(z$folds); folds$feature <- feature; folds$genetic_beta <- folds$slope
+	list(data=d,folds=folds,partial_R2=z$audit$partial_R2,N_calibration=z$audit$N_calibration,audit=z$audit)
 }
 
 risk_set_component_scan <- function(dd, feature, covars, tvar, evar, cuts = c(0, 0.5, 1, 2, 5, 10, 16)) {
@@ -1591,6 +1566,56 @@ risk_set_component_scan <- function(dd, feature, covars, tvar, evar, cuts = c(0,
 	}))
 }
 
+# A frozen Yang/control state projection, evaluated only in independent incident Yin.
+# Baseline state is the training target; future disease labels never enter the transform.
+le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir) {
+  selected<-intersect(le8_csv_env('C2_STATE_FEATURES',paste(C2_FIXED_TOP,collapse=',')),features)
+  unavailable<-function(reason) { z<-tibble(status='unavailable',reason);write_raw_csv(z,'c2.state_projection.csv',rawdir);list(status=z) }
+  if(!truthy(Sys.getenv('C2_RUN_STATE_PROJECTION','TRUE'))) return(unavailable('explicitly disabled'))
+  if(length(selected)<2 || !requireNamespace('glmnet',quietly=TRUE)) return(unavailable('at least two prespecified measured anchors and glmnet required'))
+  d<-as.data.frame(d);role<-le8_group_folds(d$.group,5,SEED+713)
+  train<-d[role!=1 & d$.prevalent %in% 0:1,,drop=FALSE]
+  test<-d[role==1 & d$.prevalent %in% 0 & is.finite(d[[tvar]]) & d[[tvar]]>0 & d[[evar]] %in% 0:1,,drop=FALSE]
+  if(nrow(train)<500 || min(table(factor(train$.prevalent,levels=0:1)))<30 || nrow(test)<100) return(unavailable('insufficient baseline-state training or independent incident validation'))
+  xx<-le8_prepare_prediction_matrix(train,test,unique(c(covars,selected)))
+  pen<-as.numeric(colnames(xx$train) %in% selected)
+  if(!any(pen > 0)) return(unavailable('no usable molecular state predictors'))
+  fold<-le8_group_folds(train$.group,5,SEED+714)
+  fit<-glmnet::cv.glmnet(xx$train,train$.prevalent,family='binomial',alpha=0,penalty.factor=pen,foldid=fold,standardize=FALSE,type.measure='deviance')
+  b<-as.matrix(coef(fit,s='lambda.min'));beta<-b[colnames(xx$train),1]
+  state_train<-drop(xx$train[,pen==1,drop=FALSE] %*% beta[pen==1]);state<-drop(xx$test[,pen==1,drop=FALSE] %*% beta[pen==1])
+  mu<-mean(state_train);sd0<-sd(state_train)
+  if(!is.finite(sd0)||sd0<=1e-10) return(unavailable('fitted molecular state score has negligible variance'))
+  test$state_score<-(state-mu)/sd0
+  # Calibrate inherited anchor components on baseline disease-free DEVELOPMENT participants only.
+  genetic<-rep(0,nrow(test));ng<-0L;calibration<-list()
+  for(f in intersect(selected,colnames(xx$train)[pen==1])) {
+    sc<-score_map[[f]];if(is.null(sc) || !sc %in% names(train)) next
+    z<-train[train$.prevalent %in% 0 & complete.cases(train[,c(f,sc,covars),drop=FALSE]),,drop=FALSE]
+    if(nrow(z)<200 || sd(z[[sc]])<=0) next
+    a<-xx$audit[xx$audit$variable==f,,drop=FALSE];gm<-mean(z[[sc]]);gs<-sd(z[[sc]])
+    z$.x<-(z[[f]]-a$center)/a$scale;z$.p<-(z[[sc]]-gm)/gs
+    cv<-covars[vapply(z[covars],function(x)length(unique(x))>1,logical(1))]
+    cf<-lm(reformulate(c('.p',cv),'.x'),z);slope<-unname(coef(cf)['.p'])
+    if(!is.finite(slope)) next
+    genetic<-genetic+beta[f]*slope*(test[[sc]]-gm)/gs;ng<-ng+1L
+    calibration[[f]]<-tibble(feature=f,pgs=sc,N=nrow(z),slope,pgs_mean=gm,pgs_sd=gs)
+  }
+  test$inherited_state<-if(ng==sum(pen==1)) genetic/sd0 else NA_real_
+  scan<-map_dfr(c('state_score','inherited_state'),function(x) map_dfr(list(c(0,2),c(2,5),c(5,10)),function(w) {
+    le8_interval_cox(test,x,tvar,evar,covars,w[1],w[2],scale_x=FALSE) |> mutate(score=x)
+  }))
+  if(nrow(scan)) scan$FDR<-p.adjust(scan$p.value,'BH',n=6)
+  scan$interpretation<-'Frozen Yang/control molecular state projection; temporal association adds state information, not identified causal direction; inherited weights remain conditional on source-GWAS overlap'
+  scan$roster_hash<-le8_hash_object(sort(test$eid));scan$training_cohort<-'Baseline prevalent plus baseline disease-free development families; future outcomes unused'
+  write_raw_csv(scan,'c2.state_projection.csv',rawdir)
+  write_raw_csv(tibble(variable=rownames(b),coefficient=as.numeric(b),lambda=fit$lambda.min),'c2.state_coefficients.csv',rawdir)
+  write_raw_csv(bind_rows(calibration),'c2.state_PGS_calibration.csv',rawdir)
+  saveRDS(list(eid=test$eid,group=test$.group,state_score=test$state_score,inherited_state=test$inherited_state),file.path(rawdir,'state_validation_individuals.rds'))
+  saveRDS(list(fit=fit,preprocessing=xx$audit,anchors=selected,center=mu,scale=sd0,training_hash=le8_hash_object(sort(train$eid)),calibration=bind_rows(calibration)),file.path(rawdir,'state_model.rds'))
+  list(status=tibble(status='ok',N_train=nrow(train),prevalent_train=sum(train$.prevalent),N_test=nrow(test),events_test=sum(test[[evar]])),results=scan)
+}
+
 run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) {
 	sf <- find_c2_score_file(layer)
 	empty <- list(status = tibble(status = "PGS unavailable"), summary = tibble(), trajectory = tibble(), folds = tibble())
@@ -1599,14 +1624,15 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 	scores <- read_c2_scores(sf)
 	biom <- if (layer == "protein")
 		read_prot() else read_met()
-	features <- unique(c(C2_FIXED_TOP, as.character(top_candidates$feature)))
-	features <- head(intersect(features, names(biom)), le8_num_env("C2_DECOMP_MAX", 100))
+	features <- setdiff(names(biom), "eid")
+	cap <- le8_num_env("C2_DECOMP_MAX", 0)
+	if (cap > 0) features <- head(features, cap)
 	mp <- map_c2_score_columns(features, names(scores))
 	if (!length(mp))
 		return(empty)
 	covars <- unique(c(vars.basic, le8_csv_env("C2_LE4_COVARS", "diet.pts,pa.pts,smoke.pts,sleep.pts"), le8_csv_env("C2_TREATMENT_VARS")))
 	ph <- read_all(unique(c(
-		"eid", "ethnic.c", covars, "birth_date", "date_attend", "date_lost", "date_death",
+		"eid", "ethnic.c", Sys.getenv("LE8_GROUP_COLUMN", Sys.getenv("PGS_GROUP_COLUMN", "")), covars, "birth_date", "date_attend", "date_lost", "date_death",
 		paste0("fod_icd10_", Y)
 	))) |>
 		filter_analysis_cohort() |>
@@ -1614,21 +1640,24 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 	ph$.prevalent <- make_prevalent_status(ph, Y)
 	for (nm in c("ph", "scores", "biom")) {
 		z <- get(nm)
-		z$eid <- as.character(z$eid)
+		z <- le8_validate_ids(z, nm)
 		assign(nm, z)
 	}
 	d <- inner_join(ph, biom[, c("eid", names(mp)), drop = FALSE], by = "eid") |>
 		inner_join(scores[, unique(c("eid", unname(mp))), drop = FALSE], by = "eid")
 	rm(ph, scores, biom)
 	invisible(gc())
-	covars <- intersect(covars, names(d))
+	if (length(setdiff(covars,names(d)))) stop("C2 required covariates missing: ", paste(setdiff(covars,names(d)),collapse=","))
+	d$.group <- le8_participant_groups(d)
 	tvar <- paste0(Y, ".t2e")
 	evar <- paste0(Y, ".Yt2e")
+	state_projection <- le8_state_projection(d,names(mp),mp,covars,tvar,evar,le8_job_dir(outdir,"c2_cause"))
 	results <- lapply(names(mp), function(feature) {
-		z <- le8_oof_decompose(d[, unique(c("eid", feature, mp[[feature]], covars, tvar, evar, ".prevalent")),
+		z <- le8_oof_decompose(d[, unique(c("eid", ".group", feature, mp[[feature]], covars, tvar, evar, ".prevalent")),
 			drop = FALSE
 		], feature, mp[[feature]], covars, k = as.integer(le8_num_env("C2_DECOMP_FOLDS", 5)), seed = SEED)
 		dd <- z$data
+		dd <- dd[complete.cases(dd[,c(".omic_z",".genetic_z",".residual_z",covars),drop=FALSE]),,drop=FALSE]
 		cv <- c(covars, ".calibration_fold")
 		co <- component_association(dd, ".omic_z", cv, tvar, evar)
 		cg <- component_association(dd, ".genetic_z", cv, tvar, evar)
@@ -1644,7 +1673,11 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 				NA_real_ else x[[col]][i]
 		}
 		out <- tibble(feature,
-			score_column = mp[[feature]], status = if (any(is.finite(dd$.genetic_z)))
+			score_column = mp[[feature]], incident_beta_difference = ji$beta_difference[1],
+			incident_se_difference = ji$difference_se[1], incident_p_difference = ji$difference_p[1],
+			incident_difference_lo = ji$difference_lo[1], incident_difference_hi = ji$difference_hi[1],
+			incident_cov_GR = ji$cov_GR[1], prevalent_beta_difference = jp$beta_difference[1],
+			prevalent_p_difference = jp$difference_p[1], status = if (any(is.finite(dd$.genetic_z)))
 				"ok" else "calibration unavailable", N_calibration = z$N_calibration, N_incident = co[["N"]], incident_events = co[["events"]],
 			genetic_beta = mean(z$folds$genetic_beta), genetic_partial_R2 = z$partial_R2, pgs_partial_R2 = z$partial_R2,
 			incident_beta_observed = co[["beta"]], incident_se_observed = co[["se"]], incident_p_observed = co[["p"]],
@@ -1670,7 +1703,9 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 		)
 		trajectory <- if (feature %in% head(names(mp), le8_num_env("C2_DECOMP_TRAJECTORY_MAX", 20)))
 			risk_set_component_scan(dd, feature, cv, tvar, evar) else tibble()
-		list(summary = out, folds = z$folds, trajectory = trajectory)
+		boot <- if (feature %in% C2_FIXED_TOP) pgs_bootstrap(transform(z$data, .time = z$data[[tvar]], .event = z$data[[evar]]),
+			covars,feature,B=as.integer(le8_num_env("C2_DECOMP_BOOT",100)),seed=SEED) else data.frame()
+		list(summary = out, folds = z$folds, trajectory = trajectory, bootstrap = boot)
 	})
 	summary <- bind_rows(lapply(results, `[[`, "summary"))
 	folds <- bind_rows(lapply(results, `[[`, "folds"))
@@ -1683,12 +1718,13 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 		p
 	)]] <- p.adjust(summary[[p]], "BH")
 	rd <- le8_job_dir(outdir, "c2_cause")
+	write_raw_csv(bind_rows(lapply(results, `[[`, "bootstrap")), "c2.decomposition_bootstrap.csv", rd)
 	write_raw_csv(summary, "c2.individual_genetic_decomposition.csv", rd)
 	write_raw_csv(trajectory, "c2.genetic_component_leadtime.csv", rd)
 	write_raw_csv(folds, "c2.decomposition_calibration_folds.csv", rd)
 	list(
 		status = tibble(status = "ok", cross_fitted = TRUE, calibration = "baseline disease-free training folds only"),
-		summary = summary, trajectory = trajectory, folds = folds, heritability_status = h2$status
+		summary = summary, trajectory = trajectory, folds = folds, heritability_status = h2$status, state_projection=state_projection, bootstrap=bind_rows(lapply(results,`[[`,"bootstrap"))
 	)
 }
 
@@ -1756,7 +1792,7 @@ find_dandelion_gene_file <- function(ygfile) {
 		unfiltered <- identical(Sys.getenv("C2_DANDELION_GENE_SCOPE", unset = "unknown"), "unfiltered")
 		independent <- identical(Sys.getenv("C2_DANDELION_SAMPLE_OVERLAP", unset = "unknown"), "none")
 		primary <- type == "WES_disease" && matches && unfiltered && independent
-		return(list(path = f, evidence_type = type, primary_eligible = primary, analysis_class = if (primary) "WES-supported trans-pQTL adaptation" else "declared/unknown-source sensitivity"))
+		return(list(path = f, evidence_type = type, primary_eligible = primary, analysis_class = if (primary) "WES-supported trans-pQTL adaptation" else paste(type,"trans-pQTL sensitivity; not verified independent WES evidence")))
 	}
 	f <- if (DANDELION_ALLOW_MAGMA)
 		find_magma_gene_file(ygfile) else NA_character_
@@ -1791,6 +1827,34 @@ read_gene_level_p <- function(file, target_symbols) {
 		write_raw_csv(z, "c2.dandelion_gene_p_aggregation.csv", .le8_analysis_state$rawdir)
 	ans <- setNames(z$p, z$gene)
 	attr(ans, "n_gene_tests") <- length(unique(as.character(d[[gc]])[!is.na(d[[gc]])]))
+	ans
+}
+
+# Clone the installed native closures in a private environment to expose their
+# computed nuisance parameters; do not modify the package namespace or P values.
+le8_dandelion_native <- function(...) {
+	ns <- asNamespace("DANDELION"); env <- new.env(parent=ns)
+	worker <- get("run_dandelion_for_exposure",ns)
+	b <- as.list(body(worker)); last <- b[[length(b)]]
+	if (!is.call(last) || as.character(last[[1]])!="list" || !all(c("pi0a","pi0b","wg.std","gene.trans","p_dact") %in% all.names(body(worker))))
+		stop("Installed DANDELION diagnostic API changed; refusing an unverified wrapper")
+	last$diagnostics <- quote(data.frame(exposure=exposure.id,n_targets=length(gene.trans),pi0a=pi0a,pi0b=pi0b,
+		weight_a=wg.std[1],weight_b=wg.std[2],weight_joint=wg.std[3],native_q_method=.native_q_method,
+		p_min=min(p_dact),p_median=median(p_dact),p_max=max(p_dact),status="complete"))
+	b[[length(b)]] <- last; body(worker)<-as.call(b);environment(worker)<-env
+	env$run_dandelion_for_exposure <- worker
+	env$safe_qvalues <- function(p) {
+		p<-get("clamp_p",ns)(p); method<-"BH fallback: short or degenerate family"
+		ans<-if(length(p)<10 || length(unique(p))<4) p.adjust(p,"BH") else if(requireNamespace("qvalue",quietly=TRUE)) {
+			method<-"qvalue";tryCatch(qvalue::qvalue(p)$qvalues,error=function(e){method<<-paste("BH fallback:",conditionMessage(e));p.adjust(p,"BH")},warning=function(w){method<<-paste("BH fallback:",conditionMessage(w));p.adjust(p,"BH")})
+		} else {method<-"BH fallback: qvalue unavailable";p.adjust(p,"BH")}
+		assign(".native_q_method",method,envir=parent.frame());ans
+	}
+	fn<-DANDELION::med_gene; b<-as.list(body(fn))
+	b<-append(b,list(quote(out$diagnostics <- do.call(rbind,lapply(results,function(z) z$diagnostics)))),after=length(b)-1L)
+	body(fn)<-as.call(b);environment(fn)<-env
+	ans<-do.call(fn,list(...)); ans$package_version<-as.character(packageVersion("DANDELION"))
+	ans$native_source_hash<-digest::digest(list(body(DANDELION::med_gene),body(get("run_dandelion_for_exposure",ns)),body(get("safe_qvalues",ns))),algo="sha256")
 	ans
 }
 
@@ -1853,14 +1917,15 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 		), pair[1], 12, 7, outdir = outdir)
 		return(invisible(NULL))
 	}
+	tg$target_adjusted <- if (toupper(Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"))=="BY") tg$target_BY else tg$target_BH
 	z <- tg |>
-		arrange(target_BH) |>
+		arrange(target_adjusted) |>
 		slice_head(n = 24) |>
 		mutate(gene2 = factor(gene2, levels = rev(gene2)))
-	a <- ggplot(z, aes( - log10(pmax(target_BH, 1e-300)), gene2)) +
+	a <- ggplot(z, aes( - log10(pmax(target_adjusted, 1e-300)), gene2)) +
 		geom_point(aes(size = n_distal_loci, shape = selected)) +
 		labs(
-			title = "a. Target-level evidence (all targets corrected)", x = "-log10(target BH)", y = NULL, size = "Distinct upstream loci",
+			title = "a. Target-level evidence (all targets corrected)", x = paste0("-log10(target ",Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"),")"), y = NULL, size = "Distinct upstream loci",
 			shape = "Selected"
 		) +
 		theme_5c(9)
@@ -1871,12 +1936,12 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 			x = "-log10(gene disease P)", y = NULL
 		) +
 		theme_5c(9)
-	c <- ggplot(tg, aes( - log10(pmax(target_BH, 1e-300)), - log10(pmax(maxP_target_BH, 1e-300)))) +
+	c <- ggplot(tg, aes( - log10(pmax(target_adjusted, 1e-300)), - log10(pmax(maxP_target_BH, 1e-300)))) +
 		geom_point(aes(shape = selected)) +
 		geom_abline(slope = 1, intercept = 0, linetype = 2) +
 		labs(
 			title = "c. DACT and conservative MaxP sensitivity",
-			x = "-log10(DACT target BH)", y = "-log10(MaxP target BH)"
+			x = paste0("-log10(DACT target ",Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"),")"), y = "-log10(MaxP target BH)"
 		) +
 		theme_5c(9)
 	d <- ggplot(z, aes( - log10(pmax(leave_best_edge_BH, 1e-300)), gene2)) +
@@ -1910,6 +1975,7 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 	edges <- dan$pairs %||% tibble()
 	edges <- edges |>
 		filter(gene2 %in% as.character(z$gene2))
+	edges$edge_adjusted <- if (toupper(Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"))=="BY") edges$global_pair_BY else edges$global_pair_BH
 	if (nrow(edges)) {
 		genes <- unique(edges$gene2)
 		loci <- unique(edges$locus_id)
@@ -1917,7 +1983,7 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 		edges$yl <- match(edges$locus_id, loci) / max(1, length(loci))
 		a <- ggplot(edges) +
 			geom_segment(aes(x = 0, xend = 1, y = yl, yend = yg, alpha =  - log10(pmax(
-				global_pair_BH,
+				edge_adjusted,
 				1e-300
 			)))) +
 			geom_text(
@@ -1960,10 +2026,7 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 	p_gene <- read_gene_level_p(input$path, ref$gene_name)
 	ref <- ref |>
 		filter(gene_name %in% names(p_gene))
-	if (mode == "Top")
-		ref <- ref |>
-			filter(feature %in% top_candidates$feature)
-	if (DANDELION_MAX_GENE2 > 0)
+		if (DANDELION_MAX_GENE2 > 0)
 		ref <- head(ref, DANDELION_MAX_GENE2) # not ranked by gene-disease P
 	if (nrow(ref) < 5)
 		return(le8_result_update(empty, list(status = "fewer than five matched annotated targets", gene_level_file = input$path)))
@@ -2015,7 +2078,7 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 	med <- NULL
 	package_status <- "package unavailable; MaxP sensitivity only"
 	if (requireNamespace("DANDELION", quietly = TRUE)) {
-		med <- tryCatch(le8_safe_call(DANDELION::med_gene, list(
+		med <- tryCatch(do.call(le8_dandelion_native, list(
 			p.trans = pt, p.wes = pw, ref.table = as.data.frame(refm),
 			gene1.list = colnames(pt), gene1.type = "SNP", SNP.ref = as.data.frame(lead |>
 				transmute(SNP, SNPPos = POS, SNPChr = CHR)), target.fdr = DANDELION_FDR, dist = DANDELION_CIS_BP,
@@ -2026,6 +2089,13 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 		if (inherits(med, "condition"))
 			med <- NULL
 	}
+	diag <- tibble(exposure=colnames(pt),n_eligible_targets=colSums(is.finite(pt)&is.finite(pw)))
+	if (!is.null(med) && !is.null(med$diagnostics)) diag <- left_join(diag,as_tibble(med$diagnostics),by="exposure")
+	if (!"status" %in% names(diag)) diag$status<-NA_character_
+	diag$status[is.na(diag$status)] <- if(package_status=="ok") "invalid_null_fit_or_insufficient_targets" else "native_failed"
+	diag$package_version <- if(!is.null(med)) med$package_version else if(requireNamespace("DANDELION",quietly=TRUE)) as.character(packageVersion("DANDELION")) else "unavailable"
+	diag$source_hash <- if(!is.null(med)) med$native_source_hash else NA_character_
+	write_raw_csv(diag,"c2.dandelion_native_diagnostics.csv",rawdir)
 	dact <- matrix(NA_real_, nrow(pt), ncol(pt), dimnames = dimnames(pt))
 	native <- matrix(FALSE, nrow(pt), ncol(pt), dimnames = dimnames(pt))
 	if (!is.null(med)) {
@@ -2044,15 +2114,28 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 			select(rsid = SNP, locus_id, CHR, POS, outcome_P = P), by = "rsid")
 	fam <- le8_dandelion_family(evidence, rownames(pt), DANDELION_FDR)
 	ev <- fam$pairs
+	ev$computation_status <- ifelse(is.finite(ev$DANDELION_p),"complete",if (package_status=="ok") "invalid_null_fit" else "failed")
+	ev$evidence_status <- ifelse(ev$significant %in% TRUE,"global_edge_selected",ifelse(ev$package_selected %in% TRUE,"native_selected","not_detected"))
+	ev$provenance_scope <- paste0("trans_pQTL+", if (input$evidence_type=="WES_disease") "WES" else "GWAS_gene")
 	alltg <- fam$targets
+	alltg$evidence_status <- ifelse(alltg$selected,"target_selected","not_detected")
+	alltg$computation_status <- ifelse(is.finite(alltg$DANDELION_p),"complete","invalid_null_fit")
+	# Remove an entire upstream locus and recalculate both multiplicity levels.
+	# Other exposure-wise raw DACT fits are unchanged because the gene2 background is fixed.
+	lolo <- bind_rows(lapply(unique(ev$locus_id),function(loc) {
+		remaining <- ev[ev$locus_id!=loc,,drop=FALSE]
+		if (!nrow(remaining)) return(tibble(removed_locus=loc,status="no remaining loci"))
+		z <- le8_dandelion_family(remaining,rownames(pt),DANDELION_FDR)$targets
+		z$removed_locus <- loc; z$status <- "full-locus removal; global and target correction recomputed"; z
+	}))
+	write_raw_csv(lolo,"c2.dandelion_leave_locus_out.csv",rawdir)
 	# Truncating the target family affects the empirical DACT null mixture.  BY correction cannot repair
 	# selected inputs or dependent component P values.
 	uncapped <- DANDELION_MAX_GENE2 == 0 && DANDELION_MAX_SNPS == 0
 	qtl_unfiltered <- identical(Sys.getenv("C2_DANDELION_QTL_SCOPE", unset = "unknown"), "unfiltered")
-	primary <- input$primary_eligible && mode == "All" && uncapped && qtl_unfiltered && ld_verified && package_status ==
+	primary <- input$primary_eligible && uncapped && qtl_unfiltered && ld_verified && package_status ==
 		"ok"
-	class <- paste(input$analysis_class, if (mode == "Top")
-		"; selected Top family is exploratory" else "; all eligible target genes", if (!ld_verified)
+	class <- paste(input$analysis_class, "; all eligible target genes (Top controls display only)", if (!ld_verified)
 		"; disease-locus LD unverified" else "; disease-locus LD verified")
 	alltg <- alltg |>
 		left_join(ref |>
@@ -2121,6 +2204,8 @@ le8_dandelion_plot_bundle <- function(dan, outdir) {
 	)))
 	ans <- le8_result_update(empty, list(
 		status = if (package_status == "ok") "ok" else "DACT unavailable; see MaxP sensitivity",
+		computation_status = if (package_status == "ok") "complete" else "failed",
+		provenance_scope = paste0("trans_pQTL+", if (input$evidence_type == "WES_disease") "WES" else "GWAS_gene"),
 		mode = mode, result = med, pairs = pd, targets = tg, targets_all = alltg, gene_pairs = gp, lead_snps = lead,
 		snp_gene_map = mp, evidence_plot = ev, exposure_qc = qc, qtl_audit = qa, input_audit = audit, sig_gene2 = tg$gene2[tg$gene_level_bonferroni %in%
 			TRUE], non_sig_gene2 = tg$gene2[!tg$gene_level_bonferroni %in% TRUE], gene_level_file = input$path,
@@ -2160,15 +2245,16 @@ plot_dandelion_mr_integration <- function(dandelion, mr, assoc, outdir) {
 		left_join(m, by = "feature") |>
 		left_join(assoc |>
 			select(feature = term, observed_beta = beta, observed_p = p.value), by = "feature")
-	a <- ggplot(z, aes( - log10(pmax(target_BH, 1e-300)), - log10(pmax(MR_FDR, 1e-300)))) +
+	z$target_adjusted <- if (toupper(Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"))=="BY") z$target_BY else z$target_BH
+	a <- ggplot(z, aes( - log10(pmax(target_adjusted, 1e-300)), - log10(pmax(MR_FDR, 1e-300)))) +
 		geom_point(aes(shape = primary_eligible)) +
 		labs(
-			title = "a. Orthogonal evidence shown side by side", x = "-log10(DACT target BH)", y = "-log10(cis-MR BH)",
+			title = "a. Orthogonal evidence shown side by side", x = paste0("-log10(DACT target ",Sys.getenv("C2_DANDELION_MULTIPLICITY","BY"),")"), y = "-log10(cis-MR BH)",
 			shape = "WES/All/LD-eligible"
 		) +
 		theme_5c(9)
 	b <- z |>
-		arrange(target_BH) |>
+		arrange(target_adjusted) |>
 		slice_head(n = 20) |>
 		ggplot(aes(observed_beta, reorder(gene2, observed_beta))) +
 		geom_point() +
@@ -2251,22 +2337,14 @@ grade_c2_evidence <- function(mr, layer, mrlink2 = list(results = tibble())) {
 			evidence_grade == "B: heterogeneous" ~ "FDR support with heterogeneity; weighted-median direction agrees",
 			evidence_grade == "U: unavailable" ~ "Not tested / missing valid input", TRUE ~ "Provisional statistical evidence; requires same-region/signal corroboration"
 		))
-	rr <- as_tibble(mrlink2$results %||% tibble())
-	z$MRlink2_p <- NA_real_
-	z$MRlink2_FDR <- NA_real_
-	if (nrow(rr)) {
-		tc <- pick_col_local(names(rr), c("^TRAIT$", "^EXPOSURE$"))
-		pc <- pick_col_local(names(rr), c("^P\\(ALPHA\\)$", "^P_ALPHA$"))
-		if (!is.na(tc) && !is.na(pc)) {
-			v <- tibble(exposure = as.character(rr[[tc]]), p = as.numeric(rr[[pc]])) |>
-				filter(is.finite(p)) |>
-				group_by(exposure) |>
-				summarise(MRlink2_p = pmin(1, min(p) * n()), .groups = "drop") |>
-				mutate(MRlink2_FDR = p.adjust(MRlink2_p, "BH"))
-			i <- match(z$exposure, v$exposure)
-			z$MRlink2_p <- v$MRlink2_p[i]
-			z$MRlink2_FDR <- v$MRlink2_FDR[i]
-		}
+	rr <- c2_mrlink_family(as_tibble(mrlink2$results %||% tibble()),mrlink2$status %||% tibble())
+	z$MRlink2_p <- z$MRlink2_FDR <- NA_real_
+	if (nrow(rr) && "feature_id" %in% names(rr)) {
+		v <- rr |> group_by(feature_id) |> summarise(MRlink2_p=if (any(is.finite(p_raw))) min(1,min(p_raw,na.rm=TRUE)*n()) else NA_real_, .groups="drop")
+		family <- unique(c(as.character(z$exposure),v$feature_id))
+		v$MRlink2_FDR <- p.adjust(v$MRlink2_p,"BH",n=length(family))
+		i <- match(z$exposure,v$feature_id); z$MRlink2_p <- v$MRlink2_p[i]; z$MRlink2_FDR <- v$MRlink2_FDR[i]
+		z$MRlink2_test <- "any prespecified regional/parameter record: Bonferroni-min then full-feature BH"
 	}
 	arrange(z, pval)
 }
@@ -2384,14 +2462,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		"C2/", layer, ": PGS check: missing ", pgs_expected,
 		"; skip individual genetic decomposition and lead-time analysis"
 	)
-	if (cache_valid(cache)) {
-		old <- tryCatch(readRDS(cache), error = function(e) NULL)
-		if (is.list(old) && all(c("meta", "MR", "MR_reverse", "MR_best") %in% names(old)) &&
-			!grepl("^failed", old$DANDELION$status %||% "") && file.exists(file.path(rawdir, "c2.genetic_discovery_scope.csv")) && identical(as.character(data.table::fread(file.path(rawdir, "c2.genetic_discovery_scope.csv"))$scope[1]), C2_FEATURE_SCOPE)) {
-			cache_message(paste0("C2/", layer), cache) ; return(le8_restore_outputs(layer, "c2_cause"))
-		}
-		message("C2/", layer, ": cache incomplete; reusing stage caches and rebuilding final outputs")
-	}
+
 	base0 <- if (layer == "protein") dir.X else dir.met.gwas
 	c1 <- read_c1_cache_for_c2(outdir) ; assoc <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |> as_tibble() ; if (!"beta" %in% names(assoc)) assoc <- assoc |> mutate(beta = safe_log(estimate))
 	base <- base0 ; ann <- layer_annotation(layer, unique(assoc$term)) ; ranked <- assoc |>
@@ -2421,6 +2492,24 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		selected <- if (MAX_FEATURES == 0) mapped else head(mapped, MAX_FEATURES)
 		mr_candidates <- unique(c(fixed_mapped, selected))
 		audit_features <- unique(c(fixed_assayed, head(ranked, if (MAX_FEATURES == 0) length(ranked) else MAX_FEATURES), mr_candidates))
+	}
+	# Validate the exact available genetic inputs, not only their parent directory.
+	ygfile <- get_y_gwas_file(Y,TRUE)
+	qtl_paths <- unique(as.character(unlist(lapply(unique(assoc$term),function(f) find_qtl_files(f,base,layer)))))
+	qtl_paths <- qtl_paths[!is.na(qtl_paths) & nzchar(qtl_paths)]
+	qtl_qc <- file.path(dirname(dirname(qtl_paths)),"qc",paste0(sub("[.](cis[.])?gz$","",basename(qtl_paths)),".grch"))
+	refdir <- Sys.getenv("MRLINK2_REF_PFILE_DIR","")
+	refs <- if(nzchar(refdir)) list.files(refdir,pattern="[.](pgen|pvar|zst|psam)$",full.names=TRUE) else character()
+	.le8_stage_source_files <<- unique(c(qtl_paths,qtl_qc,ygfile,
+		list.files(dirname(dirname(ygfile)),pattern="[.](cojo|clumped|grch|out|csv|tsv)$",recursive=TRUE,full.names=TRUE),refs,
+		file.path(le8_job_dir(outdir,"c1_correlate"),"c1.res.rds")))
+	if (cache_valid(cache)) {
+		old <- tryCatch(readRDS(cache), error = function(e) NULL)
+		if (is.list(old) && identical(old$meta$source_signature,le8_stage_fingerprint()) && identical(old$meta$mode_signature,mode_signature) && identical(old$meta$pgs_signature,pgs_signature) && all(c("meta", "MR", "MR_reverse", "MR_best") %in% names(old)) &&
+			!grepl("^failed", old$DANDELION$status %||% "") && file.exists(file.path(rawdir, "c2.genetic_discovery_scope.csv")) && identical(as.character(data.table::fread(file.path(rawdir, "c2.genetic_discovery_scope.csv"))$scope[1]), C2_FEATURE_SCOPE)) {
+			cache_message(paste0("C2/", layer), cache) ; return(le8_restore_outputs(layer, "c2_cause"))
+		}
+		message("C2/", layer, ": cache incomplete; reusing stage caches and rebuilding final outputs")
 	}
 	write_raw_csv(tibble(
 		scope = C2_FEATURE_SCOPE, maximum = MAX_FEATURES, mapped_traits = length(mapped),
@@ -2565,7 +2654,9 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	write_raw_csv(directionality_integration, "c2.directionality_causal.csv", rawdir)
 	save_plot(plot_c2_directionality(directionality_integration), "c2.Fig10.directionality_causal.png", 16, 12, outdir = outdir)
 
-	jobs_all <- build_mrlink2_jobs(iv_list, ann, layer, ygfile)
+	jobs_all <- if (RUN_MRlink2=="None") tibble() else build_mrlink2_jobs(
+		if(RUN_MRlink2=="Top") iv_list[intersect(names(iv_list),top_candidates$feature)] else iv_list,
+		if(RUN_MRlink2=="Top") ann |> filter(feature %in% top_candidates$feature) else ann,layer,ygfile)
 	jobs_audit <- if (nrow(jobs_all)) jobs_all |>
 		left_join(top_candidates |> select(trait = feature, top_rank, top_reason), by = "trait") |>
 		mutate(

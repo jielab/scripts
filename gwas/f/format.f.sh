@@ -735,7 +735,8 @@ gwas_clean_run_core() {
 
 	if [[ "$run_small" == "TRUE" ]]; then
 		gwas_clean_need_file "$RAW"
-		if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$SMALL"; then
+		if [[ "$REPLACE" != "TRUE" ]] && gwas_clean_gzip_ok "$SMALL" &&
+			{ ! declare -F gwas_post_rsid_current >/dev/null || gwas_post_rsid_current "$SMALL"; }; then
 			gwas_clean_log "Small GWAS exists: $SMALL"
 		else
 			std_small "$RAW" "$SMALL" "${QC_PREFIX}.header.small.txt"
@@ -1098,8 +1099,7 @@ if [[ ${1:-} == --worker ]]; then
       chr=normchr(get(chr_col));pos=get(pos_col);if(chr!~/^[0-9]+$/||chr+0<1||chr+0>25||pos!~/^[0-9]+$/||pos+0<1){badcoord++;next}
       key=chr SUBSEP (pos+0);in_hm3_pos=(key in hm3pos)
       snp=get(snp_col);ea=get(ea_col);nea=get(nea_col);if(snp==""||snp=="NA"||snp=="."){
-        if(in_hm3_pos&&hm3pos[key]!="")snp=hm3pos[key]
-        else{snp=chr ":" pos;if(ea!="")snp=snp ":" ea;if(nea!="")snp=snp ":" nea}
+        snp=chr ":" pos;if(ea!="")snp=snp ":" ea;if(nea!="")snp=snp ":" nea
       }
       p=(p_col>0?get(p_col):"");lp=(logp_col>0?get(logp_col):"");if(p==""&&isnum(lp))p=10^(-lp);if(lp==""&&isnum(p)&&p>0)lp=-log(p)/log(10)
       keep=(snp in hm3)||in_hm3_pos||(isnum(p)&&p+0<pthr+0);if(!keep)next
@@ -1128,6 +1128,55 @@ if [[ ${1:-} == --worker ]]; then
 	}
 
 	# Adapter for the unchanged format.f.sh formatter API.
+	gwas_post_rsid_signature() {
+		local target="$1" f
+		{
+			printf '%s\n' "rsid-v1|$GRCH|$RSID_UNMATCHED|$HM3_MODE|$P_HM3|$DBSNP|$HM3|$FILL_N|${N_TOTAL:-}"
+			for f in "$target" "$RAW" "$PHEF" "$PERF_F" "${PERF_F%/*}/format.py" "$DBSNP" "$HM3" "${HM3_POS:-}"; do
+				[[ ! -s "$f" ]] || stat -Lc '%n|%s|%y' -- "$f"
+			done
+		} | sha256sum | cut -d ' ' -f 1
+	}
+
+	gwas_post_rsid_current() {
+		[[ "$RSID_MODE" != TRUE ]] && return 0
+		local marker="${QC_PREFIX}.rsid.done"
+		[[ -s "$marker" && "$(cat "$marker")" == "$(gwas_post_rsid_signature "$1")" ]]
+	}
+
+	gwas_post_resolve_ids() {
+		local target="$1" signature marker="${QC_PREFIX}.rsid.done"
+		local mapped="$GWAS_POST_TMP/$GWAS.rsids.tsv" compressed="$GWAS_POST_TMP/$GWAS.rsids.gz"
+		local -a filter_args=()
+		[[ "$RSID_MODE" == TRUE ]] || return 0
+		signature=$(gwas_post_rsid_signature "$target")
+		if [[ "$REPLACE" != TRUE && -s "$marker" && "$(cat "$marker")" == "$signature" ]]; then
+			gwas_post_log "rsID conversion is current: $target"
+			return 0
+		fi
+		[[ "$HM3_MODE" != TRUE ]] || filter_args=(--hm3-file "$HM3" --p-hm3 "$P_HM3")
+		gwas_post_log "Resolve SNP IDs using GRCh$GRCH coordinates and alleles; unmatched=$RSID_UNMATCHED"
+		python3 "${PERF_F%/*}/format.py" format-rsids --input "$target" --output "$mapped" \
+			--audit "${QC_PREFIX}.rsid.tsv" --unresolved "${QC_PREFIX}.rsid.unresolved.tsv.gz" \
+			--dbsnp "$DBSNP" --cache "$RSID_CACHE" --grch "$GRCH" --unmatched "$RSID_UNMATCHED" \
+			"${filter_args[@]}" || return 1
+		local count_kind=format
+		[[ "$HM3_MODE" != TRUE ]] || count_kind=hm3
+		awk -F '\t' -v gwas="$GWAS" '$1=="output"{print gwas "\t" $2}' "${QC_PREFIX}.rsid.tsv" > "${QC_PREFIX}.${count_kind}.nrow.tsv"
+		# Preserve an unchanged standardized file (and its downstream artifacts).
+		if awk -F '\t' '$1=="mapped"{mapped=$2}$1=="input"{n=$2}$1=="output"{out=$2}END{exit !(mapped>0||out<n)}' "${QC_PREFIX}.rsid.tsv"; then
+			gwas_clean_compress < "$mapped" > "$compressed"
+			bgzip -t "$compressed" || return 1
+			mv -f -- "$compressed" "$target"
+			rm -f -- "${target}.tbi" "${target}.csi" "${THIN_OUT}.done" \
+				"$CLUMP_DONE" "$COJO_DONE" "${MERGED}.lead.done" "$AWK_SNP" \
+				"$MAGMA_DIR/magma.done" "$MH_META"
+		fi
+		rm -f -- "$mapped"
+		gwas_post_rsid_signature "$target" > "${marker}.tmp.$$"
+		mv -f -- "${marker}.tmp.$$" "$marker"
+	}
+
 	std_small() {
 		if [[ "${HM3_MODE:-FALSE}" == TRUE ]]; then
 			std_hm3 "$1" "$2" "${QC_PREFIX}.header.hm3.txt"
@@ -1137,11 +1186,12 @@ if [[ ${1:-} == --worker ]]; then
 	}
 
 	gwas_post_fill_missing_fields() {
-		local target="$1" saved_fill_n="$FILL_N"
+		local target="$1" saved_fill_n="$FILL_N" before
+		before=$(stat -Lc '%s|%y' -- "$target")
 		if [[ "$GWAS_POST_N_FILLED_DURING_FORMAT" == TRUE ]]; then FILL_N=""; fi
 		gwas_post_fill_missing_fields_legacy "$target"
 		FILL_N="$saved_fill_n"
-		if [[ -n "$saved_fill_n" || "$FILL_EAF" == TRUE ]]; then
+		if [[ "$(stat -Lc '%s|%y' -- "$target")" != "$before" ]]; then
 			rm -f -- "${target}.tbi" "${target}.csi"
 		fi
 	}
@@ -1728,6 +1778,10 @@ else
 	wants_magma() { [[ ",$step," == *",magma,"* ]]; }
 
 	gwas_format_validate_options() {
+		rsid_mode=$(upper "$rsid_mode")
+		[[ "$rsid_mode" == TRUE || "$rsid_mode" == FALSE ]] || { echo 'ERROR: --rsid must be TRUE or FALSE' >&2; exit 2; }
+		[[ "$rsid_unmatched" == drop || "$rsid_unmatched" == keep ]] || { echo 'ERROR: --rsid-unmatched must be drop or keep' >&2; exit 2; }
+		[[ -z "$sample_info" || ( -z "$fill_n" && -z "$n_total" ) ]] || { echo 'ERROR: --sample-info cannot be combined with --fill-n or --n-total' >&2; exit 2; }
 		replace=$(upper "$replace")
 		fill_eaf=$(upper "$fill_eaf")
 		run_cmd=$(upper "$run_cmd")
@@ -2469,7 +2523,14 @@ PGS_STEP_BODY
 			for f in "$dir_raw"/*.gz "$dir_raw"/*.bgz "$dir_raw"/*.tsv "$dir_raw"/*.txt "$dir_raw"/*.sumstats "$dir_raw"/*.assoc; do
 				[[ -f "$f" && -s "$f" && "$f" != *.aria2 ]] && printf '%s\n' "$f"
 			done
-		) | sort -u -V
+		) | while IFS= read -r f; do
+			# CKB keeps decryption audit reports beside raw GWAS files. Exclude
+			# those reports in both layouts while retaining genuine TSV inputs.
+			case "${f##*/}" in
+				decryption_report_*.tsv|decryption_report_*.tsv.gz|decryption_report_*.tsv.bgz) continue ;;
+			esac
+			printf '%s\n' "$f"
+		done | sort -u -V
 	}
 
 	list_names_from_dir() {
@@ -2690,6 +2751,7 @@ PGS_STEP_BODY
 
 	write_gwas_cmd() {
 		local gwas="$1" raw trait_dir gwas_dir source_gwas final cmd awk_snp cis_out qc_prefix clump_dir cojo_dir merged_prefix clump_done cojo_done mh_png mh_meta mh_flag mh_sig mplot_flag_file magma_dir magma_prefix clump_kb
+		local gwas_fill_n="${sample_sizes[$1]:-$fill_n}"
 		local pgs_dir pgs_score_file pgs_output pgs_done pgs_meta gwas_pgs_pfile_dir
 		local gwas_grch gwas_grch_cache gwas_refGen_clump gwas_refGen_cojo gwas_refGen_id_dir gwas_refGen_keep gwas_gene_loc gwas_mh_plot_bed gwas_hm3_pos detection_input cached_grch rc
 		raw=""
@@ -2817,6 +2879,10 @@ THIN_CMD
 		fi
 
 		gwas_grch="$grch"
+		if [[ "$gwas_grch" == auto && -n "${sample_builds[$gwas]:-}" ]]; then
+			gwas_grch="${sample_builds[$gwas]}"
+			log "Use sample-info GRCh$gwas_grch: $gwas"
+		fi
 		# With no fixed build (omitted or --grch auto), resolve every GWAS independently
 		# from the 39 sentinel rsIDs.  Use RAW before format, SMALL before a standalone
 		# liftOver, and the standardized FINAL for downstream-only requests.
@@ -3024,7 +3090,11 @@ DELETE_RAW=FALSE
 DO_STEP=$(q "$step")
 REPLACE=$(q "$replace")
 FILL_EAF=$(q "$fill_eaf")
-FILL_N=$(q "$fill_n")
+FILL_N=$(q "$gwas_fill_n")
+RSID_MODE=$(q "$rsid_mode")
+RSID_UNMATCHED=$(q "$rsid_unmatched")
+RSID_CACHE=$(q "$rsid_cache")
+DBSNP=$(q "${dbsnp:-/mnt/f/annot/dbsnp/rsids-v154-hg${gwas_grch/37/19}.tsv.gz}")
 N_TOTAL=$(q "$n_total")
 H2_HELPER=$(q "${SCRIPT_PATH%/*}/f/format.py")
 LIFTOVER_HELPER=$(q "${SCRIPT_PATH%/*}/f/format.py")
@@ -3149,7 +3219,12 @@ gwas_post_fill_missing_fields(){
       {if(isnum(\$(c["N"])))kept++;else{\$(c["N"])=fill_n;filled++}print}
       END{print "STATUS\tN" > audit;print "existing\t" kept+0 >> audit;print "filled\t" filled+0 >> audit}
     ' | gzip -c > "\$tmp"
-    gzip -t "\$tmp"; mv -f "\$tmp" "\$target"
+    gzip -t "\$tmp"
+    if awk -F '\t' '\$1=="filled"&&\$2>0{found=1}END{exit !found}' "\${QC_PREFIX}.fill_n.tsv"; then
+      mv -f "\$tmp" "\$target"
+    else
+      rm -f "\$tmp"
+    fi
   fi
 
   if [[ "\$FILL_EAF" == TRUE ]]; then
@@ -3469,6 +3544,7 @@ if [[ "\$DO_STEP" == "all" ]]; then
   gwas_post_validate_format_columns "\$RAW"
   DO_STEP=small; gwas_clean_run_core
   gwas_post_fill_missing_fields "\$SMALL"
+  gwas_post_resolve_ids "\$SMALL"
   gwas_post_ensure_index "\$SMALL"
   printf '%s\n' "\$GRCH" > "\${SMALL}.grch"
   if [[ "\$DO_LIFTOVER" == TRUE ]]; then
@@ -3486,6 +3562,7 @@ else
     gwas_post_validate_format_columns "\$RAW"
     DO_STEP=small; gwas_clean_run_core
     gwas_post_fill_missing_fields "\$SMALL"
+    gwas_post_resolve_ids "\$SMALL"
     gwas_post_ensure_index "\$SMALL"
   printf '%s\n' "\$GRCH" > "\${SMALL}.grch"
   fi

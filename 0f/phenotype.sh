@@ -173,7 +173,7 @@ phe_header_names() {
 		'^chr$|^chrom$|^chromosome$|^chr_name$'
 		'^pos$|^pos_b37$|^bp$|^base_pair$|^base_pair_location$|^genpos$|^hm_pos$'
 		'^a1$|^ea$|^eff.allele$|^effect_allele$|^allele1$|^alt$'
-		'^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$|^aa$'
+		'^OMITTED$|^nea$|^non_effect_allele$|^other_allele$|^allele0$|^allele2$|^ref.allele$|^reference_allele$|^ref$|^aa$|^a2$'
 		'^eaf$|^a1freq$|^a1_freq$|^effect_allele_frequency|^ea_freq$|^pooled_alt_af$'
 		'^n$|^obs_ct$|^Neff$'
 		'^beta$|^effect_weight$|^effect_size$'

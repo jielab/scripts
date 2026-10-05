@@ -37,7 +37,7 @@ Modules (executed in pipeline order):
   final         Assemble publication figures, tables and result summary
 
 Examples:
-  # Full pipeline; omitting module selects all modules.
+  # Public default: C1-C5 with reference ABM; final/shiny are separate.
   ./le8.sh --Y cvd_cad,ra --biom prot,met
   # Selected modules for multiple diseases and both omic layers.
   ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met
@@ -553,7 +553,8 @@ awk -v x="$C2_DANDELION_MAX_TARGET_FRACTION" 'BEGIN{exit !(x ~ /^[0-9]*[.]?[0-9]
 	echo "ERROR: --dandelion-max-target-fraction must be a number in (0,1]; got '$C2_DANDELION_MAX_TARGET_FRACTION'." >&2
 	exit 2
 }
-for pair in "--c4-module-boot:$C4_MODULE_BOOT" "--final-topn-max:$FINAL_TOPN_MAX" "--final-topn-boot:$FINAL_TOPN_BOOT" "--final-lead-min-cases:$FINAL_LEAD_MIN_CASES" "--final-mechanism-n:$FINAL_MECHANISM_N" "--match-memory-mb:$MATCH_SNP_MEMORY_MB" "--match-sort-memory-mb:$MATCH_SNP_SORT_MEMORY_MB"; do
+[[ "$C4_MODULE_BOOT" =~ ^[0-9]+$ ]] || { echo "ERROR: --c4-module-boot must be nonnegative" >&2; exit 2; }
+for pair in "--final-topn-max:$FINAL_TOPN_MAX" "--final-topn-boot:$FINAL_TOPN_BOOT" "--final-lead-min-cases:$FINAL_LEAD_MIN_CASES" "--final-mechanism-n:$FINAL_MECHANISM_N" "--match-memory-mb:$MATCH_SNP_MEMORY_MB" "--match-sort-memory-mb:$MATCH_SNP_SORT_MEMORY_MB"; do
 	name=${pair%%:*}
 	value=${pair#*:}
 	[[ "$value" =~ ^[1-9][0-9]*$ ]] || {

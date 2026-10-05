@@ -216,69 +216,19 @@ if (.final_mode == "reference") {
 		}
 
 
-		discover_ys_training <- function(tr, biom_vars, le8_vars, basic_vars, block = 100, fdr = .05, specificity_cut = .35, max_per_component = 40, seed = 2026) {
-			biom_vars <- intersect(biom_vars, names(tr)) ; le8_vars <- intersect(le8_vars, names(tr)) ; basic_vars <- intersect(basic_vars, names(tr))
-			if (!length(biom_vars) || !length(le8_vars)) return(list())
-			d <- tr[complete.cases(tr[, unique(c(le8_vars, basic_vars)), drop = FALSE]), , drop = FALSE] ; if (nrow(d) < 1000) return(list())
-			set.seed(seed) ; split <- sample(rep(c("discovery", "replication"), length.out = nrow(d)))
-			scan_half <- function(dd) {
-				if (nrow(dd) < 400) return(tibble::tibble())
-				blocks <- split(biom_vars, ceiling(seq_along(biom_vars) / block)) ; rows <- list() ; k <- 0L
-				for (cmp in le8_vars) {
-					mm <- model.matrix(reformulate(unique(c(basic_vars, setdiff(le8_vars, cmp)))), dd) ; q <- qr(mm) ; yr <- qr.resid(q, as.numeric(scale(as.numeric(dd[[cmp]])))) ; sy <- sqrt(sum(yr ^ 2)) ; df <- max(3, nrow(dd) - ncol(mm) - 2)
-					for (bb in blocks) {
-						x <- as.matrix(dd[, bb, drop = FALSE]) ; storage.mode(x) <- "double"
-						for (j in seq_len(ncol(x))) {
-							m <- median(x[, j], na.rm = TRUE) ; if (!is.finite(m)) m <- 0 ; x[!is.finite(x[, j]), j] <- m ; sx <- sd(x[, j], na.rm = TRUE) ; x[, j] <- if (is.finite(sx) && sx > 0) as.numeric(scale(x[, j])) else 0
-						}
-						xr <- qr.resid(q, x) ; r <- as.numeric(crossprod(xr, yr) / pmax(sqrt(colSums(xr ^ 2)) * sy, 1e-12)) ; r <- pmax(pmin(r, .999), - .999) ; z <- r * sqrt(df / pmax(1 - r ^ 2, 1e-9)) ; k <- k + 1L
-						rows[[k]] <- tibble::tibble(feature = bb, component = sub("\\.pts$", "", cmp), component_var = cmp, r = r, z = z, p = 2 * pt(abs(z), df = df, lower.tail = FALSE))
-					}
-				}
-				dplyr::bind_rows(rows) |>
-					dplyr::group_by(component) |>
-					dplyr::mutate(FDR = p.adjust(p, "BH")) |>
-					dplyr::ungroup()
-			}
-			ad <- scan_half(d[split == "discovery", , drop = FALSE]) ; ar <- scan_half(d[split == "replication", , drop = FALSE])
-			if (!nrow(ad) || !nrow(ar)) return(list())
-			spec <- ad |>
-				dplyr::group_by(feature) |>
-				dplyr::mutate(absz = abs(z), specificity = ifelse(sum(absz, na.rm = TRUE) > 0, absz / sum(absz, na.rm = TRUE), NA_real_)) |>
-				dplyr::slice_max(absz, n = 1, with_ties = FALSE) |>
-				dplyr::ungroup() |>
-				dplyr::select(feature, primary_component = component, specificity)
-			pri <- ad |>
-				dplyr::select(feature, component, component_var, r_disc = r, z_disc = z, FDR_disc = FDR) |>
-				dplyr::left_join(ar |> dplyr::select(feature, component, r_rep = r, z_rep = z, FDR_rep = FDR), by = c("feature", "component")) |>
-				dplyr::left_join(spec, by = "feature") |>
-				dplyr::filter(component == primary_component) |>
-				dplyr::mutate(
-					same_direction = is.finite(r_rep) & sign(r_disc) == sign(r_rep), strict = is.finite(FDR_disc) & is.finite(FDR_rep) & FDR_disc < fdr & FDR_rep < fdr & same_direction & specificity >= specificity_cut,
-					combined_fdr = dplyr::case_when(is.finite(FDR_disc) & is.finite(FDR_rep) ~ pmax(FDR_disc, FDR_rep), is.finite(FDR_disc) ~ FDR_disc, TRUE ~ Inf)
-				)
-			ans <- lapply(le8_vars, function(cmp) {
-				nm <- sub("\\.pts$", "", cmp) ; z <- pri |>
-					dplyr::filter(component == nm, strict) |>
-					dplyr::arrange(combined_fdr, dplyr::desc(abs(r_disc))) |>
-					dplyr::slice_head(n = max_per_component) |>
-					dplyr::pull(feature)
-				if (length(z) < 2) z <- pri |>
-					dplyr::filter(component == nm) |>
-					dplyr::arrange(dplyr::desc(same_direction), combined_fdr, dplyr::desc(specificity), dplyr::desc(abs(r_disc))) |>
-					dplyr::slice_head(n = min(10, max_per_component)) |>
-					dplyr::pull(feature)
-				unique(z)
-			}) ; names(ans) <- sub("\\.pts$", "", le8_vars)
-			chosen <- dplyr::bind_rows(lapply(names(ans), function(nm) {
-				if (!length(ans[[nm]])) return(NULL)
-				tibble::tibble(component = nm, feature = ans[[nm]])
-			}))
-			if (!nrow(chosen)) chosen <- tibble::tibble(component = character(), feature = character(), strict = logical(), FDR_disc = numeric(), FDR_rep = numeric(), specificity = numeric(), proxy_level = character())
-			else chosen <- chosen |>
-				dplyr::left_join(pri |> dplyr::select(feature, component, strict, FDR_disc, FDR_rep, specificity), by = c("feature", "component")) |>
-				dplyr::mutate(proxy_level = ifelse(strict, "YS_strict_fold", "YS_exploratory_fold"))
-			attr(ans, "selection_info") <- chosen ; ans
+		discover_ys_training <- function(tr,biom_vars,le8_vars,basic_vars,block=100,fdr=.05,specificity_cut=.35,max_per_component=40,seed=2026) {
+			biom_vars<-intersect(biom_vars,names(tr));le8_vars<-intersect(le8_vars,names(tr));basic_vars<-intersect(basic_vars,names(tr))
+			group<-if(".group" %in% names(tr)) tr$.group else if("eid" %in% names(tr)) le8_participant_groups(tr) else seq_len(nrow(tr))
+			fold<-le8_group_folds(group,2,seed)
+			a<-le8_proxy_map(tr[fold==1,,drop=FALSE],biom_vars,le8_vars,basic_vars)
+			b<-le8_proxy_map(tr[fold==2,,drop=FALSE],biom_vars,le8_vars,basic_vars)
+			if(!nrow(a)||!nrow(b)) return(list())
+			p<-inner_join(a |> select(feature,component,r_disc=r,FDR_disc=FDR),b |> select(feature,component,r_rep=r,FDR_rep=FDR),by=c("feature","component")) |>
+				mutate(strict=is.finite(FDR_disc)&is.finite(FDR_rep)&FDR_disc<fdr&FDR_rep<fdr&sign(r_disc)==sign(r_rep),strength=pmin(abs(r_disc),abs(r_rep)),specificity=NA_real_)
+			chosen<-p |> filter(strict) |> group_by(component) |> arrange(desc(strength),feature,.by_group=TRUE) |> slice_head(n=max_per_component) |> ungroup() |>
+				mutate(component=sub("[.]pts$","",component),proxy_level="YS_strict_fold")
+			ans<-setNames(lapply(sub("[.]pts$","",le8_vars),function(cmp) chosen$feature[chosen$component==cmp]),sub("[.]pts$","",le8_vars))
+			attr(ans,"selection_info")<-chosen;ans
 		}
 
 		cox_predict <- function(tr, te, vars, tvar, evar, horizon = 10) {
@@ -1607,7 +1557,7 @@ if (.final_mode == "reference") {
 	plot_causal_reactive_map <- function(ev) {
 		if (!nrow(ev)) return(blank_plot("Causal–reactive map", "No evidence table"))
 		z <- ev |> mutate(
-			genetic_strength = coalesce(pmin(12, - log10(pmax(MR_p, 1e-300))), 0) + 4 * pmax(0, pmin(1, coalesce(PP.H4_robust_min, PP.H4, 0))),
+			genetic_strength = coalesce(pmin(12, - log10(pmax(MR_p, 1e-300))), 0) + 4 * pmax(0, pmin(1, coalesce(PP.H4_robust_min, 0))),
 			reactive_strength = pmax(0, abs(coalesce(prevalent_score, 0))) + pmax(0, abs(coalesce(duration_score, 0))),
 			label = ifelse(feature %in% c("GDF15", "NTPROBNP", "NPPB", "PCSK9") | evidence_grade %in% c("A", "B") & min_rank(obs_p) <= 18, feature, NA_character_)
 		)
@@ -1788,10 +1738,10 @@ if (.final_mode == "reference") {
 		) else
 			tibble(feature = character(), DANDELION_p = numeric(), DANDELION_loci = integer(), DANDELION_sensitivity = logical(), DANDELION_primary = logical())
 		co0 <- as_tibble(c3$summary %||% tibble())
-		if (nrow(co0) && !"PP.H4_robust_min" %in% names(co0)) co0$PP.H4_robust_min <- co0$PP.H4
+		if (nrow(co0) && !"PP.H4_robust_min" %in% names(co0)) co0$PP.H4_robust_min <- NA_real_
 		co <- if (nrow(co0) && all(c("feature", "PP.H4") %in% names(co0))) co0 |>
 			filter(status == "ok") |>
-			mutate(.robust = coalesce(PP.H4_robust_min, PP.H4)) |>
+			mutate(.robust = PP.H4_robust_min) |>
 			group_by(feature) |>
 			slice_max(.robust, n = 1, with_ties = FALSE) |>
 			ungroup() |>
@@ -1819,7 +1769,7 @@ if (.final_mode == "reference") {
 				C2_DANDELION = if (u2$available) as.integer(coalesce(DANDELION_primary, FALSE)) else NA_integer_,
 				C2_DANDELION_sensitivity = if (u2$available) as.integer(coalesce(DANDELION_sensitivity, FALSE)) else NA_integer_,
 				C2 = if (u2$available) as.integer(coalesce(C2_MR, 0L) == 1L | coalesce(C2_DANDELION, 0L) == 1L) else NA_integer_,
-				C3 = if (u3$available) as.integer(is.finite(coalesce(PP.H4_robust_min, PP.H4)) & coalesce(PP.H4_robust_min, PP.H4) >= .7) else NA_integer_,
+				C3 = if (u3$available) as.integer(is.finite(PP.H4_robust_min) & PP.H4_robust_min >= .7) else NA_integer_,
 				C4 = if (u4$available) as.integer(coalesce(strict_YS, FALSE)) else NA_integer_,
 				C5 = as.integer(is.finite(max_selection_frequency) & max_selection_frequency >= .6),
 				FINAL_available = is.finite(max_selection_frequency), reactive_compatible = coalesce(reactive_compatible, FALSE),
@@ -1987,10 +1937,10 @@ if (.final_mode == "reference") {
 			pull(term) |>
 			intersect(biom_vars)
 		c3f <- u3$file ; c3 <- u3$data ; co3 <- as_tibble(c3$summary %||% tibble())
-		if (nrow(co3) && !"PP.H4_robust_min" %in% names(co3)) co3$PP.H4_robust_min <- co3$PP.H4
+		if (nrow(co3) && !"PP.H4_robust_min" %in% names(co3)) co3$PP.H4_robust_min <- NA_real_
 		if (nrow(co3) && !"status" %in% names(co3)) co3$status <- "ok"
 		colocset <- if (nrow(co3) && truthy(Sys.getenv("FINAL_GENETIC_EVIDENCE_INDEPENDENT", unset = "FALSE"))) co3 |>
-			filter(status == "ok", coalesce(PP.H4_robust_min, PP.H4) >= .7) |>
+			filter(status == "ok", PP.H4_robust_min >= .7) |>
 			pull(feature) |>
 			unique() |>
 			intersect(biom_vars) else character()

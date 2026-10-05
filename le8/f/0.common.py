@@ -26,6 +26,7 @@ import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
+from contextlib import contextmanager, ExitStack
 
 
 def _load_index_dependencies():
@@ -210,6 +211,10 @@ def source_module(path):
 
 def aggregate_allowed(path, root):
 	if not path.is_file() or not safe_path(path, root):
+		return False
+	# These complete regional arrays remain in the reusable C3 fit. Publication
+	# exports only the actual plotted loci/variants to aggregate workbooks.
+	if path.name in {"c3.regional_rows.csv", "c3.variant_posteriors.csv"}:
 		return False
 	if PRIVATE_NAMES.search(path.name):
 		return False
@@ -790,6 +795,7 @@ class Index:
 			"measured_FDR",
 			"pgs_p",
 			"pgs_FDR",
+			"GR_beta_difference", "GR_difference_p", "GR_difference_FDR",
 			"best_reported_cis_MR_FDR_all",
 			"PP_H4_robust_min",
 		]:
@@ -1338,7 +1344,7 @@ def parser():
   ./le8.sh shiny --Y cvd_cad,ra --port 3839
   ./le8.sh final --index-only --Y cvd_cad,ra
   ./le8.sh c4_explain --Y cvd_cad --biom prot
-  ./le8.sh c1_abm --run-abm --abm-backend both --Y cvd_cad --biom prot
+  ./le8.sh c1_abm --Y cvd_cad --biom prot
   ./le8.sh final --fit-joint --Y cvd_cad,ra --biom prot,met --replace TRUE
 
 Modules: C1 correlation (c1_connect is accepted as an alias), C2 cause, C3 coloc,
@@ -1349,7 +1355,7 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 	p.add_argument(
 		"modules",
 		nargs="?",
-		default="c1_correlate,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation,final,shiny",
+		default="c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation",
 	)
 	p.add_argument("--Y", "--trait", "-Y", default=os.getenv("Y", "cvd_cad,ra"))
 	p.add_argument("--biom", "-b", default=os.getenv("BIOM", "prot,met"))
@@ -1388,15 +1394,17 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 		"--abm-engine",
 		dest="abm_backend",
 		choices=["reference", "tabicl", "tf", "both"],
-		default="both",
-		help="Unified ABM backends; reference includes Transformer, tf is an alias for tabicl",
+		default="reference",
+		help="Unified ABM backends; reference defaults to selective training, with optional attention comparator, tf is an alias for tabicl",
 	)
 	p.add_argument(
 		"--abm-args",
 		default="",
 		help='Additional explicit ABM arguments, e.g. "--epochs 10 --device cuda"',
 	)
-	p.add_argument("--run-abm", action="store_true")
+	abm = p.add_mutually_exclusive_group()
+	abm.add_argument("--run-abm", dest="run_abm", action="store_true", default=None)
+	abm.add_argument("--skip-abm", dest="run_abm", action="store_false")
 	for flag in [
 		"fit-reference",
 		"fit-joint",
@@ -1461,6 +1469,8 @@ def dispatch_main(argv=None):
 		p.error("Unknown module; see --help.")
 	if a.run_abm and "c1_abm" not in requested:
 		requested.append("c1_abm")
+	if a.run_abm is False:
+		requested = [x for x in requested if x != "c1_abm"]
 	modules = [x for x in ORDER if x in requested]
 	fitted = a.fit_reference or a.fit_joint or a.fit_genetic or a.details
 	if fitted and "final" not in modules:
@@ -1506,13 +1516,21 @@ def dispatch_main(argv=None):
 	engine = HERE / "0.engine.sh"
 	indexed = False
 
+	def report_base():
+		# Analysis scope remains explicit; aggregate reports include already completed scopes.
+		available = [(d.name, l) for d in a.analysis_root.iterdir() if d.is_dir() and re.fullmatch(r"[A-Za-z0-9_]+", d.name)
+			for l in ("prot", "met") if (d / l).is_dir()]
+		ts = sorted(set(traits) | {t for t, _ in available})
+		ls = sorted(set(layers) | {l for _, l in available})
+		return ["--Y", ",".join(ts), "--biom", ",".join(ls), "--analysis-root", str(a.analysis_root)]
+
 	def index():
 		nonlocal indexed
 		cmd = [
 			sys.executable,
 			HERE / "0.common.py",
 			"index",
-			*base,
+			*report_base(),
 			"--import-abm",
 			"--max-table-mb",
 			a.max_table_mb,
@@ -1535,11 +1553,6 @@ def dispatch_main(argv=None):
 		elif module in NATIVE:
 			call(["bash", engine, module, *base, *native, *extra], env, a.dry_run)
 		elif module == "c1_abm":
-			if not a.run_abm:
-				print(
-					"[LE8] ABM not fitted. Add --run-abm to execute; final indexes existing results."
-				)
-				continue
 			py = os.getenv("ABM_PYTHON") or sys.executable
 			more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
 			for Y in traits:
@@ -1642,16 +1655,17 @@ def dispatch_main(argv=None):
 			if a.details:
 				call(["bash", engine, "final", *base, *native, *extra], env, a.dry_run)
 			if not a.index_only and not a.preflight:
-				cmd = [sys.executable, HERE / "final.py", "report", *base]
+				cmd = [sys.executable, HERE / "final.py", "report", *report_base()]
 				for key in ["out", "abm_root", "abm_tf_root"]:
 					if getattr(a, key) is not None:
 						cmd += ["--" + key.replace("_", "-"), str(getattr(a, key))]
 				if a.strict:
 					cmd += ["--strict"]
 				call(cmd, env, a.dry_run)
-			index()
+			if not a.preflight:
+				index()
 		elif module == "shiny":
-			if not a.no_reindex and not indexed:
+			if not a.preflight and not a.no_reindex and not indexed:
 				index()
 			if a.prepare_only:
 				continue
@@ -1700,9 +1714,28 @@ def run_table_storage(mode, work, r_bin, env):
 		raise
 
 
-def _table_runtime(argv):
+@contextmanager
+def analysis_lock(path, shared=False, waiting="Waiting for another LE8 run"):
 	import fcntl
 
+	with open(path, "a") as lock:
+		mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+		try:
+			fcntl.flock(lock, mode | fcntl.LOCK_NB)
+		except BlockingIOError:
+			print(f"[LE8] {waiting}", flush=True)
+			fcntl.flock(lock, mode)
+		try:
+			yield
+		finally:
+			fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def owns_scope(relative, scopes):
+	return scopes is None or (len(relative.parts) >= 2 and tuple(relative.parts[:2]) in scopes)
+
+
+def _table_runtime(argv):
 	def option(name, default=None):
 		for i, value in enumerate(argv):
 			if value == name and i + 1 < len(argv):
@@ -1719,77 +1752,92 @@ def _table_runtime(argv):
 		option("--analysis-root", os.getenv("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8"))
 	).resolve()
 	r_bin = option("--r-bin", os.getenv("R_BIN", "Rscript"))
-	module_arg = (
-		argv[1]
-		if argv[:1] == ["dispatch"] and len(argv) > 1
-		else argv[0]
-		if argv
-		else ""
-	)
+	arguments = argv[1:] if argv[:1] == ["dispatch"] else argv
+	if argv[:1] == ["index"]:
+		module_arg = "index"
+		traits = set(option("--Y", "cvd_cad,ra").split(","))
+		layers = set(option("--biom", "prot,met").split(","))
+		train_abm = False
+	else:
+		parsed, _ = parser().parse_known_args(arguments)
+		module_arg = parsed.modules
+		traits = set(parsed.Y.split(","))
+		layers = set(parsed.biom.split(","))
+		train_abm = parsed.run_abm is not False and (parsed.run_abm or "c1_abm" in module_arg.split(","))
+	if not traits or any(not re.fullmatch(r"[A-Za-z0-9_]+", y) for y in traits) or not layers or not layers <= {"prot", "met"}:
+		raise ValueError("Invalid outcome/layer")
+	modules = set(module_arg.split(","))
+	scopes = None if modules & {"final", "shiny", "index", "share"} else {(y, b) for y in traits for b in layers}
 	launch_shiny = "shiny" in module_arg.split(",") and "--prepare-only" not in argv
 	if module_arg == "shiny" and "--no-reindex" in argv:
 		return False
 	if module_arg == "share":
 		return False
 	root.mkdir(parents=True, exist_ok=True)
-	traits = set(option("--Y", "cvd_cad,ra").split(","))
-	layers = set(option("--biom", "prot,met").split(","))
-	train_abm = "--run-abm" in argv
 	lock_name = hashlib.sha256(str(root).encode()).hexdigest()[:20]
-	lock = open(Path("/tmp") / f"le8-{lock_name}.lock", "a")
+	publication_lock = Path("/tmp") / f"le8-{lock_name}-publish.lock"
+	locks = ExitStack()
 	try:
-		fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-	except BlockingIOError:
-		lock.close()
-		raise RuntimeError(f"Another LE8 run is using {root}")
+		locks.enter_context(analysis_lock(Path("/tmp") / f"le8-{lock_name}.lock", shared=scopes is not None,
+			waiting=f"Waiting for analysis/report transaction at {root}."))
+		for y, b in sorted(scopes or []):
+			key = hashlib.sha256(f"{root}/{y}/{b}".encode()).hexdigest()[:20]
+			locks.enter_context(analysis_lock(Path("/tmp") / f"le8-scope-{key}.lock",
+				waiting=f"{y}/{b} is already running at {root}; waiting for that scope."))
+		return _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm, scopes, publication_lock, locks, option)
+	finally:
+		locks.close()
+
+
+def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm, scopes, publication_lock, locks, option):
+	import fcntl
+
 	workspace = Path(tempfile.mkdtemp(prefix="le8-run-", dir="/tmp"))
 	work = workspace / "results"
 	work.mkdir()
 	initial = {}
 	try:
 		print(f"[LE8] Temporary tables and execution files: {workspace}", flush=True)
-		for path in root.rglob("*"):
-			if not path.is_file() or any(
-				x
-				in {
-					"_history",
-					"_source_figures",
-					"_previous",
-					"__pycache__",
-					".ruff_cache",
-					".pgs_focus_cache",
-					"logs",
-				}
-				for x in path.relative_to(root).parts
-			):
-				continue
-			relative = path.relative_to(root)
-			parts = relative.parts
-			if (
-				len(parts) > 2
-				and parts[1] in {"prot", "met"}
-				and (parts[0] not in traits or parts[1] not in layers)
-			):
-				continue
-			# Aggregate-only ABM reports never need checkpoints or participant matrices.
-			if not train_abm and any(
-				x in {"abm_reference", "abm_tabicl"} for x in parts
-			):
-				if (
-					path.suffix == ".rds"
-					or path.suffix in {".npy", ".npz", ".pt", ".joblib", ".ckpt"}
-					or any(
-						x in {"input", "neural", "quality_neural", "checkpoints"}
-						for x in parts
-					)
+		with analysis_lock(publication_lock, waiting="Waiting to read a consistent result snapshot."):
+			for path in root.rglob("*"):
+				if not path.is_file() or any(
+					x
+					in {
+						"_history",
+						"_source_figures",
+						"_previous",
+						"__pycache__",
+						".ruff_cache",
+						".pgs_focus_cache",
+						"le8_annotations",
+						"logs",
+					}
+					for x in path.relative_to(root).parts
 				):
 					continue
-			stat = path.stat()
-			initial[str(relative)] = (stat.st_size, stat.st_mtime_ns)
-			target = work / relative
-			target.parent.mkdir(parents=True, exist_ok=True)
-			# An independent copy protects published fits on failed or interrupted runs.
-			shutil.copy2(path, target)
+				relative = path.relative_to(root)
+				parts = relative.parts
+				if not owns_scope(relative, scopes):
+					continue
+				# Aggregate-only ABM reports never need checkpoints or participant matrices.
+				if not train_abm and any(
+					x in {"abm_reference", "abm_tabicl"} for x in parts
+				):
+					if (
+						path.suffix == ".rds"
+						or path.suffix in {".npy", ".npz", ".pt", ".joblib", ".ckpt"}
+						or any(
+							x in {"input", "neural", "quality_neural", "checkpoints"}
+							for x in parts
+						)
+					):
+						continue
+				stat = path.stat()
+				initial[str(relative)] = (stat.st_size, stat.st_mtime_ns)
+				target = work / relative
+				target.parent.mkdir(parents=True, exist_ok=True)
+				# An independent copy protects published fits on failed or interrupted runs.
+				shutil.copy2(path, target)
 		env = dict(
 			os.environ,
 			LE8_TABLE_WORKSPACE="1",
@@ -1826,7 +1874,8 @@ def _table_runtime(argv):
 			new_args.append("--prepare-only")
 		command = [sys.executable, str(HERE / "0.common.py"), *new_args]
 		subprocess.run(command, env=env, check=True)
-		publish_workspace(work, root, initial, r_bin, env)
+		with analysis_lock(publication_lock, waiting="Waiting to publish completed results."):
+			publish_workspace(work, root, initial, r_bin, env, scopes=scopes)
 	except BaseException:
 		print(
 			f"[LE8] Run failed; published results were retained. Diagnostic workspace: {workspace}",
@@ -1841,8 +1890,7 @@ def _table_runtime(argv):
 			print(f"[LE8] Logs: {logs}", flush=True)
 		shutil.rmtree(workspace)
 	finally:
-		fcntl.flock(lock, fcntl.LOCK_UN)
-		lock.close()
+		locks.close()
 	if launch_shiny:
 		shiny_env = dict(
 			os.environ,
@@ -1855,11 +1903,20 @@ def _table_runtime(argv):
 		command = [r_bin, str(ROOT / "shiny/app.R")]
 		if "--shiny-review" in argv:
 			command.append("--review")
-		subprocess.run(command, env=shiny_env, check=True)
+		viewer_key = hashlib.sha256((str(root) + shiny_env["LE8_SHINY_PORT"]).encode()).hexdigest()[:20]
+		viewer_lock = open(Path("/tmp") / f"le8-shiny-{viewer_key}.lock", "a")
+		try:
+			fcntl.flock(viewer_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		except BlockingIOError:
+			print("[LE8] Shiny is already serving this result directory; the updated index is available on reload.", flush=True)
+		else:
+			subprocess.run(command, env=shiny_env, check=True)
+		finally:
+			viewer_lock.close()
 	return True
 
 
-def publish_workspace(work, root, initial, r_bin, env):
+def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 	# Report paths refer to the published location, not an expired scratch folder.
 	for path in work.rglob("*"):
 		if path.is_file() and path.suffix in {".json", ".md", ".html", ".log"}:
@@ -1882,12 +1939,15 @@ def publish_workspace(work, root, initial, r_bin, env):
 				"__pycache__",
 				".ruff_cache",
 				".pgs_focus_cache",
+				"le8_annotations",
 				"logs",
 			}
 			for x in path.relative_to(work).parts
 		):
 			continue
 		relative = path.relative_to(work)
+		if not owns_scope(relative, scopes):
+			continue
 		# Workbooks preserve scratch table bytes for reuse and source verification.
 		if path.name.endswith(
 			(".csv", ".csv.gz", ".tsv", ".tsv.gz", ".tmp", ".pyc", ".log")
@@ -1943,7 +2003,7 @@ def publish_workspace(work, root, initial, r_bin, env):
 				target.unlink(missing_ok=True)
 		raise
 	for directory in sorted(
-		(p for p in root.rglob("*") if p.is_dir()),
+		(p for p in root.rglob("*") if p.is_dir() and owns_scope(p.relative_to(root), scopes)),
 		key=lambda p: len(p.parts),
 		reverse=True,
 	):

@@ -375,7 +375,7 @@ run_c1_pgs_focus <- function(layer, outdir) {
 	}
 	groupcol <- Sys.getenv("PGS_GROUP_COLUMN", "")
 	if (nzchar(groupcol) && !groupcol %in% names(ph)) stop("PGS_GROUP_COLUMN missing: ", groupcol)
-	ph$.group <- if (nzchar(groupcol)) as.character(ph[[groupcol]]) else ph$eid
+	ph$.group <- le8_participant_groups(ph)
 	if (anyNA(ph$.group) || any(!nzchar(ph$.group))) stop("Missing PGS group IDs; do not silently split related participants")
 	need <- unique(c(
 		"eid", ".prev", ".time", ".event", ".group", primary, vars.le8,
@@ -999,6 +999,70 @@ empty_c1_pgs_assoc <- function(features, score_columns = character()) {
 	)
 }
 
+# Atomic per-feature checkpoints survive an interrupted transaction workspace.
+c1_save_checkpoint <- function(value, path) {
+	dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+	tmp <- tempfile('.checkpoint-', tmpdir = dirname(path))
+	on.exit(unlink(tmp), add = TRUE)
+	saveRDS(value, tmp, compress = FALSE)
+	if (!file.rename(tmp, path)) stop('Cannot save C1 checkpoint: ', path, call. = FALSE)
+	invisible(value)
+}
+
+c1_pgs_checkpoint_scan <- function(score_map, fit_feature, signature, layer, workers = N_CORES) {
+	checkpoint <- le8_cache_dir('c1_pgs', layer, signature)
+	if (LE8_REPLACE && dir.exists(checkpoint)) unlink(checkpoint, recursive = TRUE)
+	dir.create(checkpoint, recursive = TRUE, showWarnings = FALSE)
+	features <- names(score_map)
+	kinds <- c('incident', 'prevalent', 'attained_age', 'incident_same_omic', 'prevalent_same_omic', 'attained_age_same_omic')
+	valid <- function(value, feature) is.list(value) && all(kinds %in% names(value)) &&
+		all(vapply(value[kinds], function(z) is.data.frame(z) && nrow(z) == 1L &&
+			identical(z$term, feature) && identical(z$score_column, unname(score_map[[feature]])), logical(1)))
+	file_for <- function(feature) file.path(checkpoint, paste0(pgs_hash(feature), '.rds'))
+	rows <- setNames(vector('list', length(features)), features)
+	for (feature in features) {
+		path <- file_for(feature)
+		if (!file.exists(path)) next
+		old <- tryCatch(readRDS(path), error = function(e) NULL)
+		if (identical(old$signature, signature) && valid(old$result, feature)) rows[[feature]] <- old$result
+	}
+	pending <- features[vapply(rows, is.null, logical(1))]
+	resumed <- length(features) - length(pending)
+	workers <- if (.Platform$OS.type == 'windows') 1L else max(1L, min(as.integer(workers), length(pending)))
+	message('[LE8] PROGRESS C1/PGS ', layer, ': resumed=', resumed, '/', length(features), ' workers=', workers,
+		' checkpoint=', checkpoint)
+	started <- proc.time()[['elapsed']] ; last_report <- started
+	complete <- function(feature) {
+		result <- fit_feature(feature)
+		if (!valid(result, feature)) stop('Incomplete PGS result for ', feature, call. = FALSE)
+		c1_save_checkpoint(list(signature = signature, result = result), file_for(feature))
+		# All six model frames have returned; collect once per feature, not per model.
+		invisible(gc())
+		result
+	}
+	batches <- split(pending, ceiling(seq_along(pending) / workers))
+	done <- resumed
+	for (batch in batches) {
+		if (workers > 1L && length(batch) > 1L) {
+			invisible(gc())
+			values <- parallel::mclapply(batch, complete, mc.cores = min(workers, length(batch)),
+				mc.preschedule = TRUE, mc.allow.recursive = FALSE)
+		} else values <- lapply(batch, complete)
+		if (any(vapply(seq_along(batch), function(i) !valid(values[[i]], batch[[i]]), logical(1))))
+			stop('PGS worker failed; completed feature checkpoints retained. Reduce --cores and retry.', call. = FALSE)
+		rows[batch] <- values ; done <- done + length(batch)
+		now <- proc.time()[['elapsed']]
+		if (done == length(features) || done == resumed + length(batch) || now - last_report >= 30) {
+			elapsed <- now - started
+			remaining <- elapsed / (done - resumed) * (length(features) - done) / 60
+			message('[LE8] PROGRESS C1/PGS ', layer, ': ', done, '/', length(features), ' completed; elapsed=',
+				round(elapsed / 60, 1), ' min; estimated remaining=', round(remaining, 1), ' min')
+			last_report <- now
+		}
+	}
+	unname(rows)
+}
+
 run_c1_pgs_scan <- function(
 	layer, features, covars, outcome = Y, rawdir = NULL,
 	overlap_eids = NULL
@@ -1008,7 +1072,13 @@ run_c1_pgs_scan <- function(
 	overlap_signature <- if (!length(overlap_eids)) "none" else le8_hash_object(sort(unique(overlap_eids)))
 	signature <- pgs_hash(list(C1_PGS_SCAN_VERSION, c1_pgs_signature(layer), overlap_signature,
 		outcome = outcome, covars = covars, features = features, baseline = LE8_BASELINE_VERSION,
-		options = le8_analysis_options(), phenotypes = pgs_stamp(file.path(indir, "Rdata/all.rds"))
+		options = le8_analysis_options(), phenotypes = pgs_stamp(c(file.path(indir, "Rdata/all.rds"), file.path(indir, "rap/vip.tab.gz"))),
+		max_scores = Sys.getenv("C1_PGS_MAX", "0"), follow_end = date_follow_end,
+		methods = lapply(c("cox_scan", "cox_scan_delayed_entry", "logistic_scan", "make_outcome", "t2e",
+			"le8_select_phenotypes", "le8_rebuild_baseline", "make_prevalent_status", "add_attained_age_time",
+			"filter_analysis_cohort", "map_c1_pgs_columns", "run_c1_pgs_scan"), function(name) {
+			fun <- get(name, mode = "function") ; list(formals(fun), body(fun))
+		}), packages = vapply(c("survival", "stats"), function(p) as.character(packageVersion(p)), character(1))
 	))
 	cache <- if (is.null(rawdir)) NA_character_ else file.path(rawdir, "c1.pgs_scan.rds")
 	if (!is.na(cache) && cache_valid(cache)) {
@@ -1060,11 +1130,9 @@ run_c1_pgs_scan <- function(
 	tvar <- paste0(outcome, ".t2e") ; evar <- paste0(outcome, ".Yt2e")
 	covars <- intersect(covars, names(base))
 
-	message(
-		"C1/", layer, ": scan ", length(score_map),
-		" inherited omic scores in the genotyped cohort (sequential; full PGS matrix remains in memory)"
-	)
-	rows <- lapply(names(score_map), function(feature) {
+	message("C1/", layer, ": scan ", length(score_map), " inherited omic scores; N=", nrow(base),
+		"; same-omic N=", sum(base$.omic_overlap))
+	fit_feature <- function(feature) {
 		gcol <- score_map[[feature]]
 		d <- base
 		d$.pgs_score <- suppressWarnings(as.numeric(scores[[gcol]]))
@@ -1092,7 +1160,8 @@ run_c1_pgs_scan <- function(
 			incident_same_omic = inc_same, prevalent_same_omic = prev_same,
 			attained_age_same_omic = age_same
 		)
-	})
+	}
+	rows <- c1_pgs_checkpoint_scan(score_map, fit_feature, signature, layer)
 	finish <- function(kind) bind_rows(lapply(rows, `[[`, kind)) |>
 		mutate(FDR = p.adjust(p.value, "BH")) |>
 		arrange(p.value)
@@ -1165,7 +1234,7 @@ run_c1_pgs_scan <- function(
 		attained_age_same_omic = finish("attained_age_same_omic"),
 		vldl_conditional = vldl_conditional, score_map = score_map
 	)
-	if (!is.na(cache)) saveRDS(ans, cache, compress = "xz")
+	if (!is.na(cache)) c1_save_checkpoint(ans, cache)
 	ans
 }
 
@@ -1580,8 +1649,8 @@ le8_endpoint_audit <- function(dat, features, covars, Y, root) {
 }
 
 LE8_JOB <- "c1_correlate"
-C1_CODE_VERSION <- "2026-09-15.final-systematic"
-C1_SCAN_VERSION <- "2026-09-15.final-systematic"
+C1_CODE_VERSION <- "2026-10-04.selective-and-logistic-qc"
+C1_SCAN_VERSION <- "2026-10-04.selective-and-logistic-qc"
 
 TOP_N <- as.integer(Sys.getenv("C1_TOP_N", unset = "30"))
 YY_TOP <- as.integer(Sys.getenv("C1_YY_TOP", unset = "6"))
@@ -1680,40 +1749,65 @@ assoc_blank_plot <- function(title, message) {
 # 🚩 Baseline prevalent association: logistic regression
 
 logistic_scan <- function(dat, xs, covars, y, scale_x = TRUE, min_n = 500, min_case = 20) {
-	xs <- intersect(xs, names(dat)) ; covars <- intersect(covars, names(dat))
-	bind_rows(parallel_map(xs, function(x) {
+	missing_covars <- setdiff(covars, names(dat))
+	if (length(missing_covars)) stop("Missing requested logistic covariates: ", paste(missing_covars, collapse = ", "))
+	if (!y %in% names(dat)) stop("Missing baseline outcome: ", y)
+	xs <- intersect(xs, names(dat))
+	if (!length(xs)) stop("No assayed features available for logistic_scan")
+	covars <- unique(covars)
+	result <- bind_rows(parallel_map(xs, function(x) {
 		d <- dat[, unique(c(y, x, covars)), drop = FALSE]
 		d <- d[complete.cases(d), , drop = FALSE]
+		for (nm in names(d)) if (is.numeric(d[[nm]])) d <- d[is.finite(d[[nm]]), , drop = FALSE]
 		nc <- sum(d[[y]] == 1, na.rm = TRUE)
 		empty <- tibble(
 			term = x, estimate = NA_real_, beta = NA_real_, std.error = NA_real_,
 			conf.low = NA_real_, conf.high = NA_real_, statistic = NA_real_, p.value = NA_real_,
-			N_total = nrow(d), N_event = nc
+			N_total = nrow(d), N_event = nc, status = "insufficient_data", warning = "",
+			dropped_constant_covariates = ""
 		)
-		if (nrow(d) < min_n || nc < min_case || length(unique(d[[y]])) < 2) return(empty)
-		d[[x]] <- suppressWarnings(as.numeric(d[[x]])) ; sx <- sd(d[[x]], na.rm = TRUE)
-		if (!is.finite(sx) || sx <= 0) return(empty)
-		if (scale_x) d[[x]] <- as.numeric(scale(d[[x]]))
-		f <- reformulate(c(x, covars), response = y)
-		fit <- tryCatch(glm(f, data = d, family = binomial()), error = function(e) NULL)
-		if (is.null(fit)) return(empty)
-		sm <- coef(summary(fit)) ; if (!x %in% rownames(sm)) return(empty)
-		b <- sm[x, "Estimate"] ; se <- sm[x, "Std. Error"]
-		tibble(
-			term = x, estimate = exp(b), beta = b, std.error = se,
-			conf.low = exp(b - 1.96 * se), conf.high = exp(b + 1.96 * se),
-			statistic = b / se, p.value = 2 * pnorm(abs(b / se), lower.tail = FALSE),
-			N_total = nrow(d), N_event = nc
-		)
-	})) |>
-		mutate(FDR = p.adjust(p.value, "BH")) |>
-		arrange(p.value)
+		if (nrow(d) < min_n || nc < min_case || nrow(d) - nc < min_case) return(empty)
+		if (!all(d[[y]] %in% c(0, 1))) { empty$status <- "non_binary_outcome"; return(empty) }
+		original <- d[[x]]
+		d[[x]] <- suppressWarnings(as.numeric(as.character(original)))
+		if (any(!is.finite(d[[x]]))) { empty$status <- "non_numeric_exposure"; return(empty) }
+		sx <- sd(d[[x]])
+		if (!is.finite(sx) || sx <= 0) { empty$status <- "constant_exposure"; return(empty) }
+		if (scale_x) d[[x]] <- (d[[x]] - mean(d[[x]])) / sx
+		cv <- setdiff(covars, c(x, y))
+		drop <- cv[vapply(d[cv], function(v) length(unique(v)) < 2L, logical(1))]
+		cv <- setdiff(cv, drop)
+		empty$dropped_constant_covariates <- paste(drop, collapse = ";")
+		warnings <- character()
+		fit <- tryCatch(withCallingHandlers(
+			glm(reformulate(c(x, cv), response = y), data = d, family = binomial(),
+				control = glm.control(maxit = 100)),
+			warning = function(w) { warnings <<- c(warnings, conditionMessage(w)); invokeRestart("muffleWarning") }
+		), error = function(e) e)
+		empty$warning <- paste(unique(warnings), collapse = "; ")
+		if (inherits(fit, "error")) { empty$status <- "fit_error"; empty$warning <- conditionMessage(fit); return(empty) }
+		if (!isTRUE(fit$converged) || isTRUE(fit$boundary) ||
+			any(grepl("did not converge|fitted probabilities numerically 0 or 1|infinite", warnings, ignore.case = TRUE))) {
+			empty$status <- "nonconvergence_or_separation"; return(empty)
+		}
+		sm <- coef(summary(fit))
+		if (!x %in% rownames(sm)) { empty$status <- "aliased_exposure"; return(empty) }
+		b <- unname(sm[x, "Estimate"]); se <- unname(sm[x, "Std. Error"])
+		if (!is.finite(b) || !is.finite(se) || se <= 0) { empty$status <- "non_estimable"; return(empty) }
+		empty$estimate <- exp(b); empty$beta <- b; empty$std.error <- se
+		empty$conf.low <- exp(b - 1.96 * se); empty$conf.high <- exp(b + 1.96 * se)
+		empty$statistic <- b / se; empty$p.value <- 2 * pnorm(abs(b / se), lower.tail = FALSE)
+		empty$status <- "ok"
+		empty
+	}))
+	# Retain the full declared assay family, including failed/non-estimable fits.
+	result |> mutate(FDR = p.adjust(p.value, "BH", n = length(xs))) |> arrange(p.value)
 }
 
 # Among baseline-prevalent cases, estimate whether current protein abundance
 # varies with elapsed time since diagnosis.  This explicitly tests the
-# disease -> protein interpretation that a time-agnostic case/control model
-# cannot address.
+# diagnosis-duration cross-sectional association. It does not establish
+# disease -> protein causation or a within-person molecular trajectory.
 prevalent_duration_scan <- function(dat, xs, bvar, covars, min_n = 80L) {
 	xs <- intersect(xs, names(dat)) ; covars <- intersect(covars, names(dat))
 	bind_rows(parallel_map(xs, function(x) {
@@ -3288,6 +3382,28 @@ landmark_incident_scan <- function(dat, xs, tvar, evar, covars, landmarks = C1_L
 	})
 }
 
+# Numerical association inputs and methods, independent of dispatch/report code.
+# Bump C1_SCAN_VERSION whenever the orchestration of measured models changes.
+c1_association_contract <- function(layer) {
+	settings <- Sys.getenv()
+	settings <- settings[grepl('^(C1_|LE8_(ENDPOINT|BASELINE|TREATMENT)|DATE_FOLLOW_END)', names(settings)) &
+		!grepl('^C1_(PGS|FIG)', names(settings))]
+	files <- c(file.path(indir, 'Rdata', c('all.rds', if (layer == 'protein') 'prot.rds' else 'met.rds')),
+		file.path(indir, 'rap/vip.tab.gz'), unname(settings[file.exists(settings)]))
+	functions <- c('read_all', 'read_prot', 'read_met', 'le8_select_phenotypes', 'le8_rebuild_baseline',
+		'filter_analysis_cohort', 'make_outcome', 't2e', 'add_attained_age_time', 'make_prevalent_status',
+		'cox_scan', 'cox_scan_delayed_entry', 'logistic_scan', 'prevalent_duration_scan',
+		'landmark_incident_scan', 'risk_window_scan', 'same_sample_attenuation', 'std_num')
+	list(version = C1_SCAN_VERSION, outcome = Y, layer = layer, options = le8_analysis_options(),
+		files = pgs_stamp(files), settings = settings,
+		covariates = list(vars.basic, vars.adj2, vars.le8, le8_custom_covars, C1_LE4_COVARS, C1_TREATMENT_VARS),
+		follow_end = date_follow_end,
+		methods = setNames(lapply(functions, function(name) {
+			fun <- get(name, mode = 'function') ; list(formals(fun), body(fun))
+		}), functions),
+		packages = vapply(c('survival', 'dplyr', 'stats'), function(p) as.character(packageVersion(p)), character(1)))
+}
+
 run_c1_layer <- function(layer = c("protein", "metabolite")) {
 	if (LE8_REUSE_RESULTS) return(le8_restore_outputs(match.arg(layer), "c1_correlate"))
 	# Check reusable results and initialize the analysis output directory.
@@ -3332,7 +3448,7 @@ run_c1_layer <- function(layer = c("protein", "metabolite")) {
 	pgs_signature <- c1_pgs_signature(layer)
 	if (cache_valid(selected_cache)) {
 		old <- tryCatch(readRDS(selected_cache), error = function(e) NULL)
-		if (is.list(old) && identical(old$meta$code_version, C1_CODE_VERSION) && identical(old$meta$pgs_signature, pgs_signature) &&
+		if (is.list(old) && identical(old$meta$source_signature,le8_stage_fingerprint()) && identical(old$meta$code_version, C1_CODE_VERSION) && identical(old$meta$pgs_signature, pgs_signature) &&
 			all(c("pgs_incident", "pgs_prevalent", "pgs_attained_age") %in% names(old))) {
 			cache_message(paste0("C1/", layer), selected_cache) ; return(le8_restore_outputs(layer, "c1_correlate"))
 		}
@@ -3340,13 +3456,16 @@ run_c1_layer <- function(layer = c("protein", "metabolite")) {
 	}
 
 	biom0 <- if (layer == "protein") read_prot() else read_met() ; features_all <- setdiff(names(biom0), "eid")
+	method_contract <- c1_association_contract(layer)
+	resume_scan <- file.path(le8_cache_dir("c1_association", layer, pgs_hash(method_contract)), "c1.scan.rds")
+	if (cache_valid(resume_scan)) scan_cache <- resume_scan
 	scan <- if (cache_valid(scan_cache)) tryCatch(readRDS(scan_cache), error = function(e) NULL) else NULL
 	scan_contract <- list(
-		version = "final-landmark-family", landmark_all = Sys.getenv("C1_LANDMARK_ALL", "TRUE"), endpoint_manifest = Sys.getenv("LE8_ENDPOINT_MANIFEST", ""), layer = layer, le4_covars = sort(C1_LE4_COVARS),
+		source_signature=le8_stage_fingerprint(), version = "final-landmark-family", landmark_all = Sys.getenv("C1_LANDMARK_ALL", "TRUE"), endpoint_manifest = Sys.getenv("LE8_ENDPOINT_MANIFEST", ""), layer = layer, le4_covars = sort(C1_LE4_COVARS),
 		full_le8_sensitivity = C1_FULL_LE8_SENSITIVITY,
 		treatment_vars = sort(C1_TREATMENT_VARS)
 	)
-	reuse <- is.list(scan) && identical(scan$scan_contract, scan_contract) && all(c("association_adj2", "prevalent_adj2") %in% names(scan))
+	reuse <- is.list(scan) && (identical(scan$method_contract, method_contract) || identical(scan$scan_contract, scan_contract)) && all(c("association_adj2", "prevalent_adj2") %in% names(scan))
 	if (!is.null(scan) && !reuse)
 		message("C1/", layer, ": scan cache incomplete; recomputing association scans")
 
@@ -3446,7 +3565,7 @@ run_c1_layer <- function(layer = c("protein", "metabolite")) {
 		if (ATTENUATION_TOP > 0) att_features <- head(att_features, ATTENUATION_TOP)
 		attenuation_sameN <- same_sample_attenuation(dat, att_features, tvar, evar, covs_basic, covs_adj2)
 		scan <- list(
-			scan_contract = scan_contract,
+			method_contract = method_contract, scan_contract = scan_contract,
 			association_basic = assoc_basic, association_adj2 = assoc_adj2,
 			birthline_basic = birthline_basic, birthline_adj2 = birthline_adj2,
 			prevalent_basic = prevalent_basic, prevalent_adj2 = prevalent_adj2, reverse_adj2 = reverse_adj2,
@@ -3456,7 +3575,8 @@ run_c1_layer <- function(layer = c("protein", "metabolite")) {
 			birthline_adj2_full_le8 = birthline_adj2_full_le8,
 			prevalent_adj2_full_le8 = prevalent_adj2_full_le8
 		)
-		saveRDS(scan, scan_cache, compress = "xz")
+		c1_save_checkpoint(scan, resume_scan)
+		c1_save_checkpoint(scan, scan_cache)
 	} else {
 		assoc_basic <- scan$association_basic ; assoc_adj2 <- scan$association_adj2
 		birthline_basic <- scan$birthline_basic %||% cox_scan_delayed_entry(dat, features, birth_covs_basic, Y)

@@ -12,8 +12,13 @@ le8_table_private <- function(x) {
 	any(gsub('[^a-z0-9]', '', names) %in% le8_table_private_columns |
 		grepl('(^|[_. #])(eid|iid|fid)($|[_. ])', names))
 }
+le8_table_blank <- function(path) {
+	if (file.info(path)$size == 0) return(TRUE)
+	if (file.info(path)$size > 1024) return(FALSE)
+	!any(nzchar(trimws(readLines(path,warn=FALSE))))
+}
 le8_table_read <- function(path) {
-	if (file.info(path)$size == 0) return(data.frame())
+	if (le8_table_blank(path)) return(data.frame())
 	separator <- if (grepl('[.]tsv([.]gz)?$', path)) '\t' else ','
 	tryCatch(as.data.frame(data.table::fread(path, sep = separator, check.names = FALSE, showProgress = FALSE)),
 		error = function(e) stop('Cannot preserve table: ', path, ': ', conditionMessage(e)))
@@ -233,8 +238,7 @@ le8_table_c3_results <- function(directory, public) {
 		if (!all(c('summary', 'regional', 'variants') %in% names(obj))) stop('Incomplete C3 result: ', cache)
 		x <- as.data.frame(obj$summary)
 		x <- x[x$status %in% 'ok', , drop = FALSE]
-		robust <- if ('PP.H4_robust_min' %in% names(x)) x$PP.H4_robust_min else x$PP.H4
-		robust[is.na(robust)] <- x$PP.H4[is.na(robust)]
+		robust <- if ('PP.H4_robust_min' %in% names(x)) x$PP.H4_robust_min else rep(NA_real_,nrow(x))
 		x <- x[order(-robust, -x$PP.H4, na.last = TRUE), , drop = FALSE]
 		loci <- head(x, 4L)
 		key <- function(z) paste(z$feature, z$locus, sep = '\r')
@@ -357,7 +361,9 @@ le8_table_result_groups <- function(names, directory) {
 		),
 		c5 = c(cellulation = 'cell'),
 		abm_reference = c(validation = 'test_|subgroup|development_metrics',
-			development = 'tuning|oof_fits|embedding|metric_features|mosaic_weights|token_membership'),
+			development = 'tuning|oof_fits|embedding|metric_features|mosaic_weights|token_membership',
+			selective_training = 'c1[.]selective[.](training_comparison|model_tuning|crossfit_audit)',
+			selective_validation = 'c1[.]selective[.](risk_stratified_gain|gate_diagnostics|audit_contrasts|decision_curve)'),
 		abm_tabicl = c(model = 'test_|tuning|learning_curve|feature_selection'),
 		attention = c(interventions = 'intervention'),
 		le8_annotations = c(protein_interactions = 'string_physical'),
@@ -367,10 +373,11 @@ le8_table_result_groups <- function(names, directory) {
 	if (module %in% c('final', 'shiny')) rules <- c(
 		catalogue = '^(tables|figures|status|question_sources)[.]',
 		abm = '(questions[.]|question_)abm_', cell = '(questions[.]|question_)cell',
-		dandelion = 'dandelion', nonlinear = 'nonlinear', mediation = 'mediation',
+		dandelion = 'dandelion', nonlinear = 'nonlinear|age_models', mediation = 'mediation',
+		state_projection = 'state_projection',
 		temporal = '(questions[.]|question_)temporal',
-		genetics = '(^loci[.]|[._](genetic|same_locus|mr_scope)[.])',
-		connections = '[._](members|modules|pillars|inflammation_definition)[.]',
+		genetics = '(^loci[.]|[._](genetic|same_locus|mr_signal_evidence|mr_scope|susie_pairs|susie_diagnostics|decomposition)[.])',
+		connections = '[._](members|modules|pillars|inflammation_definition|concept_coefficients|concept_status|concept_fold_panels)[.]',
 		validation = 'prediction|proxy|[._](contrasts|fit|heterogeneity|design)[.]',
 		overview = 'cohort|overview|association_counts|discovery_counts',
 		association = '^(candidates|effects)[.]'
@@ -457,7 +464,15 @@ le8_table_workbook <- function(directory, public) {
 	for (figure in figures) {
 		selected <- names(tables)[startsWith(names(tables), paste0(sub('[.]png$', '', figure), '.panel_'))]
 		if (!length(selected)) selected <- names(tables)[grepl(le8_table_figure_pattern(figure), names(tables), ignore.case = TRUE)]
-		if (!length(selected)) stop('No analysis table mapped to figure: ', file.path(directory, figure))
+		if (!length(selected)) {
+			pattern <- le8_table_figure_pattern(figure)
+			expected <- names(public$files)[grepl(pattern,names(public$files),ignore.case=TRUE)]
+			empty <- length(expected) && all(vapply(public$files[expected],function(z) !le8_table_useful(z$data),logical(1)))
+			if (!empty) stop('No analysis table mapped to figure: ', file.path(directory, figure))
+			selected <- paste0(sub('[.]png$','',figure),'.availability.csv')
+			tables[[selected]] <- data.frame(result_table=expected,availability='No analyzable rows; figure contains an unavailable-results panel')
+			public$files[[selected]] <- le8_table_from_data(tables[[selected]])
+		}
 		plans[[sub('[.]png$', '.xlsx', figure)]] <- selected
 	}
 	for (figure in figures) {
@@ -561,15 +576,15 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 }
 le8_table_stores <- function(root) {
 	paths <- list.files(root, pattern = '[.]xlsx$', recursive = TRUE, full.names = TRUE)
-	paths <- paths[!grepl('/(_history|_source_figures|_previous)/', paths)]
-	unlist(lapply(unique(dirname(paths)), le8_table_archive_files), use.names = FALSE)
+	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations)/', paths)]
+	as.character(unlist(lapply(unique(dirname(paths)), le8_table_archive_files), use.names = FALSE))
 }
 le8_tables_pack <- function(root, clean = TRUE) {
 	root <- normalizePath(root, winslash = '/', mustWork = TRUE)
 	paths <- list.files(root, pattern = '[.](csv|tsv|jsonl)([.]gz)?$|[.]xlsx$|[.]json$', recursive = TRUE, full.names = TRUE, all.files = TRUE)
-	internal <- basename(paths) == 'c5.completed.json' | grepl('/abm_(reference|tabicl)(/attention)?/[^/]+[.]json$', paths)
+	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl)(/attention)?/[^/]+[.]json$', paths)
 	paths <- paths[!grepl('[.]json$', paths) | internal]
-	paths <- paths[!grepl('/(_history|_source_figures|_previous)/', paths)]
+	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations)/', paths)]
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
 	for (directory in directories) {
 		old_workbooks <- le8_table_archive_files(directory)
@@ -600,7 +615,7 @@ le8_tables_pack <- function(root, clean = TRUE) {
 				entry <- le8_table_entry(path) ; entry$sheets <- sheets
 			} else {
 				separator <- if (grepl('[.]tsv([.]gz)?$', path)) '\t' else ','
-				header <- data.table::fread(path, sep = separator, nrows = 0, showProgress = FALSE)
+				header <- if (le8_table_blank(path)) data.frame() else data.table::fread(path, sep = separator, nrows = 0, showProgress = FALSE)
 				is_private <- le8_table_private(header)
 				x <- if (!intermediate || is_private) le8_table_read(path) else NULL
 				entry <- le8_table_entry(path, x)
@@ -614,7 +629,9 @@ le8_tables_pack <- function(root, clean = TRUE) {
 			written <- le8_table_workbook(directory, public)
 			unlink(setdiff(old_workbooks, file.path(directory, written)))
 		}
-		if (clean && length(files)) unlink(files)
+		# A source XLSX may have the same name as its newly consolidated figure
+		# workbook. Never delete the published replacement while cleaning inputs.
+		if (clean && length(files)) unlink(setdiff(files,le8_table_archive_files(directory)))
 		message('Packed result workbooks: ', directory)
 		invisible(gc())
 	}
@@ -720,6 +737,13 @@ le8_analysis_options <- function(outcome = Y) list(
 )
 
 # Validate completed results without raw participant input or model fitting.
+le8_code_fingerprint <- function() {
+	code <- list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE)
+	f <- tempfile(); on.exit(unlink(f), add=TRUE)
+	base::saveRDS(get0(".le8_loaded_code",ifnotfound=tools::md5sum(code)), f, version=2, compress=FALSE)
+	unname(tools::md5sum(f))
+}
+
 le8_completed_results <- function(root, traits, layers, modules) {
 	stores <- new.env(parent = emptyenv())
 	table_entry <- function(path) {
@@ -755,8 +779,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 			meta <- x$meta
 			if (!identical(meta$trait, y) || !identical(meta$layer, if (b == "prot") "protein" else "metabolite") || !(identical(meta$module, m) || (m == "c4_panel_validation" && identical(meta$module, "c4_focus"))))
 				stop("Cached trait/layer/module mismatch: ", f)
-			if (!identical(meta$analysis_options, le8_analysis_options(y)) || !identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026"))))
-				stop("Cached analysis options or seed differ: ", f, ". Use --replace TRUE or a new output directory.")
+			settings_match <- identical(meta$analysis_options, le8_analysis_options(y)) && identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026")))
 			generated <- meta$generated
 			version <- if (is.null(meta$code_version)) "saved fitted result" else meta$code_version
 			present <- function(paths) all(vapply(paths, function(path) {
@@ -794,10 +817,11 @@ le8_completed_results <- function(root, traits, layers, modules) {
 				complete <- complete && reusable
 				budgets <- sort(unique(as.numeric(strsplit(Sys.getenv("C4_FOCUS_BUDGETS", "5,10,50"), ",")[[1]])))
 				actual <- sort(unique(x$tables$metrics$budget[x$tables$metrics$budget > 0]))
-				if (!identical(as.numeric(actual), budgets)) stop("Cached C4 assay budgets differ: ", d, ". Use --replace TRUE or a new output directory.")
+				if (!identical(as.numeric(actual), budgets)) settings_match <- FALSE
 			}
 			if (m == "c2_cause") for (n in c("RUN_MRlink2", "RUN_Dandelion"))
-				if (!identical(meta[[n]], Sys.getenv(n, "Top"))) stop("Cached C2 method setting differs: ", n, " in ", d)
+				if (!identical(meta[[n]], Sys.getenv(n, "Top"))) settings_match <- FALSE
+			if (!settings_match || !identical(meta$code_signature,le8_code_fingerprint())) { reusable <- FALSE; complete <- FALSE }
 			status <- if (complete) "completed" else if (reusable) "cached" else "incomplete"
 			detail <- if (complete) "Saved estimates and original scope retained; no refitting or relabelling" else if (reusable)
 				"Numerical results complete; regenerate presentation without refitting" else "Missing result fields or numerical exports; stage resume required"
@@ -814,8 +838,9 @@ if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] == "
 	z <- le8_completed_results(args[2], split(args[3]), split(args[4]), split(args[5]))
 	if (nrow(z)) {
 		write.csv(z, args[6], row.names = FALSE)
-		for (i in which(z$status == "completed")) cat(paste(z$trait[i], z$module[i], z$layer[i], sep = "|"), "\n", sep = "")
-		for (i in which(z$status == "cached")) cat(paste(z$trait[i], z$module[i], z$layer[i], "reuse-results", sep = "|"), "\n", sep = "")
+		# Output completeness alone cannot prove unchanged inputs, groups or LD.
+		# Each module revalidates its full stage signature before reusing its fits.
+		# Explicit presentation-only entry points retain their frozen-results path.
 	}
 	quit(save = "no", status = 0)
 }
@@ -865,6 +890,69 @@ le8_breslow_hazard <- function(time, event, lp) {
 	data.frame(time = a$time, hazard = cumsum(a$event / denom))
 }
 
+# 🚩 Shared participant groups and proxy statistics
+le8_validate_ids <- function(d, label = "input") {
+	if (!"eid" %in% names(d)) stop(label, " lacks eid")
+	d$eid <- as.character(d$eid)
+	if (anyNA(d$eid) || any(!nzchar(trimws(d$eid))) || anyDuplicated(d$eid)) stop(label, " contains missing/duplicate eid")
+	d
+}
+le8_participant_groups <- function(d) {
+	d <- le8_validate_ids(d)
+	column <- Sys.getenv("LE8_GROUP_COLUMN", Sys.getenv("PGS_GROUP_COLUMN", ""))
+	file <- Sys.getenv("LE8_GROUP_FILE", "")
+	if (nzchar(file)) {
+		m <- le8_validate_ids(as.data.frame(data.table::fread(file)), "group mapping")
+		if (!"group" %in% names(m)) stop("LE8_GROUP_FILE requires eid,group (kinship connected components)")
+		g <- as.character(m$group[match(d$eid, m$eid)])
+	} else if (nzchar(column)) {
+		if (!column %in% names(d)) stop("Required group column missing: ", column)
+		g <- as.character(d[[column]])
+	} else if (".group" %in% names(d)) g <- as.character(d$.group) else g <- d$eid
+	if (anyNA(g) || any(!nzchar(trimws(g)))) stop("Incomplete participant group mapping")
+	g
+}
+le8_group_folds <- function(group, k = 5L, seed = 2026L) {
+	group <- as.character(group); u <- sort(unique(group))
+	if (anyNA(group) || any(!nzchar(group)) || length(u) < k) stop("Insufficient valid independent groups")
+	set.seed(seed); f <- sample(rep(seq_len(k), length.out = length(u))); f[match(group, u)]
+}
+le8_group_bootstrap <- function(group) {
+	blocks <- split(seq_along(group), as.character(group))
+	unlist(blocks[sample(seq_along(blocks), length(blocks), replace = TRUE)], use.names = FALSE)
+}
+le8_proxy_map <- function(d, features, components, covars, adjustment = "basic_adjusted", min_n = 100L) {
+	if (length(setdiff(covars, names(d)))) stop("Missing required proxy covariates: ", paste(setdiff(covars, names(d)), collapse = ","))
+	components <- intersect(components, names(d)); features <- intersect(features, names(d))
+	if (!adjustment %in% c("basic_adjusted", "conditional_specificity")) stop("Unknown proxy adjustment")
+	rows <- lapply(components, function(cmp) {
+		cv <- unique(c(covars, if (adjustment == "conditional_specificity") setdiff(components, cmp)))
+		dd <- d[complete.cases(d[, unique(c(cmp, cv)), drop = FALSE]), , drop = FALSE]
+		if (nrow(dd) < min_n || !is.finite(sd(dd[[cmp]])) || sd(dd[[cmp]]) <= 0) return(tibble())
+		cv <- cv[vapply(dd[cv], function(x) length(unique(x)) > 1L, logical(1))]
+		q <- qr(model.matrix(reformulate(if (length(cv)) cv else "1"), dd))
+		y <- qr.resid(q, as.numeric(scale(dd[[cmp]]))); sy <- sqrt(sum(y^2)); df <- nrow(dd) - q$rank - 1L
+		if (sy <= 0 || df < 10) return(tibble())
+		bind_rows(lapply(split(features, ceiling(seq_along(features)/64)), function(bb) {
+			x <- as.matrix(dd[, bb, drop = FALSE]); storage.mode(x) <- "double"
+			for (j in seq_len(ncol(x))) {
+				v <- x[,j]; med <- median(v[is.finite(v)], na.rm = TRUE)
+				v[!is.finite(v)] <- if (is.finite(med)) med else 0; ss <- sd(v)
+				x[,j] <- if (is.finite(ss) && ss > 0) (v-mean(v))/ss else 0
+			}
+			xr <- qr.resid(q,x); den <- sqrt(colSums(xr^2))*sy
+			r <- as.numeric(crossprod(xr,y))/den; r <- pmax(-.999999,pmin(.999999,r))
+			z <- r*sqrt(df/(1-r*r)); p <- 2*pt(abs(z),df,lower.tail=FALSE)
+			tibble(feature=bb, component=cmp, r, z, p, N=nrow(dd), adjustment,
+				se_r=sqrt((1-r*r)/df), status=ifelse(is.finite(p),"ok","constant/unavailable"))
+		}))
+	})
+	z <- bind_rows(rows)
+	if (!nrow(z)) return(z)
+	z |> group_by(component) |> mutate(FDR=p.adjust(p,"BH",n=length(features))) |> ungroup() |>
+		mutate(FDR_all=p.adjust(p,"BH",n=length(features)*length(components)))
+}
+
 le8_fit_budget_model <- function(train, test, clinical, features, tvar, evar,
 			solver = "cox", seed = 2026) {
 	if (!solver %in% c("cox", "ridge")) stop("solver must be cox or ridge")
@@ -887,7 +975,7 @@ le8_fit_budget_model <- function(train, test, clinical, features, tvar, evar,
 			return(list(status = "ill-conditioned training design; use prespecified ridge solver", condition_number = condition))
 		f <- reformulate(safe, response = "survival::Surv(.time,.event)")
 		fit <- tryCatch(withCallingHandlers(survival::coxph(f, tr,
-			ties = "efron", x = TRUE, y = TRUE,
+			ties = "breslow", x = TRUE, y = TRUE,
 			model = TRUE, singular.ok = FALSE
 		), warning = capture), error = function(e) e)
 		if (inherits(fit, "condition")) return(list(status = conditionMessage(fit)))
@@ -900,14 +988,16 @@ le8_fit_budget_model <- function(train, test, clinical, features, tvar, evar,
 		for (e in 0 : 1) {
 			ix <- which(tr$.event == e) ; foldid[ix] <- sample(rep(1 : 5, length.out = length(ix)))
 		}
-		if (".group" %in% names(train) && exists("final_group_folds")) foldid <- final_group_folds(train$.group, 5, seed)
+		if (".group" %in% names(train)) foldid <- le8_group_folds(train$.group, 5, seed)
 		fit <- tryCatch(withCallingHandlers(glmnet::cv.glmnet(xx$train,
 			survival::Surv(tr$.time, tr$.event),
-			family = "cox", alpha = 0, foldid = foldid,
+			family = "cox", alpha = 0, foldid = foldid, cox.ties = "breslow",
 			type.measure = "deviance", standardize = TRUE, penalty.factor = penalty
 		), warning = capture), error = function(e) e)
 		if (inherits(fit, "condition")) return(list(status = conditionMessage(fit)))
-		lambda <- fit$lambda.1se ; beta <- as.numeric(coef(fit, s = "lambda.1se"))
+		lambda_rule <- Sys.getenv("LE8_RIDGE_LAMBDA", "lambda.min")
+		if (!lambda_rule %in% c("lambda.min", "lambda.1se")) stop("Invalid LE8_RIDGE_LAMBDA")
+		lambda <- fit[[lambda_rule]] ; beta <- as.numeric(coef(fit, s = lambda_rule))
 		lp_train <- drop(xx$train %*% beta) ; lp_center <- mean(lp_train)
 		lp <- drop(xx$test %*% beta) - lp_center
 		bh <- tryCatch(le8_breslow_hazard(tr$.time, tr$.event, lp_train - lp_center), error = function(e) e)
@@ -925,13 +1015,18 @@ le8_fit_budget_model <- function(train, test, clinical, features, tvar, evar,
 	# A coxph fit's formula environment captures this entire call (including
 	# full train/test omics); serializing it can turn one small model into GBs.
 	list(
-		status = "ok", lp = lp, baseline_hazard = bh, N_selected = count,
+		status = "ok", lp = lp, contributions=sweep(xx$test,2,beta,`*`), baseline_hazard = bh, N_selected = count,
 		coefficient = tibble(variable = orig, beta = beta), preprocess = xx$audit,
 		N_effective = sum(vapply(features, function(v)
 			any(abs(beta[orig == v | startsWith(orig, paste0(v, "__"))]) > 1e-8), logical(1))),
 		effective_threshold = 1e-8,
 		effective_interpretation = "Numerical coefficient-use diagnostic; not variable importance or assay utility",
-		fit_method = fit_method, condition_number = condition, lambda = lambda, lp_center = lp_center,
+		fit_method = fit_method, tie_method = "breslow", condition_number = condition, lambda = lambda, lp_center = lp_center,
+		N_train = nrow(train), events_train = sum(tr$.event), design_rank = qr(xx$train)$rank,
+		penalty = tibble(variable = orig, penalty_factor = penalty),
+		cv_curve = if (inherits(fit, "cv.glmnet")) tibble(lambda = fit$lambda, loss = fit$cvm, se = fit$cvsd) else tibble(),
+		molecular_lp_sd_train = sd(drop(xx$train[, penalty > 0, drop = FALSE] %*% beta[penalty > 0])),
+		molecular_lp_sd_test = sd(drop(xx$test[, penalty > 0, drop = FALSE] %*% beta[penalty > 0])),
 		warnings = paste(unique(warn), collapse = "; ")
 	)
 }
@@ -970,7 +1065,7 @@ le8_weighted_auc <- function(p, y, w) {
 	b <- as.numeric(rowsum(w * (1 - y), g, reorder = FALSE)) ; cum <- cumsum(b) - b
 	sum(a * (cum + .5 * b)) / (sum(a) * sum(b))
 }
-le8_evaluate_risk <- function(time, event, p, horizon, model, budget, paradigm, ablation = "none", B = 0, seed = 2026) {
+le8_evaluate_risk <- function(time, event, p, horizon, model, budget, paradigm, ablation = "none", B = 0, seed = 2026, groups = seq_along(time)) {
 	iw <- le8_ipcw(time, event, horizon)
 	base <- tibble(model, budget, paradigm, ablation, horizon,
 		N = length(time), events_by_horizon = iw$N_case,
@@ -1004,7 +1099,7 @@ le8_evaluate_risk <- function(time, event, p, horizon, model, budget, paradigm, 
 	if (B > 0L) {
 		set.seed(seed)
 		boot <- map_dfr(seq_len(B), function(i) {
-			ix <- sample.int(n, n, replace = TRUE)
+			ix <- le8_group_bootstrap(groups)
 			z <- le8_ipcw(time[ix], event[ix], horizon)
 			tibble(
 				replicate = i, AUC = if (z$status == "ok") le8_weighted_auc(p[ix], z$y, z$w) else NA_real_,
@@ -1162,61 +1257,46 @@ le8_plot_final_review <- function(met, ca, dc, horizons, budgets, outdir) {
 # Relearn connection-based feature membership inside the outer training split.
 # No validation LE8 measurements or outcomes enter this procedure.
 le8_training_connection_set <- function(train, features, components, covars, rawdir) {
-	components <- intersect(components, names(train)) ; covars <- intersect(covars, names(train))
-	if (length(components) < 1) return(character())
-	d <- as.data.frame(train) ; d <- d[complete.cases(d[, unique(c(components, covars)), drop = FALSE]), , drop = FALSE]
-	set.seed(SEED + 411)
-	cap <- as.integer(le8_num_env("FINAL_CONNECTION_MAX_N", 60000))
-	if (nrow(d) > cap) d <- d[sample.int(nrow(d), cap), , drop = FALSE]
-	if (nrow(d) < 1000) return(character())
-	half <- if (".le8_proxy_half" %in% names(d)) d$.le8_proxy_half else sample(rep(1 : 2, length.out = nrow(d)))
-	if (anyNA(half) || !all(half %in% 1 : 2)) stop("Invalid prespecified proxy discovery/replication assignment")
-	features <- intersect(features, names(d))
-	scans <- map_dfr(1 : 2, function(h) {
-		dd <- d[half == h, , drop = FALSE]
-		map_dfr(components, function(cmp) {
-			cv <- unique(c(covars, setdiff(components, cmp)))
-			M <- model.matrix(reformulate(cv), dd) ; q <- qr(M)
-			yr <- qr.resid(q, as.numeric(scale(dd[[cmp]]))) ; sy <- sqrt(sum(yr ^ 2)) ; df <- nrow(dd) - q$rank - 1L
-			if (!is.finite(sy) || sy <= 0 || df < 10) return(tibble())
-			blocks <- split(features, ceiling(seq_along(features) / 64))
-			map_dfr(blocks, function(bb) {
-				x <- as.matrix(dd[, bb, drop = FALSE]) ; storage.mode(x) <- "double"
-				for (j in seq_len(ncol(x))) {
-					z <- x[, j] ; m <- median(z[is.finite(z)], na.rm = TRUE)
-					if (!is.finite(m)) m <- 0 ; z[!is.finite(z)] <- m ; s <- sd(z)
-					x[, j] <- if (is.finite(s) && s > 0) (z - mean(z)) / s else 0
-				}
-				xr <- qr.resid(q, x) ; den <- sqrt(colSums(xr ^ 2)) * sy
-				r <- as.numeric(crossprod(xr, yr)) / pmax(den, 1e-20) ; r <- pmax( - .999999, pmin(.999999, r))
-				z <- r * sqrt(df / (1 - r * r)) ; p <- 2 * pt(abs(z), df, lower.tail = FALSE)
-				tibble(feature = bb, component = cmp, r, z, p, N = nrow(dd), half = h)
-			})
-		})
-	})
+	d <- as.data.frame(train); components <- intersect(components,names(d))
+	if (!length(components)) return(character())
+	d$.group <- le8_participant_groups(d)
+	half <- if (".le8_proxy_half" %in% names(d)) d$.le8_proxy_half else le8_group_folds(d$.group,2,SEED+411)
+	if (anyNA(half) || !all(half %in% 1:2)) stop("Invalid proxy halves")
+	if (any(vapply(split(half,d$.group),function(x) length(unique(x))>1,logical(1)))) stop("Family crosses proxy halves")
+	scans <- bind_rows(lapply(c("basic_adjusted","conditional_specificity"),function(adj)
+		bind_rows(lapply(1:2,function(h) le8_proxy_map(d[half==h,,drop=FALSE],features,components,covars,adj) |> mutate(half=h)))))
 	if (!nrow(scans)) return(character())
-	scans <- scans |>
-		group_by(half, component) |>
-		mutate(FDR = p.adjust(p, "BH")) |>
-		ungroup()
-	a <- scans |>
-		filter(half == 1) |>
-		group_by(feature) |>
-		mutate(specificity = abs(z) / sum(abs(z))) |>
-		slice_max(abs(z), n = 1, with_ties = FALSE) |>
-		ungroup() |>
-		select(feature, component, r1 = r, FDR1 = FDR, specificity)
-	b <- scans |>
-		filter(half == 2) |>
-		select(feature, component, r2 = r, FDR2 = FDR)
-	joined <- left_join(a, b, by = c("feature", "component")) |>
-		mutate(
-			selected = is.finite(FDR1) & is.finite(FDR2) & FDR1 < .05 & FDR2 < .05 &
-				sign(r1) == sign(r2) & is.finite(specificity) & specificity >= .35,
-			scope = "outer training participants only; replicated LE8 association, not intervention evidence"
-		)
-	write_raw_csv(joined, "connection_membership_training_only.csv", rawdir)
-	joined$feature[joined$selected %in% TRUE]
+	write_raw_csv(scans,"connection_proxy_maps_training_only.csv",rawdir)
+	a <- scans |> filter(half==1,adjustment=="basic_adjusted") |> group_by(feature) |>
+		mutate(specificity=abs(r)/sum(abs(r),na.rm=TRUE)) |> ungroup() |>
+		select(feature,component,r1=r,FDR1=FDR,specificity)
+	b <- scans |> filter(half==2,adjustment=="basic_adjusted") |> select(feature,component,r2=r,FDR2=FDR)
+	joined <- left_join(a,b,by=c("feature","component")) |> mutate(
+		selected=is.finite(FDR1)&is.finite(FDR2)&FDR1<.05&FDR2<.05&sign(r1)==sign(r2),
+		proxy_strength=pmin(abs(r1),abs(r2)), scope="development only; disease-blind replicated basic-adjusted proxy",
+		training_hash=le8_hash_object(sort(d$eid))) |> arrange(desc(proxy_strength),feature,component)
+	# Greedy redundancy control is learned from development X only. Keep the full
+	# qualified pool, but postpone near-duplicate assays when forming the prefix.
+	out <- unique(joined$feature[joined$selected %in% TRUE])
+	cutoff <- as.numeric(Sys.getenv("C4_PROXY_REDUNDANCY_R", ".95"))
+	if (!is.finite(cutoff) || cutoff<=0 || cutoff>1) stop("Invalid C4_PROXY_REDUNDANCY_R")
+	candidates <- head(out,500L); chosen <- deferred <- character()
+	if (length(candidates)>1L && cutoff<1) {
+		ids <- order(vapply(d$eid,function(id) digest::digest(paste(SEED,id),algo="xxhash64"),character(1)))
+		ids <- head(ids,5000L)
+		x <- as.matrix(d[ids,candidates,drop=FALSE]); storage.mode(x) <- "double"
+		for(j in seq_len(ncol(x))) { v<-x[,j]; m<-median(v[is.finite(v)],na.rm=TRUE);v[!is.finite(v)]<-if(is.finite(m)) m else 0;x[,j]<-v }
+		r <- suppressWarnings(cor(x));r[!is.finite(r)]<-0
+		for(f in candidates) {
+			if (length(chosen) && any(abs(r[f,chosen])>cutoff)) deferred<-c(deferred,f) else chosen<-c(chosen,f)
+		}
+		out <- c(chosen,setdiff(out,candidates),deferred)
+	}
+	joined$assay_rank <- match(joined$feature,out)
+	joined$redundancy_rule <- paste0("Greedy |r|<=",cutoff," in top 500 proxy candidates; deterministic <=5000 development donors; qualified correlated assays postponed")
+	write_raw_csv(joined,"connection_membership_training_only.csv",rawdir)
+	attr(out,"membership") <- joined
+	out
 }
 
 # Shared functions for the LE8-supervised 5C omics pipeline.
@@ -1234,17 +1314,13 @@ suppressPackageStartupMessages(
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 bt <- function(x) paste0("`", x, "`")
 
-# Reproducible outcome-stratified folds shared by Final and C4 nonlinear analyses. Prediction-model
+# Reproducible outcome-blind family folds shared by Final and C4 nonlinear analyses. Prediction-model
 # functions themselves live in 0f/prediction.R and Final extensions in final.R.
 make_folds <- function(dat, event_var, k = 5, seed = 2026) {
-	set.seed(seed)
-	fold <- integer(nrow(dat)) ; event <- dat[[event_var]]
-	for (value in unique(event[!is.na(event)])) {
-		id <- which(event == value)
-		fold[id] <- sample(rep(seq_len(k), length.out = length(id)))
-	}
-	fold
+	group <- if (".group" %in% names(dat)) dat$.group else if ("eid" %in% names(dat)) le8_participant_groups(dat) else seq_len(nrow(dat))
+	le8_group_folds(group,k,seed)
 }
+
 cap <- function(x, limit) pmax(pmin(x, limit), - limit)
 safe_log <- function(x) ifelse(is.finite(x) & x > 0, log(x), NA_real_)
 truthy <- function(x) toupper(as.character(x)) %in% c("TRUE", "T", "1", "YES", "Y")
@@ -1460,10 +1536,33 @@ cache_valid <- function(path) {
 	isTRUE(!info$isdir && info$size > 0)
 }
 # Reuse stage results only when their internal settings match the requested analysis.
+.le8_loaded_code <- tools::md5sum(list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE))
+le8_stage_fingerprint <- function() {
+	code <- list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE)
+	env <- Sys.getenv(); env <- env[grepl("^(C[1-5]_|PGS_|RUN_|LE8_(GWAS|PQTL|MQTL|LD|GROUP|GRCH|REFGEN|ENDPOINT|BASELINE)|FINAL_CONNECTION|DATE_FOLLOW_END)",names(env))]
+	files <- unique(c(file.path(get0("indir",ifnotfound=""),"Rdata",c("all.rds","prot.rds","met.rds","prot.pgs.rds","met.pgs.rds")),
+		unname(env[file.exists(env)]),get0(".le8_stage_source_files",ifnotfound=character()),file.path(get0("indir",ifnotfound=""),"rap/vip.tab.gz")))
+	for (mf in env[grepl("MANIFEST$",names(env)) & file.exists(env)]) {
+		m <- tryCatch(data.table::fread(mf,showProgress=FALSE),error=function(e) NULL)
+		if (!is.null(m)) for (nm in intersect(c("file","path","weights_file","ld_file"),names(m))) {
+			v <- as.character(m[[nm]]); relative <- !grepl("^/|^[A-Za-z]:",v)
+			v[relative] <- file.path(dirname(mf),v[relative]); files <- unique(c(files,v))
+		}
+	}
+	info <- file.info(files)
+	# Transaction workspaces move between runs; identify upstream results by
+	# their stable path within the analysis root, while inspecting actual files.
+	root <- paste0(sub("/+$", "", get0("analysis_root", ifnotfound="")), "/")
+	logical_files <- files
+	inside <- !is.na(files) & nzchar(root) & root != "/" & startsWith(files, root)
+	logical_files[inside] <- paste0("<analysis-root>/", substring(files[inside], nchar(root) + 1L))
+	le8_hash_object(list(code=.le8_loaded_code,env=env,files=logical_files,size=info$size,mtime=as.numeric(info$mtime)))
+}
 read_stage_cache <- function(path, version = NULL) {
 	if (!cache_valid(path)) return(NULL)
 	z <- tryCatch(readRDS(path), error = function(e) NULL)
 	if (is.null(z) || !is.list(z) || is.null(z$data)) return(NULL)
+	if (!identical(z$source_signature,le8_stage_fingerprint())) return(NULL)
 	if (!is.null(version) && !identical(z$version, version)) return(NULL)
 	if (!is.null(z$analysis_options) && !identical(z$analysis_options, le8_analysis_options())) return(NULL)
 	z$data
@@ -1473,7 +1572,7 @@ write_stage_cache <- function(data, path, version = NULL) {
 	# Publish only after serialization finishes; interruptions leave the old cache intact.
 	tmp <- tempfile(pattern = ".stage-", tmpdir = dirname(path))
 	on.exit(unlink(tmp), add = TRUE)
-	value <- list(generated = format(Sys.time(), "%F %T %z"), data = data, analysis_options = le8_analysis_options())
+	value <- list(generated = format(Sys.time(), "%F %T %z"), data = data, code_signature=le8_code_fingerprint(), source_signature=le8_stage_fingerprint(), analysis_options = le8_analysis_options())
 	if (!is.null(version)) value$version <- version
 	saveRDS(value, tmp, compress = "xz")
 	if (!file.rename(tmp, path)) stop("Cannot publish stage cache: ", path, call. = FALSE)
@@ -1514,6 +1613,9 @@ le8_stage <- function(label, expr, detail = "") {
 	if (value$visible) value$value else invisible(value$value)
 }
 parallel_map <- function(x, fun) {
+	# PGS invokes six one-feature models; the enclosing feature loop owns GC.
+	# Avoid repeatedly walking the entire resident score matrix for each model.
+	if (length(x) <= 1L) return(lapply(x, fun))
 	# Release unreachable model frames before forking so children inherit a
 	# smaller heap. Collect between tasks after fun's local frame has returned;
 	# otherwise each long-lived worker can retain several fits' worth of garbage.
@@ -1551,7 +1653,7 @@ quiet_package_call <- function(expr) {
 module_meta <- function(layer, module = LE8_JOB, extra = list()) {
 	c(list(
 		module = module, layer = layer, trait = Y, generated = format(Sys.time(), "%F %T %z"),
-		seed = SEED, R_runtime = R.version.string, biom = BIOM, analysis_options = le8_analysis_options()
+		seed = SEED, R_runtime = R.version.string, biom = BIOM, code_signature=le8_code_fingerprint(), source_signature=le8_stage_fingerprint(), analysis_options = le8_analysis_options()
 	), extra)
 }
 finalize_outputs <- function(module, outdir = getwd()) {
@@ -1896,15 +1998,27 @@ match_GRCH_table <- function(query_file, reference_file, position_only = FALSE) 
 	d
 }
 read_sumstat_matched <- function(query_file, reference_file,
-			N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000")),
+			N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA"))),
 			joint = grepl("jma\\.cojo$", query_file %||% ""), position_only = FALSE) {
 	standardize_sumstat(match_GRCH_table(query_file, reference_file, position_only = position_only),
 		N_default,
 		joint = joint, source_file = query_file
 	)
 }
-standardize_sumstat <- function(d, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000")),
-			joint = FALSE, source_file = NA_character_) {
+le8_variant_key <- function(z) {
+	pair <- paste(pmin(z$EA,z$NEA),pmax(z$EA,z$NEA),sep=":")
+	snv <- nchar(z$EA)==1 & nchar(z$NEA)==1 & !is.na(z$EA) & !is.na(z$NEA)
+	a <- chartr("ATCG","TAGC",z$EA); b <- chartr("ATCG","TAGC",z$NEA)
+	pair[snv] <- pmin(pair[snv],paste(pmin(a[snv],b[snv]),pmax(a[snv],b[snv]),sep=":"))
+	key <- paste(.norm_chr_value(z$CHR),format(z$POS,scientific=FALSE,trim=TRUE),pair,sep=":")
+	missing <- is.na(z$CHR)|!is.finite(z$POS)|is.na(z$EA)|is.na(z$NEA)
+	key[missing] <- paste(z$SNP[missing],z$EA[missing],z$NEA[missing],sep=":")
+	key
+}
+.le8_sumstat_qc <- new.env(parent=emptyenv()); .le8_sumstat_qc$rows <- list()
+standardize_sumstat <- function(d, N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA"))),
+			joint = FALSE, source_file = NA_character_, conflict_policy=c("error","exclude")) {
+	conflict_policy <- match.arg(conflict_policy)
 	d <- as.data.frame(d, check.names = FALSE) ; nms <- names(d)
 	col <- list(
 		SNP = .pick_col(nms, c("SNP", "RSID", "RS_NUMBER", "VARIANT_ID", "ID", "MARKERNAME", "POS_NAME")),
@@ -1938,20 +2052,39 @@ standardize_sumstat <- function(d, N_default = as.numeric(Sys.getenv("C2_SUMSTAT
 	# Unknown N stays NA; no fabricated default sample size.
 	ans$P[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] <- 2 * pnorm(abs(ans$BETA[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1] /
 		ans$SE[!is.finite(ans$P) | ans$P <= 0 | ans$P > 1]), lower.tail = FALSE)
-	ans |>
-		filter(!is.na(SNP), SNP != "", is.finite(BETA), is.finite(SE), SE > 0) |>
-		distinct(SNP, .keep_all = TRUE)
+	ans <- ans |> filter(!is.na(SNP), SNP!="",is.finite(BETA),is.finite(SE),SE>0) |> distinct()
+	ans$variant_key <- le8_variant_key(ans)
+	dup <- unique(ans$variant_key[duplicated(ans$variant_key)])
+	remove <- integer(); conflicting <- character(); redundant <- 0L
+	for (key in dup) {
+		ix <- which(ans$variant_key==key); z <- ans[ix,,drop=FALSE]; a <- z[1,,drop=FALSE]
+		comp <- function(v) ifelse(nchar(v)==1,chartr("ACGT","TGCA",v),NA_character_)
+		plus <- (z$EA==a$EA & z$NEA==a$NEA) | (comp(z$EA)==a$EA & comp(z$NEA)==a$NEA)
+		minus <- (z$EA==a$NEA & z$NEA==a$EA) | (comp(z$EA)==a$NEA & comp(z$NEA)==a$EA)
+		direction <- ifelse(plus %in% TRUE,1,ifelse(minus %in% TRUE,-1,NA_real_))
+		eq <- function(v,ref) all(!is.finite(v) & !is.finite(ref) | is.finite(v) & is.finite(ref) & abs(v-ref)<=1e-8*pmax(1,abs(ref)))
+		consistent <- eq(z$BETA*direction,a$BETA) && eq(z$SE,a$SE) && eq(z$N,a$N) && eq(ifelse(direction==1,z$EAF,1-z$EAF),a$EAF)
+		if (consistent) { remove<-c(remove,ix[-1]); redundant<-redundant+length(ix)-1L } else { conflicting<-c(conflicting,key);remove<-c(remove,ix) }
+	}
+	if (length(conflicting) && conflict_policy=="error") stop("Conflicting duplicate coordinate/allele statistics: ",source_file)
+	if (length(remove)) ans <- ans[-remove,,drop=FALSE]
+	if (length(conflicting)) warning("Excluded ",length(conflicting)," ambiguous coordinate/allele identities from ",source_file,call.=FALSE)
+	qc <- tibble(source_file,input_rows=nrow(d),retained_rows=nrow(ans),redundant_rows_collapsed=redundant,
+		ambiguous_variant_identities=length(conflicting),policy=conflict_policy)
+	attr(ans,"variant_qc") <- qc
+	if (exists(".le8_sumstat_qc",inherits=TRUE)) .le8_sumstat_qc$rows[[length(.le8_sumstat_qc$rows)+1L]] <- qc
+	ans
 }
-read_sumstat <- function(file, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000")), joint = grepl("jma\\.cojo$", file %||% "")) {
+read_sumstat <- function(file, N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA"))), joint = grepl("jma\\.cojo$", file %||% "")) {
 	if (is.na(file) || !file.exists(file) || file.size(file) == 0) return(tibble())
-	standardize_sumstat(read_table_auto(file), N_default, joint = joint, source_file = file)
+	standardize_sumstat(read_table_auto(file), N_default, joint = joint, source_file = file, conflict_policy="exclude")
 }
 read_sumstat_header <- function(path) {
 	con <- if (grepl("\\.gz$", path)) gzfile(path, "rt") else base::file(path, "rt")
 	on.exit(close(con), add = TRUE)
 	readLines(con, n = 1, warn = FALSE)
 }
-read_sumstat_region <- function(file, chr, start, end, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000"))) {
+read_sumstat_region <- function(file, chr, start, end, N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA")))) {
 	if (is.na(file) || !file.exists(file) || file.size(file) == 0) return(tibble())
 	hdr <- tryCatch(read_sumstat_header(file), error = function(e) "")
 	d <- NULL
@@ -2000,11 +2133,11 @@ read_sumstat_region <- function(file, chr, start, end, N_default = as.numeric(Sy
 		}
 	}
 	if (is.null(d)) d <- read_table_auto(file)
-	z <- standardize_sumstat(d, N_default, joint = grepl("jma\\.cojo$", file), source_file = file)
+	z <- standardize_sumstat(d, N_default, joint = grepl("jma\\.cojo$", file), source_file = file, conflict_policy="exclude")
 	z |> filter(.norm_chr_value(CHR) == .norm_chr_value(chr), POS >= start, POS <= end)
 }
 
-read_sumstat_snps <- function(file, snps, N_default = as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "100000"))) {
+read_sumstat_snps <- function(file, snps, N_default = suppressWarnings(as.numeric(Sys.getenv("C2_SUMSTAT_N", unset = "NA")))) {
 	snps <- unique(as.character(snps)) ; snps <- snps[!is.na(snps) & nzchar(snps)]
 	if (!length(snps) || is.na(file) || !file.exists(file)) return(tibble())
 	hdr <- tryCatch(read_sumstat_header(file), error = function(e) "")
@@ -2021,7 +2154,7 @@ read_sumstat_snps <- function(file, snps, N_default = as.numeric(Sys.getenv("C2_
 		}
 	}
 	if (is.null(d)) d <- read_table_auto(file)
-	standardize_sumstat(d, N_default, joint = grepl("jma\\.cojo$", file), source_file = file) |> filter(SNP %in% snps)
+	standardize_sumstat(d, N_default, joint = grepl("jma\\.cojo$", file), source_file = file, conflict_policy="exclude") |> filter(SNP %in% snps)
 }
 
 get_y_gwas_file <- function(trait = Y, required = TRUE) {
@@ -2039,7 +2172,7 @@ recover_qtl_alleles <- function(iv, full_file) {
 		EA_full = toupper(EA), NEA_full = toupper(NEA),
 		EAF_full = EAF, CHR_full = CHR, POS_full = POS
 	)
-	iv |>
+	out <- iv |>
 		mutate(EA_joint = toupper(EA), NEA_joint = toupper(NEA)) |>
 		left_join(a, by = "SNP") |>
 		mutate(
@@ -2058,12 +2191,22 @@ recover_qtl_alleles <- function(iv, full_file) {
 			CHR = CHR_full, POS = POS_full
 		) |>
 		select( - ends_with("_full"), - EA_joint, - NEA_joint, - same_to_full, - reverse_to_full, - allele_ok)
+	ambiguous <- out$SNP[duplicated(out$SNP)|duplicated(out$SNP,fromLast=TRUE)]
+	if(length(ambiguous)) warning("Excluded ",length(unique(ambiguous))," ambiguous multiallelic COJO identifiers",call.=FALSE)
+	out <- out[!out$SNP %in% ambiguous,,drop=FALSE]
+	out$variant_key <- le8_variant_key(out);out
 }
 is_palindromic <- function(a1, a2) paste0(a1, a2) %in% c("AT", "TA", "CG", "GC")
 allele_complement <- function(a) chartr("ATCG", "TAGC", toupper(a))
 harmonize_sumstats <- function(x, y, drop_palindromic = TRUE) {
+	x$variant_key <- le8_variant_key(x); y$variant_key <- le8_variant_key(y)
+	if (anyDuplicated(x$variant_key) || anyDuplicated(y$variant_key)) stop("Conflicting duplicate variant identities before harmonization")
+	x$rsid_x <- x$SNP; y$rsid_y <- y$SNP
+	x$SNP <- x$variant_key; y$SNP <- y$variant_key
+	valid <- function(z) z[!is.na(z$EA)&!is.na(z$NEA)&grepl("^[ACGT]+$",z$EA)&grepl("^[ACGT]+$",z$NEA)&z$EA!=z$NEA,,drop=FALSE]
+	x <- valid(x); y <- valid(y)
 	d <- inner_join(x |> select(SNP, CHR_x = CHR, POS_x = POS, EA_x = EA, NEA_x = NEA, EAF_x = EAF, BETA_x = BETA, SE_x = SE, P_x = P, N_x = N, everything()),
-		y |> select(SNP, CHR_y = CHR, POS_y = POS, EA_y = EA, NEA_y = NEA, EAF_y = EAF, BETA_y = BETA, SE_y = SE, P_y = P, N_y = N),
+		y |> select(SNP, CHR_y = CHR, POS_y = POS, EA_y = EA, NEA_y = NEA, EAF_y = EAF, BETA_y = BETA, SE_y = SE, P_y = P, N_y = N, rsid_y),
 		by = "SNP", suffix = c("", ".dup")
 	)
 	if (!nrow(d)) return(d)
@@ -2073,8 +2216,8 @@ harmonize_sumstats <- function(x, y, drop_palindromic = TRUE) {
 			EA_y_comp = allele_complement(EA_y), NEA_y_comp = allele_complement(NEA_y),
 			same = EA_x == EA_y & NEA_x == NEA_y,
 			flip = EA_x == NEA_y & NEA_x == EA_y,
-			strand_same = EA_x == EA_y_comp & NEA_x == NEA_y_comp,
-			strand_flip = EA_x == NEA_y_comp & NEA_x == EA_y_comp,
+			strand_same = nchar(EA_x)==1 & nchar(NEA_x)==1 & EA_x == EA_y_comp & NEA_x == NEA_y_comp,
+			strand_flip = nchar(EA_x)==1 & nchar(NEA_x)==1 & EA_x == NEA_y_comp & NEA_x == EA_y_comp,
 			pal = is_palindromic(EA_x, NEA_x),
 			pal_same_diff = abs(EAF_x - EAF_y),
 			pal_flip_diff = abs(EAF_x - (1 - EAF_y)),
@@ -2171,7 +2314,7 @@ le8_fit_mr <- function(iv, ygwas, exposure, analysis) {
 			es <- sm["BETA_x", "Estimate"] ; ese <- sm["BETA_x", "Std. Error"] ; esp <- sm["BETA_x", "Pr(>|t|)"]
 		}
 	}
-	metrics <- calc_iv_metrics(iv |> filter(SNP %in% d$SNP))
+	metrics <- calc_iv_metrics(iv[le8_variant_key(iv) %in% d$variant_key,,drop=FALSE])
 	tx <- (d$BETA_x / d$SE_x) ^ 2 ; ty <- (d$BETA_y / d$SE_y) ^ 2
 	rxi <- tx / (tx + pmax(d$N_x - 2, 1)) ; ryi <- ty / (ty + pmax(d$N_y - 2, 1))
 	sok <- is.finite(rxi) & is.finite(ryi) ; sf <- if (any(sok)) mean(rxi[sok] > ryi[sok]) else NA_real_
@@ -2780,8 +2923,9 @@ le8_mock_enrich <- function(a, enrich, outdir, enrich_prev = tibble()) {
 	rawdir <- le8_job_dir(outdir, 'c1_correlate') ; genes <- a$term[a$p.value < .05 / nrow(a) & is.finite(a$p.value)]
 	sf <- file.path(rawdir, 'c1.mock_gene_universe.csv') ; write_raw_csv(a |> transmute(gene = term, selected = term %in% genes), 'c1.mock_gene_universe.csv', rawdir)
 	cached <- all(file.exists(file.path(rawdir, c('c1.mock_function_terms.csv', 'c1.mock_tf_edges.csv', 'c1.mock_ppi_edges.csv'))))
-	# Keep public annotation downloads alongside this outcome's C1 outputs.
-	py <- Sys.which('python3') ; status <- if (LE8_REUSE_RESULTS && cached) 0L else if (nzchar(py)) system2(py, shQuote(c(file.path(Sys.getenv('LE8_FDIR'), 'c1.abm.py'), 'annotations', sf, rawdir, file.path(rawdir, 'le8_annotations'))), timeout = 600) else 1L
+	# Download dictionaries are reusable inputs; only derived analyses are published.
+	annotation_cache <- le8_cache_dir('annotations',basename(outdir))
+	py <- Sys.which('python3') ; status <- if (LE8_REUSE_RESULTS && cached) 0L else if (nzchar(py)) system2(py, shQuote(c(file.path(Sys.getenv('LE8_FDIR'), 'c1.abm.py'), 'annotations', sf, rawdir, annotation_cache)), timeout = 600) else 1L
 	rd <- function(n) {
 		f <- file.path(rawdir, n) ; if (status == 0L && file.exists(f)) as_tibble(data.table::fread(f)) else tibble()
 	}
@@ -2980,7 +3124,7 @@ le8_mock_c4 <- function(a, outdir) {
 # 0.common.R
 # Final LE8 5C methods. UKB data are read from external inputs.
 # Shared integrity, outcome and reproducibility functions.
-LE8_CODE_VERSION <- "2026-10-02.final"
+LE8_CODE_VERSION <- "2026-10-05.integrated-5c-v2"
 .le8_analysis_state <- new.env(parent = emptyenv())
 .le8_analysis_state$hashes <- new.env(parent = emptyenv())
 
@@ -3184,10 +3328,29 @@ le8_same_locus_evidence <- function(mr, coloc, layer) {
 		# Old min/max ranges do not prove a particular retained SNP overlaps.
 		FALSE
 	}, logical(1))
-	z |> dplyr::transmute(feature, locus, locus_class,
+	z$region_IV_coverage <- vapply(seq_len(nrow(z)),function(i) {
+		if (!"instrument_positions" %in% names(z)) return(NA_real_)
+		pp <- strsplit(strsplit(as.character(z$instrument_positions[i]),";",fixed=TRUE)[[1]],":",fixed=TRUE)
+		if (!length(pp)) return(NA_real_)
+		mean(vapply(pp,function(q) length(q)==2 && q[1]==as.character(z$chr[i]) && is.finite(suppressWarnings(as.numeric(q[2]))) && as.numeric(q[2])>=z$start[i] && as.numeric(q[2])<=z$end[i],logical(1)))
+	},numeric(1))
+	z$IV_coverage <- vapply(seq_len(nrow(z)),function(i) {
+		if (!all(c("instrument_snps","aligned_MR_IVs") %in% names(z))) return(NA_real_)
+		ids <- strsplit(as.character(z$instrument_snps[i]),";",fixed=TRUE)[[1]]
+		kept <- strsplit(as.character(z$aligned_MR_IVs[i]),";",fixed=TRUE)[[1]]
+		if (!length(ids) || anyNA(ids) || any(!nzchar(ids))) return(NA_real_)
+		mean(ids %in% kept)
+	},numeric(1))
+	z$MR_signal_status <- if ("MR_signal_status" %in% names(z)) z$MR_signal_status else NA_character_
+	z$MR_signal_coverage <- if ("MR_signal_coverage" %in% names(z)) z$MR_signal_coverage else NA_real_
+	z$resolved_signal_pass <- is.na(z$MR_signal_status) | z$MR_signal_status=="all_instrument_signals_supported"
+	z$input_scale_verified <- if ("beta_scale_status" %in% names(z)) z$beta_scale_status %in% "verified" else FALSE
+	z |> dplyr::transmute(feature, locus, locus_class, region_IV_coverage, IV_coverage,input_scale_verified,
+		signal_support=ifelse(!is.na(MR_signal_status),MR_signal_status,ifelse(IV_coverage<1,"partial_signal_support","region_only; independent signals unresolved")),
+		MR_signal_coverage,
 		MR_FDR = FDR_all,
 		coloc_robust_min = PP.H4_robust_min, instrument_overlap,
-		eligible = instrument_overlap & is.finite(FDR_all) & FDR_all < .05 &
+		eligible = resolved_signal_pass & input_scale_verified & instrument_overlap & is.finite(IV_coverage) & IV_coverage==1 & is.finite(FDR_all) & FDR_all < .05 &
 			is.finite(PP.H4_robust_min) & PP.H4_robust_min >= .7,
 		claim = "Same cis/local region MR + ABF support; not a resolved causal signal or causal proof"
 	)
@@ -3219,11 +3382,17 @@ if (nzchar(Sys.getenv("DATE_FOLLOW_END", unset = ""))) {
 le8_gwas_metadata <- function(file) {
 	out <- list(
 		N = NA_real_, N_case = NA_real_, N_control = NA_real_, sdY = NA_real_,
-		type = NA_character_, beta_scale = NA_character_, build = NA_character_,
+		type = NA_character_, beta_scale = NA_character_, build = NA_character_, ancestry = NA_character_,
 		source = "unprovided", discovery_overlap = "unknown"
 	)
 	if (length(file) != 1L || is.na(file) || !nzchar(file)) return(out)
 	f <- Sys.getenv("LE8_GWAS_MANIFEST", unset = "")
+	stem <- sub("[.](cis[.])?gz$", "", basename(file))
+	bf <- file.path(dirname(dirname(file)), "qc", paste0(stem, ".grch"))
+	if (file.exists(bf)) {
+		b <- trimws(readLines(bf, warn = FALSE)[1])
+		if (b %in% c("37","38")) { out$build <- b; out$source <- bf }
+	}
 	if (!nzchar(f) || !file.exists(f)) return(out)
 	m <- data.table::fread(f, showProgress = FALSE)
 	if (!"file" %in% names(m)) stop("LE8_GWAS_MANIFEST needs a file column")
@@ -3261,6 +3430,10 @@ layer_annotation <- function(layer, features) {
 	z
 }
 le8_finish_analysis <- function(layer, module, env) {
+	if (exists(".le8_sumstat_qc",inherits=TRUE) && length(.le8_sumstat_qc$rows)) {
+		qc <- dplyr::distinct(dplyr::bind_rows(.le8_sumstat_qc$rows))
+		write_raw_csv(qc,paste0(substr(module,1,2),".variant_identity_qc.csv"),le8_job_dir(if(layer=="protein") out.prot else out.met,module))
+	}
 	# An early cache return has already-complete additions. A failed core run
 	# must not be disguised by an expensive on-exit analysis.
 	if (!exists("out", envir = env, inherits = FALSE)) return(invisible(NULL))
@@ -3276,7 +3449,7 @@ le8_finish_analysis <- function(layer, module, env) {
 				decomp_folds = de$folds %||% tibble(), decomp_summary = de$summary %||% tibble()
 			)
 		},
-		c3_coloc = le8_c3_additions(get0local("res", obj$summary), get0local("mr", tibble()), layer, outdir),
+		c3_coloc = le8_c3_additions(get0local("res", obj$summary), get0local("mr", tibble()), layer, outdir, obj$susie %||% list()),
 		c4_connect = le8_c4_additions(obj, outdir),
 		final_prediction = le8_final_additions(
 			get0local("dat"), get0local("biom_vars"), get0local("ranked"),
@@ -3291,7 +3464,7 @@ le8_finish_analysis <- function(layer, module, env) {
 	# from C1-C5. Do not overwrite unknown files or serialized individual data.
 	cache <- get0local("selected_cache", get0local("final_cache", get0local("cache")))
 	if (is.character(cache) && length(cache) == 1L && file.exists(cache) && grepl("(res[.]rds)$", cache)) {
-		obj$review <- tables ; obj$meta$code_version <- LE8_CODE_VERSION
+		obj$review <- tables ; obj$meta$common_code_version <- LE8_CODE_VERSION
 		base::saveRDS(obj, cache, compress = "xz")
 	}
 	le8_optional(paste0(module, "_output_index"), finalize_outputs(module, outdir))
@@ -3301,8 +3474,8 @@ le8_finish_analysis <- function(layer, module, env) {
 
 # Shared marginal-effect MR and interval-specific Cox methods
 le8_interval_cox <- function(dat, x, tvar, evar, covars, lo, hi, scale_x = TRUE, min_event = 20L) {
-	covars <- intersect(covars, names(dat))
-	cols <- unique(c(x, tvar, evar, covars))
+	if(length(setdiff(covars,names(dat)))) stop("Missing required interval-Cox covariates: ",paste(setdiff(covars,names(dat)),collapse=","))
+	cols <- unique(c(x, tvar, evar, covars,intersect(".group",names(dat))))
 	d <- as.data.frame(dat[, cols, drop = FALSE])
 	d <- d[complete.cases(d), , drop = FALSE]
 	d <- d[is.finite(d[[tvar]]) & d[[tvar]] > lo & d[[evar]] %in% c(0, 1), , drop = FALSE]
@@ -3323,14 +3496,14 @@ le8_interval_cox <- function(dat, x, tvar, evar, covars, lo, hi, scale_x = TRUE,
 		d[[x]] <- (d[[x]] - m) / s
 	}
 	ff <- as.formula(paste0("survival::Surv(.stop,.event) ~ ", paste(bt(c(x, covars)), collapse = " + ")))
-	fit <- tryCatch(survival::coxph(ff, d, ties = "efron"), error = function(e) NULL)
+	fit <- tryCatch(if(".group" %in% names(d) && anyDuplicated(d$.group)) survival::coxph(ff,d,ties="efron",cluster=d$.group,robust=TRUE) else survival::coxph(ff, d, ties = "efron"), error = function(e) NULL)
 	if (is.null(fit))
 		return(ans)
 	sm <- coef(summary(fit))
 	if (!x %in% rownames(sm))
 		return(ans)
 	b <- sm[x, "coef"]
-	se <- sm[x, "se(coef)"]
+	se <- sqrt(vcov(fit)[x,x])
 	ans$beta <- b
 	ans$std.error <- se
 	ans$conf.low <- b - 1.96 * se
@@ -3438,7 +3611,8 @@ read_qtl_instruments <- function(feature, base_dir, layer = c("protein", "metabo
 		}
 	}
 	# Alleles, BETA, SE, P and N all come from the same marginal QTL record.
-	iv <- q[q$SNP %in% j$SNP & !is.na(q$EA) & nzchar(q$EA) & !is.na(q$NEA) & nzchar(q$NEA), , drop = FALSE]
+	score <- recover_qtl_alleles(j,fs$full)
+	iv <- q[q$variant_key %in% score$variant_key & !is.na(q$EA) & nzchar(q$EA) & !is.na(q$NEA) & nzchar(q$NEA), , drop = FALSE]
 	if (!nrow(iv))
 		return(empty)
 	classify <- function(z) {
@@ -3466,7 +3640,6 @@ read_qtl_instruments <- function(feature, base_dir, layer = c("protein", "metabo
 	}
 	iv <- classify(iv)
 	iv$effect_type <- "marginal"
-	score <- tryCatch(recover_qtl_alleles(j, fs$full), error = function(e) j)
 	score <- classify(score)
 	score$effect_type <- "COJO_joint_PGS_only"
 	list(instruments = iv, score_instruments = score, files = fs)
@@ -3490,7 +3663,7 @@ run_mr <- function(iv, ygwas, exposure, analysis) {
 	# overlapping instrument.
 	if (nrow(iv)) {
 		h <- harmonize_sumstats(iv, ygwas)
-		iv <- iv[iv$SNP %in% h$SNP, , drop = FALSE]
+		iv <- iv[le8_variant_key(iv) %in% h$variant_key, , drop = FALSE]
 	}
 	pp <- le8_prepare_mr_iv(iv, exposure)
 	if (analysis == "unknown")

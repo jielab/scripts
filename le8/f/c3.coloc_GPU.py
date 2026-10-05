@@ -3,6 +3,8 @@
 
 # 🚩 c3.coloc_GPU
 import csv
+import hashlib
+import importlib.metadata
 import gzip
 import math
 import os
@@ -315,241 +317,79 @@ def find_lead_and_region(path, region, window_kb):
 	return chrom, max(1, pos - w), pos + w
 
 
-def to_signal(d, signal, typ):
-	"""Return the one-row, variant-as-column matrix required by gpu-coloc --format."""
+def to_signal(d, signal, typ, sdY=None):
+	"""Standalone BF conversion; variant identities must already be reconciled."""
 	if d.empty:
-		raise RuntimeError("Empty region for signal " + signal)
-	d = d.copy()
-	d["z"] = d["BETA"] / d["SE"]
-	sd_prior = 0.15 if typ == "quant" else 0.20
-	v = d["SE"] ** 2
-	r = (sd_prior**2) / ((sd_prior**2) + v)
-	d["lbf"] = 0.5 * (np.log1p(-r) + (r * (d["z"] ** 2)))
+		raise ValueError("Empty signal")
+	if typ == "quant" and (sdY is None or not np.isfinite(sdY) or sdY <= 0):
+		raise ValueError("Quantitative BF requires documented sdY")
+	if "variant" not in d:
+		raise ValueError("A shared prepared variant key is required; allele sorting is not normalization")
+	v = d.SE.to_numpy(float)**2
+	w = (.15 * sdY)**2 if typ == "quant" else .2**2
+	lbf = .5 * (np.log(v) - np.log(v+w) + w/(v+w)*(d.BETA.to_numpy(float)/np.sqrt(v))**2)
+	if not np.isfinite(lbf).all():
+		raise ValueError("Nonfinite BF")
+	z = pd.DataFrame({"variant": d.variant.astype(str), "lbf": lbf}).drop_duplicates()
+	if z.variant.duplicated().any():
+		raise ValueError("Conflicting duplicate variants")
+	wide = pd.DataFrame([z.lbf.to_numpy()], columns=z.variant)
+	i = int(np.argmax(z.lbf))
+	return wide, str(z.variant.iloc[i]), float(z.lbf.iloc[i])
 
-	# Log-BFs are invariant to effect-allele direction, so canonicalise the allele pair.
-	# This prevents QTL/outcome files with swapped EA/NEA from creating different column names.
-	def canonical_pair(row):
-		pair = "_".join(sorted([str(row["NEA"]).upper(), str(row["EA"]).upper()]))
-		comp = str.maketrans("ATCG", "TAGC")
-		pair_comp = "_".join(
-			sorted(
-				[
-					str(row["NEA"]).upper().translate(comp),
-					str(row["EA"]).upper().translate(comp),
-				]
-			)
-		)
-		return min(pair, pair_comp)
 
-	allele_pair = d.apply(canonical_pair, axis=1)
-	d["variant"] = (
-		"chr"
-		+ d["CHR"].astype(str).str.replace("chr", "", case=False, regex=False)
-		+ "_"
-		+ d["POS"].astype(int).astype(str)
-		+ "_"
-		+ allele_pair
-	)
-	d = d[["variant", "lbf"]].replace([np.inf, -np.inf], np.nan).dropna().drop_duplicates("variant")
-	if d.empty:
-		raise RuntimeError("No variants after formatting for signal " + signal)
-	lead_idx = d["lbf"].idxmax()
-	lead = str(d.loc[lead_idx, "variant"])
-	strength = float(d.loc[lead_idx, "lbf"])
-	# gpu-coloc/format.py reads each signal file and treats its columns as variants,
-	# taking df.iloc[0] as the signal's log-BF vector.
-	wide = pd.DataFrame([d["lbf"].to_numpy()], columns=d["variant"].tolist())
-	return wide, lead, strength
+def reference_posterior(x, y, p1=1e-4, p2=1e-4, p12=1e-5):
+	"""Stable H3 without subtracting nearly equal exponentials."""
+	from scipy.special import logsumexp
+	x, y = np.asarray(x,dtype=float), np.asarray(y,dtype=float)
+	if x.shape != y.shape or x.ndim != 1 or not len(x) or not np.isfinite([x,y]).all():
+		raise ValueError("Invalid BF vectors")
+	pre = np.r_[-np.inf, np.logaddexp.accumulate(y)]
+	suf = np.r_[np.logaddexp.accumulate(y[::-1])[::-1], -np.inf]
+	off = np.logaddexp(pre[:-1], suf[1:])
+	l = np.array([0,np.log(p1)+logsumexp(x),np.log(p2)+logsumexp(y),np.log(p1)+np.log(p2)+logsumexp(x+off),np.log(p12)+logsumexp(x+y)])
+	return np.exp(l-logsumexp(l))
 
 
 def prepare_signals(manifest, cad_gwas, outdir, window_kb, outcome_type="cc"):
+	"""Use the exact ordered, harmonized BF vectors prepared once by C3 R."""
 	outdir = Path(outdir)
-	qtl_dir = outdir / "qtl_signals"
-	cad_dir = outdir / "cad_signals"
-	qtl_dir.mkdir(parents=True, exist_ok=True)
-	cad_dir.mkdir(parents=True, exist_ok=True)
-	for old_file in list(qtl_dir.glob("*.feather")) + list(cad_dir.glob("*.feather")):
-		old_file.unlink()
-
-	with open(manifest, newline="") as f:
-		rows = list(csv.DictReader(f, delimiter="\t"))
-
-	qtl_summary, cad_summary, expected_pairs, status_rows = [], [], [], []
-	records = []
-	qtl_groups = {}
-	print(f"GPU-coloc preparation: {len(rows)} manifest rows", flush=True)
-	for row_index, row in enumerate(rows):
-		omics = row.get("omics", "protein") or "protein"
-		trait = row.get("trait", "")
-		qtl_file = row.get("file", row.get("exposure", ""))
-		typ = row.get("type", "quant") or "quant"
-		region = row.get("region", "") or ""
-		record = {
-			"row_index": row_index,
-			"omics": omics,
-			"trait": trait,
-			"qtl_file": qtl_file,
-			"type": typ,
-			"input_region": region,
-		}
-		records.append(record)
-		if not trait or not qtl_file or not os.path.exists(qtl_file):
-			record["status"] = "not_run"
-			record["message"] = "missing qtl file"
-			continue
+	qdir, ydir = outdir/"qtl_signals", outdir/"cad_signals"
+	qdir.mkdir(parents=True, exist_ok=True); ydir.mkdir(parents=True, exist_ok=True)
+	for f in [*qdir.glob("*.feather"), *ydir.glob("*.feather")]: f.unlink()
+	rows = pd.read_csv(manifest, sep="\t").fillna("")
+	qs, ys, pairs, statuses = [], [], [], []
+	from scipy.special import logsumexp
+	for i, row in rows.iterrows():
+		base = {k: str(row.get(k,"")) for k in ["omics","trait","region","snp_hash","BF_model","prior_config"]}
 		try:
-			chrom, start, end = find_lead_and_region(qtl_file, region, window_kb)
-			chrom = norm_chrom(chrom)
-			record.update(
-				{
-					"chrom": chrom,
-					"start": int(start),
-					"end": int(end),
-					"region_key": f"chr{chrom}:{int(start)}-{int(end)}",
-				}
-			)
-			qtl_groups.setdefault(qtl_file, []).append(record)
-		except Exception as e:
-			record["status"] = "failed"
-			record["message"] = str(e)
-
-	# Each QTL file commonly supplies up to three loci. Read its requested
-	# union once instead of decompressing the same file once per locus.
-	for group_index, (qtl_file, group) in enumerate(qtl_groups.items(), start=1):
-		try:
-			regions = [(x["chrom"], x["start"], x["end"]) for x in group]
-			qtl_union = load_regions(qtl_file, regions)
-			for record in group:
-				qtl = select_region(qtl_union, record["chrom"], record["start"], record["end"])
-				qtl_signal = safe_name(
-					f"QTL__{record['omics']}__{record['trait']}__chr{record['chrom']}_{record['start']}_{record['end']}"
-				)
-				qtl_s, qtl_lead, qtl_strength = to_signal(qtl, qtl_signal, record["type"])
-				feather.write_feather(qtl_s, qtl_dir / f"{qtl_signal}.feather")
-				qtl_summary.append(
-					{
-						"signal": qtl_signal,
-						"chromosome": record["chrom"],
-						"location_min": record["start"],
-						"location_max": record["end"],
-						"signal_strength": qtl_strength,
-						"lead_variant": qtl_lead,
-						"omics": record["omics"],
-						"trait": record["trait"],
-						"source_file": qtl_file,
-					}
-				)
-				record["qtl_signal"] = qtl_signal
-				record["qtl_n"] = int(qtl_s.shape[1])
-		except Exception as e:
-			for record in group:
-				if "qtl_signal" not in record:
-					record["status"] = "failed"
-					record["message"] = f"QTL preparation failed: {e}"
-		if group_index % 25 == 0 or group_index == len(qtl_groups):
-			print(
-				f"GPU-coloc preparation: QTL files {group_index}/{len(qtl_groups)}",
-				flush=True,
-			)
-
-	# The previous implementation called load_region(cad_gwas, ...) for every
-	# unique locus. With hundreds of loci that decompressed the same outcome
-	# file hundreds of times. Retain the union in one sequential scan.
-	unique_regions = {}
-	for record in records:
-		if "qtl_signal" in record:
-			unique_regions.setdefault(record["region_key"], (record["chrom"], record["start"], record["end"]))
-	cad_cache, cad_errors = {}, {}
-	if unique_regions:
-		try:
-			cad_union = load_regions(cad_gwas, list(unique_regions.values()), label="Outcome GWAS")
-			for region_index, (region_key, (chrom, start, end)) in enumerate(unique_regions.items(), start=1):
-				try:
-					cad = select_region(cad_union, chrom, start, end)
-					# One outcome signal per exact region is sufficient. The old
-					# trait-specific copies created a large cross-product of
-					# identical CAD signals whenever several omics traits shared a locus.
-					cad_signal = safe_name(f"CAD__chr{chrom}_{start}_{end}")
-					cad_s, cad_lead, cad_strength = to_signal(cad, cad_signal, outcome_type)
-					feather.write_feather(cad_s, cad_dir / f"{cad_signal}.feather")
-					cad_summary.append(
-						{
-							"signal": cad_signal,
-							"chromosome": chrom,
-							"location_min": start,
-							"location_max": end,
-							"signal_strength": cad_strength,
-							"lead_variant": cad_lead,
-							"source_file": cad_gwas,
-						}
-					)
-					cad_cache[region_key] = {
-						"signal": cad_signal,
-						"n": int(cad_s.shape[1]),
-					}
-				except Exception as e:
-					cad_errors[region_key] = str(e)
-				if region_index % 100 == 0 or region_index == len(unique_regions):
-					print(
-						f"GPU-coloc preparation: outcome signals {region_index}/{len(unique_regions)}",
-						flush=True,
-					)
-		except Exception as e:
-			for region_key in unique_regions:
-				cad_errors[region_key] = f"Outcome GWAS preparation failed: {e}"
-
-	for record in records:
-		base_status = {
-			"omics": record["omics"],
-			"trait": record["trait"],
-			"region": record.get("region_key", record["input_region"]),
-		}
-		if "qtl_signal" not in record:
-			status_rows.append(
-				{
-					**base_status,
-					"status": record.get("status", "failed"),
-					"message": record.get("message", "QTL preparation failed"),
-				}
-			)
-			continue
-		cad_info = cad_cache.get(record["region_key"])
-		if cad_info is None:
-			status_rows.append(
-				{
-					**base_status,
-					"status": "failed",
-					"message": cad_errors.get(record["region_key"], "outcome signal missing"),
-				}
-			)
-			continue
-		expected_pairs.append(
-			{
-				"omics": record["omics"],
-				"trait": record["trait"],
-				"region": record["region_key"],
-				"qtl_signal": record["qtl_signal"],
-				"cad_signal": cad_info["signal"],
-			}
-		)
-		status_rows.append(
-			{
-				**base_status,
-				"status": "ok",
-				"message": f"qtl_n={record['qtl_n']}; cad_n={cad_info['n']}",
-			}
-		)
-
-	pd.DataFrame(qtl_summary).to_csv(outdir / "qtl_summary.tsv", sep="\t", index=False)
-	pd.DataFrame(cad_summary).to_csv(outdir / "cad_summary.tsv", sep="\t", index=False)
-	pd.DataFrame(expected_pairs).to_csv(outdir / "expected_pairs.tsv", sep="\t", index=False)
-	pd.DataFrame(status_rows).to_csv(outdir / "signal_preparation_status.tsv", sep="\t", index=False)
-	if len(qtl_summary) == 0 or len(cad_summary) == 0:
-		raise SystemExit("No GPU-coloc signal files were created. See signal_preparation_status.tsv")
-	print(
-		f"GPU-coloc preparation complete: {len(qtl_summary)} QTL signals, {len(cad_summary)} outcome signals",
-		flush=True,
-	)
+			path = Path(str(row.get("pair_file","")))
+			if not path.is_file(): raise ValueError("Shared CPU pair unavailable: " + str(row.get("input_status","not prepared")))
+			d = pd.read_csv(path,sep="\t",dtype={"variant":str})
+			if not {"variant","lbf1","lbf2"} <= set(d): raise ValueError("Invalid prepared pair columns")
+			if d.empty or d.variant.isna().any() or d.variant.duplicated().any(): raise ValueError("Invalid prepared variant identities")
+			if not np.isfinite(d[["lbf1","lbf2"]].to_numpy()).all(): raise ValueError("Nonfinite prepared BF")
+			key = hashlib.sha256("\n".join(d.variant).encode()).hexdigest()
+			if key != base["snp_hash"]: raise ValueError("Shared SNP hash mismatch")
+			chrom, start, end = re.match(r"chr([^:]+):(\d+)-(\d+)$",base["region"]).groups()
+			qx = safe_name(f"QTL__{base['omics']}__{base['trait']}__{i}")
+			yx = safe_name(f"OUTCOME__{base['trait']}__{i}")
+			for col, sig, directory, summaries in [("lbf1",qx,qdir,qs),("lbf2",yx,ydir,ys)]:
+				# Explicit SNP intersection per pair: no unmeasured SNPs become zero evidence.
+				feather.write_feather(pd.DataFrame([d[col].to_numpy()],columns=d.variant),directory/(sig+".feather"))
+				j=int(np.argmax(d[col]))
+				summaries.append(dict(signal=sig,chromosome=chrom,location_min=int(start),location_max=int(end),signal_strength=float(d[col].iloc[j]),lead_variant=str(d.variant.iloc[j])))
+			pp=reference_posterior(d.lbf1.to_numpy(),d.lbf2.to_numpy(),p12=float(os.getenv("GPU_COLOC_P12","1e-5")))
+			pairs.append(dict(**base,qtl_signal=qx,cad_signal=yx,n_snps=len(d),pair_file=str(path),**{f"reference_PP.H{j}":pp[j] for j in range(5)}))
+			statuses.append(dict(**base,status="ok",message=f"{len(d)} identical shared CPU/GPU variants"))
+		except Exception as exc:
+			statuses.append(dict(**base,status="input_invalid",message=str(exc)))
+	pd.DataFrame(qs).to_csv(outdir/"qtl_summary.tsv",sep="\t",index=False)
+	pd.DataFrame(ys).to_csv(outdir/"cad_summary.tsv",sep="\t",index=False)
+	pd.DataFrame(pairs,columns=list(pairs[0]) if pairs else ["qtl_signal","cad_signal"]).to_csv(outdir/"expected_pairs.tsv",sep="\t",index=False)
+	pd.DataFrame(statuses).to_csv(outdir/"signal_preparation_status.tsv",sep="\t",index=False)
+	if not pairs: raise SystemExit("No eligible shared CPU/GPU pair; see signal_preparation_status.tsv")
+	print(f"Prepared {len(pairs)} exact common-variant pairs",flush=True)
 
 
 def filter_results(raw_results, expected_pairs, output_file, h4_threshold=0.70):
@@ -579,8 +419,12 @@ def filter_results(raw_results, expected_pairs, output_file, h4_threshold=0.70):
 		pp_col = "PP.H4" if "PP.H4" in raw.columns else None
 		if pp_col:
 			raw[pp_col] = pd.to_numeric(raw[pp_col], errors="coerce")
-			raw = raw.sort_values(pp_col, ascending=False, na_position="last")
-		raw = raw.drop_duplicates(["signal1", "signal2"], keep="first")
+			raw = raw.drop_duplicates()
+		conflict = raw.duplicated(["signal1","signal2"],keep=False)
+		bad = set(map(tuple,raw.loc[conflict,["signal1","signal2"]].to_numpy()))
+		raw = raw.drop_duplicates(["signal1","signal2"])
+		raw["duplicate_conflict"] = [tuple(v) in bad for v in raw[["signal1","signal2"]].to_numpy()]
+		if pp_col: raw.loc[raw.duplicate_conflict,pp_col] = np.nan
 		out = expected.merge(
 			raw,
 			how="left",
@@ -615,6 +459,18 @@ def filter_results(raw_results, expected_pairs, output_file, h4_threshold=0.70):
 		default=f"H4<{threshold_label}",
 	)
 	out["GPU_H4_threshold"] = h4_threshold
+	if "duplicate_conflict" in out:
+		out.loc[out.duplicate_conflict.fillna(False).astype(bool),"GPU_status"] = "validation_failed_duplicate"
+	if "reference_PP.H4" in out:
+		ref = pd.to_numeric(out["reference_PP.H4"],errors="coerce")
+		out["absolute_difference_H4"] = abs(pp-ref)
+		out["parity_tolerance"] = float(os.getenv("GPU_COLOC_PARITY_TOL","1e-4"))
+		out["parity_status"] = np.where(finite,np.where(out.absolute_difference_H4 <= out.parity_tolerance,"pass","numerical_disagreement"),"native_result_unavailable")
+		out["threshold_disagreement"] = np.where(finite,(pp>=h4_threshold)!=(ref>=h4_threshold),None)
+		out["reference_role"] = "double precision diagnostic; native result retained"
+	try: out["backend_version"] = importlib.metadata.version("gpu-coloc")
+	except importlib.metadata.PackageNotFoundError: out["backend_version"] = "unavailable"
+	out["native_dtype"] = "float32"
 	out = out.drop(columns=["_gpu_merge"])
 	out.to_csv(output_file, sep="\t", index=False)
 

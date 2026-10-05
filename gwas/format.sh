@@ -24,6 +24,13 @@ Project and execution:
   --grch auto|37|38           Detect the build per GWAS by default
   --jobs 4 --replace FALSE --run-cmd FALSE --foreground TRUE --submit-bsub FALSE
   --delete-raw FALSE          Delete raw only after all requested modules succeed
+  --rsid TRUE --rsid-unmatched drop|keep
+    Convert non-rsIDs using build-specific dbSNP CHR/POS and both alleles.
+    Default drop: unresolved rows go to qc/[trait].rsid.unresolved.tsv.gz.
+  --dbsnp FILE --rsid-cache DIR  Optional mapping reference/cache overrides
+  --sample-info FILE          TSV: phenocode,num_samples or num_cases,num_controls;
+                              also accepts GWAS,N. Optional grch=37/38 column
+                              supplies each build with --grch auto. Fills missing N.
   Explicit magma requests run by default unless --run-cmd is supplied.
 
 Key analysis settings (all defaults are editable below in this script):
@@ -104,6 +111,11 @@ jobs=4
 replace=FALSE
 fill_eaf=FALSE
 fill_n=""
+sample_info=""
+rsid_mode=TRUE
+rsid_unmatched=drop
+dbsnp=""
+rsid_cache=""
 run_cmd=FALSE
 run_cmd_set=0
 is_bsub=FALSE
@@ -196,6 +208,16 @@ while [[ $# -gt 0 ]]; do
 			n_total="$2"
 			shift 2
 			;;
+		--rsid)
+			need_arg_value "$1" "${2-}"; rsid_mode="$2"; shift 2 ;;
+		--rsid-unmatched)
+			need_arg_value "$1" "${2-}"; rsid_unmatched="$2"; shift 2 ;;
+		--dbsnp)
+			need_arg_value "$1" "${2-}"; dbsnp="$2"; shift 2 ;;
+		--rsid-cache)
+			need_arg_value "$1" "${2-}"; rsid_cache="$2"; shift 2 ;;
+		--sample-info)
+			need_arg_value "$1" "${2-}"; sample_info="$2"; shift 2 ;;
 		--h2-sex)
 			need_arg_value "$1" "${2-}"
 			h2_sex="$2"
@@ -575,6 +597,7 @@ if [[ -n "$dir_out_arg" ]]; then
 else
 	dir_out="/mnt/f/gwas/$label"
 fi
+[[ -n "$rsid_cache" ]] || rsid_cache="$dir_out/.project/rsid"
 
 if [[ -n "$dir_raw_arg" ]]; then
 	if [[ -d "$dir_raw_arg/raw" ]]; then
@@ -677,6 +700,19 @@ n_discovered=$(wc -l <"$names_tmp" | tr -d ' ')
 name_preview=$(head -n 20 "$names_tmp" | paste -sd, -)
 ((n_discovered <= 20)) || name_preview="$name_preview,..."
 log "Discovered $n_discovered GWAS: $name_preview"
+
+# Validate every selected trait before dispatch, not halfway through a batch.
+declare -A sample_sizes=()
+declare -A sample_builds=()
+if [[ -n "$sample_info" ]]; then
+	need_file "$sample_info"
+	python3 "${SCRIPT_PATH%/*}/f/format.py" sample-info --input "$sample_info" \
+		--names "$names_tmp" --output "$dir_cmd/sample_sizes.tsv" --grch "$grch"
+	while IFS=$'\t' read -r trait sample_n sample_grch; do
+		sample_sizes["$trait"]="$sample_n"
+		sample_builds["$trait"]="$sample_grch"
+	done < "$dir_cmd/sample_sizes.tsv"
+fi
 
 while read -r gwas; do
 	[[ -n "$gwas" ]] || continue

@@ -2,7 +2,7 @@
 
 
 # 🚩 le8
-# Public LE8 interface. Default sequence: C1, C2, C3, C4, C5, final, shiny.
+# Public LE8 interface. Default sequence: C1 (including reference ABM), C2, C3, C4, C5.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
@@ -12,7 +12,8 @@ le8_usage() {
 	cat <<'HELP'
 Usage: ./le8.sh [module[,module...]] [options]
 
-No module list: C1 -> C2 -> C3 -> C4 (connect/panel validation) -> C5 -> final -> shiny.
+No module list: C1 + reference ABM -> C2 -> C3 -> C4 (connect/panel validation) -> C5.
+Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results keep their original methods/scope; --replace TRUE requests new fits.
 Result workbooks and named participant RDS files restore numerical inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
@@ -29,12 +30,12 @@ Examples:
   ./le8.sh c4_connect,c4_panel_validation --Y cvd_cad --biom prot
   ./le8.sh c4_explain --Y cvd_cad --biom prot
   ./le8.sh c5_cellulation --Y cvd_cad --biom prot
-  ./le8.sh c1_abm --run-abm --abm-backend both --Y cvd_cad --biom prot
+  ./le8.sh c1_abm --Y cvd_cad --biom prot
   ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
 
 Modules:
   c1_correlate   Measured/PGS associations, temporal analyses and enrichment
-  c1_abm         Agent-based modeling (ABM): reference/Transformer and TabICLv2
+  c1_abm         Agent-based modeling (ABM): selective reference and TabICLv2
   c2_cause       MR and genetic decomposition
   c3_coloc       Colocalization and locus evidence
   c4_connect     LE8 connections, proxies, mediation, interactions and nonlinearity
@@ -59,9 +60,10 @@ Main options (defaults are set below in this script):
   --host ADDRESS         127.0.0.1
   --memory-limit-gb N    Explicit process-tree RAM cap; 0 disables it
   --memory-swap-gb N     Explicit swap cap
-  --abm-backend METHOD   reference | tabicl | both (default both)
+  --abm-backend METHOD   reference | tabicl | both (default reference)
   --abm-args STRING      Extra backend arguments, parsed without shell evaluation
-  --run-abm              Explicitly train ABM; no training otherwise
+  --run-abm              Include ABM with an explicit module list
+  --skip-abm             Skip ABM in the default C1-C5 sequence
   --fit-reference, --fit-joint, --fit-genetic  Explicit Final fitting
   --details       Regenerate detailed R plots from saved results
   --index-only           Build index without report figures or R
@@ -101,11 +103,11 @@ HELP
 
 le8_main() {
 	# Shared defaults, deliberately visible at the public entry point.
-	local modules=c1_correlate,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation,final,shiny trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
+	local modules=c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
 	local seed=2026 replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
-	local backend=both cores="" ukb_phe="" memory_limit="" memory_swap=""
+	local backend=reference cores="" ukb_phe="" memory_limit="" memory_swap=""
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.

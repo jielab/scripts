@@ -100,6 +100,15 @@ ROLES = {
 	"cell_enrichment": ("c5_cellulation", "c5.cell.enrichment.csv"),
 	"cell_coverage": ("c5_cellulation", "c5.cell.coverage.csv"),
 	"cigma": ("c5_cellulation", "c5.CIGMA_annotation.csv"),
+	"cell_contrasts": ("c5_cellulation", "c5.cell.panel_contrasts.csv"),
+	"cell_evidence": ("c5_cellulation", "c5.evidence_long.csv"),
+	"concept_coefficients": ("c4_connect", "c4.focus.concept_coefficients.csv"),
+	"concept_status": ("c4_connect", "c4.focus.concept_status.csv"),
+	"mr_lolo": ("c2_cause", "c2.dandelion_leave_locus_out.csv"),
+	"coloc_same_locus": ("c3_coloc", "c3.same_locus_evidence.csv"),
+	"susie_pairs": ("c3_coloc", "c3.susie_signal_pairs.csv"),
+	"mr_signal_evidence": ("c3_coloc", "c3.same_locus_signal_evidence.csv"),
+	"susie_diagnostics": ("c3_coloc", "c3.susie_diagnostics.csv"),
 }
 
 
@@ -109,6 +118,14 @@ def has(d: pd.DataFrame, *cols: str) -> bool:
 
 def num(d: pd.DataFrame, name: str) -> pd.Series:
 	return pd.to_numeric(d[name], errors="coerce")
+
+
+def display_budget(d: pd.DataFrame) -> int:
+	requested = int(os.environ.get("FINAL_DISPLAY_BUDGET", "10"))
+	values = sorted(set(pd.to_numeric(d.get("budget", pd.Series(dtype=float)), errors="coerce").dropna()))
+	values = [int(v) for v in values if v > 0]
+	# Choose using configured assay budgets only, never observed performance.
+	return min(values, key=lambda v: (abs(v-requested), v)) if values else requested
 
 
 def clean_name(name: str) -> str:
@@ -360,6 +377,17 @@ class Report:
 			for model, sub in members.dropna(subset=["feature"]).groupby("model"):
 				fs = set(sub.feature.astype(str))
 				cc = co[co.model == model].copy()
+				if model.startswith("YSconcept"):
+					# The deployed risk coefficients address concepts; assay loadings
+					# belong to the first stage and are shown in their own table.
+					cb = cc[cc.variable.astype(str).str.startswith("concept_")]
+					dg = self.get(trait, layer, "focus_diagnostics")
+					dg = dg[dg.model.eq(model)] if "model" in dg else pd.DataFrame()
+					effective.append(dict(model=model, nominal=len(fs), effective=np.nan,
+						effective_concepts=int((num(cb,"beta").abs()>self.arg.coefficient_epsilon).sum()),
+						molecular_lp_sd_test=float(dg.molecular_lp_sd_test.iloc[0]) if len(dg) and "molecular_lp_sd_test" in dg else np.nan,
+						interpretation="Concept risk coefficients and assay loadings are distinct; use saved LP contributions to assess molecular contribution"))
+					continue
 				# Includes dummy columns for categorical features; ordinary omics are numeric.
 				use = cc.variable.astype(str).map(
 					lambda x: any(x == f or x.startswith(f + "__") for f in fs)
@@ -519,7 +547,7 @@ class Report:
 					"warning",
 					v.get("analysis_class", "Primary eligibility unverified")
 					+ "; exclude from independent causal confirmation counts.",
-					"dandelion",
+					"dandelion", "dandelion_lolo", "dandelion_native", "state_projection", "age_models",
 				)
 		components = self.get(trait, layer, "pgs_components")
 		boot = self.get(trait, layer, "pgs_bootstrap")
@@ -712,6 +740,7 @@ class Report:
 			"status",
 		):
 			return [], pd.DataFrame()
+		budget = display_budget(metrics)
 		models = [
 			"Clinical",
 			"NS_10",
@@ -722,11 +751,12 @@ class Report:
 			"YSbalanced_Yin_10",
 			"YSbalanced_YinYang_10",
 		]
+		models = [m.replace("_10", f"_{budget}") for m in models]
 		z = metrics[
 			metrics.stratum.eq("All")
 			& num(metrics, "landmark").eq(0)
 			& num(metrics, "horizon").eq(10)
-			& num(metrics, "budget").isin([0, 10])
+			& num(metrics, "budget").isin([0, budget])
 			& metrics.model.isin(models)
 			& metrics.status.eq("ok")
 		].copy()
@@ -750,7 +780,7 @@ class Report:
 		z["trait"], z["layer"] = trait, layer
 
 		def labels(d):
-			return d.model.str.replace(r"_10$", "", regex=True).str.replace(
+			return d.model.str.replace(rf"_{budget}$", "", regex=True).str.replace(
 				"_", " ", regex=False
 			)
 
@@ -780,7 +810,7 @@ class Report:
 		panels = [
 			self.panel(
 				f"Fig4_{trait}_{layer}",
-				f"{trait} {layer}: 10-assay budget, N={int(num(z, 'N').iloc[0])}",
+				f"{trait} {layer}: {budget}-assay budget, N={int(num(z, 'N').iloc[0])}",
 				z,
 				discrimination,
 				"All validation participants, baseline landmark. Clinical uses zero assays; other rows retain their reported actual assay counts.",
@@ -801,7 +831,7 @@ class Report:
 				contrasts.stratum.eq("All")
 				& num(contrasts, "landmark").eq(0)
 				& num(contrasts, "horizon").eq(10)
-				& contrasts.reference.eq("NS_10")
+				& contrasts.reference.eq(f"NS_{budget}")
 				& contrasts.model.isin(z.model)
 			].copy()
 			if d.model.duplicated().any():
@@ -1310,7 +1340,7 @@ class Report:
 			"Fig3",
 			"LE8 supervision, coverage and effective panel size",
 			f3,
-			"YS is disease-ranked within LE8-eligible biomarkers; YSbalanced is a distinct LE8-first arm. No sleep proxy is invented. Near-zero protein coefficients indicate a clinical-only fit, not a successful compact molecular panel. No universal YinYang gain is assumed.",
+			"YS is ranked by replicated LE8 proxy strength without disease labels; NS uses multivariate disease selection and YSplus keeps the same total assay budget. Unsupported domains remain unavailable. Near-zero protein coefficients indicate a clinical-only fit, not a successful compact molecular panel. No universal YinYang gain is assumed.",
 		)
 		# Fig4: completed C4 validation, followed by separately available prediction protocols.
 		f4 = []
@@ -1430,7 +1460,7 @@ class Report:
 		]
 		if focus_used:
 			notes.append(
-				"C4 display: fixed 10-assay budget, all validation participants, baseline to year 10. Dashed lines show clinical AUC or zero paired gain versus NS. Intervals condition on frozen fits; exploratory comparisons require external validation. Death is censored; these are not competing-risk cumulative incidences."
+				"C4 display: configured assay budget shown in the panel, all validation participants, baseline to year 10. Dashed lines show clinical AUC or zero paired gain versus NS. Intervals condition on frozen fits; exploratory comparisons require external validation. Death is censored; these are not competing-risk cumulative incidences."
 			)
 		if legacy_used:
 			notes.append(
@@ -1697,7 +1727,7 @@ class Report:
 			"FigS4",
 			"Genetic evidence needs locus-level checks",
 			s4,
-			"Colocalization counts are conditional on MR-selected candidates and are not unique independent genomic regions. Posterior concentration on one SNP under H4 does not imply H4 is likely.",
+			"Colocalization counts cover prespecified anchors, MR-selected candidates and explicitly planned disease loci; these are not unique independent genomic regions. Posterior concentration on one SNP under H4 does not imply H4 is likely.",
 		)
 
 		s5 = []
@@ -2556,6 +2586,9 @@ class Questions:
 			("inflammation_definition", c4("inflammation_definition")),
 			("design", c4("design")),
 			("fit", c4("fit_diagnostics")),
+			("concept_coefficients", c4("concept_coefficients")),
+			("concept_status", c4("concept_status")),
+			("concept_fold_panels", c4("concept_fold_panels")),
 		]:
 			self.add(name, d)
 		if len(heterogeneity) and {"landmark", "p_heterogeneity", "FDR"} <= set(
@@ -2684,6 +2717,11 @@ class Questions:
 				("abm_coverage", "coverage_curve.csv"),
 				("abm_paired", "paired_contrasts.csv"),
 				("abm_support", "support_error_audit.csv"),
+				("abm_training", "c1.selective.training_comparison.csv"),
+				("abm_gate", "c1.selective.gate_diagnostics.csv"),
+				("abm_risk_gain", "c1.selective.risk_stratified_gain.csv"),
+				("abm_audit", "c1.selective.audit_contrasts.csv"),
+				("abm_decision", "c1.selective.decision_curve.csv"),
 			]:
 				d = self.read(run / filename, Y, layer, name + ":" + backend)
 				if d.empty:
@@ -2703,7 +2741,7 @@ class Questions:
 					d = abm_gain(d, ["subset"])
 					if backend == "reference":
 						chosen = d[
-							d.model.eq("abm_transformer") & d["subset"].eq("supported")
+							d.model.eq("elasticnet_weighted" if "elasticnet_weighted" in set(d.model) else "abm_transformer") & d["subset"].eq("supported")
 						]
 						if len(chosen) == 1:
 							row = chosen.iloc[0]
@@ -2723,7 +2761,7 @@ class Questions:
 								"abm_metrics",
 							)
 				elif name == "abm_coverage":
-					d = abm_gain(d, ["quantile"])
+					d = abm_gain(d, ["selector", "quantile"] if "selector" in d else ["quantile"])
 				self.add(name, d)
 		genetic = (
 			candidates[(candidates.Y == Y) & (candidates.layer == layer)].copy()
@@ -2742,7 +2780,7 @@ class Questions:
 				"存在不同关联信息"
 				if nullsig.any() or diffs.any()
 				else "尚无充分差异证据",
-				f"同人群 {len(matched)} 个 assay/scope 记录：{int(nullsig.sum())} 个实测 P≥0.05、PGS FDR<0.05；{int(diffs.sum())} 个 G−R 对比 FDR<0.05。",
+				f"同人群 {len(matched)} 个 assay/scope 记录：{int(nullsig.sum())} 个实测 P≥0.05、PGS FDR<0.05；{matched.GR_difference_FDR.notna().sum()} 个有匹配 G−R 检验，其中 {int(diffs.sum())} 个 FDR<0.05。C2 完整分解见独立结果表。",
 				"PGS 是遗传倾向，不是出生时浓度；R包含未捕获遗传、环境、疾病、治疗和误差。差异不是因果证明。",
 				"genetic",
 			)
@@ -2755,10 +2793,20 @@ class Questions:
 			("nonlinear", "c4_connect", "c4.nonlin_tests.csv"),
 			("nonlinear_curves", "c4_connect", "c4.nonlin_curves.csv"),
 			("same_locus", "c3_coloc", "c3.same_locus_evidence.csv"),
+			("susie_pairs", "c3_coloc", "c3.susie_signal_pairs.csv"),
+			("mr_signal_evidence", "c3_coloc", "c3.same_locus_signal_evidence.csv"),
+			("susie_diagnostics", "c3_coloc", "c3.susie_diagnostics.csv"),
 			("cell", "c5_cellulation", "c5.cell.enrichment.csv"),
+			("cell_contrasts", "c5_cellulation", "c5.cell.panel_contrasts.csv"),
+			("cell_evidence", "c5_cellulation", "c5.evidence_long.csv"),
 			("cell_status", "c5_cellulation", "c5.cellulation_status.csv"),
 			("mr_scope", "c2_cause", "c2.method_scope_audit.csv"),
 			("dandelion", "c2_cause", "c2.dandelion_input_audit.csv"),
+			("dandelion_lolo", "c2_cause", "c2.dandelion_leave_locus_out.csv"),
+			("dandelion_native", "c2_cause", "c2.dandelion_native_diagnostics.csv"),
+			("state_projection", "c2_cause", "c2.state_projection.csv"),
+			("decomposition", "c2_cause", "c2.individual_genetic_decomposition.csv"),
+			("age_models", "c4_connect", "c4.age_models.csv"),
 		]:
 			d = read(module, filename, name)
 			self.add(name, d)
@@ -2815,7 +2863,7 @@ class Questions:
 			"abm_metrics",
 			"abm_coverage",
 			"abm_paired",
-			"abm_support",
+			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision",
 			"genetic",
 			"temporal",
 			"cohort",
@@ -2824,10 +2872,12 @@ class Questions:
 			"nonlinear",
 			"nonlinear_curves",
 			"same_locus",
+			"susie_pairs", "susie_diagnostics", "mr_signal_evidence",
 			"cell",
 			"cell_status",
+			"cell_contrasts", "cell_evidence", "concept_coefficients", "concept_status", "concept_fold_panels",
 			"mr_scope",
-			"dandelion",
+			"dandelion", "dandelion_lolo", "dandelion_native", "state_projection", "decomposition", "age_models",
 			"overview",
 			"sources",
 		]
@@ -2917,11 +2967,12 @@ def question_figures(out, traits, layers):
 	)
 	for col, (y, l) in enumerate(pairs):
 		d = select(ct, y, l)
+		budget = display_budget(d)
 		if len(d):
 			d = d[
 				d.stratum.eq("All")
 				& d.landmark.eq(0)
-				& d.reference.eq("NS_10")
+				& d.reference.eq(f"NS_{budget}")
 				& truth(d.comparison_valid)
 			]
 		ax = axs[0, col]
@@ -2930,15 +2981,15 @@ def question_figures(out, traits, layers):
 			for i, (_, r) in enumerate(d.iterrows()):
 				ax.plot([r.delta_lo, r.delta_hi], [i, i], color="#247b83")
 				ax.plot(r.delta_AUC, i, "o", color="#247b83")
-			ax.set_yticks(range(len(d)), d.model.str.replace("_10", "", regex=False))
+			ax.set_yticks(range(len(d)), d.model.str.replace(f"_{budget}", "", regex=False))
 			ax.axvline(0, ls="--", color="grey", lw=0.8)
 			ax.set_xlabel("Paired delta AUC vs NS (nominal 95% CI)")
 		else:
 			absent(ax, "Equal-budget paired prediction unavailable")
-		ax.set_title(f"{y} | {l} | 10 assays, all validation participants")
+		ax.set_title(f"{y} | {l} | {budget} assays, all validation participants")
 		p = select(px, y, l)
 		if len(p):
-			p = p[p.model.eq("YS_YinYang_10")]
+			p = p[p.model.eq(f"YS_YinYang_{budget}")]
 		ax = axs[1, col]
 		if len(p):
 			p = p.set_index("component").reindex(list(PILLARS)).reset_index()
@@ -2963,12 +3014,12 @@ def question_figures(out, traits, layers):
 			ax.set_xlabel("Held-out delta R² vs NS (paired 95% CI if available)")
 		else:
 			absent(ax, "LE8 reconstruction unavailable")
-		ax.set_title("YS YinYang, 10 assays: all eight LE8 components")
+		ax.set_title(f"YS YinYang, {budget} assays: all eight LE8 components")
 	save(
 		fig,
 		"Fig6.question_LE8",
 		["contrasts", "proxy"],
-		"Fixed display budget 10; all budgets retained in CSV/Shiny. Prediction and reconstruction are distinct endpoints. Intervals condition on fitted panels; clinical-only shrinkage must be checked in the contrast table. No claim of intervention responsiveness.",
+		"Display uses the configured budget (default 10), or the closest available assay budget; never chosen by model performance. All budgets retained in workbooks/Shiny. Prediction and reconstruction are distinct endpoints. Intervals condition on fitted panels; clinical-only shrinkage must be checked in the contrast table. No claim of intervention responsiveness.",
 	)
 
 	metrics, coverage = read("abm_metrics"), read("abm_coverage")
@@ -2980,7 +3031,9 @@ def question_figures(out, traits, layers):
 		constrained_layout=True,
 	)
 	colors = {
-		"abm_transformer": "#247b83",
+		"elasticnet_weighted": "#247b83",
+		"elasticnet_target_tuned": "#8d5ab4",
+		"abm_transformer": "#426b91",
 		"elasticnet": "#b46724",
 		"clinical": "#777777",
 	}
@@ -2991,6 +3044,8 @@ def question_figures(out, traits, layers):
 		ax = axs[0, col]
 		if len(d):
 			for model, color in colors.items():
+				if model not in set(d.model):
+					continue
 				z = (
 					d[d.model.eq(model)]
 					.set_index("subset")
@@ -3006,7 +3061,10 @@ def question_figures(out, traits, layers):
 		ax = axs[1, col]
 		d = select(coverage, y, l)
 		if len(d):
-			d = d[d.backend.eq("reference") & d.model.eq("abm_transformer")]
+			primary = "elasticnet_weighted" if "elasticnet_weighted" in set(d.model) else "abm_transformer"
+			d = d[d.backend.eq("reference") & d.model.eq(primary)]
+			if "selector" in d:
+				d = d[d.selector.eq("gain")]
 		if len(d):
 			d = d.sort_values("quantile")
 			ax.plot(d.coverage, d.Brier_gain_vs_elasticnet, "o-", color="#247b83")

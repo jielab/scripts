@@ -368,6 +368,8 @@ def render_abm_figures(out, primary="abm_transformer", missing_only=True):
 	name = "Fig_coverage.png"
 	if needed(name) and (out / "coverage_curve.csv").is_file():
 		data = pd.read_csv(out / "coverage_curve.csv")
+		if "selector" in data.columns:
+			data = data.loc[data.selector.eq("gain")]
 		if {"model", "coverage", "Brier_IPCW"} <= set(data.columns) and not data.empty:
 			fig, ax = plt.subplots(figsize=(7, 4))
 			for model in [primary, "elasticnet", "abm_clinical"]:
@@ -443,7 +445,7 @@ def run(kind=None, argv=None):
 				return code
 		return 0
 	kind = selected
-	defaults = ["--device", "cuda", "--cores", "16"]
+	defaults = ["--device", "auto", "--cores", "16"]
 	if kind == "reference":
 		defaults += ["--quality-teacher", "all"]
 	if any(x in rest for x in ["--help", "-h"]):
@@ -644,6 +646,30 @@ def reference_parser():
 		action="store_true",
 		help="Negative control: permute time/event pairs independently within each non-test role",
 	)
+	# C1_SELECTIVE_OPTIONS_BEGIN
+	p.add_argument("--abm-design", choices=["selective", "attention"], default="selective")
+	p.add_argument("--selective-coverage", type=float, default=0.60)
+	p.add_argument("--selective-coverages", default="0.2,0.4,0.6,0.8,1.0")
+	p.add_argument("--selective-split", default="0.60,0.10,0.10,0.20",
+	                    help="Build,tune,calibration,test fractions; --split-file takes precedence")
+	p.add_argument("--selective-folds", type=int, default=5)
+	p.add_argument("--selective-repeats", type=int, default=1)
+	p.add_argument("--selective-gate-fraction", type=float, default=0.30)
+	p.add_argument("--selective-weight-floor", type=float, default=0.20)
+	p.add_argument("--selective-neighbors", type=int, default=100)
+	p.add_argument("--selective-prior-strength", type=float, default=50.0)
+	p.add_argument("--selective-components", type=int, default=32)
+	p.add_argument("--selective-support-quantile", type=float, default=0.99)
+	p.add_argument("--selective-gate-target", choices=["omics_gain", "local_gain"], default="omics_gain")
+	p.add_argument("--selective-gate-trees", type=int, default=100)
+	p.add_argument("--selective-min-events", type=int, default=10)
+	p.add_argument("--selective-primary", choices=["elasticnet", "tree"], default="elasticnet")
+	p.add_argument("--selective-clinical-tier", choices=["basic", "extended"], default="basic",
+	                    help="Descriptive label only; actual --covariates are always exported")
+	p.add_argument("--selective-dca-thresholds", default="0.01,0.025,0.05,0.10,0.20")
+	p.add_argument("--selective-boot-models", default="primary",
+	                    choices=["primary", "all"], help="Paired intervals; all includes tree arms")
+	# C1_SELECTIVE_OPTIONS_END
 	return p
 
 
@@ -1098,7 +1124,7 @@ import torch
 # Common
 # Small shared helpers. All learned objects are local, trusted research artifacts.
 
-VERSION = "5.1.0"
+VERSION = "6.0.0-selective-20261004"
 
 
 def words(value):
@@ -6061,6 +6087,1272 @@ def tabicl_project(a, out):
 # Lossless RDS column-selection bridge, written only to a temporary directory.
 RDS_EXPORT_SCRIPT = '# Read-only bridge. No sourcing of phenotype pipelines or installing R packages.\nargs <- commandArgs(trailingOnly = TRUE)\nstopifnot(length(args) == 3L)\nx <- readRDS(args[1])\nif (!is.data.frame(x)) stop("Expected one data.frame in RDS")\ncols <- readLines(args[3], warn = FALSE)\nif (length(cols)) {\n  absent <- setdiff(cols, names(x))\n  if (length(absent)) stop("Missing columns: ", paste(absent, collapse = ", "))\n  x <- x[, cols, drop = FALSE]\n}\nfor (nm in names(x)) {\n  if (inherits(x[[nm]], "Date") || inherits(x[[nm]], "POSIXt"))\n    x[[nm]] <- format(x[[nm]], "%Y-%m-%d")\n  if (inherits(x[[nm]], "integer64")) x[[nm]] <- as.character(x[[nm]])\n}\n# Binary transfer preserves subnormal numeric metadata used as category codes.\nsaveRDS(x, args[2], compress = FALSE)\n\n'
 
+
+# C1_SELECTIVE_V6_BEGIN
+import argparse
+import hashlib
+import json
+import math
+import os
+import sys
+import copy
+import warnings
+from pathlib import Path
+from types import SimpleNamespace
+import numpy as np
+import pandas as pd
+import joblib
+from scipy import sparse
+from scipy.optimize import minimize
+from scipy.special import expit, logit
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, SplineTransformer
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.metrics import roc_auc_score, average_precision_score
+
+
+def s6_words(value):
+    return [s.strip() for s in (value or "").split(",") if s.strip()]
+
+
+def s6_log(action, stage, detail=""):
+    print(f"[C1 selective] {action} {stage} | {detail}", flush=True)
+
+
+def s6_loss(y, p):
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return -(y*np.log(p) + (1-y)*np.log1p(-p))
+
+
+def s6_fit_logistic(x, y, w, c, ratio, seed, max_iter=3000):
+    import inspect
+    ok = w > 0
+    if len(np.unique(y[ok])) < 2:
+        raise ValueError("Logistic regression requires both known outcome classes")
+    kw = dict(C=float(c), solver="saga" if ratio else "lbfgs", max_iter=max_iter,
+              tol=1e-4, random_state=seed)
+    if inspect.signature(LogisticRegression).parameters["penalty"].default == "deprecated":
+        kw["l1_ratio"] = ratio
+    else:
+        kw["penalty"] = "elasticnet" if ratio else "l2"
+        if ratio:
+            kw["l1_ratio"] = ratio
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ConvergenceWarning)
+        model = LogisticRegression(**kw).fit(np.asarray(x[ok], dtype=np.float64), y[ok],
+                                             sample_weight=w[ok]/w[ok].mean())
+    if any(issubclass(v.category, ConvergenceWarning) for v in caught):
+        raise ValueError(f"Logistic fit did not converge within {max_iter} iterations")
+    return model
+
+
+class S6Clinical:
+    """Fitted exclusively on the relevant training/pilot participants."""
+    def __init__(self, cols, categorical, sparse_output=False):
+        self.cols, self.categorical = list(cols), list(categorical)
+        self.sparse_output = sparse_output
+    def normalized(self, p):
+        absent = set(self.cols) - set(p.columns)
+        if absent:
+            raise ValueError("Missing requested covariates: " + ",".join(sorted(absent)))
+        frame = p[self.cols].copy()
+        for col in self.cols:
+            if col in self.categorical:
+                frame[col] = frame[col].map(lambda v: np.nan if pd.isna(v) else
+                  str(int(v)) if isinstance(v, (float, np.floating)) and np.isfinite(v) and float(v).is_integer()
+                  else str(v)).astype(object)
+            else:
+                value = pd.to_numeric(frame[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+                if (frame[col].notna() & value.isna()).any():
+                    raise ValueError(f"Non-numeric covariate {col}; declare it categorical")
+                frame[col] = value
+        return frame
+    def fit(self, p):
+        frame = self.normalized(p)
+        if frame.isna().all().any():
+            raise ValueError("All-missing training covariate")
+        cat = [c for c in self.cols if c in self.categorical]
+        num = [c for c in self.cols if c not in cat and c != "age"]
+        pieces = []
+        if num:
+            pieces.append(("numeric", make_pipeline(SimpleImputer(strategy="median"), StandardScaler()), num))
+        if "age" in self.cols and "age" not in cat:
+            pieces.append(("age", make_pipeline(SimpleImputer(strategy="median"),
+               SplineTransformer(n_knots=4, degree=3, include_bias=False), StandardScaler()), ["age"]))
+        if cat:
+            pieces.append(("categorical", make_pipeline(SimpleImputer(strategy="most_frequent"),
+               OneHotEncoder(handle_unknown="ignore", drop="first", sparse_output=self.sparse_output)), cat))
+        self.design = ColumnTransformer(pieces, sparse_threshold=1.0 if self.sparse_output else 0)
+        self.design.fit(frame)
+        self.levels = {c:set(frame[c].dropna()) for c in cat}
+        return self
+    def transform(self, p):
+        if not self.cols:
+            return np.empty((len(p), 0), dtype=np.float32)
+        value = self.design.transform(self.normalized(p))
+        if self.sparse_output:
+            return sparse.csr_matrix(value, dtype=np.float64)
+        return np.asarray(value, dtype=np.float32)
+    def unknown(self, p):
+        frame = self.normalized(p)
+        ans = np.zeros(len(p), bool)
+        for name, levels in self.levels.items():
+            ans |= (frame[name].notna() & ~frame[name].isin(levels)).to_numpy()
+        return ans
+
+
+class S6Preprocessor:
+    def __init__(self, missing, residual_cols, categorical, transform):
+        self.max_missing, self.residual_cols = missing, residual_cols
+        self.categorical, self.transform_name = categorical, transform
+    def scale_transform(self, raw):
+        x = np.asarray(raw, dtype=np.float32)
+        x = np.where(np.isfinite(x), x, np.nan)
+        if self.transform_name == "log1p":
+            if np.any(x < 0):
+                raise ValueError("log1p requires nonnegative inputs")
+            x = np.log1p(x)
+        return x
+    def fit(self, raw, p, allowed=None):
+        x = self.scale_transform(raw)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            valid = (np.mean(~np.isfinite(x), axis=0) < self.max_missing) & (np.nanstd(x, axis=0)>1e-8)
+        if allowed is not None:
+            valid &= np.asarray(allowed, bool)
+        self.keep = np.flatnonzero(valid)
+        if len(self.keep) < 3:
+            raise ValueError("Fewer than three usable training assays")
+        z = x[:, self.keep]
+        self.lower, self.upper = np.nanquantile(z, [.005,.995], axis=0)
+        z = np.clip(z, self.lower, self.upper)
+        self.median = np.nanmedian(z, axis=0)
+        z = np.where(np.isfinite(z), z, self.median)
+        self.adjust = None
+        if self.residual_cols:
+            self.design = S6Clinical(self.residual_cols, self.categorical, sparse_output=True).fit(p)
+            c = self.design.transform(p)
+            if c.shape[1]:
+                # Sparse technical design prevents the former dense plate matrix.
+                self.adjust = Ridge(alpha=10.0, solver="lsqr", tol=1e-5).fit(c,z)
+                for begin in range(0,len(z),512):
+                    z[begin:begin+512] -= self.adjust.predict(c[begin:begin+512])
+        self.mean, self.sd = z.mean(0), np.maximum(z.std(0), 1e-6)
+        return self
+    def transform(self, raw, p):
+        result = np.empty((len(raw),len(self.keep)),dtype=np.float32)
+        observed = np.empty(result.shape,bool)
+        for begin in range(0,len(raw),512):
+            end = min(begin+512,len(raw))
+            x = self.scale_transform(raw[begin:end])[:,self.keep]
+            mask = np.isfinite(x)
+            x = np.clip(np.where(mask,x,self.median),self.lower,self.upper)
+            if self.adjust is not None:
+                x -= self.adjust.predict(self.design.transform(p.iloc[begin:end]))
+            result[begin:end] = np.clip((x-self.mean)/self.sd,-10,10)
+            observed[begin:end] = mask
+        return result,observed
+
+
+class S6Censoring:
+    def fit(self,p,horizon,min_g=.05):
+        self.horizon,self.min_g = horizon,min_g
+        t,e = p.time.to_numpy(float),p.event.to_numpy(int)
+        if np.any(~np.isfinite(t)) or np.any(t<=0) or not set(e)<= {0,1}:
+            raise ValueError("Invalid survival data")
+        self.times,inverse,count = np.unique(t,return_inverse=True,return_counts=True)
+        disease = np.bincount(inverse,weights=e,minlength=len(count))
+        risk = len(t) - np.r_[0,np.cumsum(count)[:-1]]
+        denominator = risk-disease
+        censoring = count-disease
+        fraction = np.divide(censoring,denominator,out=np.zeros(len(count)),where=denominator>0)
+        self.survival = np.cumprod(1-fraction)
+        if np.sum(t>horizon)<10 or self.at([horizon])[0]<min_g:
+            raise ValueError("Insufficient censoring support; shorten prediction horizon")
+        return self
+    def at(self,t,left=False):
+        ix=np.searchsorted(self.times,np.asarray(t),side="left" if left else "right")-1
+        return np.where(ix>=0,self.survival[np.maximum(ix,0)],1.0)
+    def labels_weights(self,p):
+        t,e = p.time.to_numpy(float),p.event.to_numpy(int)
+        case=(e==1)&(t<=self.horizon); control=t>self.horizon
+        g=np.ones(len(t)); g[case]=self.at(t[case],left=True);g[control]=self.at(np.full(control.sum(),self.horizon))
+        if np.any(g[case|control]<self.min_g):
+            raise ValueError("Unsupported censoring weights")
+        w=np.zeros(len(t));w[case|control]=1/g[case|control]
+        return case.astype(int),w
+
+
+class S6Calibrator:
+    def fit(self,prob,y,w):
+        self.center=float(np.mean(logit(np.clip(prob,1e-6,1-1e-6))))
+        self.scale=max(float(np.std(logit(np.clip(prob,1e-6,1-1e-6)))),1e-6)
+        z=(logit(np.clip(prob,1e-6,1-1e-6))-self.center)/self.scale
+        ww=w/w.sum()
+        def objective(b):
+            eta=b[0]+b[1]*z
+            error=expit(eta)-y
+            return (np.sum(ww*(np.logaddexp(0,eta)-y*eta))+.0001*b[1]**2,
+                    np.array([np.sum(ww*error),np.sum(ww*error*z)+.0002*b[1]]))
+        prior=np.clip(np.average(y,weights=w),1e-6,1-1e-6)
+        fit=minimize(objective,[logit(prior),1.],jac=True,method="L-BFGS-B",bounds=[(None,None),(0,None)])
+        if not fit.success:raise ValueError("Calibration failed: "+str(fit.message))
+        self.coef=fit.x
+        return self
+    def predict(self,prob):
+        z=(logit(np.clip(prob,1e-6,1-1e-6))-self.center)/self.scale
+        return expit(self.coef[0]+self.coef[1]*z)
+
+
+# C1 selective-prediction implementation. Embedded into f/c1.abm.py by apply_c1.py.
+# Only development outcomes train models/gates. A gate is not a data-validity label.
+
+S6_VERSION = "6.0.0-selective-20261004"
+S6_PRIMARY = "elasticnet_weighted"
+
+
+def s6_options(parser):
+    parser.add_argument("--abm-design", choices=["selective", "attention"], default="selective")
+    parser.add_argument("--selective-coverage", type=float, default=0.60)
+    parser.add_argument("--selective-coverages", default="0.2,0.4,0.6,0.8,1.0")
+    parser.add_argument("--selective-split", default="0.60,0.10,0.10,0.20",
+                        help="Build,tune,calibration,test fractions; --split-file takes precedence")
+    parser.add_argument("--selective-folds", type=int, default=5)
+    parser.add_argument("--selective-repeats", type=int, default=1)
+    parser.add_argument("--selective-gate-fraction", type=float, default=0.30)
+    parser.add_argument("--selective-weight-floor", type=float, default=0.20)
+    parser.add_argument("--selective-neighbors", type=int, default=100)
+    parser.add_argument("--selective-prior-strength", type=float, default=50.0)
+    parser.add_argument("--selective-components", type=int, default=32)
+    parser.add_argument("--selective-support-quantile", type=float, default=0.99)
+    parser.add_argument("--selective-gate-target", choices=["omics_gain", "local_gain"], default="omics_gain")
+    parser.add_argument("--selective-gate-trees", type=int, default=100)
+    parser.add_argument("--selective-min-events", type=int, default=10)
+    parser.add_argument("--selective-primary", choices=["elasticnet", "tree"], default="elasticnet")
+    parser.add_argument("--selective-clinical-tier", choices=["basic", "extended"], default="basic",
+                        help="Descriptive label only; actual --covariates are always exported")
+    parser.add_argument("--selective-dca-thresholds", default="0.01,0.025,0.05,0.10,0.20")
+    parser.add_argument("--selective-boot-models", default="primary",
+                        choices=["primary", "all"], help="Paired intervals; all includes tree arms")
+    return parser
+
+
+def s6_validate(a):
+    if not 0 < a.selective_coverage <= 1:
+        raise ValueError("--selective-coverage must be in (0,1]")
+    a.selective_coverages = sorted(set(float(v) for v in str(a.selective_coverages).split(","))
+                                   | {1.0, a.selective_coverage})
+    if not all(0 < q <= 1 for q in a.selective_coverages):
+        raise ValueError("Invalid coverage grid")
+    a.selective_split = [float(v) for v in str(a.selective_split).split(",")]
+    if len(a.selective_split) != 4 or min(a.selective_split) <= 0 or not np.isclose(sum(a.selective_split), 1):
+        raise ValueError("--selective-split needs four positive fractions summing to one")
+    if a.selective_folds < 3 or a.selective_repeats < 1:
+        raise ValueError("Use >=3 selective folds and >=1 repeat")
+    if not 0.15 <= a.selective_gate_fraction <= 0.5:
+        raise ValueError("Gate fraction must be in [0.15,0.5]")
+    if not 0 < a.selective_weight_floor <= 1 or not 0 < a.selective_support_quantile <= 1:
+        raise ValueError("Invalid weight floor/support quantile")
+    if min(a.selective_neighbors, a.selective_components, a.selective_min_events) < 2:
+        raise ValueError("Neighborhood/components/min-events must be >=2")
+    if a.selective_prior_strength < 0 or a.selective_gate_trees < 1:
+        raise ValueError("Invalid shrinkage/gate iterations")
+    if a.selective_primary == "tree" and a.tree == "none":
+        raise ValueError("Tree primary needs --tree lightgbm or hist")
+    a.selective_dca_thresholds = [float(v) for v in str(a.selective_dca_thresholds).split(",")]
+    if not all(0 < t < 1 for t in a.selective_dca_thresholds):
+        raise ValueError("Decision thresholds must be in (0,1)")
+    forbidden={"time","event","target","eligible","split","role",a.trait,
+               getattr(a,"diagnosis_col",""),getattr(a,"death_col",""),getattr(a,"lost_col","")}
+    leaked=set(s6_words(a.covariates)+s6_words(a.residualize))&forbidden
+    if leaked:
+        raise ValueError("Outcome/follow-up columns cannot be predictors: "+",".join(sorted(leaked)))
+    if a.resume:
+        raise ValueError("Selective fits are atomic; epoch --resume belongs to --abm-design attention")
+    return a
+
+
+def s6_seed(text, seed):
+    return int.from_bytes(hashlib.blake2b((str(seed) + ":" + str(text)).encode(), digest_size=8).digest(), "little")
+
+
+def s6_groups(p, a):
+    values = p[a.group_col if a.group_col else a.id_col]
+    if values.isna().any() or values.astype(str).str.strip().eq("").any():
+        raise ValueError("Missing participant/family identifiers")
+    return values.astype(str).to_numpy()
+
+
+def s6_group_folds(groups, k, seed):
+    """Outcome-blind folds: changing a held-out label cannot change its gate fit."""
+    levels = sorted(set(map(str, groups)), key=lambda v: s6_seed(v, seed))
+    if len(levels) < k:
+        raise ValueError("Too few independent groups for cross-fitting")
+    lookup = {v: i % k for i, v in enumerate(levels)}
+    return np.asarray([lookup[str(g)] for g in groups], dtype=int)
+
+
+def s6_split(p, a):
+    if a.split_file:
+        return split_people(p, a)
+    groups = s6_groups(p, a)
+    levels = sorted(set(groups), key=lambda v: s6_seed(v, a.seed + 1051))
+    edges = np.rint(np.cumsum(a.selective_split) * len(levels)).astype(int)
+    lookup, start = {}, 0
+    for role, end in zip(["build", "tune", "calibration", "test"], edges):
+        lookup.update({g: role for g in levels[start:end]})
+        start = end
+    part = np.asarray([lookup[g] for g in groups])
+    if len(set(part)) != 4:
+        raise ValueError("All four partitions need independent groups")
+    return part
+
+
+def s6_check_events(y, w, minimum, role):
+    counts = np.bincount(np.asarray(y, int)[np.asarray(w) > 0], minlength=2)
+    if min(counts) < minimum:
+        raise ValueError(f"{role}: only {counts[1]} known cases and {counts[0]} controls; "
+                         "reduce folds/change horizon or use more data. No silent fallback fit.")
+
+
+def s6_make_tree(a, seed, leaves=15):
+    if a.tree == "lightgbm":
+        from lightgbm import LGBMClassifier
+        return LGBMClassifier(n_estimators=a.tree_estimators, num_leaves=leaves,
+                              learning_rate=0.03, min_child_samples=40, reg_lambda=10,
+                              n_jobs=a.cores, random_state=seed, deterministic=True,
+                              force_col_wise=True, verbosity=-1)
+    if a.tree == "hist":
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        return HistGradientBoostingClassifier(max_iter=a.tree_estimators, max_leaf_nodes=leaves,
+                    learning_rate=0.03, min_samples_leaf=40, l2_regularization=10,
+                    early_stopping=False, random_state=seed)
+    return None
+
+
+def s6_fit_tree(model, x, y, w):
+    ok = np.asarray(w) > 0
+    model.fit(x[ok], y[ok], sample_weight=w[ok] / np.mean(w[ok]))
+    return model
+
+
+class S6Neighborhood:
+    """Full eligible donor bank, partially whitened PCA, probability borrowing.
+
+    No self-fit filtering. Raw donor outcomes are aggregated, not copied as a
+    binary personal prediction. IPCW and kernel weights determine effective N.
+    The bank stores low-dimensional coordinates, not an N x N distance matrix.
+    """
+    def fit(self, x, y, w, groups, a, seed, features=None):
+        from sklearn.decomposition import PCA
+        from sklearn.neighbors import NearestNeighbors
+        ncomp = min(a.selective_components, x.shape[1], len(x) - 1)
+        if ncomp < 2:
+            raise ValueError("Insufficient geometry dimensions")
+        self.pca = PCA(n_components=ncomp, svd_solver="randomized", random_state=seed).fit(x)
+        variance = np.maximum(self.pca.explained_variance_, 1e-8)
+        # Quarter-power rather than full whitening avoids magnifying tiny PCs.
+        self.scale = np.power(variance, 0.25) * np.sqrt(ncomp)
+        self.module_columns=[];self.module_names=[]
+        if getattr(a,"module_file",""):
+            modules=pd.read_csv(a.module_file,sep="\t",dtype=str)
+            if not {"feature","module"}<=set(modules.columns) or features is None:
+                raise ValueError("--module-file requires feature/module TSV and retained assay names")
+            lookup={str(v):i for i,v in enumerate(features)}
+            for name,sub in modules.dropna(subset=["feature","module"]).groupby("module",sort=True):
+                ix=sorted({lookup[v] for v in sub.feature if v in lookup})
+                if len(ix)>=2:self.module_columns.append(ix);self.module_names.append(str(name))
+            if not self.module_columns:raise ValueError("No module has >=2 retained assays")
+        if self.module_columns:
+            scores=np.column_stack([x[:,ix].mean(1) for ix in self.module_columns])
+            self.module_mean=scores.mean(0);self.module_sd=np.maximum(scores.std(0),1e-6)
+        known = np.asarray(w) > 0
+        self.z = self.transform(x)[known]
+        self.y, self.w = y[known].astype(float), w[known].astype(float)
+        self.groups = np.asarray(groups)[known]
+        self.k = min(a.selective_neighbors, len(self.z))
+        self.strength = float(a.selective_prior_strength)
+        self.index = NearestNeighbors(algorithm="brute", metric="euclidean", n_jobs=a.cores).fit(self.z)
+        return self
+
+    def module_scores(self,x):
+        if not self.module_columns:return np.empty((len(x),0),dtype=np.float32)
+        scores=np.column_stack([x[:,ix].mean(1) for ix in self.module_columns])
+        return np.asarray((scores-self.module_mean)/self.module_sd,dtype=np.float32)
+
+    def transform(self, x):
+        z=np.asarray(self.pca.transform(x)/self.scale,dtype=np.float32)
+        modules=self.module_scores(x)
+        if modules.shape[1]:z=np.c_[z,modules/np.sqrt(modules.shape[1])]/np.sqrt(2)
+        return z
+
+    def predict(self, x, global_risk, groups, permute=False, seed=0):
+        z = self.transform(x)
+        p = np.empty(len(x)); diagnostics = np.empty((len(x), 4))
+        donor_y = self.y.copy()
+        if permute:
+            donor_y = np.random.default_rng(seed).permutation(donor_y)
+        for start in range(0, len(x), 256):
+            stop = min(start + 256, len(x))
+            # Normal prediction roles are family-disjoint. The extra candidates
+            # also make this routine safe for explicit family-exclusion checks.
+            search_k = min(len(self.z), max(self.k + 16, 2 * self.k))
+            distance, j = self.index.kneighbors(z[start:stop], n_neighbors=search_k)
+            forbidden = np.asarray(groups)[start:stop, None] == self.groups[j]
+            distance = np.where(forbidden, np.inf, distance)
+            order = np.argsort(distance, axis=1, kind="stable")[:, :self.k]
+            distance = np.take_along_axis(distance, order, axis=1)
+            j = np.take_along_axis(j, order, axis=1)
+            valid = np.isfinite(distance)
+            last = np.max(np.where(valid, distance, 0), axis=1)
+            bandwidth = np.maximum(last, 1e-6)
+            kernel = np.exp(-0.5 * (distance / bandwidth[:, None]) ** 2)
+            weight = kernel * self.w[j] * valid
+            total = weight.sum(1)
+            weight = np.divide(weight, total[:, None], out=np.zeros_like(weight), where=total[:, None] > 0)
+            ess = np.divide(1, (weight * weight).sum(1), out=np.zeros(len(weight)), where=(weight * weight).sum(1) > 0)
+            local = (weight * donor_y[j]).sum(1)
+            borrowing = np.divide(ess, ess + self.strength, out=np.zeros_like(ess), where=(ess + self.strength) > 0)
+            p[start:stop] = borrowing * local + (1 - borrowing) * global_risk[start:stop]
+            first = distance[:, 0]
+            # Finite OOD values so the gate never silently imputes an infinite distance.
+            diagnostics[start:stop] = np.c_[np.where(np.isfinite(first), first, 1e6),
+                np.where(total > 0, last, 1e6), ess / max(self.k, 1), borrowing]
+        return np.clip(p, 1e-6, 1 - 1e-6), diagnostics
+
+
+class S6Teacher:
+    def fit(self, raw, p, features, a, seed):
+        self.a = a
+        self.prep = S6Preprocessor(a.feature_missing, s6_words(a.residualize),
+                                         s6_words(a.categorical), a.transform).fit(raw, p)
+        self.clinical = S6Clinical(s6_words(a.covariates), s6_words(a.categorical)).fit(p)
+        x, _ = self.prep.transform(raw, p)
+        c = self.clinical.transform(p)
+        if c.shape[1] == 0:
+            raise ValueError("At least one comparator covariate is needed")
+        self.km = S6Censoring().fit(p, a.horizon, a.min_censor_survival)
+        y, w = self.km.labels_weights(p)
+        s6_check_events(y, w, a.selective_min_events, "pilot")
+        self.clin = s6_fit_logistic(c, y, w, 1.0, 0, seed, a.max_iter)
+        self.en = s6_fit_logistic(np.c_[c, x], y, w, a.teacher_c, .5, seed, a.max_iter)
+        self.tree = s6_make_tree(a, seed)
+        if self.tree is not None:
+            s6_fit_tree(self.tree, np.c_[c, x], y, w)
+        self.neighborhood = S6Neighborhood().fit(x, y, w, s6_groups(p, a), a, seed, [features[j] for j in self.prep.keep])
+        return self
+
+    def predict(self, raw, p):
+        x, obs = self.prep.transform(raw, p)
+        c = self.clinical.transform(p)
+        pc = self.clin.predict_proba(c)[:, 1]
+        pe = self.en.predict_proba(np.c_[c, x])[:, 1]
+        pt = pe if self.tree is None else self.tree.predict_proba(np.c_[c, x])[:, 1]
+        pg = (pe + pt) / 2
+        pl, geometry = self.neighborhood.predict(x, pg, s6_groups(p, self.a))
+        # All columns are available before the query outcome. Geometry and risk
+        # are separate columns, rather than a manufactured "reliability" score.
+        gx = np.c_[pc, pg, pl, pe - pt, pg - pc, pl - pg,
+                   1 - obs.mean(1), np.log1p(geometry[:, :2]), geometry[:, 2:], self.neighborhood.module_scores(x)]
+        return {"clinical": pc, "global": pg, "local": pl, "gate_x": gx,
+                "distance": geometry[:, 0], "relative_ess": geometry[:, 2]}
+
+
+class S6GainGate:
+    feature_names = ["clinical_risk", "omics_risk", "local_risk", "learner_disagreement",
+                     "omics_minus_clinical", "local_minus_global", "missing_fraction",
+                     "log_nearest_distance", "log_kth_distance", "relative_ess", "borrow_fraction"]
+    def fit(self, prediction, y, w, a):
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        self.models = {}
+        ok = w > 0
+        s6_check_events(y, w, a.selective_min_events, "gate-training")
+        targets = {
+            "omics_gain": (y - prediction["clinical"]) ** 2 - (y - prediction["global"]) ** 2,
+            "local_gain": (y - prediction["global"]) ** 2 - (y - prediction["local"]) ** 2,
+            "absolute_error": (y - prediction["global"]) ** 2,
+        }
+        for name, target in targets.items():
+            # A small honest gate, not another high-dimensional outcome learner.
+            model = HistGradientBoostingRegressor(max_iter=a.selective_gate_trees,
+                max_leaf_nodes=5, learning_rate=.04, min_samples_leaf=max(20, min(100, int(ok.sum()/20))),
+                l2_regularization=10, early_stopping=False, random_state=a.seed + 714)
+            model.fit(prediction["gate_x"][ok], target[ok], sample_weight=w[ok] / w[ok].mean())
+            self.models[name] = model
+        self.reference_distances = np.sort(prediction["distance"])
+        return self
+
+    def predict(self, prediction):
+        result = {name: model.predict(prediction["gate_x"]) for name, model in self.models.items()}
+        # A percentile of independently observed pilot-to-gate distances.
+        result["support_percentile"] = np.searchsorted(self.reference_distances,
+                 prediction["distance"], side="right") / max(len(self.reference_distances), 1)
+        result["relative_ess"] = prediction["relative_ess"]
+        return result
+
+
+class S6GateEnsemble:
+    def predict(self, raw, p):
+        sums = {}
+        for teacher, gate in self.members:
+            values = gate.predict(teacher.predict(raw, p))
+            for name, value in values.items():
+                sums[name] = sums.get(name, np.zeros(len(p))) + value / len(self.members)
+        return sums
+
+
+def s6_crossfit_gate(raw, p, features, a, out=None):
+    """Three independent roles within each fold: pilot, gate-training, recipient.
+
+    For recipient i, neither i nor its family's outcomes enter its pilot models,
+    geometry, censoring model, or gain gate. This is stronger than simply fitting
+    a second model to OOF residuals whose teachers may have included i elsewhere.
+    """
+    groups = s6_groups(p, a)
+    accumulator, counts, models, rows = {}, np.zeros(len(p)), [], []
+    teacher_oof = {name: np.zeros(len(p)) for name in ["clinical", "global", "local"]}
+    for repeat in range(a.selective_repeats):
+        fold_id = s6_group_folds(groups, a.selective_folds, a.seed + 1200 + repeat)
+        for fold in range(a.selective_folds):
+            recipient = np.flatnonzero(fold_id == fold)
+            others = np.flatnonzero(fold_id != fold)
+            unique = sorted(set(groups[others]), key=lambda v: s6_seed(v, a.seed + 2000 + 31*repeat + fold))
+            ngate = max(1, int(round(len(unique) * a.selective_gate_fraction)))
+            gate_groups = set(unique[:ngate])
+            gate_idx = others[np.asarray([g in gate_groups for g in groups[others]])]
+            pilot = others[np.asarray([g not in gate_groups for g in groups[others]])]
+            if set(groups[recipient]) & (set(groups[pilot]) | set(groups[gate_idx])):
+                raise AssertionError("Recipient/family leakage in gain-gate fitting")
+            teacher = S6Teacher().fit(raw[pilot], p.iloc[pilot], features, a,
+                                     a.seed + 3000 + 31*repeat + fold)
+            gp = teacher.predict(raw[gate_idx], p.iloc[gate_idx])
+            yg, wg = teacher.km.labels_weights(p.iloc[gate_idx])
+            gate = S6GainGate().fit(gp, yg, wg, a)
+            rp = teacher.predict(raw[recipient], p.iloc[recipient])
+            values = gate.predict(rp)
+            # Normalize within this untouched recipient fold, NOT over all OOF
+            # scores: other folds' teachers may have seen this recipient's label.
+            # Global OOF rank normalization would reintroduce a subtle own-label path.
+            recipient_ids=p.iloc[recipient][a.id_col].astype(str).to_numpy()
+            fold_rank=s6_ranks(values[a.selective_gate_target],recipient_ids,a.seed+92+repeat)
+            fold_rule=S6CoverageRule().fit(values[a.selective_gate_target],values["support_percentile"],
+                    recipient_ids,a.selective_coverage,a.selective_support_quantile,a.seed+91+repeat)
+            values["training_selected"]=fold_rule.apply(values[a.selective_gate_target],values["support_percentile"],recipient_ids).astype(float)
+            values["training_soft"]=np.where(values["support_percentile"]<=a.selective_support_quantile,
+                  a.selective_weight_floor+(1-a.selective_weight_floor)*fold_rank,a.selective_weight_floor)
+            for name, value in values.items():
+                accumulator.setdefault(name, np.zeros(len(p)))[recipient] += value
+            for name in teacher_oof:
+                teacher_oof[name][recipient] += rp[name]
+            counts[recipient] += 1
+            models.append((teacher, gate))
+            rows.append(dict(repeat=repeat+1, fold=fold+1, pilot_n=len(pilot), gate_n=len(gate_idx),
+                    recipient_n=len(recipient), group_disjoint=True, recipient_outcomes_used=False))
+            s6_log("DONE", "selective_crossfit", f"repeat={repeat+1}; fold={fold+1}; pilot={len(pilot)}; gate={len(gate_idx)}; recipients={len(recipient)}")
+    if np.any(counts != a.selective_repeats):
+        raise AssertionError("Cross-fit coverage failure")
+    values = {name: v/counts for name, v in accumulator.items()}
+    values.update({"OOF_" + name: v/counts for name, v in teacher_oof.items()})
+    ensemble = S6GateEnsemble(); ensemble.members = models
+    if out is not None:
+        pd.DataFrame(rows).to_csv(Path(out)/"c1.selective.crossfit_audit.csv", index=False)
+    return ensemble, values
+
+
+def s6_ranks(values, ids, seed):
+    """Stable, outcome-blind tie handling. Constant gates reduce to random selection."""
+    values = np.asarray(values, float)
+    if not np.isfinite(values).all():
+        raise ValueError("Nonfinite selection score")
+    tie = np.asarray([s6_seed(i, seed) for i in ids], dtype=np.uint64)
+    order = np.lexsort((tie, values))
+    ranks = np.empty(len(values)); ranks[order] = (np.arange(len(values)) + .5) / len(values)
+    return ranks
+
+
+class S6CoverageRule:
+    def fit(self, score, support, ids, q, support_quantile, seed):
+        self.q, self.seed, self.support_quantile = float(q), int(seed), support_quantile
+        self.all_eligible = q == 1.0
+        self.threshold, self.tie_threshold = -np.inf, 0
+        self.requested_count = int(np.ceil(q * len(score)))
+        ok = np.asarray(support) <= support_quantile
+        good = np.flatnonzero(ok)
+        n = min(self.requested_count, len(good))
+        self.support_limited = n < self.requested_count
+        if self.all_eligible:
+            self.threshold = -np.inf
+        elif n == 0:
+            self.threshold = np.inf
+        else:
+            ties = np.asarray([s6_seed(v, seed) for v in ids], dtype=np.uint64)
+            order = good[np.lexsort((ties[good], np.asarray(score)[good]))]
+            boundary = order[-n]
+            self.threshold = float(np.asarray(score)[boundary])
+            self.tie_threshold = int(ties[boundary])
+        return self
+
+    def apply(self, score, support, ids):
+        if self.all_eligible:
+            return np.ones(len(score), dtype=bool)
+        score = np.asarray(score)
+        ties = np.asarray([s6_seed(v, self.seed) for v in ids], dtype=np.uint64)
+        return ((score > self.threshold) | ((score == self.threshold) & (ties >= self.tie_threshold))) & (np.asarray(support) <= self.support_quantile)
+
+
+def s6_train_weights(values, ids, a):
+    """Use only fold-local, recipient-outcome-blind selection decisions.
+
+    With repeats, average the separately honest soft weights; majority-vote the
+    hard masks. Do not rank or threshold cross-fitted scores globally here.
+    """
+    if not {"training_selected","training_soft"}<=set(values):
+        raise ValueError("Missing honest fold-local training weights")
+    keep=np.asarray(values["training_selected"])>=.5
+    soft=np.asarray(values["training_soft"],float)
+    if len(keep)!=len(ids) or np.any(~np.isfinite(soft)) or np.any(soft<a.selective_weight_floor-1e-10) or np.any(soft>1+1e-10):
+        raise ValueError("Invalid cross-fitted training weights")
+    return keep,np.clip(soft,a.selective_weight_floor,1.0)
+
+
+def s6_matched_random(keep, soft, risk, ids, seed):
+    """Risk-composition control: random subset/weights within OOF clinical-risk deciles.
+
+    No case-count matching based on recipient outcomes. Exact subset size and
+    the within-bin soft-weight distribution are preserved.
+    """
+    ranks = s6_ranks(risk, ids, seed)
+    bins = np.minimum((ranks*10).astype(int), 9)
+    rng = np.random.default_rng(seed)
+    subset, weights = np.zeros(len(ids), bool), np.zeros(len(ids))
+    for group in np.unique(bins):
+        ix = np.flatnonzero(bins == group)
+        perm = rng.permutation(ix)
+        subset[perm[:int(np.sum(keep[ix]))]] = True
+        weights[ix] = soft[rng.permutation(ix)]
+    assert subset.sum() == keep.sum()
+    return subset, weights
+
+
+class S6FinalModels:
+    def predict_raw(self, raw, p):
+        x, obs = self.prep.transform(raw, p)
+        c = self.clinical.transform(p)
+        blocks = {"clinical":c, "omics":x, "combined":np.c_[c,x]}
+        result = {name: model.predict_proba(blocks[self.inputs[name]])[:,1]
+                  for name,model in self.models.items()}
+        global_risk = np.mean([result[n] for n in self.global_names],axis=0)
+        for name,permuted in [("local_borrowing",False),("local_permuted_donors",True)]:
+            result[name] = self.neighborhood.predict(x,global_risk,s6_groups(p,self.a),
+                                permute=permuted,seed=self.a.seed+507)[0]
+        return result
+    def predict(self, raw, p):
+        raw_prediction=self.predict_raw(raw,p)
+        return {name:self.calibrators[name].predict(value) for name,value in raw_prediction.items()}
+
+
+def s6_tune_final(raw,p,parts,gate_values,build_values,features,a,out):
+    build,tune,calfit = parts["build"],parts["tune"],parts["calibration_fit"]
+    model=S6FinalModels();model.a=a
+    model.prep=S6Preprocessor(a.feature_missing,s6_words(a.residualize),s6_words(a.categorical),a.transform).fit(raw[build],p.iloc[build])
+    model.clinical=S6Clinical(s6_words(a.covariates),s6_words(a.categorical)).fit(p.iloc[build])
+    xb,_=model.prep.transform(raw[build],p.iloc[build]);xt,_=model.prep.transform(raw[tune],p.iloc[tune])
+    cb,ct=model.clinical.transform(p.iloc[build]),model.clinical.transform(p.iloc[tune])
+    model.km=S6Censoring().fit(p.iloc[build],a.horizon,a.min_censor_survival)
+    yb,wb=model.km.labels_weights(p.iloc[build]);yt,wt=model.km.labels_weights(p.iloc[tune])
+    bc={"clinical":cb,"omics":xb,"combined":np.c_[cb,xb]}
+    tc={"clinical":ct,"omics":xt,"combined":np.c_[ct,xt]}
+    ids=p.iloc[build][a.id_col].astype(str).to_numpy()
+    keep,soft=s6_train_weights(build_values,ids,a)
+    random_keep,random_soft=s6_matched_random(keep,soft,build_values["OOF_clinical"],ids,a.seed+94)
+    target=gate_values["primary_mask"][tune]
+    s6_check_events(yt[target],wt[target],a.selective_min_events,"supported tune")
+    weights={"full":np.ones(len(build)),"target_tuned":np.ones(len(build)),
+             "filtered":keep.astype(float),"weighted":soft,
+             "random_filtered":random_keep.astype(float),"random_weighted":random_soft}
+    model.models,model.inputs={},{}
+    tuning,training=[],[]
+    arms=[("clinical","ridge","clinical","full"),("omics_elasticnet","en","omics","full")]
+    families=[("elasticnet","en")]
+    if a.tree != "none":families.append((a.tree,"tree"))
+    for family,kind in families:
+        for arm in weights:
+            arms.append((family if arm=="full" else family+"_"+arm,kind,"combined",arm))
+    for name,kind,inputs,arm in arms:
+        multiplier=weights[arm]
+        train_w=wb*multiplier
+        validation=np.ones(len(tune),bool) if arm=="full" else target
+        # Check all matched arms up front: do not quietly substitute the full model.
+        s6_check_events(yb,train_w,a.selective_min_events,"training "+name)
+        grid=[1.] if kind=="ridge" else a.c_grid if kind=="en" else [7,15,31]
+        best=None
+        for param in grid:
+            try:
+                if kind=="tree":
+                    candidate=s6_fit_tree(s6_make_tree(a,a.seed,leaves=int(param)),bc[inputs],yb,train_w)
+                else:
+                    candidate=s6_fit_logistic(bc[inputs],yb,train_w,param,.5 if kind=="en" else 0,a.seed,a.max_iter)
+                prob=candidate.predict_proba(tc[inputs])[:,1]
+                value=float(np.average(s6_loss(yt[validation],prob[validation]),weights=wt[validation]))
+                tuning.append(dict(model=name,parameter=float(param),validation_logloss=value,
+                                   validation_subset="all" if arm=="full" else "frozen_supported",status="completed"))
+                if best is None or value<best[0]:best=(value,candidate,param)
+            except ValueError as exc:
+                tuning.append(dict(model=name,parameter=float(param),validation_logloss=np.nan,
+                                   validation_subset="all" if arm=="full" else "frozen_supported",status=str(exc)))
+        if best is None:raise ValueError("All hyperparameters failed for "+name)
+        model.models[name]=best[1];model.inputs[name]=inputs
+        effective=(train_w.sum()**2)/(np.sum(train_w**2))
+        row=dict(model=name,learner="sklearn_elasticnet" if kind=="en" else a.tree if kind=="tree" else "sklearn_ridge_logistic",
+                 inputs=inputs,training_strategy=arm,training_n=int(np.sum(multiplier>0)),
+                 known_n=int(np.sum(train_w>0)),known_cases=int(np.sum((yb==1)&(train_w>0))),
+                 weighted_case_fraction=float(np.average(yb,weights=train_w)),effective_weighted_n=float(effective),
+                 selected_parameter=float(best[2]),tuning_subset="all" if arm=="full" else "frozen_supported")
+        if kind in ["en","ridge"]:
+            co=best[1].coef_[0]
+            row["nonzero_coefficients"]=int(np.sum(np.abs(co)>1e-8))
+            row["nonzero_molecular_coefficients"]=int(np.sum(np.abs(co[cb.shape[1]:])>1e-8)) if inputs=="combined" else int(np.sum(np.abs(co)>1e-8)) if inputs=="omics" else 0
+        training.append(row)
+        s6_log("DONE","final_fit",f"{name}; known N={row['known_n']}; cases={row['known_cases']}")
+    model.global_names=["elasticnet"]+([a.tree] if a.tree!="none" else [])
+    model.neighborhood=S6Neighborhood().fit(xb,yb,wb,s6_groups(p.iloc[build],a),a,a.seed+501,[features[j] for j in model.prep.keep])
+    rawcal=model.predict_raw(raw[calfit],p.iloc[calfit])
+    yc,wc=model.km.labels_weights(p.iloc[calfit])
+    s6_check_events(yc,wc,a.selective_min_events,"calibration fit")
+    model.calibrators={name:S6Calibrator().fit(prob,yc,wc) for name,prob in rawcal.items()}
+    # Calibration uses the entire unfiltered calibration sample for every arm.
+    # Selection changes the training distribution, not the calibration target population.
+    pd.DataFrame(tuning).to_csv(out/"c1.selective.model_tuning.csv",index=False)
+    pd.DataFrame(training).to_csv(out/"c1.selective.training_comparison.csv",index=False)
+    pd.DataFrame({a.id_col:ids,**build_values,"selected_for_training":keep,
+                  "training_weight":soft,"random_selected":random_keep,"random_weight":random_soft}).to_csv(out/"training_individuals.csv",index=False)
+    return model
+
+
+def s6_metric(y,w,prob):
+    ans=dict(AUC_IPCW=np.nan,AUPRC_IPCW=np.nan,Brier_IPCW=np.nan,
+             Brier_Hajek=np.nan,LogLoss_IPCW=np.nan,observed_IPCW=np.nan,
+             predicted_mean=np.nan,prediction_sd=np.nan,prediction_unique=0)
+    if len(y)==0 or not np.all(np.isfinite(prob)) or w.sum()<=0:return ans
+    ok=w>0
+    if len(np.unique(y[ok]))==2:
+        ans["AUC_IPCW"]=float(roc_auc_score(y[ok],prob[ok],sample_weight=w[ok]))
+        ans["AUPRC_IPCW"]=float(average_precision_score(y[ok],prob[ok],sample_weight=w[ok]))
+    ans.update(Brier_IPCW=float(np.mean(w*(y-prob)**2)),Brier_Hajek=float(np.average((y-prob)**2,weights=w)),
+               LogLoss_IPCW=float(np.mean(w*s6_loss(y,prob))),observed_IPCW=float(np.average(y,weights=w)),
+               predicted_mean=float(np.mean(prob)),prediction_sd=float(np.std(prob)),
+               prediction_unique=int(len(np.unique(prob))))
+    return ans
+
+
+def s6_uno(time,event,prob,km):
+    """Truncated Uno-style IPCW concordance, not the horizon ROC AUC.
+
+    Comparable pairs require T_j > T_i and an observed event for i by horizon.
+    Weight = 1/G(T_i-)^2; risk ties contribute 1/2, time ties are excluded.
+    A Fenwick tree avoids allocating pairwise comparisons.
+    """
+    if len(time)<2:return np.nan
+    levels=np.unique(prob); ranks=np.searchsorted(levels,prob)+1
+    tree=np.zeros(len(levels)+1,dtype=float)
+    def add(k):
+        while k<len(tree):tree[k]+=1;k+=k&-k
+    def prefix(k):
+        total=0.
+        while k>0:total+=tree[k];k-=k&-k
+        return total
+    order=np.argsort(-np.asarray(time),kind="stable")
+    numerator=denominator=later=0.;start=0
+    while start<len(order):
+        end=start+1
+        while end<len(order) and time[order[end]]==time[order[start]]:end+=1
+        for i in order[start:end]:
+            if event[i]==1 and time[i]<=km.horizon and later>0:
+                g=float(km.at([time[i]],left=True)[0])
+                if g<km.min_g:return np.nan
+                weight=1/g**2
+                lower=prefix(int(ranks[i]-1));equal=prefix(int(ranks[i]))-lower
+                numerator+=weight*(lower+.5*equal);denominator+=weight*later
+        for i in order[start:end]:add(int(ranks[i]));later+=1
+        start=end
+    return numerator/denominator if denominator>0 else np.nan
+
+
+def s6_bootstrap(y,w,predictions,mask,groups,pairs,count,seed):
+    idx=np.flatnonzero(mask)
+    columns=["model","reference","metric","delta","lower","upper","replicates","uncertainty"]
+    if len(idx)<30 or len(np.unique(y[idx][w[idx]>0]))<2:
+        return pd.DataFrame(columns=columns)
+    # Build cluster membership in O(N log N), not one N-vector scan per family.
+    selected_groups=np.asarray(groups)[idx].astype(str)
+    order=np.argsort(selected_groups,kind="stable")
+    sorted_groups=selected_groups[order]
+    edges=np.flatnonzero(sorted_groups[1:]!=sorted_groups[:-1])+1
+    units=np.split(idx[order],edges)
+    names=sorted(set(v for pair in pairs for v in pair))
+    point={n:s6_metric(y[idx],w[idx],predictions[n][idx]) for n in names}
+    keys=["AUC_IPCW","Brier_IPCW","LogLoss_IPCW"]
+    samples={(m,b,k):[] for m,b in pairs for k in keys}
+    rng=np.random.default_rng(seed)
+    for _ in range(count):
+        take=np.concatenate([units[j] for j in rng.integers(0,len(units),len(units))])
+        values={n:s6_metric(y[take],w[take],predictions[n][take]) for n in names}
+        for (m,b,k),array in samples.items():
+            delta=values[m][k]-values[b][k]
+            if np.isfinite(delta):array.append(delta)
+    rows=[]
+    for (m,b,k),array in samples.items():
+        ci=np.quantile(array,[.025,.975]) if len(array)>=20 else [np.nan,np.nan]
+        rows.append(dict(model=m,reference=b,metric=k,delta=point[m][k]-point[b][k],
+                    lower=ci[0],upper=ci[1],replicates=len(array),
+                    uncertainty="conditional_on_frozen_model_and_gate; family_bootstrap; exploratory_intervals"))
+    return pd.DataFrame(rows,columns=columns)
+
+
+def s6_contrasts(a,primary):
+    family=primary.removesuffix("_weighted")
+    families=[family]
+    if a.selective_boot_models=="all":families=list(dict.fromkeys(["elasticnet"]+([a.tree] if a.tree!="none" else [])))
+    pairs=[]
+    for f in families:
+        pairs.extend([(f+"_weighted",f+"_target_tuned"),(f+"_filtered",f+"_target_tuned"),
+          (f+"_weighted",f+"_random_weighted"),(f+"_filtered",f+"_random_filtered"),
+          (f+"_target_tuned",f),(f+"_weighted",f)])
+    pairs.extend([("local_borrowing","local_permuted_donors"),("local_borrowing",family),(family,"clinical")])
+    return list(dict.fromkeys(pairs))
+
+
+def s6_json(path,value):
+    def convert(v):
+        if isinstance(v,dict):return {str(k):convert(x) for k,x in v.items()}
+        if isinstance(v,(list,tuple,np.ndarray)):return [convert(x) for x in v]
+        if isinstance(v,(np.integer,np.bool_)):return v.item()
+        if isinstance(v,(float,np.floating)):return float(v) if np.isfinite(v) else None
+        if isinstance(v,Path):return str(v)
+        return v
+    path=Path(path);tmp=path.with_suffix(path.suffix+".tmp")
+    tmp.write_text(json.dumps(convert(value),ensure_ascii=False,indent=2,allow_nan=False)+"\n",encoding="utf-8")
+    tmp.replace(path)
+
+
+def s6_fit(raw,p,features,a,out):
+    """Fit/freeze only. Test outcomes are exported after fitting, never passed to a fit."""
+    out=Path(out);out.mkdir(parents=True,exist_ok=True)
+    p=p.copy().reset_index(drop=True)
+    if p[a.id_col].astype(str).duplicated().any():raise ValueError("Duplicate participant IDs")
+    if not set(p.event.astype(int))<={0,1} or np.any(~np.isfinite(p.time)) or np.any(p.time<=0):
+        raise ValueError("Invalid endpoint coding")
+    if "split" not in p:p["split"]=s6_split(p,a)
+    if not set(p.split)=={"build","tune","calibration","test"}:raise ValueError("Invalid split roles")
+    group=s6_groups(p,a)
+    if pd.DataFrame({"g":group,"split":p.split}).groupby("g").split.nunique().max()>1:
+        raise ValueError("Families cross outer roles")
+    cal=p.split.eq("calibration").to_numpy()
+    levels=sorted(set(group[cal]),key=lambda v:s6_seed(v,a.seed+832))
+    audit_groups=set(levels[:len(levels)//2])
+    p["role"]=p.split
+    p.loc[cal & np.asarray([g in audit_groups for g in group]),"role"]="calibration_audit"
+    p.loc[cal & ~np.asarray([g in audit_groups for g in group]),"role"]="calibration_fit"
+    parts={name:np.flatnonzero(p.role.eq(name)) for name in ["build","tune","calibration_fit","calibration_audit","test"]}
+    if min(map(len,parts.values()))<30:raise ValueError("Each fit/tune/calibration/audit/test role needs >=30 people")
+    if getattr(a,"shuffle_development_outcomes",False):
+        rng=np.random.default_rng(a.seed+912)
+        for role in parts:
+            if role=="test":continue
+            ix=parts[role];p.loc[ix,["time","event"]]=p.loc[rng.permutation(ix),["time","event"]].to_numpy()
+    p[[a.id_col,"split","role"]].to_csv(out/"split.csv",index=False)
+    # Outcome dates/labels are not gate features; predict functions explicitly
+    # select only user-declared covariates, technical fields, molecular X and IDs.
+    gate,build_values=s6_crossfit_gate(raw[parts["build"]],p.iloc[parts["build"]],features,a,out)
+    external=np.flatnonzero(~p.role.isin(["build","test"]))
+    external_values=gate.predict(raw[external],p.iloc[external])
+    values={name:np.full(len(p),np.nan) for name in external_values}
+    for name in external_values:
+        values[name][external]=external_values[name]
+        values[name][parts["build"]]=build_values[name]
+    tune=parts["tune"];ids=p[a.id_col].astype(str).to_numpy()
+    rules={}
+    for q in a.selective_coverages:
+        rules[q]=S6CoverageRule().fit(values[a.selective_gate_target][tune],values["support_percentile"][tune],
+                            ids[tune],q,a.selective_support_quantile,a.seed+91)
+    primary_mask=rules[a.selective_coverage].apply(values[a.selective_gate_target],values["support_percentile"],ids)
+    values["primary_mask"]=primary_mask
+    model=s6_tune_final(raw,p,parts,values,build_values,features,a,out)
+    family="elasticnet" if a.selective_primary=="elasticnet" else a.tree
+    primary=family+"_weighted"
+    audit=parts["calibration_audit"]
+    audit_predictions=model.predict(raw[audit],p.iloc[audit])
+    ya,wa=model.km.labels_weights(p.iloc[audit])
+    audit_pairs=s6_bootstrap(ya,wa,audit_predictions,primary_mask[audit],group[audit],
+                    [(primary,family+"_target_tuned")],a.bootstrap,a.seed+813)
+    audit_pairs.to_csv(out/"c1.selective.audit_contrasts.csv",index=False)
+    brier=audit_pairs.loc[audit_pairs.metric.eq("Brier_IPCW")]
+    audit_cases=int(np.sum(ya[primary_mask[audit]]));audit_known=int(np.sum(wa[primary_mask[audit]]>0))
+    supported_gain=bool(len(brier)==1 and np.isfinite(brier.iloc[0].upper) and brier.iloc[0].upper<0
+                        and audit_cases>=a.selective_min_events and audit_known-audit_cases>=a.selective_min_events)
+    readiness=dict(status="audit_supported_gain" if supported_gain else "incremental_gain_not_established",
+         primary_model=primary,reference=family+"_target_tuned",gate_target=a.selective_gate_target,
+         audit_selected_cases=audit_cases,audit_selected_known=audit_known,
+         audit_coverage=float(primary_mask[audit].mean()),
+         clinical_tier=a.selective_clinical_tier,
+         clinical_covariates=s6_words(a.covariates),
+         interpretation="Independent internal-audit paired Brier screen; not an individual guarantee or external validation")
+    # Control selectors are frozen from tune X/predictions, never test outcomes.
+    control_rules={}
+    for label,score in [("support_only",-values["support_percentile"]),
+                         ("absolute_error",-values["absolute_error"])]:
+        control_rules[label]={q:S6CoverageRule().fit(score[tune],np.zeros(len(tune)),ids[tune],q,1.,a.seed+92)
+                              for q in a.selective_coverages}
+    tune_predictions=model.predict(raw[tune],p.iloc[tune])
+    pc=tune_predictions["clinical"]
+    control_rules["clinical_lowrisk"]={q:S6CoverageRule().fit(-pc,np.zeros(len(tune)),ids[tune],q,1.,a.seed+93)
+                                     for q in a.selective_coverages}
+    rngscore=np.asarray([s6_seed(i,a.seed+97)/2**64 for i in ids[tune]])
+    control_rules["random"]={q:S6CoverageRule().fit(rngscore,np.zeros(len(tune)),ids[tune],q,1.,a.seed+97)
+                             for q in a.selective_coverages}
+    bundle=dict(version=S6_VERSION,design="selective",config=vars(a),features=list(features),
+      retained_features=[features[j] for j in model.prep.keep],primary=primary,fallback=family,
+      model=model,gate=gate,coverage_rules=rules,control_rules=control_rules,readiness=readiness,
+      build_groups=set(group[parts["build"]]),development_groups=set(group[~p.role.eq("test")]),
+      calibration_edges={name:np.unique(np.quantile(prob,np.linspace(0,1,11))) for name,prob in tune_predictions.items()})
+    joblib.dump(bundle,out/"model_bundle.joblib",compress=3)
+    s6_json(out/"MODEL_FROZEN.json",dict(version=S6_VERSION,design="selective",primary=primary,
+           test_Y_used_for_fitting_or_selection=False,initial_split_outcome_blind=not bool(a.split_file),
+           model_sha256=hashlib.sha256((out/"model_bundle.joblib").read_bytes()).hexdigest()))
+    s6_json(out/"reference_readiness.json",readiness)
+    s6_json(out/"cohort_audit.json",dict(n_after_qc=len(p),retained_features=len(model.prep.keep),
+       role_counts=p.role.value_counts().to_dict(),group_split=bool(a.group_col),horizon=a.horizon,
+       outcome_interpretation="net risk; death censored; not competing-risk cumulative incidence",
+       assay_screening="training QC only; no whole-cohort outcome-based feature screening"))
+    # Only now score the held-out test participants; y is not an argument.
+    test=parts["test"]
+    test_table=s6_predict(bundle,raw[test],p.iloc[test])
+    test_table.to_csv(out/"test_individuals.csv",index=False)
+    p.iloc[test][[a.id_col,"time","event"]].assign(family_group=group[test]).to_csv(out/"test_outcomes.csv",index=False)
+    s6_json(out/"prediction_columns.json",list(model.calibrators)+["deployed_policy"])
+    names=list(model.calibrators)
+    pd.DataFrame([dict(subset="calibration_audit",model=name,**s6_metric(ya,wa,audit_predictions[name])) for name in names]).to_csv(out/"development_metrics.csv",index=False)
+    score_sd=float(np.std(values[a.selective_gate_target][tune]))
+    pd.DataFrame([dict(gate_target=a.selective_gate_target,score_sd=score_sd,constant_gate=score_sd<1e-12,
+       requested_coverage=q,tune_actual_coverage=float(rule.apply(values[a.selective_gate_target][tune],values["support_percentile"][tune],ids[tune]).mean()),
+       support_limited=rule.support_limited,threshold=rule.threshold)
+       for q,rule in rules.items()]).to_csv(out/"c1.selective.gate_diagnostics.csv",index=False)
+    s6_json(out/"TRAIN_DONE.json",dict(version=S6_VERSION))
+    return bundle
+
+
+def s6_predict(bundle,raw,p):
+    a=SimpleNamespace(**bundle["config"])
+    prob=bundle["model"].predict(raw,p)
+    gate=bundle["gate"].predict(raw,p)
+    ids=p[a.id_col].astype(str).to_numpy()
+    mask=bundle["coverage_rules"][a.selective_coverage].apply(gate[a.selective_gate_target],gate["support_percentile"],ids)
+    unknown=bundle["model"].clinical.unknown(p)
+    observed=np.isfinite(bundle["model"].prep.scale_transform(raw)[:,bundle["model"].prep.keep])
+    missing=1-observed.mean(1)
+    qc=(missing<=a.sample_missing)&~unknown
+    ready=bundle["readiness"]["status"]=="audit_supported_gain"
+    released=mask&qc&ready
+    answer=pd.DataFrame({a.id_col:ids,**prob,**gate,"supported_match":mask,
+       "missing_fraction":missing,"unknown_category":unknown,"reference_ready":ready,
+       "prediction_released":released,"released_net_risk":np.where(released,prob[bundle["primary"]],np.nan),
+       "deployed_policy":np.where(released,prob[bundle["primary"]],prob[bundle["fallback"]]),
+       "estimated_squared_error":gate["absolute_error"]})
+    return answer
+
+
+def s6_selection_masks(bundle,table):
+    a=SimpleNamespace(**bundle["config"]);ids=table[a.id_col].astype(str).to_numpy()
+    result={}
+    for q,rule in bundle["coverage_rules"].items():
+        result[("gain",q)]=rule.apply(table[a.selective_gate_target].to_numpy(),table.support_percentile.to_numpy(),ids)
+    scores={"support_only":-table.support_percentile.to_numpy(),
+            "absolute_error":-table.absolute_error.to_numpy(),
+            "clinical_lowrisk":-table.clinical.to_numpy(),
+            "random":np.asarray([s6_seed(v,a.seed+97)/2**64 for v in ids])}
+    for label,rules in bundle["control_rules"].items():
+        for q,rule in rules.items():result[(label,q)]=rule.apply(scores[label],np.zeros(len(table)),ids)
+    return result
+
+
+def s6_evaluate(out):
+    out=Path(out)
+    frozen=json.loads((out/"MODEL_FROZEN.json").read_text())
+    if frozen.get("design")!="selective":raise ValueError("Not a selective model")
+    if hashlib.sha256((out/"model_bundle.joblib").read_bytes()).hexdigest()!=frozen["model_sha256"]:
+        raise ValueError("Frozen model hash does not match")
+    bundle=joblib.load(out/"model_bundle.joblib")
+    a=SimpleNamespace(**bundle["config"]);idcol=a.id_col
+    table=pd.read_csv(out/"test_individuals.csv",dtype={idcol:str})
+    people=pd.read_csv(out/"test_outcomes.csv",dtype={idcol:str,"family_group":str})
+    if not table[idcol].equals(people[idcol]):raise ValueError("Test outcome/prediction IDs differ")
+    y,w=bundle["model"].km.labels_weights(people)
+    names=json.loads((out/"prediction_columns.json").read_text())
+    predictions={n:table[n].to_numpy(float) for n in names}
+    selected=table.supported_match.to_numpy(bool)
+    masks={"all":np.ones(len(table),bool),"supported":selected,"rejected":~selected}
+    rows=[]
+    for subset,mask in masks.items():
+        for name,prob in predictions.items():
+            row=dict(model=name,subset=subset,n=int(mask.sum()),known=int(np.sum(w[mask]>0)),
+               cases=int(y[mask].sum()),coverage=float(mask.mean()),horizon=a.horizon,
+               **s6_metric(y[mask],w[mask],prob[mask]))
+            row["Uno_C_horizon"]=s6_uno(people.time.to_numpy()[mask],people.event.to_numpy()[mask],prob[mask],bundle["model"].km)
+            rows.append(row)
+    result=pd.DataFrame(rows);result.to_csv(out/"test_metrics.csv",index=False)
+    pairframes=[]
+    for subset,mask in masks.items():
+        frame=s6_bootstrap(y,w,predictions,mask,people.family_group.to_numpy(),
+                 s6_contrasts(a,bundle["primary"]),a.bootstrap,a.seed+822)
+        frame.insert(0,"subset",subset);pairframes.append(frame)
+    contrasts=pd.concat(pairframes,ignore_index=True)
+    contrasts.to_csv(out/"paired_contrasts.csv",index=False)
+    coverage=[]
+    selection=s6_selection_masks(bundle,table)
+    for (selector,q),mask in selection.items():
+        for name,prob in predictions.items():
+            coverage.append(dict(selector=selector,quantile=q,requested_coverage=q,model=name,
+              coverage=float(mask.mean()),n=int(mask.sum()),known=int(np.sum(w[mask]>0)),cases=int(y[mask].sum()),
+              threshold_source="frozen on tune without tune/test outcomes for thresholding",
+              **s6_metric(y[mask],w[mask],prob[mask])))
+    coverage=pd.DataFrame(coverage);coverage.to_csv(out/"coverage_curve.csv",index=False)
+    # Paired gains within clinical-risk bins prevent low prevalence being mistaken
+    # for an improvement attributable to molecular matching or training filtering.
+    ranks=s6_ranks(predictions["clinical"],table[idcol].to_numpy(),a.seed+945)
+    bins=np.minimum((ranks*10).astype(int),9)
+    gains=[]
+    primary=bundle["primary"];family=bundle["fallback"];target=family+"_target_tuned"
+    for label,mask in masks.items():
+        for k in [-1]+list(range(10)):
+            take=mask if k==-1 else mask&(bins==k)
+            if not take.any():continue
+            gains.append(dict(subset=label,clinical_risk_bin="all" if k==-1 else str(k+1),n=int(take.sum()),
+               cases=int(y[take].sum()),clinical_risk=float(predictions["clinical"][take].mean()),
+               omics_Brier_gain=float(np.mean(w[take]*((y[take]-predictions["clinical"][take])**2-(y[take]-predictions[family][take])**2))),
+               training_Brier_gain=float(np.mean(w[take]*((y[take]-predictions[target][take])**2-(y[take]-predictions[primary][take])**2)))))
+    pd.DataFrame(gains).to_csv(out/"c1.selective.risk_stratified_gain.csv",index=False)
+    errbins=np.minimum((s6_ranks(table.absolute_error.to_numpy(),table[idcol].to_numpy(),a.seed+946)*5).astype(int),4)
+    error=[]
+    for k in range(5):
+        mask=errbins==k
+        pm=s6_metric(y[mask],w[mask],predictions[primary][mask]);em=s6_metric(y[mask],w[mask],predictions["elasticnet"][mask])
+        error.append(dict(bin=k+1,n=int(mask.sum()),cases=int(y[mask].sum()),
+                estimated_squared_error=float(table.absolute_error.to_numpy()[mask].mean()),
+                observed_IPCW=pm["observed_IPCW"],primary_Brier=pm["Brier_IPCW"],elasticnet_Brier=em["Brier_IPCW"],
+                Brier_gain_vs_elasticnet=em["Brier_IPCW"]-pm["Brier_IPCW"],
+                interpretation="Descriptive error bin; not an individual accuracy label"))
+    pd.DataFrame(error).to_csv(out/"support_error_audit.csv",index=False)
+    calibration=[];dca=[]
+    for name,prob in predictions.items():
+        edges=bundle["calibration_edges"].get(name,bundle["calibration_edges"][family])
+        group=np.searchsorted(edges[1:-1],prob,side="right")
+        for k in np.unique(group):
+            mask=group==k
+            calibration.append(dict(model=name,group=int(k)+1,N=int(mask.sum()),known=int(np.sum(w[mask]>0)),
+               predicted=float(prob[mask].mean()),observed_IPCW=float(np.average(y[mask],weights=w[mask])) if w[mask].sum()>0 else np.nan,
+               bin_source="frozen tune prediction quantiles"))
+        for threshold in a.selective_dca_thresholds:
+            treat=prob>=threshold
+            dca.append(dict(model=name,threshold=threshold,n=len(y),
+                net_benefit_IPCW=float(np.mean(w*treat*(y-(1-y)*threshold/(1-threshold)))),
+                treat_all_IPCW=float(np.mean(w*(y-(1-y)*threshold/(1-threshold)))),treat_none=0.0))
+    pd.DataFrame(calibration).to_csv(out/"test_calibration.csv",index=False)
+    pd.DataFrame(dca).to_csv(out/"c1.selective.decision_curve.csv",index=False)
+    title=["# C1 selective prediction", "",f"{a.trait} / {a.biom}; horizon={a.horizon:g} years.","",
+      f"Primary model: {primary}. Fallback: {family}. Gate target: {a.selective_gate_target}.",
+      f"Requested coverage: {a.selective_coverage:.1%}; actual test selection: {selected.mean():.1%}; released primary predictions: {table.prediction_released.mean():.1%}.",
+      "",f"Internal audit: {bundle['readiness']['status']}.","",
+      "The model is fitted from individual-level data. Elastic net is the sklearn implementation, not an R glmnet run.",
+      f"Clinical comparator tier: {a.selective_clinical_tier}; covariates: {a.covariates}.",
+      "The basic tier is not a validated full clinical CAD risk score.","",
+      "## Matched interpretation", 
+      "Compare weighted/filtered with target_tuned on identical held-out masks to isolate training selection.",
+      "Compare target_tuned with the full arm to isolate validation-objective tuning.",
+      "Random controls preserve training size/weight distribution within OOF clinical-risk deciles.",
+      "Higher selected-subset AUC than full-cohort AUC is not itself evidence of model superiority.",
+      "Constant gates use deterministic random tie-breaking and do not establish predictability strata.",
+      "Admission is determined without the query outcome. Rejected individuals are not labeled invalid, noisy, or a proven biological subtype.","",
+      "## Metrics and uncertainty", 
+      "AUC_IPCW is a fixed-horizon ROC AUC. Uno_C_horizon is separately computed with censoring-adjusted comparable pairs; they are not interchangeable.",
+      "Brier_IPCW and LogLoss_IPCW use sum(IPCW*loss)/N; Brier_Hajek is also provided.",
+      "Death is censored: independent-censoring net-risk estimand, not a competing-risk cumulative incidence.",
+      "Intervals condition on frozen fits/gates and are exploratory, not multiplicity-adjusted external validation.",
+      "Do not choose a new coverage, model, or biological subgroup by optimizing these test results.","",
+      "## Test summary", result[["subset","model","n","cases","AUC_IPCW","Uno_C_horizon","Brier_IPCW"]].to_csv(index=False),
+      "## Boundary", "This implementation does not guarantee improvement, C-index 0.85, or deterministic individual outcomes.",
+      "A future independent cohort/center-based locked validation is still needed after model development."]
+    (out/"REPORT.md").write_text("\n".join(title)+"\n",encoding="utf-8")
+    s6_figures(out)
+    s6_json(out/"DONE.json",dict(version=S6_VERSION,design="selective"))
+    return result
+
+
+def s6_figures(out):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    out=Path(out)
+    meta=json.loads((out/"MODEL_FROZEN.json").read_text());primary=meta["primary"]
+    metrics_table=pd.read_csv(out/"test_metrics.csv")
+    data=metrics_table[metrics_table.subset.eq("all")].sort_values("AUC_IPCW")
+    fig,ax=plt.subplots(figsize=(10,max(5,len(data)*.28)))
+    ax.barh(data.model,data.AUC_IPCW);ax.axvline(.5,linestyle="--")
+    ax.set(xlim=(0,1),xlabel="Full held-out IPCW AUC",title="All models, identical held-out participants")
+    fig.tight_layout();fig.savefig(out/"Fig_model_comparison.png",dpi=180);plt.close(fig)
+    data.to_csv(out/"Fig_model_comparison.csv",index=False)
+    curves=pd.read_csv(out/"coverage_curve.csv")
+    family=primary.removesuffix("_weighted")
+    display=["clinical",family,family+"_target_tuned",primary,family+"_filtered","local_borrowing"]
+    for metric,title,name in [("AUC_IPCW","Discrimination on the same selected people","Fig_selective_auc"),
+                              ("Brier_IPCW","Brier loss on the same selected people","Fig_coverage")]:
+        fig,ax=plt.subplots(figsize=(9,5));used=[]
+        for model in display:
+            sub=curves[curves.selector.eq("gain")&curves.model.eq(model)].sort_values("coverage")
+            if len(sub):ax.plot(sub.coverage,sub[metric],marker="o",label=model);used.append(sub)
+        ax.set(xlabel="Actual held-out coverage",ylabel=metric,title=title);ax.legend(fontsize=8)
+        fig.tight_layout();fig.savefig(out/(name+".png"),dpi=180);plt.close(fig)
+        if used:pd.concat(used).to_csv(out/(name+".csv"),index=False)
+    contrasts=pd.read_csv(out/"paired_contrasts.csv")
+    sub=contrasts[contrasts.subset.eq("supported")&contrasts.metric.eq("Brier_IPCW")].copy()
+    if len(sub):
+        sub["label"]=sub.model+" minus "+sub.reference
+        fig,ax=plt.subplots(figsize=(11,max(4,len(sub)*.42)))
+        yy=np.arange(len(sub));ax.scatter(sub.delta,yy)
+        valid=np.isfinite(sub.lower)&np.isfinite(sub.upper)
+        ax.hlines(yy[valid],sub.loc[valid,"lower"],sub.loc[valid,"upper"])
+        ax.axvline(0,linestyle="--");ax.set_yticks(yy,sub.label)
+        ax.set(xlabel="Paired Brier difference (negative favors first model)",title="Training and retrieval controls, identical selected participants")
+        fig.tight_layout();fig.savefig(out/"Fig_selective_training.png",dpi=180);plt.close(fig)
+        sub.to_csv(out/"Fig_selective_training.csv",index=False)
+    sub=curves[curves.model.eq(family)].copy()
+    fig,ax=plt.subplots(figsize=(9,5))
+    for selector,d in sub.groupby("selector"):
+        d=d.sort_values("coverage");ax.plot(d.coverage,d.Brier_IPCW,marker="o",label=selector)
+    ax.set(xlabel="Actual held-out coverage",ylabel="Same full model: IPCW Brier",
+           title="Gate controls (different selected people; inspect case mix)")
+    ax.legend(fontsize=8);fig.tight_layout();fig.savefig(out/"Fig_selective_gate_controls.png",dpi=180);plt.close(fig)
+    sub.to_csv(out/"Fig_selective_gate_controls.csv",index=False)
+
+
+def s6_train_from_host(a,out):
+    out=Path(out)
+    prepared=abm_cache_dir(out,"input");prepared.mkdir(parents=True,exist_ok=True)
+    p=prepare(a,prepared);raw=np.load(prepared/"raw.npy")
+    features=(prepared/"features.txt").read_text().splitlines()
+    p,audit=outcomes(p,a)
+    eligible=p.eligible.to_numpy(bool)
+    p=p.loc[eligible].reset_index(drop=True);raw=raw[eligible]
+    p["split"]=s6_split(p,a)
+    build=p.split.eq("build").to_numpy()
+    transform=S6Preprocessor(a.feature_missing,s6_words(a.residualize),s6_words(a.categorical),a.transform)
+    x=transform.scale_transform(raw[build])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore",RuntimeWarning)
+        keep=(np.mean(~np.isfinite(x),axis=0)<a.feature_missing)&(np.nanstd(x,axis=0)>1e-8)
+    if keep.sum()<3:raise ValueError("Fewer than three molecular features pass build QC")
+    missing=np.mean(~np.isfinite(transform.scale_transform(raw[:,keep])),axis=1)
+    good=missing<=a.sample_missing
+    pd.DataFrame({a.id_col:p[a.id_col],"split":p.split,"missing_fraction":missing,"included":good}).to_csv(out/"sample_qc.csv",index=False)
+    # Freeze the sample-QC denominator; keep full input feature names for projection.
+    raw=raw[good];p=p.loc[good].reset_index(drop=True)
+    s6_json(out/"manifest.json",runtime_manifest(a))
+    return s6_fit(raw,p,features,a,out)
+
+
+def s6_project_from_host(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu"):
+    out=Path(out);bundle=joblib.load(out/"model_bundle.joblib");cfg=bundle["config"]
+    idcol=cfg["id_col"]
+    columns=list(dict.fromkeys([idcol]+s6_words(cfg["covariates"])+s6_words(cfg["residualize"])+([cfg["group_col"]] if cfg["group_col"] else [])))
+    p=read_table(phe_file,idcol,columns,r_bin);m=read_table(omics_file,idcol,r_bin=r_bin)
+    if cfg["biom"]=="prot":m.columns=[v if v==idcol else str(v).upper() for v in m]
+    elif met_input=="raw":m,_=map_metabolites(m,cfg["met_map"],idcol)
+    if not set(m[idcol])<=set(p[idcol]):raise ValueError("Missing projection metadata")
+    p=p.set_index(idcol).loc[m[idcol]].reset_index()
+    a=SimpleNamespace(**cfg)
+    if set(s6_groups(p,a))&bundle["development_groups"]:
+        raise ValueError("Projection includes development participants/families; use untouched external participants")
+    m=m.reindex(columns=[idcol]+bundle["features"])
+    raw=numeric(m,bundle["features"],"selective projection")
+    result=s6_predict(bundle,raw,p)
+    Path(output).parent.mkdir(parents=True,exist_ok=True)
+    result.to_csv(output,index=False)
+    return result
+
+
+def s6_bind_host():
+    """Keep annotations, ordinary C1 analyses and the attention/TabICL controls."""
+    previous_main=globals()["reference_main"]
+    previous_evaluate=globals()["reference_evaluate"]
+    previous_project=globals()["reference_project"]
+    def new_evaluate(out):
+        path=Path(out)/"MODEL_FROZEN.json"
+        if path.is_file() and json.loads(path.read_text()).get("design")=="selective":return s6_evaluate(out)
+        return previous_evaluate(out)
+    def new_project(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu"):
+        path=Path(out)/"MODEL_FROZEN.json"
+        if path.is_file() and json.loads(path.read_text()).get("design")=="selective":
+            return s6_project_from_host(out,phe_file,omics_file,output,r_bin,met_input,device)
+        return previous_project(out,phe_file,omics_file,output,r_bin,met_input,device)
+    def new_main():
+        a=configure(reference_parser().parse_args())
+        if a.abm_design=="attention":return previous_main()
+        # evaluate/project restore the saved config; they must not reinterpret a fit.
+        if a.command=="evaluate":
+            from threadpoolctl import threadpool_limits
+            out=output_directory(a)
+            with run_lock(out),threadpool_limits(a.cores):return new_evaluate(out)
+        if a.command=="project":
+            if not a.run_dir or not a.output:raise ValueError("project requires --run-dir and --output")
+            from threadpoolctl import threadpool_limits
+            with threadpool_limits(a.cores):
+                return new_project(output_directory(a),a.phe_file,a.omics_file,a.output,a.r_bin,a.met_input,a.device)
+        a=s6_validate(a)
+        out=output_directory(a)
+        if a.check_device:
+            print("Selective backend uses CPU sklearn/LightGBM; no GPU model is fitted.");return
+        if a.dry_run:
+            print(json.dumps(dict(output=str(out),config=vars(a)),indent=2));return
+        if a.preflight:
+            import importlib.util
+            paths=[] if a.demo else [a.phe_file,a.omics_file]
+            paths += [s for s in [a.split_file,a.module_file] if s]
+            if a.biom=="met" and a.met_input=="raw" and not a.demo:paths.append(a.met_map)
+            absent=[v for v in paths if not Path(v).is_file()]
+            if absent:raise FileNotFoundError("Missing inputs: "+", ".join(absent))
+            if any(str(v).lower().endswith(".rds") for v in paths) and not importlib.util.find_spec("pyreadr"):
+                raise RuntimeError("RDS inputs need the existing pyreadr dependency")
+            if a.tree=="lightgbm" and not importlib.util.find_spec("lightgbm"):
+                raise RuntimeError("LightGBM unavailable; explicitly choose --tree hist")
+            print("Selective preflight passed; no data/model training performed.");return
+        from threadpoolctl import threadpool_limits
+        out.mkdir(parents=True,exist_ok=True)
+        with run_lock(out),threadpool_limits(a.cores):
+            if (out/"MODEL_FROZEN.json").exists() and not a.replace:
+                saved=json.loads((out/"manifest.json").read_text()) if (out/"manifest.json").exists() else {}
+                current=runtime_manifest(a)
+                if saved.get("signature")!=current.get("signature"):
+                    raise ValueError("Existing result belongs to different code/options. Use a new --analysis-root or explicitly --replace; nothing was overwritten.")
+                if (out/"DONE.json").is_file() or (a.train_only and (out/"TRAIN_DONE.json").is_file()):
+                    s6_log("SKIP","completed",str(out));return
+                return new_evaluate(out)
+            if not prepare_run_directory(out,resume=False,replace=a.replace,train_only=a.train_only):return
+            s6_train_from_host(a,out)
+            if not a.train_only:return new_evaluate(out)
+    globals()["reference_main"]=new_main
+    globals()["reference_evaluate"]=new_evaluate
+    globals()["reference_project"]=new_project
+    # Newly fitted classes remain loadable through the existing canonical identity.
+    for name in ["S6Clinical","S6Preprocessor","S6Censoring","S6Calibrator","S6Neighborhood",
+                 "S6Teacher","S6GainGate","S6GateEnsemble","S6CoverageRule","S6FinalModels"]:
+        globals()[name].__module__="c1_abm"
+
+
+if "reference_main" in globals() and "reference_parser" in globals():
+    s6_bind_host()
+# C1_SELECTIVE_V6_END
 
 # 🚩 Canonical model serialization
 # A single module identity is used for newly fitted models, including CLI runs.

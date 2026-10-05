@@ -8,11 +8,11 @@ suppressPackageStartupMessages({
 	# Cell-specific analyses are executed only by c5_cellulation.
 })
 LE8_JOB <- "c3_coloc"
-C3_CODE_VERSION <- "2026-09-19.mr-fdr-v1"
+C3_CODE_VERSION <- "2026-10-05.shared-pair-signals-v3"
 
 # c3 mr selection C3 candidates are significant C2 analyses and their actual retained instruments.  This
 # avoids re-running COJO coordinate matching (including PGS-only preparation).
-C3_SELECTION_VERSION <- "2026-09-19.mr-fdr-v1"
+C3_SELECTION_VERSION <- "2026-10-05.shared-pair-signals-v3"
 c3_file_stamp <- function(paths) {
 	paths <- unique(paths[!is.na(paths) & nzchar(paths)])
 	info <- file.info(paths)
@@ -34,10 +34,10 @@ c3_select_mr <- function(mr, layer, fdr = 0.05, max_features = 200L) {
 	if (any(is.na(z$instrument_snps) | !nzchar(z$instrument_snps)))
 		stop("Significant C2 MR rows lack retained instrument IDs; rerun C2.", call. = FALSE)
 	features <- unique(z$exposure)
-	if (length(features) > max_features)
+	if (max_features > 0 && length(features) > max_features)
 		message("C3: ", length(features), " MR-significant features; C3_MAX_FEATURES retains ", max_features)
 	z |>
-		filter(exposure %in% head(features, max_features))
+		filter(exposure %in% if (max_features > 0) head(features, max_features) else features)
 }
 c3_mr_instruments <- function(mr) {
 	bind_rows(lapply(seq_len(nrow(mr)), function(i) {
@@ -54,7 +54,7 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 	key <- le8_hash_object(list(version = C3_SELECTION_VERSION, file = c3_file_stamp(qfile), wanted = wanted, metadata = c3_file_stamp(Sys.getenv(
 		"LE8_GWAS_MANIFEST",
 		""
-	)), N = Sys.getenv("C2_SUMSTAT_N", "100000")))
+	)), N = Sys.getenv("C2_SUMSTAT_N", "NA")))
 	cache <- file.path(cache_root, paste0(key, ".rds"))
 	iv <- read_stage_cache(cache)
 	if (is.data.frame(iv)) {
@@ -102,51 +102,19 @@ c3_locus_settings <- function() list(window = WINDOW_BP, min_snps = MIN_SNPS, p1
 ), susie_max = Sys.getenv("C3_SUSIE_MAX_SNPS", "5000"), ld = c3_file_stamp(Sys.getenv(
 	"LE8_LD_MANIFEST",
 	""
-)), metadata = c3_file_stamp(Sys.getenv("LE8_GWAS_MANIFEST", "")), N = Sys.getenv("C2_SUMSTAT_N", "100000"))
+)), metadata = c3_file_stamp(Sys.getenv("LE8_GWAS_MANIFEST", "")), N = Sys.getenv("C2_SUMSTAT_N", "NA"))
 c3_cached_locus <- function(cache, legacy_files, feature, layer, chr, pos, cls, qfile, yfile, outtype, sfrac) {
 	z <- read_stage_cache(cache)
 	if (!is.null(z))
 		return(z)
-	# Legacy caches have no input signature. Migrate only default ABF settings, unchanged input files and
-	# exactly matching geometry/class; never a SuSiE run.
-	legacy_ok <- !LE8_REPLACE && WINDOW_BP == 5e+05 && MIN_SNPS == 50 && identical(unname(C3_P12), c(
-		1e-06, 1e-05,
-		1e-04
-	)) && !truthy(Sys.getenv("C3_RUN_SUSIE", "FALSE")) && Sys.getenv("C2_SUMSTAT_N", "100000") == "100000" &&
-		!nzchar(Sys.getenv("LE8_GWAS_MANIFEST", "")) && !is.finite(sfrac)
-	if (!legacy_ok)
-		return(NULL)
-	suffix <- paste0("_", gsub("[^A-Za-z0-9._-]", "_", feature), "_chr", chr, "_", format(pos,
-		scientific = FALSE,
-		trim = TRUE
-	), ".rds")
-	paths <- legacy_files[endsWith(basename(legacy_files), suffix)]
-	for (f in paths) {
-		if (any(file.info(c(qfile, yfile))$mtime > file.info(f)$mtime))
-			next
-		old <- read_stage_cache(f)
-		s <- old$summary
-		if (is.data.frame(s) && nrow(s) == 1L && all(c("locus_class", "case_fraction_source") %in% names(s)) &&
-			identical(as.character(s$feature), feature) && identical(as.character(s$layer), layer) && identical(
-			as.character(s$locus_class),
-			cls
-		) && as.character(s$chr) == as.character(chr) && s$lead_pos == pos && s$start == max(1, pos - WINDOW_BP) &&
-			s$end == pos + WINDOW_BP && s$case_fraction_source == "not required for beta/varbeta cc ABF" && all(c(
-			"variants",
-			"regional"
-		) %in% names(old))) {
-			write_stage_cache(old, cache)
-			return(old)
-		}
-	}
 	NULL
 }
 
 
 C3_MR_FDR <- as.numeric(Sys.getenv("C3_MR_FDR", unset = "0.05"))
 if (!LE8_REUSE_RESULTS) suppressPackageStartupMessages(pacman::p_load(coloc))
-MAX_FEATURES <- as.integer(Sys.getenv("C3_MAX_FEATURES", unset = "200"))
-MAX_LOCI_PER_FEATURE <- as.integer(Sys.getenv("C3_MAX_LOCI_PER_FEATURE", unset = "3"))
+MAX_FEATURES <- as.integer(Sys.getenv("C3_MAX_FEATURES", unset = "0"))
+MAX_LOCI_PER_FEATURE <- as.integer(Sys.getenv("C3_MAX_LOCI_PER_FEATURE", unset = "0"))
 WINDOW_BP <- as.numeric(Sys.getenv("COLOC_WINDOW_BP", unset = "500000"))
 MIN_SNPS <- as.integer(Sys.getenv("C3_MIN_NSNP", unset = "50"))
 H4_STRONG <- as.numeric(Sys.getenv("C3_H4", unset = "0.70"))
@@ -208,35 +176,14 @@ read_gpu_coloc_results <- function(rawdir, gpudir = le8_cache_dir("gpu_coloc", b
 plot_gpu_coloc_validation <- function(gpu, abf, outdir) {
 	d <- gpu$results
 	st <- gpu$status
-	if (nrow(d) && "GPU_PP.H4" %in% names(d)) {
-		if ("region" %in% names(d) && "locus" %in% names(abf)) {
-			z <- d |>
-				filter(is.finite(GPU_PP.H4)) |>
-				group_by(feature, region) |>
-				slice_max(GPU_PP.H4, n = 1, with_ties = FALSE) |>
-				ungroup() |>
-				left_join(abf |>
-					filter(status == "ok") |>
-					transmute(feature, region = locus, ABF_PP.H4 = PP.H4), by = c("feature", "region"))
-		} else {
-			z <- d |>
-				filter(is.finite(GPU_PP.H4)) |>
-				group_by(feature) |>
-				slice_max(GPU_PP.H4, n = 1, with_ties = FALSE) |>
-				ungroup() |>
-				left_join(abf |>
-					filter(status == "ok") |>
-					group_by(feature) |>
-					summarise(ABF_PP.H4 = max(PP.H4, na.rm = TRUE), .groups = "drop"), by = "feature") |>
-				mutate(region = NA_character_)
-		}
-		z <- z |>
-			arrange(desc(GPU_PP.H4)) |>
-			slice_head(n = 40) |>
-			mutate(
-				label = ifelse(is.na(region) | !nzchar(region), feature, paste(feature, region, sep = " | ")),
-				label = factor(label, levels = rev(label))
-			)
+	keys <- c("feature","region","snp_hash","BF_model","prior_config")
+	if (nrow(d) && "GPU_PP.H4" %in% names(d) && all(keys %in% names(d)) && all(c("locus","snp_hash","BF_model","prior_config") %in% names(abf))) {
+		ref <- abf |> filter(status=="ok") |> transmute(feature,region=locus,snp_hash,BF_model,prior_config,ABF_PP.H4=PP.H4)
+		if (anyDuplicated(as.data.frame(d[keys])) || anyDuplicated(as.data.frame(ref[keys]))) stop("Conflicting duplicate CPU/GPU pair identity")
+		z <- left_join(d,ref,by=keys) |> mutate(label=paste(feature,region,sep=" | "))
+		z$absolute_difference <- abs(z$GPU_PP.H4-z$ABF_PP.H4)
+		write_raw_csv(z,"c3.gpu_parity.csv",le8_job_dir(outdir,"c3_coloc"))
+		z$label <- factor(z$label,levels=rev(unique(z$label)))
 		pa <- if (!nrow(z))
 			blank_plot("a. GPU-coloc regional results") else ggplot(z, aes(GPU_PP.H4, label)) +
 			geom_vline(xintercept = H4_STRONG, linetype = 2, color = "grey55") +
@@ -451,12 +398,12 @@ plot_coloc_results <- function(res, regional, variants, layer, outdir) {
 		ok[[nm]] <- if (nm == "PP.H4_p12_default")
 			ok$PP.H4 else NA_real_
 	ok <- ok |>
-		arrange(desc(coalesce(PP.H4_robust_min, PP.H4)), desc(PP.H4))
+		arrange(desc(PP.H4_robust_min), desc(PP.H4))
 	top <- ok |>
 		slice_head(n = 30) |>
 		mutate(
 			label = paste(feature, str_replace(locus, "^chr", "chr"), sep = " | "), label = factor(label, levels = rev(label)),
-			robust = coalesce(PP.H4_robust_min, PP.H4) >= H4_STRONG, lo = pmin(PP.H4_p12_conservative, PP.H4_p12_default,
+			robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, lo = pmin(PP.H4_p12_conservative, PP.H4_p12_default,
 				PP.H4_p12_liberal,
 				na.rm = TRUE
 			), hi = pmax(PP.H4_p12_conservative, PP.H4_p12_default, PP.H4_p12_liberal,
@@ -583,7 +530,7 @@ plot_coloc_results <- function(res, regional, variants, layer, outdir) {
 	} else p4a <- blank_plot("a. Variant-level shared-signal posterior", "No variant posterior was available")
 	cs <- ok |>
 		filter(is.finite(credible_set_n), credible_set_n > 0, is.finite(PP.H4)) |>
-		mutate(robust = coalesce(PP.H4_robust_min, PP.H4) >= H4_STRONG, degenerate = credible_set_n == 1 & coalesce(
+		mutate(robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, degenerate = credible_set_n == 1 & coalesce(
 			lead_shared_pp,
 			0
 		) > 0.999, label = ifelse(feature %in% loc$feature | degenerate & PP.H4 >= H4_STRONG, paste(feature,
@@ -591,7 +538,7 @@ plot_coloc_results <- function(res, regional, variants, layer, outdir) {
 			sep = " | "
 		), NA_character_))
 	p4b <- if (!nrow(cs))
-		blank_plot("b. Credible-set resolution", "No credible-set summary was available") else ggplot(cs, aes(credible_set_n, coalesce(PP.H4_robust_min, PP.H4), color = degenerate, size = n_snps)) +
+		blank_plot("b. Credible-set resolution", "No credible-set summary was available") else ggplot(cs, aes(credible_set_n, PP.H4_robust_min, color = degenerate, size = n_snps)) +
 		geom_hline(yintercept = H4_STRONG, linetype = 2, color = "grey55") +
 		geom_point(alpha = 0.62) +
 		ggrepel::geom_text_repel(aes(label = label),
@@ -675,7 +622,7 @@ credible_set_audit <- function(res, variants = tibble()) {
 	by_locus <- ok |>
 		select(feature, locus, n_snps, PP.H4, PP.H4_robust_min, lead_shared_pp, credible_set_n) |>
 		left_join(locus, by = c("feature", "locus")) |>
-		mutate(robust = coalesce(PP.H4_robust_min, PP.H4) >= H4_STRONG, one_snp_concentration = credible_set_n ==
+		mutate(robust = is.finite(PP.H4_robust_min) & PP.H4_robust_min >= H4_STRONG, one_snp_concentration = credible_set_n ==
 			1 & coalesce(lead_shared_pp, lead_pp, 0) > 0.999, audit_flag = case_when(
 			one_snp_concentration ~ "verify LD/harmonization: one-SNP posterior concentration",
 			!is.finite(credible_set_n) | credible_set_n < 1 ~ "missing credible set", TRUE ~ "ok"
@@ -706,7 +653,7 @@ select_nonoverlapping_leads <- function(iv, max_loci = MAX_LOCI_PER_FEATURE, win
 		overlap <- length(keep) && any(iv$CHR[keep] == iv$CHR[i] & abs(iv$POS[keep] - iv$POS[i]) <= 2 * window_bp)
 		if (!overlap)
 			keep <- c(keep, i)
-		if (length(keep) >= max_loci)
+		if (max_loci > 0 && length(keep) >= max_loci)
 			break
 	}
 	iv[keep, , drop = FALSE] |>
@@ -778,6 +725,9 @@ le8_dense_ld <- function(trait, chr, start, end, snps, EA, NEA) {
 	z <- tryCatch(readRDS(f), error = function(e) NULL)
 	if (!is.list(z) || is.null(z$R) || is.null(z$alleles))
 		return(list(status = "LD RDS must contain R and alleles"))
+if (!is.finite(z$n_ref %||% NA_real_) || z$n_ref<50 || !as.character(z$build %||% "") %in% c("37","38") || !nzchar(z$ancestry %||% ""))
+		return(list(status="dense LD build/ancestry/n_ref not verified"))
+	if (anyDuplicated(snps)) return(list(status="multiple alleles share an LD identifier; provide allele-specific LD"))
 	R <- z$R
 	a <- as.data.frame(z$alleles)
 	if (!all(c("SNP", "EA", "NEA") %in% names(a)) || anyDuplicated(a$SNP) || !is.matrix(R) || nrow(R) != ncol(R) ||
@@ -806,7 +756,29 @@ le8_dense_ld <- function(trait, chr, start, end, snps, EA, NEA) {
 	)
 }
 
-le8_run_susie <- function(dx, dy, d, feature, chr, start, end, locus) {
+c3_susie_fit <- function(dataset, ld, trait, locus) {
+	settings <- list(L=as.integer(le8_num_env("C3_SUSIE_L",10)), maxit=1000L, estimate_residual_variance=FALSE)
+	key <- le8_hash_object(list(dataset=dataset, ld_metadata=ld[c("build","ancestry","n_ref")], settings=settings,
+		coloc=as.character(packageVersion("coloc")), susieR=as.character(packageVersion("susieR"))))
+	cache <- file.path(le8_cache_dir("susie_fits","shared"),paste0(key,".rds"))
+	if (!LE8_REPLACE && file.exists(cache)) {
+		answer <- readRDS(cache);answer$diagnostics$trait <- trait;answer$diagnostics$locus <- locus
+		return(answer)
+	}
+	fit <- coloc::runsusie(dataset,maxit=settings$maxit,L=settings$L,estimate_residual_variance=FALSE)
+	if (!isTRUE(fit$converged)) stop("SuSiE did not converge")
+	mismatch <- if (length(dataset$snp)<=1500L) tryCatch(susieR::estimate_s_rss(
+		dataset$beta/sqrt(dataset$varbeta),dataset$LD,dataset$N),error=function(e) NA_real_) else NA_real_
+	answer <- list(fit=fit,diagnostics=tibble(trait,locus,N=dataset$N,n_variants=length(dataset$snp),
+		n_ref=ld$n_ref,build=as.character(ld$build),ancestry=ld$ancestry,L=settings$L,converged=fit$converged,
+		ld_summary_mismatch=mismatch,mismatch_status=if (is.finite(mismatch)) "estimated; review LD compatibility" else "unavailable or diagnostic size cap",
+		credible_sets=length(fit$sets$cs),fit_hash=key))
+	dir.create(dirname(cache),recursive=TRUE,showWarnings=FALSE)
+	tmp <- tempfile(tmpdir=dirname(cache));saveRDS(answer,tmp);file.rename(tmp,cache)
+	answer
+}
+
+le8_run_susie <- function(dx, dy, d, feature, chr, start, end, locus, expected_build=NULL, expected_ancestry=NULL) {
 	no <- list(status = "disabled", summary = tibble(), pip = tibble())
 	if (!truthy(Sys.getenv("C3_RUN_SUSIE", unset = "FALSE")))
 		return(no)
@@ -816,34 +788,94 @@ le8_run_susie <- function(dx, dy, d, feature, chr, start, end, locus) {
 		return(modifyList(no, list(status = "actual discovery N required for each SuSiE trait")))
 	if (length(dx$snp) > le8_num_env("C3_SUSIE_MAX_SNPS", 5000))
 		return(modifyList(no, list(status = "locus exceeds configured dense-LD memory cap; not thinned")))
-	lx <- le8_dense_ld(feature, chr, start, end, d$SNP, d$EA_x, d$NEA_x)
-	ly <- le8_dense_ld(Y, chr, start, end, d$SNP, d$EA_x, d$NEA_x) # harmonization orients both betas to EA_x
+	lx <- le8_dense_ld(feature, chr, start, end, d$rsid_x %||% d$SNP, d$EA_x, d$NEA_x)
+	ly <- le8_dense_ld(Y, chr, start, end, d$rsid_y %||% d$SNP, d$EA_x, d$NEA_x) # harmonization orients both betas to EA_x
 	if (lx$status != "ok" || ly$status != "ok")
 		return(modifyList(no, list(status = paste(lx$status, ly$status, sep = "; "))))
+if (as.character(lx$build)!=as.character(ly$build)) return(modifyList(no,list(status="LD builds differ")))
+	if (!is.null(expected_build) && as.character(lx$build)!=as.character(expected_build)) return(modifyList(no,list(status="LD and summary builds differ")))
+	if (length(expected_ancestry)!=2L || anyNA(expected_ancestry) || any(!nzchar(expected_ancestry)))
+		return(modifyList(no,list(status="summary ancestry unverified; declare ancestry for both GWAS files in LE8_GWAS_MANIFEST")))
+	if (any(toupper(c(lx$ancestry,ly$ancestry))!=toupper(expected_ancestry)))
+		return(modifyList(no,list(status="LD and summary ancestries differ")))
+	dimnames(lx$R) <- list(d$SNP,d$SNP); dimnames(ly$R) <- list(d$SNP,d$SNP)
 	dx$LD <- lx$R
 	dy$LD <- ly$R
 	ans <- tryCatch(
 		{
-			fx <- coloc::runsusie(dx, maxit = 1000, estimate_residual_variance = FALSE)
-			fy <- coloc::runsusie(dy, maxit = 1000, estimate_residual_variance = FALSE)
+			ax <- c3_susie_fit(dx,lx,feature,locus); ay <- c3_susie_fit(dy,ly,Y,locus)
+			fx <- ax$fit; fy <- ay$fit
+			diagnostics <- bind_rows(ax$diagnostics,ay$diagnostics)
 			if (!isTRUE(fx$converged) || !isTRUE(fy$converged))
 				stop("SuSiE did not converge")
+			if (is.null(fx$sets$cs) || is.null(fy$sets$cs)) return(list(status="no credible set",summary=tibble(),diagnostics=diagnostics,pip=tibble(feature,locus,SNP=d$SNP,QTL_PIP=fx$pip,outcome_PIP=fy$pip)))
 			fits <- lapply(C3_P12, function(p12) coloc::coloc.susie(fx, fy, p1 = 1e-04, p2 = 1e-04, p12 = p12))
 			sm <- imap_dfr(fits, function(ff, nm) as_tibble(ff$summary) |>
 				mutate(prior = nm, feature = feature, locus = locus))
 			pp <- tibble(feature, locus, SNP = d$SNP, QTL_PIP = fx$pip, outcome_PIP = fy$pip)
+			credible <- imap_dfr(list(QTL=fx,outcome=fy),function(z,trait) imap_dfr(z$sets$cs,function(ii,signal) {
+				purity <- z$sets$purity[signal,,drop=FALSE]
+				tibble(feature,locus,trait,signal,signal_id=z$sets$cs_index[match(signal,names(z$sets$cs))],SNP=d$SNP[ii],PIP=z$pip[ii],
+					min_abs_corr=purity$min.abs.corr,mean_abs_corr=purity$mean.abs.corr)
+			}))
 			rd <- .le8_analysis_state$rawdir
 			dir.create(file.path(rd, "susie"), showWarnings = FALSE)
 			stem <- paste0(gsub("[^A-Za-z0-9_.-]", "_", paste(feature, locus)), ".rds")
 			saveRDS(
-				list(QTL = fx, outcome = fy, coloc = fits, summary = sm, pip = pp, LD_QTL = lx$file, LD_outcome = ly$file),
+				list(QTL = fx, outcome = fy, coloc = fits, summary = sm, pip = pp, diagnostics=diagnostics,credible_sets=credible,LD_QTL = lx$file, LD_outcome = ly$file),
 				file.path(rd, "susie", stem)
 			)
-			list(status = "ok; signal-pair posterior available", summary = sm, pip = pp)
+			list(status = "ok; signal-pair posterior available", summary = sm, pip = pp, diagnostics=diagnostics,credible_sets=credible,
+				variants=tibble(SNP=d$SNP,QTL_rsid=d$rsid_x %||% d$SNP,outcome_rsid=d$rsid_y %||% d$SNP))
 		},
 		error = function(e) modifyList(no, list(status = conditionMessage(e)))
 	)
 	ans
+}
+
+# Shared double-precision regional Bayes factors for CPU and accelerator.
+c3_logsum <- function(x) { m <- max(x); if (!is.finite(m)) return(m); m + log(sum(exp(x-m))) }
+c3_reference_posterior <- function(x,y,p1=1e-4,p2=1e-4,p12=1e-5) {
+	if (length(x)!=length(y) || !length(x) || any(!is.finite(c(x,y)))) stop("Invalid common BF vectors")
+	n <- length(x); pre <- suf <- rep(-Inf,n+1L)
+	for (i in seq_len(n)) pre[i+1L] <- c3_logsum(c(pre[i],y[i]))
+	for (i in rev(seq_len(n))) suf[i] <- c3_logsum(c(suf[i+1L],y[i]))
+	off <- vapply(seq_len(n),function(i) c3_logsum(c(pre[i],suf[i+1L])),numeric(1))
+	l <- c(0,log(p1)+c3_logsum(x),log(p2)+c3_logsum(y),log(p1)+log(p2)+c3_logsum(x+off),log(p12)+c3_logsum(x+y))
+	exp(l-c3_logsum(l))
+}
+c3_lbf <- function(ds) {
+	sdY <- ds$sdY
+	if (ds$type=="quant" && is.null(sdY)) sdY <- getFromNamespace("sdY.est","coloc")(ds$varbeta,ds$MAF,ds$N)
+	w <- if (ds$type=="quant") (.15*sdY)^2 else .2^2; v <- ds$varbeta
+	bf <- .5*(log(v)-log(v+w)+(w/(v+w))*(ds$beta/sqrt(v))^2)
+	if (any(!is.finite(bf))) stop("Nonfinite BF; strong signals are not dropped")
+	bf
+}
+c3_prepare_locus_pair <- function(qtl_file,ygwas_file,chr,start,end,outcome_type,case_frac) {
+	if (any(grepl("thin|sig.only|hm3",basename(c(qtl_file,ygwas_file)),ignore.case=TRUE))) stop("Dense full summary statistics required")
+	mq <- le8_gwas_metadata(qtl_file); my <- le8_gwas_metadata(ygwas_file)
+	if (any(is.na(c(mq$build,my$build)))) stop("Unknown genome build; supply formatter .grch QC or LE8_GWAS_MANIFEST")
+	if (as.character(mq$build)!=as.character(my$build)) stop("Discovery builds differ; coordinate harmonization required before extraction")
+	q <- read_sumstat_region(qtl_file,chr,start,end); y <- read_sumstat_region(ygwas_file,chr,start,end)
+	d <- harmonize_sumstats(q,y)
+	if (!nrow(d)) stop("No allele-aligned overlapping variants")
+	if (any(d$POS_x != d$POS_y | d$CHR_x != d$CHR_y,na.rm=TRUE)) stop("Variant coordinates disagree after matching")
+	d <- d[order(d$SNP),,drop=FALSE]
+	if (anyDuplicated(d$SNP)) stop("Conflicting duplicate variant keys")
+	x <- le8_coloc_dataset(d,1L,"quant",qtl_file); yy <- le8_coloc_dataset(d,2L,outcome_type,ygwas_file,case_frac)
+	xb <- c3_lbf(x); yb <- c3_lbf(yy)
+	lead_retained <- function(z) {
+		i <- which(is.finite(z$P)); if (!length(i)) return(NA)
+		i <- i[which.min(z$P[i])]
+		if (z$P[i]>=5e-8) return(TRUE)
+		z$variant_key[i] %in% d$SNP
+	}
+	lead_coverage <- c(QTL=lead_retained(q),outcome=lead_retained(y))
+	pair <- tibble(variant=d$SNP,lbf1=xb,lbf2=yb)
+	key <- digest::digest(paste(pair$variant,collapse="\n"),algo="sha256",serialize=FALSE)
+	list(data=d,x=x,y=yy,pair=pair,hash=key,build=mq$build,ancestry=c(mq$ancestry,my$ancestry),n_qtl=nrow(q),n_outcome=nrow(y),lead_coverage=lead_coverage,
+		beta_scale_status=if (outcome_type!="cc" || identical(my$beta_scale,"log_odds")) "verified" else "log-odds assumption unverified")
 }
 
 coloc_one_locus <- function(
@@ -867,26 +899,18 @@ coloc_one_locus <- function(
 		s$message <- msg
 		list(summary = s, variants = tibble(), regional = tibble())
 	}
-	q <- read_sumstat_region(qtl_file, lead_chr, start, end)
-	y <- read_sumstat_region(ygwas_file, lead_chr, start, end)
-	d <- harmonize_sumstats(q, y)
-	if (!nrow(d))
-		return(fail("no allele-aligned overlapping SNPs"))
-	d <- d |>
-		filter(is.finite(BETA_x), is.finite(SE_x), SE_x > 0, is.finite(BETA_y), is.finite(SE_y), SE_y > 0)
-	s$n_snps <- nrow(d)
-	if (nrow(d) < MIN_SNPS)
-		return(fail("insufficient dense overlap"))
-	mq <- le8_gwas_metadata(qtl_file)
-	my <- le8_gwas_metadata(ygwas_file)
-	if (!is.na(mq$build) && !is.na(my$build) && as.character(mq$build) != as.character(my$build))
-		return(fail("declared discovery builds differ; harmonize coordinates before C3"))
-	datasets <- tryCatch(list(x = le8_coloc_dataset(d, 1L, "quant", qtl_file), y = le8_coloc_dataset(
-		d, 2L, outcome_type,
-		ygwas_file, case_frac
-	)), error = function(e) e)
-	if (inherits(datasets, "condition"))
-		return(fail(conditionMessage(datasets)))
+	prepared <- tryCatch(c3_prepare_locus_pair(qtl_file,ygwas_file,lead_chr,start,end,outcome_type,case_frac),error=function(e)e)
+	if (inherits(prepared,"condition")) return(fail(conditionMessage(prepared)))
+	d <- prepared$data; s$n_snps <- nrow(d)
+	if (nrow(d)<MIN_SNPS) return(fail("insufficient dense overlap"))
+	s$snp_hash <- prepared$hash; s$genome_build <- as.character(prepared$build)
+	s$beta_scale_status <- prepared$beta_scale_status
+	s$n_qtl_raw <- prepared$n_qtl; s$n_outcome_raw <- prepared$n_outcome
+	s$qtl_strong_lead_retained <- prepared$lead_coverage[["QTL"]]
+	s$outcome_strong_lead_retained <- prepared$lead_coverage[["outcome"]]
+	s$coverage_status <- if (any(prepared$lead_coverage %in% FALSE)) "strong regional lead absent after harmonization; posterior conditional on incomplete coverage" else "regional strong leads retained or no genome-wide significant lead"
+	s$BF_model <- "marginal_ABF"; s$prior_config <- "p1=1e-4;p2=1e-4;p12=1e-5"
+	datasets <- list(x=prepared$x,y=prepared$y)
 	fits <- lapply(C3_P12, function(p12) tryCatch(
 		{
 			f <- NULL
@@ -898,14 +922,21 @@ coloc_one_locus <- function(
 	f <- fits[["default"]]
 	if (inherits(f, "condition"))
 		return(fail(conditionMessage(f)))
-	for (i in 0 : 4) s[[paste0("PP.H", i)]] <- as.numeric(f$summary[[paste0("PP.H", i, ".abf")]])
+	posterior <- lapply(C3_P12,function(pr) c3_reference_posterior(prepared$pair$lbf1,prepared$pair$lbf2,p12=pr))
+	for (i in 0:4) s[[paste0("PP.H",i)]] <- posterior[["default"]][i+1L]
 	pp <- vapply(fits, function(x) if (inherits(x, "condition"))
 		NA_real_ else as.numeric(x$summary[["PP.H4.abf"]]), numeric(1))
+	pp <- vapply(posterior,function(x) x[5],numeric(1))
 	s$PP.H4_p12_conservative <- pp["conservative"]
 	s$PP.H4_p12_default <- pp["default"]
 	s$PP.H4_p12_liberal <- pp["liberal"]
 	s$PP.H4_robust_min <- if (all(is.finite(pp)))
 		min(pp) else NA_real_ # missing prior is not a pass
+s$prior_complete <- all(is.finite(pp)); s$prior_robust <- s$prior_complete && min(pp)>=H4_STRONG
+	s$prior_status <- if (!s$prior_complete) "prior_incomplete" else if (s$prior_robust) "prior_robust" else "prior_sensitive"
+	if (any(prepared$lead_coverage %in% FALSE)) {
+		s$PP.H4_robust_min <- NA_real_;s$prior_robust <- FALSE;s$prior_status <- "coverage_incomplete"
+	}
 	v <- as_tibble(f$results) |>
 		arrange(desc(SNP.PP.H4)) |>
 		mutate(
@@ -916,7 +947,7 @@ coloc_one_locus <- function(
 	s$lead_shared_pp <- v$SNP.PP.H4[1]
 	s$credible_set_n <- sum(v$credible95)
 	s$status <- "ok"
-	su <- le8_run_susie(datasets$x, datasets$y, d, feature, lead_chr, start, end, locus)
+	su <- le8_run_susie(datasets$x, datasets$y, d, feature, lead_chr, start, end, locus, prepared$build,prepared$ancestry)
 	s$susie_status <- su$status
 	r <- bind_rows(
 		d |>
@@ -924,7 +955,61 @@ coloc_one_locus <- function(
 		d |>
 			transmute(layer, feature, locus, dataset = Y, SNP, position = POS_y, p = P_y, beta = BETA_y, se = SE_y)
 	)
-	list(summary = s, variants = v, regional = r, susie = su)
+	list(summary = s, variants = v, regional = r, susie = su, prepared_pair = prepared$pair)
+}
+
+# Each retained MR instrument is mapped to a QTL credible set. A region-wide
+# posterior cannot validate other QTL signals in the same aggregate MR estimate.
+c3_mr_signal_evidence <- function(res, mr, susie, layer) {
+	primary <- if (layer == "protein") "cis" else "local"
+	if (!all(c("exposure","analysis","instrument_snps") %in% names(mr)) || !nrow(res)) return(tibble())
+	rows <- list()
+	for (j in seq_along(susie)) {
+		s <- susie[[j]]; pairs <- s$summary %||% tibble(); cs <- s$credible_sets %||% tibble(); variants <- s$variants %||% tibble()
+		if (!nrow(pairs) || !nrow(cs) || !nrow(variants)) next
+		feature <- pairs$feature[1]; locus <- pairs$locus[1]
+		if (!any(res$feature == feature & res$locus == locus & res$locus_class == primary,na.rm=TRUE)) next
+		m <- mr[mr$exposure == feature & mr$analysis == primary,,drop=FALSE]
+		if ("outcome" %in% names(m)) m <- m[!is.na(m$outcome) & m$outcome == Y,,drop=FALSE]
+		if (!nrow(m)) next
+		pairs <- pairs |> group_by(idx1,idx2) |> summarise(
+			prior_complete = all(names(C3_P12) %in% prior) && all(is.finite(PP.H4.abf)),
+			PP.H4_robust_min = if (prior_complete) min(PP.H4.abf) else NA_real_,.groups="drop")
+		for (i in seq_len(nrow(m))) {
+			ids <- unique(trimws(strsplit(m$instrument_snps[i],";",fixed=TRUE)[[1]]))
+			ids <- ids[!is.na(ids) & nzchar(ids)]
+			for (iv in ids) {
+				keys <- unique(variants$SNP[variants$SNP == iv | variants$QTL_rsid == iv])
+				keys <- keys[!is.na(keys)]
+				q <- cs[cs$trait == "QTL" & cs$SNP %in% keys,,drop=FALSE]
+				signals <- unique(q$signal_id)
+				if (!length(signals)) signals <- NA_integer_
+				for (signal in signals) {
+					p <- pairs[!is.na(signal) & pairs$idx1 == signal,,drop=FALSE]
+					if (!nrow(p)) p <- tibble(idx1=signal,idx2=NA_integer_,prior_complete=FALSE,PP.H4_robust_min=NA_real_)
+					rows[[length(rows)+1L]] <- p |> transmute(feature,locus,analysis=primary,MR_row=i,MR_IV=iv,
+						variant_key=paste(keys,collapse=";"),in_aligned_variants=length(keys)==1L,
+						QTL_signal=idx1,outcome_signal=idx2,ambiguous_assignment=length(keys)!=1L || length(unique(q$signal_id))>1L,
+						prior_complete,PP.H4_robust_min,
+						signal_pair_supported=prior_complete & is.finite(PP.H4_robust_min) & PP.H4_robust_min>=H4_STRONG)
+				}
+			}
+		}
+	}
+	z <- bind_rows(rows)
+	if (!nrow(z)) return(z)
+	per_iv <- z |> group_by(feature,locus,analysis,MR_row,MR_IV) |> summarise(
+		IV_supported=any(signal_pair_supported) && !any(ambiguous_assignment),
+		IV_assigned=any(!is.na(QTL_signal)) && !any(ambiguous_assignment),.groups="drop")
+	status <- per_iv |> group_by(feature,locus,analysis,MR_row) |> summarise(
+		MR_IV_count=n(),MR_IV_assigned=sum(IV_assigned),MR_IV_supported=sum(IV_supported),
+		MR_signal_coverage=mean(IV_supported),MR_signal_status=case_when(
+			all(IV_supported) ~ "all_instrument_signals_supported",
+			any(IV_supported) ~ "partial_signal_support",
+			all(IV_assigned) ~ "no_robust_shared_instrument_signal",
+			TRUE ~ "instrument_signal_unresolved"),.groups="drop")
+	left_join(z,status,by=c("feature","locus","analysis","MR_row")) |>
+		mutate(claim="Credible-set assignment and signal-pair compatibility; not causal proof or independent replication")
 }
 
 le8_c3_sets <- function(res, mr, layer) {
@@ -934,25 +1019,18 @@ le8_c3_sets <- function(res, mr, layer) {
 	list(Causal_Tier1 = character(), Causal_Tier2plus = g, Causal_any = g)
 }
 
-le8_c3_additions <- function(res, mr, layer, outdir) {
-	e <- le8_same_locus_evidence(mr, res, layer)
-	rd <- le8_job_dir(outdir, "c3_coloc")
-	write_raw_csv(e, "c3.same_locus_evidence.csv", rd)
-	ss <- list.files(file.path(rd, "susie"), pattern = "\\.rds$", full.names = TRUE)
-	su <- bind_rows(lapply(ss, function(f) {
-		z <- readRDS(f)
-		as_tibble(z$summary)
-	}))
-	pi <- bind_rows(lapply(ss, function(f) {
-		z <- readRDS(f)
-		as_tibble(z$pip)
-	}))
-	write_raw_csv(su, "c3.susie_signal_pairs.csv", rd)
-	write_raw_csv(pi, "c3.susie_trait_PIP.csv", rd)
-	status <- if ("susie_status" %in% names(res))
-		res |>
-			count(susie_status) else tibble(status = "no loci")
-	list(same_locus = e, susie_pairs = su, susie_PIP = pi, susie_status = status)
+le8_c3_additions <- function(res, mr, layer, outdir, susie = list()) {
+	e <- le8_same_locus_evidence(mr,res,layer); rd <- le8_job_dir(outdir,"c3_coloc")
+	write_raw_csv(e,"c3.same_locus_evidence.csv",rd)
+	si <- c3_mr_signal_evidence(res,mr,susie,layer)
+	write_raw_csv(si,"c3.same_locus_signal_evidence.csv",rd)
+	su <- bind_rows(lapply(susie,function(z) z$summary %||% tibble()))
+	pi <- bind_rows(lapply(susie,function(z) z$pip %||% tibble()))
+	dg <- bind_rows(lapply(susie,function(z) z$diagnostics %||% tibble()))
+	cs <- bind_rows(lapply(susie,function(z) z$credible_sets %||% tibble()))
+	write_raw_csv(su,"c3.susie_signal_pairs.csv",rd); write_raw_csv(pi,"c3.susie_trait_PIP.csv",rd)
+	write_raw_csv(dg,"c3.susie_diagnostics.csv",rd);write_raw_csv(cs,"c3.susie_credible_sets.csv",rd)
+	list(same_locus=e,same_locus_signals=si,susie_pairs=su,susie_PIP=pi,susie_diagnostics=dg,susie_credible_sets=cs,susie_status=if ("susie_status" %in% names(res)) count(res,susie_status) else tibble(status="not attempted"))
 }
 
 run_c3_layer <- function(layer = c("protein", "metabolite")) {
@@ -984,7 +1062,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	dir.create(rawdir, recursive = TRUE, showWarnings = FALSE)
 	cache <- file.path(rawdir, "c3.res.rds")
 	if (!is.finite(C3_MR_FDR) || C3_MR_FDR <= 0 || C3_MR_FDR >= 1 || !is.finite(MAX_FEATURES) || MAX_FEATURES <
-		1 || !is.finite(MAX_LOCI_PER_FEATURE) || MAX_LOCI_PER_FEATURE < 1)
+		0 || !is.finite(MAX_LOCI_PER_FEATURE) || MAX_LOCI_PER_FEATURE < 0)
 		stop("Invalid C3 MR FDR / feature / locus limits", call. = FALSE)
 	c2f <- file.path(le8_job_dir(outdir, "c2_cause"), "c2.res.rds")
 	if (!file.exists(c2f))
@@ -992,7 +1070,11 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	c2 <- readRDS(c2f)
 	mr <- c2$MR %||% tibble()
 	selected_mr <- c3_select_mr(mr, layer, C3_MR_FDR, MAX_FEATURES)
-	candidates <- unique(selected_mr$exposure)
+	anchors <- if (layer=="protein") le8_csv_env("C3_ANCHORS","PCSK9,LPA,GDF15,NTPROBNP,MMP12,TGFB1,COL6A3") else le8_csv_env("C3_MET_ANCHORS","")
+	anchor_coords <- layer_annotation(layer,anchors)
+	plan_file <- Sys.getenv("C3_LOCUS_PLAN",""); extra_plan <- if (nzchar(plan_file)) as_tibble(fread(plan_file)) else tibble()
+	if (nrow(extra_plan) && !all(c("feature","chr","pos") %in% names(extra_plan))) stop("C3_LOCUS_PLAN requires feature,chr,pos")
+	candidates <- unique(c(selected_mr$exposure,anchors,extra_plan$feature))
 	message(
 		"C3/", layer, ": FDR_all < ", C3_MR_FDR, "; ", nrow(selected_mr), " significant MR analyses, ", length(candidates),
 		" features; up to ", MAX_LOCI_PER_FEATURE, " loci per feature"
@@ -1003,7 +1085,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	qfiles <- setNames(lapply(candidates, function(feature) find_qtl_files(feature, base, layer)), candidates)
 	input_files <- c(ygfile, unlist(lapply(qfiles, function(fs) fs$full)))
 	selection_signature <- le8_hash_object(list(
-		version = C3_SELECTION_VERSION, mr = as.data.frame(selected_mr[
+		version = C3_SELECTION_VERSION, source_signature=le8_stage_fingerprint(), anchors=anchor_coords, extra_plan=extra_plan, mr = as.data.frame(selected_mr[
 ,
 			c("exposure", "analysis", "pval", "FDR_all", "instrument_snps", "instrument_positions")
 		]), settings = c3_locus_settings(),
@@ -1054,6 +1136,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 		message("C3: discovery case fraction not supplied; beta/varbeta cc ABF omits s, rather than substituting cohort prevalence")
 	coloc_started <- le8_stage_start(paste0("C3/", layer, " coloc"))
 	rows <- list()
+	susie_results <- list()
 	vrows <- list()
 	rrows <- list()
 	manifest <- list()
@@ -1074,12 +1157,22 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 			"; completed loci=", k, ", reused=", reused_loci
 		)
 		qf <- qfiles[[feature]]$full
-		if (length(qf) != 1L || is.na(qf) || !file.exists(qf))
-			stop("Missing full QTL for MR-selected feature: ", feature, call. = FALSE)
+		if (length(qf) != 1L || is.na(qf) || !file.exists(qf)) {
+			k <- k+1L; rows[[k]] <- tibble(feature,layer,status="unavailable",message="full QTL missing",selection_sources=if (feature %in% anchors) "anchor_audit" else "mr_validation",locus=NA_character_,PP.H4=NA_real_,PP.H4_robust_min=NA_real_)
+			next
+		}
 		fm <- selected_mr |>
 			filter(exposure == feature)
-		iv <- c3_read_mr_qtl(fm, qf, qtl_cache_root)
+		iv <- if (nrow(fm)) c3_read_mr_qtl(fm,qf,qtl_cache_root) else tibble(SNP=character(),CHR=character(),POS=numeric(),P=numeric(),analysis=character())
 		leads <- select_nonoverlapping_leads(iv, MAX_LOCI_PER_FEATURE, WINDOW_BP)
+		leads$selection_sources <- rep("mr_validation",nrow(leads))
+		aa <- anchor_coords[anchor_coords$feature==feature & is.finite(anchor_coords$start) & is.finite(anchor_coords$end),,drop=FALSE]
+		if (nrow(aa)) leads <- bind_rows(leads,tibble(SNP=paste0("anchor:",feature),CHR=as.character(aa$chr[1]),POS=round((aa$start[1]+aa$end[1])/2),P=NA_real_,analysis=if (layer=="protein") "cis" else "local",selection_sources="anchor_audit"))
+		if (nrow(extra_plan)) {
+			xp <- extra_plan |> filter(.data$feature==.env$feature)
+			if (nrow(xp)) leads <- bind_rows(leads,tibble(SNP=paste0("plan:",seq_len(nrow(xp))),CHR=as.character(xp$chr),POS=as.numeric(xp$pos),P=NA_real_,analysis=vapply(seq_len(nrow(xp)),function(j) le8_locus_class(feature,layer,xp$chr[j],xp$pos[j]),character(1)),selection_sources="disease_locus_screen"))
+		}
+		leads <- leads |> group_by(CHR,POS,analysis) |> mutate(selection_sources=paste(sort(unique(selection_sources)),collapse=";")) |> slice(1) |> ungroup()
 		selection_audit[[feature]] <- iv |>
 			mutate(feature = feature, selected_lead = SNP %in% leads$SNP)
 		write_raw_csv(bind_rows(selection_audit), "c3.mr_locus_selection.csv", rawdir)
@@ -1107,16 +1200,30 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 				z <- coloc_one_locus(feature, layer, qf, leads$CHR[i], leads$POS[i], ygfile, outtype, sfrac, locus_class = leads$analysis[i])
 				write_stage_cache(z, locus_cache)
 			} else reused_loci <- reused_loci + 1L
+			z$summary$selection_sources <- leads$selection_sources[i]
+			z$summary$aligned_MR_IVs <- paste(iv$SNP[iv$variant_key %in% (z$prepared_pair$variant %||% character())],collapse=";")
 			rows[[k]] <- z$summary
+			susie_results[[k]] <- z$susie %||% list(status="not attempted")
 			vrows[[k]] <- z$variants
 			rrows[[k]] <- z$regional
-			manifest[[k]] <- tibble(omics = layer, trait = feature, file = qf, type = "quant", region = z$summary$locus)
+			pairfile <- file.path(gpudir,"prepared",paste0(locus_key,".tsv"))
+			if (is.data.frame(z$prepared_pair)) { dir.create(dirname(pairfile),recursive=TRUE,showWarnings=FALSE); data.table::fwrite(z$prepared_pair,pairfile,sep="\t") }
+			manifest[[k]] <- tibble(omics=layer,trait=feature,file=qf,type="quant",region=z$summary$locus,
+				pair_file=if (file.exists(pairfile)) pairfile else "",snp_hash=z$summary$snp_hash %||% NA_character_,
+				BF_model="marginal_ABF",prior_config="p1=1e-4;p2=1e-4;p12=1e-5",input_status=z$summary$status)
 		}
 		message("C3/", layer, ": ", feature, " done in ", round(as.numeric(difftime(Sys.time(), feature_started,
 			units = "secs"
 		)), 1), " s; loci=", k, ", reused=", reused_loci)
 	}
 	res <- bind_rows(rows)
+	signal_evidence <- c3_mr_signal_evidence(res,mr,susie_results,layer)
+	if (nrow(signal_evidence)) {
+		status <- signal_evidence |> group_by(feature,locus) |> summarise(
+			MR_signal_coverage=min(MR_signal_coverage),
+			MR_signal_status=if (all(MR_signal_status=="all_instrument_signals_supported")) "all_instrument_signals_supported" else if (any(MR_signal_coverage>0)) "partial_signal_support" else "instrument_signals_not_supported",.groups="drop")
+		res <- left_join(res,status,by=c("feature","locus"))
+	}
 	variants <- bind_rows(vrows)
 	regional <- bind_rows(rrows)
 	mani <- bind_rows(manifest)
@@ -1151,7 +1258,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 				outcome_type = outtype, case_fraction = sfrac, code_version = C3_CODE_VERSION,
 				selection_signature = selection_signature, status = "no QTL locus constructed"
 			)), summary = res, variants = variants,
-			regional = regional, manifest = mani, GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud,
+			regional = regional, susie = susie_results, manifest = mani, GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud,
 			pgs_triangulation = tri
 		)
 		saveRDS(out, cache, compress = "xz")
@@ -1194,7 +1301,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 		meta = module_meta(layer, extra = list(
 			outcome_type = outtype, case_fraction = sfrac, code_version = C3_CODE_VERSION,
 			selection_signature = selection_signature
-		)), summary = res, variants = variants, regional = regional, manifest = mani,
+		)), summary = res, variants = variants, regional = regional, susie = susie_results, manifest = mani,
 		GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud, pgs_triangulation = tri
 	)
 	saveRDS(out, cache, compress = "xz")

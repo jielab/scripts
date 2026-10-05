@@ -254,14 +254,14 @@ def run(script, args):
 			# Only real stage transitions, never a wall-clock heartbeat.
 			major = re.match(
 				r"^(JOB=|MODE=|Completed\s|Done\b|FINAL:|"
-				r"LE8 .*preflight|MAHA pipeline:|\[MAHA(?: FINAL)?\]|"
+				r"LE8 .*preflight|\[LE8\] PROGRESS\b|MAHA pipeline:|\[MAHA(?: FINAL)?\]|"
 				r"\[[^\]]+\] (?:START|DONE|FAIL|ERROR)\b|"
 				r"(?:Starting|Finished|Running) (?:module|step|stage)\b)",
 				line,
 			)
-			# LE8 console: stage boundaries only, plus diagnostics below.
+			# LE8 console: stage boundaries and completed-work progress, plus diagnostics.
 			if label == "le8":
-				major = bool(re.match(r"^\[LE8\] (START|DONE|FAIL|ERROR)\b", line))
+				major = bool(re.match(r"^\[LE8\] (START|DONE|FAIL|ERROR|PROGRESS)\b", line))
 			error = re.search(
 				r"(?i)(?:^|[\] :])(?:error|fatal|warning|traceback|exception)\b|"
 				r"\b[A-Za-z]+(?:Error|Exception):|Execution halted|^Calls:|^停止执行",
