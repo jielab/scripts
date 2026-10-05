@@ -285,6 +285,7 @@ class Report:
 				for kind, external in [
 					("reference", self.arg.abm_root),
 					("tf", self.arg.abm_tf_root),
+					("selective_attention", None),
 				]:
 					runs = result_candidates(self.root, trait, layer, kind, external)
 					for role, filename in [
@@ -624,7 +625,7 @@ class Report:
 				"Source-specific score analysis is marked unavailable; no cis/trans/MHC-exclusion null finding can be claimed from these placeholders.",
 				"pgs_source_status",
 			)
-		for kind in ["reference", "tf"]:
+		for kind in ["reference", "tf", "selective_attention"]:
 			met = self.get(trait, layer, f"abm_{kind}_metrics").copy()
 			if not has(met, "model", "AUC_IPCW"):
 				continue
@@ -1494,7 +1495,7 @@ class Report:
 		)
 		# Fig5: row-based models and individual reliability, with native controls.
 		f5 = []
-		for kind in ["reference", "tf"]:
+		for kind in ["reference", "tf", "selective_attention"]:
 			pieces = []
 			prespec = (
 				[
@@ -2530,7 +2531,7 @@ class Questions:
 				d = pd.read_csv(p)
 			except pd.errors.EmptyDataError:
 				d = pd.DataFrame()
-			if PRIVATE_COLUMNS & set(map(str.lower, d.columns)):
+			if _index.has_private_columns(d.columns):
 				raise ValueError(f"Participant data rejected: {rel}")
 			record.update(rows=len(d), status="available" if len(d) else "empty")
 		else:
@@ -2724,10 +2725,10 @@ class Questions:
 			"contrasts",
 		)
 
-		for kind in ["reference", "tf"]:
+		for kind in ["reference", "tf", "selective_attention"]:
 			runs = result_candidates(self.root, Y, layer, kind)
 			run = next((p for p in runs if (p / "test_metrics.csv").exists()), runs[0])
-			backend = "reference" if kind == "reference" else "tabicl"
+			backend = "reference" if kind == "reference" else "selective_attention" if kind == "selective_attention" else "tabicl"
 			for name, filename in [
 				("abm_metrics", "test_metrics.csv"),
 				("abm_coverage", "coverage_curve.csv"),
@@ -2738,6 +2739,9 @@ class Questions:
 				("abm_risk_gain", "c1.selective.risk_stratified_gain.csv"),
 				("abm_audit", "c1.selective.audit_contrasts.csv"),
 				("abm_decision", "c1.selective.decision_curve.csv"),
+				("abm_registry", "model_registry.csv"),
+				("abm_release_audit", "audit_decision.csv"),
+				("abm_fit_status", "fit_status.csv"),
 			]:
 				d = self.read(run / filename, Y, layer, name + ":" + backend)
 				if d.empty:
@@ -2754,7 +2758,8 @@ class Questions:
 				if name == "abm_metrics":
 					if "subset" not in d:
 						d["subset"] = "all"
-					d = abm_gain(d, ["subset"])
+					if backend != "selective_attention":
+						d = abm_gain(d, ["subset"])
 					if backend == "reference":
 						chosen = d[
 							d.model.eq("elasticnet_weighted" if "elasticnet_weighted" in set(d.model) else "abm_transformer") & d["subset"].eq("supported")
@@ -2776,7 +2781,12 @@ class Questions:
 								"AUC不是C-index。需结合 rejected 组、事件率、同组基准与配对区间；低风险组 Brier 较低不证明更可预测。",
 								"abm_metrics",
 							)
-				elif name == "abm_coverage":
+				elif name == "abm_release_audit" and backend == "selective_attention":
+					for _, row in d.iterrows():
+						self.claim(Y, layer, "S7 selective attention", str(row.status),
+							f"预定候选 {row.primary}；实际 fallback {row.fallback}；审计候选 N={row.candidate_N}，家庭数={row.candidate_groups}。",
+							"实际模型架构见 model_registry；研究覆盖率与释放覆盖率分别报告。Uno C 是 horizon 内的 IPCW concordance；未通过独立审计时使用 fallback。", "abm_release_audit")
+				elif name == "abm_coverage" and backend != "selective_attention":
 					d = abm_gain(d, ["selector", "quantile"] if "selector" in d else ["quantile"])
 				self.add(name, d)
 		genetic = (
@@ -2881,7 +2891,7 @@ class Questions:
 			"abm_metrics",
 			"abm_coverage",
 			"abm_paired",
-			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision",
+			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision", "abm_registry", "abm_release_audit", "abm_fit_status",
 			"genetic",
 			"temporal",
 			"cohort",
@@ -3161,6 +3171,34 @@ def question_figures(out, traits, layers):
 		["genetic", "temporal", "same_locus"],
 		"All matched assays in existing_full/basic; orange = measured P>=0.05 and PGS full-family FDR<0.05. Distinct own-SD scales, not an effect-difference test. Named markers are prespecified examples. PGS is inherited propensity, not birth concentration; G/R differences, MR and exact-locus coloc require separate evaluation.",
 	)
+
+	# S7 is a distinct architecture/estimand record; retain every registered model.
+	s7 = metrics.loc[metrics.backend.eq("selective_attention")].copy() if "backend" in metrics else pd.DataFrame()
+	if len(s7):
+		fig, axs = plt.subplots(2, len(pairs), figsize=(max(8, 5 * len(pairs)), 10), squeeze=False, constrained_layout=True)
+		for col, (y, l) in enumerate(pairs):
+			d = select(s7, y, l)
+			full = d[d.subset.eq("all")]
+			ax = axs[0, col]
+			if len(full):
+				ax.barh(full.model, full.Uno_C_horizon)
+				ax.set(xlim=(0, 1), xlabel="Horizon-truncated Uno C", title=f"{y} | {l}: all frozen S7 models")
+			else: absent(ax, "S7 unavailable")
+			ax = axs[1, col]
+			curve = select(coverage, y, l)
+			if len(curve): curve = curve[curve.backend.eq("selective_attention") & curve.selector.eq("release_gain")]
+			if len(curve):
+				primary = full.primary_id.iloc[0]
+				fallback = full.reference_id.iloc[0]
+				for model in [primary, fallback, "policy_risk"]:
+					z = curve[curve.model.eq(model)].sort_values("requested_coverage")
+					ax.plot(z.actual_coverage, z.Uno_C_horizon, "o-", label=model)
+				ax.set(xlabel="Actual research coverage", ylabel="Uno C on the SAME subset",
+					title=f"Audit: {full.audit_status.iloc[0]}; release {full.release_coverage.iloc[0]:.1%}")
+				ax.legend(fontsize=7)
+			else: absent(ax, "S7 coverage unavailable")
+		save(fig, "Fig9.question_ABM_attention", ["abm_metrics", "abm_coverage", "abm_paired", "abm_registry", "abm_release_audit", "abm_fit_status"],
+			"S7 selective_attention only. Architectures and all model IDs remain explicit. The primary is preregistered; the fallback is separately calibrated. Research and release coverage differ. Uno C is horizon-truncated concordance, not ROC AUC. Paired uncertainty is conditional on frozen fitted models.")
 	pd.DataFrame(manifest).to_csv(
 		out / "final.questions.figure_manifest.csv", index=False
 	)

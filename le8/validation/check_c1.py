@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic selective-training regression suite from the 2026-10-04 delivery.
 Imports the actual integrated c1.abm.py; temporary fits stay in /tmp.
-Run: python tests/check_c1.py
+Run: python validation/check_c1.py
 """
 from __future__ import annotations
 import argparse

@@ -9,6 +9,10 @@ le8_table_private_columns <- c(
 )
 le8_table_private <- function(x) {
 	names <- tolower(names(x))
+	# S7 aggregate metrics use reference_id for a MODEL; participant reference IDs
+	# remain private in every other schema, and eid columns are always private.
+	if (all(c('run_id', 'model_id', 'primary_id', 'reference_id', 'n', 'uno_c_horizon') %in% names))
+		names <- names[names != 'reference_id']
 	any(gsub('[^a-z0-9]', '', names) %in% le8_table_private_columns |
 		grepl('(^|[_. #])(eid|iid|fid)($|[_. ])', names))
 }
@@ -322,6 +326,7 @@ le8_table_figure_pattern <- function(file) {
 	if (grepl('^Fig[0-9S]+$', stem)) return(paste0('^', stem, '[_./]'))
 	if (grepl('^Fig6[.]question_LE8', stem)) return('final[.]questions[.](contrasts|proxy|pillars|prediction)[.]')
 	if (grepl('^Fig7[.]question_ABM', stem)) return('final[.]questions[.]abm_(metrics|coverage|paired|support)[.]')
+	if (grepl('^Fig9[.]question_ABM_attention', stem)) return('final[.]questions[.]abm_(metrics|coverage|paired|registry|release_audit|fit_status)[.]')
 	if (grepl('^Fig8[.]question_genetic', stem)) return('final[.]questions[.](genetic|temporal|same_locus)[.]')
 	if (grepl('coverage', stem, ignore.case = TRUE)) return('coverage_curve|support_error')
 	if (stem == 'Fig_masked_reconstruction') return('masked_feature_metrics|masked_reconstruction')
@@ -365,6 +370,9 @@ le8_table_result_groups <- function(names, directory) {
 			development = 'tuning|oof_fits|embedding|metric_features|mosaic_weights|token_membership',
 			selective_training = 'c1[.]selective[.](training_comparison|model_tuning|crossfit_audit)',
 			selective_validation = 'c1[.]selective[.](risk_stratified_gain|gate_diagnostics|audit_contrasts|decision_curve)'),
+		abm_selective_attention = c(validation = 'test_|coverage|paired|development_metrics|audit_decision|audit_contrasts|censoring_sensitivity',
+			training = 'model_registry|model_tuning|gate_training|crossfit_audit|fit_status',
+			inputs = 'preprocessing_audit|role_audit|reference_diagnostics'),
 		abm_tabicl = c(model = 'test_|tuning|learning_curve|feature_selection'),
 		attention = c(interventions = 'intervention'),
 		le8_annotations = c(protein_interactions = 'string_physical'),
@@ -583,7 +591,7 @@ le8_table_stores <- function(root) {
 le8_tables_pack <- function(root, clean = TRUE) {
 	root <- normalizePath(root, winslash = '/', mustWork = TRUE)
 	paths <- list.files(root, pattern = '[.](csv|tsv|jsonl)([.]gz)?$|[.]xlsx$|[.]json$', recursive = TRUE, full.names = TRUE, all.files = TRUE)
-	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl)(/attention)?/[^/]+[.]json$', paths)
+	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl|selective_attention)(/attention)?/[^/]+[.]json$', paths)
 	paths <- paths[!grepl('[.]json$', paths) | internal]
 	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations)/', paths)]
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
@@ -644,7 +652,7 @@ le8_tables_restore <- function(root) {
 	for (path in paths) {
 		x <- le8_table_load(dirname(path))
 		for (name in names(x$files)) le8_table_restore_entry(x$files[[name]], dirname(path), name)
-		if (grepl('/abm_(reference|tabicl)/', path) && Sys.getenv('LE8_TABLE_ABM_PRIVATE', 'TRUE') != 'TRUE') next
+		if (grepl('/abm_(reference|tabicl|selective_attention)/', path) && Sys.getenv('LE8_TABLE_ABM_PRIVATE', 'TRUE') != 'TRUE') next
 		for (filename in names(x$private_files)) {
 			if (basename(filename) != filename) stop('Unsafe private table path')
 			data <- readRDS(file.path(dirname(path), filename))

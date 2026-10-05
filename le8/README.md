@@ -72,19 +72,57 @@ contrasts 表必须有 `model,reference`，对比双方的实际 assay 数及 fo
 
 ### 可复现验收
 
-按本次审计“将前次测试套件纳入当前代码版本”的要求，长期回归源码保存在 `tests/`；合成输入、拟合、图片、日志、备份和缓存仍只放 `/tmp`。前次交付中仅适用于安装器/旧宿主打补丁的检查已移除，科学检查改为导入当前整合代码；通过数按本次实际运行计数。
+按本次审计“将前次测试套件纳入当前代码版本”的要求，长期回归源码保存在 `validation/`；合成输入、拟合、图片、日志、备份和缓存仍只放 `/tmp`。前次交付中仅适用于安装器/旧宿主打补丁的检查已移除，科学检查改为导入当前整合代码；通过数按本次实际运行计数。
 
 在已经安装 LE8 依赖的环境执行：
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python tests/check_c1.py
-PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_c5.py tests/test_audit.py
-Rscript tests/audit_acceptance.R
+PYTHONDONTWRITEBYTECODE=1 python validation/check_c1.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider validation/test_c5.py validation/test_audit.py
+Rscript validation/audit_acceptance.R
 ```
 
 本轮结果：C1 17 项、Python/C5/dispatcher 58 项、R 18 组验收通过。R 包括实际嵌套 concept 拟合、replacement 风险模型系数、真实 bcftools INDEL 规范化、规范化证明失效、COJO 身份继承、prepared pair 与 `coloc.abf` 数值一致，以及 20 次家庭聚类 bootstrap。
 
 另通过公共 `le8.sh` 完成单结局/蛋白层的隔离 smoke：C1 使用 2,400 人合成数据、家庭文件及自定义截止日期（质控后 2,383 人）；C5 使用显式同预算比较，均完成正常结果打包；实际公共入口与直接调用的配置签名及全部输出 hash 一致。新增 C4 保真度图和 Final/Shiny 索引也完成隔离导出。Python/R 语法与 shell 解析通过。这些是当前代码的合成/入口验证，不是全量 UKB、真实 GPU、TabICL 权重或原生 CIGMA 的验证。
+
+## C1 selective attention（2026-10-05）
+
+按 `C1_Codex_Implementation_20261005` 接入独立的 `--abm-design selective_attention`。默认仍是原 S6 `selective`；原 `attention` 和 TabICL 仍是独立实验。新模式只接受 `--abm-backend reference`，结果放在 `c1_correlate/abm_selective_attention/`，不覆盖 `abm_reference/`。逐项实现、测试与限制见 [C1.md](C1.md)。
+
+新模式保留连续分子的 bulk、上下 tail、missing 通道及二元特征；线性/树和神经模型使用同一原始 assay 与临床信息。复用 RowEncoder/ContextStack，实际训练 Q/K 检索注意力。全流程按家庭分为 build、tune_model、tune_gate、calibration_fit、calibration_audit、test；训练权重来自 recipient 家庭完全不参与的 pilot/gate。释放 gate 比较最终已校准候选与实际 fallback，独立审计证据不足时输出 fallback，不强制释放固定人数。
+
+显式选择新模式的命令如下。家庭文件、固定 outer roster 需替换为实际核实的路径；本轮没有启动这条 UKB 正式命令。没有家庭数据时可不传 `--group-file`，但此时只按个人隔离，不能声称控制了亲缘。
+
+```sh
+./le8.sh c1_abm --Y cvd_cad --biom prot \
+  --analysis-root /mnt/d/analysis/le8_s7 \
+  --group-file /actual/path/families.csv \
+  --outer-roster /actual/path/outer.csv \
+  --abm-backend reference --seed 2026 \
+  --abm-args '--abm-design selective_attention --device cuda --cores 8 --selective-coverage 0.60 --s7-primary attention_retrieval_weighted --bootstrap 500'
+```
+
+家庭文件为字符串 `eid,group`；outer 文件为 `eid,role`，角色仅 `training,test`。默认训练家庭命名空间为 `ukb`，其他队列应显式使用 `--group-namespace`。外部投射必须提供当前外部家庭文件或列及核实过的命名空间；不会继承训练时的临时文件，也不会要求外部 CSV 自带 `.le8_family`。开发集所有角色的 ID 均禁止进入外部验证，同命名空间的开发家庭也禁止；改变命名空间不能绕过 ID 重叠检查。
+
+```sh
+./le8.sh c1_abm --Y cvd_cad --biom prot \
+  --analysis-root /mnt/d/analysis/le8_s7 --abm-backend reference \
+  --abm-args 'project --run-dir /mnt/d/analysis/le8_s7/cvd_cad/prot/c1_correlate/abm_selective_attention --phe-file /actual/path/external_baseline.csv --omics-file /actual/path/external_prot.csv --projection-group-file /actual/path/external_families.csv --projection-group-namespace ukb --output /tmp/external_prediction.csv --device cpu --cores 4'
+```
+
+这里的 baseline 输入仅需 ID 和训练时所用的基线临床/技术字段，不需结局。正式私有预测可将 `--output` 指向分析目录中的 CSV 交换路径，由公共事务封入同名 RDS。已有旧 bundle 如果没有完整 development roster，外部验证会明确拒绝；需要重拟合才能补齐，不能把仅 context 名单当作完整名单。
+
+新模式的主指标为固定 horizon 的 IPCW 风险指标与真正的 Uno C；家庭 bootstrap 对各模型使用相同抽样。年龄三分位/性别的条件删失敏感性仅在 build 拟合，作为另表诊断，不替换主策略；该敏感性不声称估计条件删失 Uno C。Final/Shiny 分开展示新旧模式、实际架构、候选/fallback、研究/释放覆盖和审计状态。
+
+依赖沿用 `environment.yml` / `requirements.txt` 的 PyTorch、scikit-learn、SciPy、pandas、joblib、threadpoolctl；默认树为 LightGBM，CPU smoke 显式选 `--tree hist`。RDS 仍需 pyreadr；打包需现有 R 环境。新模式不下载 TabICL 权重。以下测试均使用合成数据，输入与结果留在 `/tmp`；结构模拟不要求神经模型胜出。
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider validation/test_c1_s7_kernels.py validation/test_c1_s7_production.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider validation/test_c1_s7_simulations.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider validation/test_c1_s7_devices.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider validation/test_c1_s7_public.py
+```
 
 ## 分开分析，最后汇总
 
@@ -155,7 +193,7 @@ Rscript shiny/app.R
 ./le8.sh shiny --no-reindex --analysis-root /mnt/d/analysis/le8
 ```
 
-运行 `./le8.sh` 默认只执行 C1–C5（包含 reference ABM 和 C4 面板验证），完成后退出。汇总与查看单独使用 `./le8.sh final,shiny`；只生成汇总而不启动服务，可加 `--prepare-only`。临时验证输出、备份和 Python 缓存均放在 `/tmp`；本次审计要求纳入版本的回归源码见 `tests/`。
+运行 `./le8.sh` 默认只执行 C1–C5（包含 reference ABM 和 C4 面板验证），完成后退出。汇总与查看单独使用 `./le8.sh final,shiny`；只生成汇总而不启动服务，可加 `--prepare-only`。临时验证输出、备份和 Python 缓存均放在 `/tmp`；本次审计要求纳入版本的回归源码见 `validation/`。
 
 当前测试范围与实测通过数见上方“可复现验收”。SuSiE 的真实分析仍需提供与各 GWAS 的 `ancestry` 一致的 LD 元数据；未知效应尺度、缺失强信号或未完成的分析不会升级为完整 MR–coloc 支持。Final 默认展示 10-assay 预算，若未运行该预算则展示最近的已配置预算，选择不依据预测结果。
 

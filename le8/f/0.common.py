@@ -77,6 +77,9 @@ PRIVATE_COLUMNS = {
 
 def has_private_columns(columns):
 	names = [str(name).lower() for name in columns]
+	# S7 aggregate tables identify the comparator model with reference_id.
+	if {'run_id', 'model_id', 'primary_id', 'reference_id', 'n', 'uno_c_horizon'} <= set(names):
+		names = [name for name in names if name != 'reference_id']
 	private = {re.sub(r"[^a-z0-9]", "", name) for name in PRIVATE_COLUMNS}
 	private.update({"id", "id1", "id2", "sampleid", "ukbid", "ukbeid"})
 	return any(
@@ -1150,6 +1153,7 @@ ABM_BACKENDS = {
 	"reference": ("reference", "v5_attention_allteachers"),
 	"tf": ("tabicl", "tabiclv2_finetuned"),
 	"tabicl": ("tabicl", "tabiclv2_finetuned"),
+	"selective_attention": ("selective_attention", "selective_attention"),
 }
 
 
@@ -1596,6 +1600,11 @@ def dispatch_main(argv=None):
 	if "c1_abm" in modules:
 		py = os.getenv("ABM_PYTHON") or sys.executable
 		more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
+		mode_parser = argparse.ArgumentParser(add_help=False)
+		mode_parser.add_argument("--abm-design", default="selective")
+		mode, _ = mode_parser.parse_known_args(more)
+		if mode.abm_design == "selective_attention" and a.abm_backend != "reference":
+			raise ValueError("selective_attention requires --abm-backend reference; tabicl/both are incompatible")
 		for Y in traits:
 			for layer in layers:
 				selected = "tabicl" if a.abm_backend == "tf" else a.abm_backend
@@ -1872,7 +1881,7 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 					continue
 				# Aggregate-only ABM reports never need checkpoints or participant matrices.
 				if not train_abm and any(
-					x in {"abm_reference", "abm_tabicl"} for x in parts
+					x in {"abm_reference", "abm_tabicl", "abm_selective_attention"} for x in parts
 				):
 					if (
 						path.suffix == ".rds"
@@ -1906,6 +1915,11 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 			path.unlink()
 		new_args = []
 		skip = False
+		def map_path(value):
+			if value.startswith('--') and '=' in value:
+				key, path = value.split('=', 1)
+				return key + '=' + map_path(path)
+			return str(work) + value[len(str(root)):] if value == str(root) or value.startswith(str(root) + '/') else value
 		for i, value in enumerate(argv):
 			if skip:
 				skip = False
@@ -1915,8 +1929,12 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 				skip = True
 			elif value.startswith("--analysis-root="):
 				new_args.append("--analysis-root=" + str(work))
+			elif (i and argv[i - 1] == '--abm-args') or value.startswith('--abm-args='):
+				# A sibling such as results-external is not inside results.
+				prefix, content = ('--abm-args=', value.split('=', 1)[1]) if value.startswith('--abm-args=') else ('', value)
+				new_args.append(prefix + shlex.join([map_path(word) for word in shlex.split(content)]))
 			else:
-				new_args.append(value.replace(str(root), str(work)))
+				new_args.append(map_path(value))
 		if not any(
 			x == "--analysis-root" or x.startswith("--analysis-root=") for x in new_args
 		):

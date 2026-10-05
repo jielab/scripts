@@ -424,6 +424,11 @@ def run(kind=None, argv=None):
 	if a.memory_limit_gb < 0 or a.memory_swap_gb < 0:
 		raise ValueError("Invalid process-tree memory cap")
 	selected = "tabicl" if a.backend == "tf" else a.backend
+	mode_parser = argparse.ArgumentParser(add_help=False)
+	mode_parser.add_argument("--abm-design", default="selective")
+	mode, _ = mode_parser.parse_known_args(rest)
+	if mode.abm_design == "selective_attention" and selected != "reference":
+		raise ValueError("selective_attention requires --backend reference; tabicl/both are incompatible")
 	if selected == "both":
 		if any(x == "--run-dir" or x.startswith("--run-dir=") for x in rest):
 			raise ValueError(
@@ -509,6 +514,55 @@ if __name__ == "__main__" and "--_abm-worker" not in sys.argv[1:]:
 
 # ABM
 # ABM 5: Transformer-assisted individual reference copying and disease risk.
+
+
+def s6_options(parser):
+    parser.add_argument("--abm-design", choices=["selective", "attention", "selective_attention"], default="selective")
+    parser.add_argument("--selective-coverage", type=float, default=0.60)
+    parser.add_argument("--selective-coverages", default="0.2,0.4,0.6,0.8,1.0")
+    parser.add_argument("--selective-split", default="0.60,0.10,0.10,0.20",
+                        help="Build,tune,calibration,test fractions; --split-file takes precedence")
+    parser.add_argument("--selective-folds", type=int, default=5)
+    parser.add_argument("--selective-repeats", type=int, default=1)
+    parser.add_argument("--selective-gate-fraction", type=float, default=0.30)
+    parser.add_argument("--selective-weight-floor", type=float, default=0.20)
+    parser.add_argument("--selective-neighbors", type=int, default=100)
+    parser.add_argument("--selective-prior-strength", type=float, default=50.0)
+    parser.add_argument("--selective-components", type=int, default=32)
+    parser.add_argument("--selective-support-quantile", type=float, default=0.99)
+    parser.add_argument("--selective-gate-target", choices=["omics_gain", "local_gain"], default="omics_gain")
+    parser.add_argument("--selective-gate-trees", type=int, default=100)
+    parser.add_argument("--selective-min-events", type=int, default=10)
+    parser.add_argument("--selective-primary", choices=["elasticnet", "tree"], default="elasticnet")
+    parser.add_argument("--selective-clinical-tier", choices=["basic", "extended"], default="basic",
+                        help="Descriptive label only; actual --covariates are always exported")
+    parser.add_argument("--selective-dca-thresholds", default="0.01,0.025,0.05,0.10,0.20")
+    parser.add_argument("--selective-boot-models", default="primary",
+                        choices=["primary", "all"], help="Paired intervals; all includes tree arms")
+    return parser
+
+
+def s7_options(p):
+	p.add_argument("--group-namespace", default="ukb", help="Frozen training family namespace; external projection must declare its namespace")
+	p.add_argument("--s7-primary", default="attention_retrieval_weighted")
+	p.add_argument("--s7-tail-policy", choices=["dual", "bulk_only"], default="dual")
+	p.add_argument("--s7-tail-cap", type=float, default=12.)
+	p.add_argument("--s7-feature-schema", default="")
+	p.add_argument("--s7-views", default="global,learned,tail")
+	p.add_argument("--s7-neighbors-per-view", type=int, default=64)
+	p.add_argument("--s7-radius-ref-n", type=int, default=2048)
+	p.add_argument("--s7-bandwidth-grid", default="0.5,1,2")
+	p.add_argument("--s7-prior-strength", type=float, default=20.)
+	p.add_argument("--s7-max-borrow", type=float, default=.8)
+	p.add_argument("--s7-hard-filter", action="store_true")
+	p.add_argument("--s7-weight-scope", choices=["query_loss", "loss_and_bank"], default="query_loss")
+	p.add_argument("--s7-audit-min-events", type=int, default=20)
+	p.add_argument("--s7-audit-min-controls", type=int, default=50)
+	p.add_argument("--projection-mode", choices=["external_validation", "diagnostic"], default="external_validation")
+	p.add_argument("--projection-group-file")
+	p.add_argument("--projection-group-col")
+	p.add_argument("--projection-group-namespace")
+	return p
 
 
 def reference_parser():
@@ -648,30 +702,8 @@ def reference_parser():
 		action="store_true",
 		help="Negative control: permute time/event pairs independently within each non-test role",
 	)
-	# C1_SELECTIVE_OPTIONS_BEGIN
-	p.add_argument("--abm-design", choices=["selective", "attention"], default="selective")
-	p.add_argument("--selective-coverage", type=float, default=0.60)
-	p.add_argument("--selective-coverages", default="0.2,0.4,0.6,0.8,1.0")
-	p.add_argument("--selective-split", default="0.60,0.10,0.10,0.20",
-	                    help="Build,tune,calibration,test fractions; --split-file takes precedence")
-	p.add_argument("--selective-folds", type=int, default=5)
-	p.add_argument("--selective-repeats", type=int, default=1)
-	p.add_argument("--selective-gate-fraction", type=float, default=0.30)
-	p.add_argument("--selective-weight-floor", type=float, default=0.20)
-	p.add_argument("--selective-neighbors", type=int, default=100)
-	p.add_argument("--selective-prior-strength", type=float, default=50.0)
-	p.add_argument("--selective-components", type=int, default=32)
-	p.add_argument("--selective-support-quantile", type=float, default=0.99)
-	p.add_argument("--selective-gate-target", choices=["omics_gain", "local_gain"], default="omics_gain")
-	p.add_argument("--selective-gate-trees", type=int, default=100)
-	p.add_argument("--selective-min-events", type=int, default=10)
-	p.add_argument("--selective-primary", choices=["elasticnet", "tree"], default="elasticnet")
-	p.add_argument("--selective-clinical-tier", choices=["basic", "extended"], default="basic",
-	                    help="Descriptive label only; actual --covariates are always exported")
-	p.add_argument("--selective-dca-thresholds", default="0.01,0.025,0.05,0.10,0.20")
-	p.add_argument("--selective-boot-models", default="primary",
-	                    choices=["primary", "all"], help="Paired intervals; all includes tree arms")
-	# C1_SELECTIVE_OPTIONS_END
+	s6_options(p)
+	s7_options(p)
 	return p
 
 
@@ -808,6 +840,8 @@ def configure(a):
 
 
 def output_directory(a, backend="reference"):
+	if backend == "reference" and getattr(a, "abm_design", "") == "selective_attention":
+		backend = "selective_attention"
 	return (
 		Path(a.run_dir)
 		if a.run_dir
@@ -821,7 +855,7 @@ def output_directory(a, backend="reference"):
 
 def abm_cache_dir(out, *parts):
 	out = Path(out).resolve()
-	if out.parent.name == "c1_correlate" and out.name in {"abm_reference", "abm_tabicl"}:
+	if out.parent.name == "c1_correlate" and out.name in {"abm_reference", "abm_tabicl", "abm_selective_attention"}:
 		project = out.parents[3]
 		if project == Path(os.getenv("LE8_ANALYSIS_ROOT", str(project))).resolve():
 			project = Path(os.getenv("LE8_PUBLISHED_ROOT", str(project))).resolve()
@@ -902,7 +936,7 @@ def reference_main():
 			raise ValueError("project requires --run-dir and --output")
 		with threadpool_limits(a.cores):
 			reference_project(
-				out, a.phe_file, a.omics_file, a.output, a.r_bin, a.met_input, a.device
+				out, a.phe_file, a.omics_file, a.output, a.r_bin, a.met_input, a.device, projection_request=projection_request(a)
 			)
 		return
 	if a.dry_run:
@@ -3316,7 +3350,7 @@ def read_table(path, id_col="eid", columns=None, r_bin="Rscript", string_columns
 	return validate_ids(frame, id_col)
 
 
-def numeric(frame, columns, context):
+def numeric(frame, columns, context, dtype="float32"):
 	values = []
 	for name in columns:
 		raw = frame[name]
@@ -3324,7 +3358,7 @@ def numeric(frame, columns, context):
 		bad = raw.notna() & val.isna()
 		if bad.any():
 			raise ValueError(f"{context}: nonnumeric values in {name}")
-		values.append(val.to_numpy(dtype="float32", na_value=np.nan))
+		values.append(val.to_numpy(dtype=dtype, na_value=np.nan))
 	if not values:
 		raise ValueError(f"{context}: no molecular columns")
 	result = np.column_stack(values)
@@ -3580,7 +3614,7 @@ def prepare(a, out):
 		raise ValueError(
 			"Metadata/outcome columns in omics matrix: " + ", ".join(sorted(collision))
 		)
-	x = numeric(omics, features, "omics")
+	x = numeric(omics, features, "omics", dtype="float64" if a.abm_design == "selective_attention" else "float32")
 	negative = np.sum(x < 0, axis=0)
 	x = molecular_input_qc(x, a.biom, a.demo)
 	negative_to_missing = int(negative.sum()) if a.biom == "met" and not a.demo else 0
@@ -4737,7 +4771,7 @@ def runtime_manifest(a):
 		except importlib.metadata.PackageNotFoundError:
 			deps[name] = "not_installed"
 	paths = [] if a.demo else [a.phe_file, a.omics_file]
-	paths += [s for s in [a.split_file, a.module_file, a.group_file, a.outer_roster] if s]
+	paths += [s for s in [a.split_file, a.module_file, a.group_file, a.outer_roster, getattr(a, "s7_feature_schema", "")] if s]
 	if a.biom == "met" and a.met_input == "raw" and not a.demo:
 		paths.append(a.met_map)
 	config = {
@@ -5347,6 +5381,7 @@ def reference_train(a, out):
 		profile_center=profile_center,
 		profile_scale=profile_scale,
 	)
+	freeze_projection_schema(bundle, p, a, ~test)
 	joblib.dump(bundle, out / "model_bundle.joblib", compress=3)
 	dump(
 		out / "MODEL_FROZEN.json",
@@ -5544,36 +5579,17 @@ def reference_project(
 	r_bin="Rscript",
 	met_input="named",
 	device="cpu",
+	projection_request=None,
 ):
 	bundle = joblib.load(Path(run_dir) / "model_bundle.joblib")
 	cfg = bundle["config"]
 	idcol = cfg["id_col"]
-	cols = list(
-		dict.fromkeys(
-			[idcol]
-			+ words(cfg["covariates"])
-			+ words(cfg["residualize"])
-			+ ([cfg["group_col"]] if cfg["group_col"] else [])
-		)
-	)
-	p = read_table(phe_path, idcol, cols, r_bin)
-	omics = read_table(omics_path, idcol, r_bin=r_bin)
-	if cfg["biom"] == "prot":
-		omics.columns = [c if c == idcol else str(c).upper() for c in omics.columns]
-	elif met_input == "raw":
-		omics, _ = map_metabolites(omics, cfg["met_map"], idcol)
-	if omics.columns.duplicated().any():
-		raise ValueError("Assay names collide after normalization")
-	if not set(omics[idcol]) <= set(p[idcol]):
-		raise ValueError("Query IDs lack baseline metadata")
-	p = p.set_index(idcol).loc[omics[idcol]].reset_index()
-	# Entirely absent assays can be imputed, but their missingness affects support.
-	absent = set(bundle["features"]) - set(omics)
-	omics = omics.reindex(columns=[idcol] + bundle["features"])
-	raw = numeric(omics, bundle["features"], "projection")
-	raw = molecular_input_qc(raw, cfg["biom"], cfg.get("demo", False))
+	request = projection_request or ProjectionRequest(phe_path, omics_path, output, met_input=met_input, r_bin=r_bin, device=device)
+	p, raw, projection_audit = load_projection(bundle, request)
+	absent = projection_audit["absent_assays"]
 	x, observed = bundle["prep"].transform(raw, p)
 	info, detail = predict_bundle(bundle, x, observed, p, device_for(device))
+	info["validation_status"] = projection_audit["validation_status"]
 	output = Path(output)
 	output.parent.mkdir(parents=True, exist_ok=True)
 	info.to_csv(output, index=False)
@@ -6066,6 +6082,7 @@ def tabicl_train(a, out, model_info):
 		constant=float(raw["constant"][0]),
 		pretrained=model_info,
 	)
+	freeze_projection_schema(bundle, p, a, ~test)
 	joblib.dump(bundle, out / "model_bundle.joblib", compress=3)
 	info.to_csv(out / "test_predictions.csv", index=False)
 	p.loc[
@@ -6162,34 +6179,8 @@ def tabicl_project(a, out):
 	b = joblib.load(out / "model_bundle.joblib")
 	cfg = b["config"]
 	idcol = cfg["id_col"]
-	cols = list(
-		dict.fromkeys(
-			[idcol]
-			+ words(cfg["covariates"])
-			+ words(cfg["residualize"])
-			+ ([cfg["group_col"]] if cfg["group_col"] else [])
-		)
-	)
-	p = read_table(a.phe_file, idcol, cols, a.r_bin)
-	m = read_table(a.omics_file, idcol, r_bin=a.r_bin)
-	if cfg["biom"] == "prot":
-		m.columns = [c if c == idcol else str(c).upper() for c in m]
-	elif a.met_input == "raw":
-		m, _ = map_metabolites(m, cfg["met_map"], idcol)
-	if not set(m[idcol]) <= set(p[idcol]):
-		raise ValueError("Missing query metadata")
-	p = p.set_index(idcol).loc[m[idcol]].reset_index()
+	p, raw, projection_audit = load_projection(b, projection_request(a))
 	ids = p[idcol].to_numpy(str)
-	if set(ids) & set(b["context_ids"]):
-		raise ValueError(
-			"Query contains labeled context participants; use a truly held-out query"
-		)
-	if cfg["group_col"] and b["context_groups"] is not None:
-		if set(p[cfg["group_col"]].astype(str)) & set(b["context_groups"]):
-			raise ValueError("Query families overlap labeled context")
-	m = m.reindex(columns=[idcol] + b["features"])
-	raw = numeric(m, b["features"], "TF projection")
-	raw = molecular_input_qc(raw, cfg["biom"], cfg.get("demo", False))
 	x, observed = b["prep"].transform(raw, p)
 	z = x[:, b["selected"]]
 	c = b["clinical"].transform(p)
@@ -6221,6 +6212,8 @@ def tabicl_project(a, out):
 			"released_net_risk": np.where(release, values, np.nan),
 		}
 	)
+	result["validation_status"] = projection_audit["validation_status"]
+	dump(Path(a.output).with_suffix(".audit.json"), projection_audit)
 	Path(a.output).parent.mkdir(parents=True, exist_ok=True)
 	result.to_csv(a.output, index=False)
 	return result
@@ -6451,30 +6444,6 @@ S6_VERSION = "6.0.0-selective-20261004"
 S6_PRIMARY = "elasticnet_weighted"
 
 
-def s6_options(parser):
-    parser.add_argument("--abm-design", choices=["selective", "attention"], default="selective")
-    parser.add_argument("--selective-coverage", type=float, default=0.60)
-    parser.add_argument("--selective-coverages", default="0.2,0.4,0.6,0.8,1.0")
-    parser.add_argument("--selective-split", default="0.60,0.10,0.10,0.20",
-                        help="Build,tune,calibration,test fractions; --split-file takes precedence")
-    parser.add_argument("--selective-folds", type=int, default=5)
-    parser.add_argument("--selective-repeats", type=int, default=1)
-    parser.add_argument("--selective-gate-fraction", type=float, default=0.30)
-    parser.add_argument("--selective-weight-floor", type=float, default=0.20)
-    parser.add_argument("--selective-neighbors", type=int, default=100)
-    parser.add_argument("--selective-prior-strength", type=float, default=50.0)
-    parser.add_argument("--selective-components", type=int, default=32)
-    parser.add_argument("--selective-support-quantile", type=float, default=0.99)
-    parser.add_argument("--selective-gate-target", choices=["omics_gain", "local_gain"], default="omics_gain")
-    parser.add_argument("--selective-gate-trees", type=int, default=100)
-    parser.add_argument("--selective-min-events", type=int, default=10)
-    parser.add_argument("--selective-primary", choices=["elasticnet", "tree"], default="elasticnet")
-    parser.add_argument("--selective-clinical-tier", choices=["basic", "extended"], default="basic",
-                        help="Descriptive label only; actual --covariates are always exported")
-    parser.add_argument("--selective-dca-thresholds", default="0.01,0.025,0.05,0.10,0.20")
-    parser.add_argument("--selective-boot-models", default="primary",
-                        choices=["primary", "all"], help="Paired intervals; all includes tree arms")
-    return parser
 
 
 def s6_validate(a):
@@ -7167,6 +7136,7 @@ def s6_fit(raw,p,features,a,out):
       model=model,gate=gate,coverage_rules=rules,control_rules=control_rules,readiness=readiness,
       build_groups=set(group[parts["build"]]),development_groups=set(group[~p.role.eq("test")]),
       calibration_edges={name:np.unique(np.quantile(prob,np.linspace(0,1,11))) for name,prob in tune_predictions.items()})
+    freeze_projection_schema(bundle,p,a,~p.role.eq("test"))
     joblib.dump(bundle,out/"model_bundle.joblib",compress=3)
     s6_json(out/"MODEL_FROZEN.json",dict(version=S6_VERSION,design="selective",primary=primary,
            test_Y_used_for_fitting_or_selection=False,initial_split_outcome_blind=not bool(a.split_file),
@@ -7414,25 +7384,1568 @@ def s6_train_from_host(a,out):
     return s6_fit(raw,p,features,a,out)
 
 
-def s6_project_from_host(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu"):
-    out=Path(out);bundle=joblib.load(out/"model_bundle.joblib");cfg=bundle["config"]
-    idcol=cfg["id_col"]
-    columns=list(dict.fromkeys([idcol]+s6_words(cfg["covariates"])+s6_words(cfg["residualize"])+([cfg["group_col"]] if cfg["group_col"] else [])))
-    p=read_table(phe_file,idcol,columns,r_bin);m=read_table(omics_file,idcol,r_bin=r_bin)
-    if cfg["biom"]=="prot":m.columns=[v if v==idcol else str(v).upper() for v in m]
-    elif met_input=="raw":m,_=map_metabolites(m,cfg["met_map"],idcol)
-    if not set(m[idcol])<=set(p[idcol]):raise ValueError("Missing projection metadata")
-    p=p.set_index(idcol).loc[m[idcol]].reset_index()
-    a=SimpleNamespace(**cfg)
-    if set(s6_groups(p,a))&bundle["development_groups"]:
-        raise ValueError("Projection includes development participants/families; use untouched external participants")
-    m=m.reindex(columns=[idcol]+bundle["features"])
-    raw=numeric(m,bundle["features"],"selective projection")
-    raw=molecular_input_qc(raw,cfg["biom"],cfg.get("demo",False))
+def s6_project_from_host(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu",projection_request=None):
+    bundle=joblib.load(Path(out)/"model_bundle.joblib")
+    request=projection_request or ProjectionRequest(phe_file,omics_file,output,met_input=met_input,r_bin=r_bin,device=device)
+    p,raw,audit=load_projection(bundle,request)
     result=s6_predict(bundle,raw,p)
+    result["validation_status"]=audit["validation_status"]
     Path(output).parent.mkdir(parents=True,exist_ok=True)
     result.to_csv(output,index=False)
+    dump(Path(output).with_suffix(".audit.json"),audit)
     return result
+
+
+# 🚩 Shared external projection contract
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ProjectionRequest:
+	phe_file: str
+	omics_file: str
+	output: str
+	group_file: str | None = None
+	group_col: str | None = None
+	group_namespace: str | None = None
+	met_input: str = "named"
+	mode: str = "external_validation"
+	r_bin: str = "Rscript"
+	device: str = "cpu"
+
+
+def projection_request(a):
+	return ProjectionRequest(a.phe_file, a.omics_file, a.output,
+		a.projection_group_file or a.group_file,
+		a.projection_group_col or a.group_source_column,
+		a.projection_group_namespace, a.met_input, a.projection_mode, a.r_bin, a.device)
+
+
+def freeze_projection_schema(bundle, p, a, development):
+	bundle["development_ids"] = set(p.loc[development, a.id_col].astype(str))
+	bundle["development_groups"] = set(s6_groups(p.loc[development], a))
+	bundle["projection_schema"] = dict(id_col=a.id_col,
+		covariates=words(a.covariates), technical=words(a.residualize),
+		requires_family=bool(a.group_col), source_group_col=getattr(a, 'group_source_column', a.group_col),
+		internal_group_col=a.group_col or ".le8_family", group_namespace=getattr(a, 'group_namespace', 'ukb'),
+		development_ids=bundle["development_ids"], development_groups=bundle["development_groups"])
+	return bundle
+
+
+def prepare_projection_metadata(frozen_schema, request, omics_ids):
+	idcol = frozen_schema["id_col"]
+	cols = list(dict.fromkeys([idcol] + frozen_schema["covariates"] + frozen_schema["technical"] +
+		([request.group_col] if request.group_col else [])))
+	meta = read_table(request.phe_file, idcol, cols, request.r_bin,
+		string_columns=([request.group_col] if request.group_col else []))
+	_string_ids(pd.Series(omics_ids), "omics IDs")
+	if len(set(omics_ids)) != len(omics_ids):
+		raise ValueError("Duplicate projection omics IDs")
+	if not set(omics_ids) <= set(meta[idcol]):
+		raise ValueError("Projection IDs lack baseline metadata")
+	meta = meta.set_index(idcol).loc[list(omics_ids)].reset_index()
+	mapping = None
+	if request.group_file:
+		mapping = read_table(request.group_file, idcol, [idcol, "group"], request.r_bin, string_columns=["group"])
+	family = frozen_schema["requires_family"]
+	if family and not request.group_namespace:
+		raise ValueError("Family-aware projection requires --projection-group-namespace")
+	if request.mode not in {"external_validation", "diagnostic"}:
+		raise ValueError("Unknown projection mode")
+	meta = attach_projection_groups(meta, id_col=idcol, source_group_col=request.group_col,
+		mapping=mapping, allow_individual_fallback=not family,
+		internal_group_col=frozen_schema["internal_group_col"])
+	groups = meta[frozen_schema["internal_group_col"]].to_numpy(str)
+	same_namespace = request.group_namespace == frozen_schema["group_namespace"]
+	if request.mode == "external_validation":
+		assert_external_roster(meta[idcol], groups,
+			frozen_schema["development_ids"], frozen_schema["development_groups"] if same_namespace else set())
+	status = dict(validation_status="external_validation" if request.mode == "external_validation" else "not_external_validation",
+		group_namespace=request.group_namespace, same_group_namespace=same_namespace,
+		schema_aligned=True, N=len(meta), requires_family=family)
+	return meta, status
+
+
+def load_projection(bundle, request):
+	cfg = bundle["config"]; idcol = cfg["id_col"]
+	if "projection_schema" not in bundle:
+		raise ValueError("This legacy bundle lacks a complete development roster; refit before external projection")
+	omics = read_table(request.omics_file, idcol, r_bin=request.r_bin)
+	if cfg["biom"] == "prot":
+		omics.columns = [c if c == idcol else str(c).upper() for c in omics]
+	elif request.met_input == "raw":
+		omics, _ = map_metabolites(omics, cfg["met_map"], idcol)
+	if omics.columns.duplicated().any():
+		raise ValueError("Assay names collide after normalization")
+	meta, audit = prepare_projection_metadata(bundle["projection_schema"], request, omics[idcol].tolist())
+	audit["absent_assays"] = sorted(set(bundle["features"]) - set(omics))
+	omics = omics.reindex(columns=[idcol] + bundle["features"])
+	raw = numeric(omics, bundle["features"], "projection",
+		dtype="float64" if bundle.get("design") == "selective_attention" else "float32")
+	raw = molecular_input_qc(raw, cfg["biom"], cfg.get("demo", False))
+	return meta, raw, audit
+
+
+def _matrix(x: np.ndarray) -> np.ndarray:
+    a = np.asarray(x, dtype=np.float64)
+    if a.ndim != 2 or not a.shape[0] or not a.shape[1]:
+        raise ValueError('Expected a nonempty rows-by-features matrix')
+    a = a.copy()
+    a[~np.isfinite(a)] = np.nan
+    return a
+
+
+class S7TailTransform:
+    """Frozen bulk/tail representation; rare variation survives bulk winsorization.
+
+    fit: training data only. transform: no fitting, outcome input, or batch statistics.
+    Inferred binary means observed values are exactly {0,1}; dosage is explicit.
+    Constant/all-missing source features are removed based on training only.
+    """
+    def __init__(self, max_missing: float = .2, lower_q: float = .005,
+                 upper_q: float = .995, tail_cap: float = 12.):
+        if not 0 <= max_missing < 1 or not 0 <= lower_q < upper_q <= 1:
+            raise ValueError('Invalid missingness limit or quantiles')
+        if not np.isfinite(tail_cap) or tail_cap <= 0:
+            raise ValueError('tail_cap must be positive and finite')
+        self.max_missing, self.lower_q, self.upper_q = max_missing, lower_q, upper_q
+        self.tail_cap = tail_cap
+
+    def fit(self, x: np.ndarray, feature_types: list[str] | None = None):
+        x = _matrix(x)
+        self.n_input_features_ = x.shape[1]
+        if feature_types is not None and len(feature_types) != x.shape[1]:
+            raise ValueError('One feature type is required for each source assay')
+        types, records, retained = [], [], []
+        for j in range(x.shape[1]):
+            v = x[np.isfinite(x[:, j]), j]
+            reason = ('all_missing' if not len(v) else
+                      'excess_missing' if 1-len(v)/len(x) > self.max_missing else
+                      'constant_raw' if np.min(v) == np.max(v) else 'retained')
+            typ = feature_types[j] if feature_types is not None else (
+                'binary' if len(v) and np.isin(v, [0., 1.]).all() else 'continuous')
+            if typ not in {'continuous', 'binary', 'dosage'}:
+                raise ValueError(f'Unknown feature type at column {j}: {typ}')
+            if typ == 'binary' and not np.isin(v, [0., 1.]).all():
+                raise ValueError('A binary feature has values outside {0,1}')
+            if typ == 'dosage' and ((v < 0).any() or (v > 2).any()):
+                raise ValueError('Explicit dosage must be in [0,2]')
+            records.append(dict(source_index=j, feature_type=typ, status=reason,
+                                observed_n=len(v), raw_variance=float(np.var(v)) if len(v) else np.nan))
+            if reason == 'retained':
+                retained.append(j); types.append(typ)
+        if not retained:
+            raise ValueError('No nonconstant training features passed QC')
+        self.keep_ = np.asarray(retained, dtype=int)
+        self.feature_types_ = tuple(types)
+        n = len(retained)
+        self.lower_, self.upper_, self.median_, self.scale_ = (np.zeros(n) for _ in range(4))
+        self.bulk_mean_, self.bulk_sd_ = np.zeros(n), np.ones(n)
+        for k, (j, typ) in enumerate(zip(retained, types)):
+            v = x[np.isfinite(x[:, j]), j]
+            med = float(np.median(v))
+            lo, hi = np.quantile(v, [self.lower_q, self.upper_q])
+            scale = (np.quantile(v, .75) - np.quantile(v, .25)) / 1.349
+            if scale <= 1e-12:
+                scale = 1.4826 * np.median(np.abs(v-med))
+            if scale <= 1e-12:
+                nonzero = np.abs(v-med); nonzero = nonzero[nonzero > 1e-12]
+                scale = float(np.median(nonzero)) if len(nonzero) else 1.
+            self.lower_[k], self.upper_[k], self.median_[k], self.scale_[k] = lo, hi, med, scale
+            if typ == 'continuous':
+                bulk = np.clip(np.where(np.isfinite(x[:, j]), x[:, j], med), lo, hi)
+                self.bulk_mean_[k] = np.mean(bulk)
+                sd = float(np.std(bulk)); self.bulk_sd_[k] = sd if sd > 1e-12 else 1.
+                records[j]['bulk_variance_after_clipping'] = float(np.var(bulk))
+                records[j]['rare_signal_preserved_in_tail'] = bool(lo == hi and np.var(v) > 0)
+            elif typ == 'binary':
+                self.median_[k] = float(np.sum(v == 1) > np.sum(v == 0))
+                records[j]['bulk_variance_after_clipping'] = float(np.var(v))
+                records[j]['rare_signal_preserved_in_tail'] = False
+            else:
+                records[j]['bulk_variance_after_clipping'] = float(np.var(v))
+                records[j]['rare_signal_preserved_in_tail'] = False
+        self.audit_ = pd.DataFrame(records)
+        return self
+
+    def transform(self, x: np.ndarray) -> dict[str, np.ndarray]:
+        x = _matrix(x)
+        if x.shape[1] != self.n_input_features_:
+            raise ValueError('Source feature count differs from the frozen schema')
+        a = x[:, self.keep_]; observed = np.isfinite(a)
+        filled = np.where(observed, a, self.median_)
+        bulk = np.zeros_like(filled); up = np.zeros_like(filled); down = np.zeros_like(filled)
+        cap_hit = np.zeros_like(observed)
+        for k, typ in enumerate(self.feature_types_):
+            if typ == 'continuous':
+                bulk[:, k] = (np.clip(filled[:, k], self.lower_[k], self.upper_[k])-
+                              self.bulk_mean_[k])/self.bulk_sd_[k]
+                with np.errstate(over='ignore', invalid='ignore'):
+                    # arcsinh preserves sign/order in the tail; cap is numeric safety, not a quantile filter.
+                    hi = np.arcsinh(np.maximum(filled[:, k]-self.upper_[k], 0)/self.scale_[k])
+                    lo = np.arcsinh(np.maximum(self.lower_[k]-filled[:, k], 0)/self.scale_[k])
+                up[:, k] = np.where(observed[:, k], np.minimum(hi, self.tail_cap), 0)
+                down[:, k] = np.where(observed[:, k], np.minimum(lo, self.tail_cap), 0)
+                cap_hit[:, k] = observed[:, k] & ((hi > self.tail_cap) | (lo > self.tail_cap))
+            elif typ == 'binary':
+                if not np.isin(a[observed[:, k], k], [0., 1.]).all():
+                    raise ValueError('Projection values violate binary schema')
+                bulk[:, k] = filled[:, k]
+            else:
+                v = a[observed[:, k], k]
+                if (v < 0).any() or (v > 2).any():
+                    raise ValueError('Projection dosage outside [0,2]')
+                bulk[:, k] = filled[:, k]/2.
+        return dict(bulk=bulk.astype('float32'), tail_up=up.astype('float32'),
+                    tail_down=down.astype('float32'), observed=observed,
+                    tail_cap_hit=cap_hit)
+
+    def linear_design(self, x: np.ndarray) -> np.ndarray:
+        z = self.transform(x)
+        return np.concatenate([z['bulk'], z['tail_up'], z['tail_down'],
+                               (~z['observed']).astype('float32')], axis=1)
+
+
+@dataclass
+class BorrowResult:
+    probability: np.ndarray
+    weights: np.ndarray
+    effective_donors: np.ndarray
+    effective_groups: np.ndarray
+    support: np.ndarray
+    borrow_fraction: np.ndarray
+    valid_count: np.ndarray
+
+
+def fixed_scale_borrow(distances: np.ndarray, labels: np.ndarray,
+                       donor_ipcw: np.ndarray, prior: np.ndarray, *,
+                       radius: float, temperature: float = 1., strength: float = 20.,
+                       alpha_max: float = .8, allowed: np.ndarray | None = None,
+                       donor_groups: np.ndarray | None = None) -> BorrowResult:
+    """Probability borrowing with frozen absolute scale and group-level ESS.
+
+    distances/labels/donor_ipcw: (queries, selected_donors).
+    allowed already excludes self and family. No query outcomes are accepted.
+    radius is learned from TRAINING group-disjoint distances, never from this batch.
+    This reference covers fixed-kernel borrowing, not neural Q/K optimization.
+    """
+    d = np.asarray(distances, dtype=float)
+    y = np.asarray(labels, dtype=float); w = np.asarray(donor_ipcw, dtype=float)
+    p = np.asarray(prior, dtype=float)
+    if d.ndim != 2 or y.shape != d.shape or w.shape != d.shape or p.shape != (len(d),):
+        raise ValueError('Incompatible borrowing shapes')
+    if not np.isfinite([radius, temperature, strength, alpha_max]).all() or radius <= 0 or temperature <= 0 or strength < 0 or not 0 <= alpha_max <= 1:
+        raise ValueError('Invalid fixed scale or shrinkage')
+    if np.any(~np.isfinite(p)) or np.any((p < 0) | (p > 1)):
+        raise ValueError('prior is not a probability')
+    if np.isnan(d).any() or (d < 0).any():
+        raise ValueError('Distances must be nonnegative; infinity means unavailable')
+    if np.any(~np.isfinite(w)) or (w < 0).any() or np.any(~np.isfinite(y)) or np.any((y != 0) & (y != 1)):
+        raise ValueError('Invalid donor labels or weights')
+    good = np.isfinite(d) & (w > 0)
+    if allowed is not None:
+        allow = np.asarray(allowed, dtype=bool)
+        if allow.shape != d.shape:
+            raise ValueError('Invalid allowed-mask shape')
+        good &= allow
+    if donor_groups is not None:
+        donor_groups = np.asarray(donor_groups)
+        if donor_groups.shape != d.shape:
+            raise ValueError('Invalid donor-group shape')
+    with np.errstate(divide='ignore', over='ignore', invalid='ignore'):
+        logits = np.where(good, -.5*(d/(radius*temperature))**2 + np.log(np.maximum(w, np.finfo(float).tiny)), -np.inf)
+    if not d.shape[1]:
+        return BorrowResult(p.copy(), np.zeros_like(d), np.zeros(len(d)), np.zeros(len(d)),
+                            np.zeros(len(d)), np.zeros(len(d)), np.zeros(len(d), dtype=int))
+    maximum = np.max(logits, axis=1, keepdims=True)
+    maximum = np.where(np.isfinite(maximum), maximum, 0.)
+    with np.errstate(under='ignore'):
+        raw = np.exp(logits-maximum)
+    denom = raw.sum(axis=1, keepdims=True)
+    weights = np.divide(raw, denom, out=np.zeros_like(raw), where=denom > 0)
+    ss = (weights**2).sum(axis=1)
+    ess = np.divide(1., ss, out=np.zeros(len(d)), where=ss > 0)
+    essg = ess.copy()
+    if donor_groups is not None:
+        for i in range(len(d)):
+            grouped: dict[str, float] = {}
+            for j in np.flatnonzero(weights[i] > 0):
+                group = str(donor_groups[i, j])
+                if not group.strip():
+                    raise ValueError('Empty donor group')
+                grouped[group] = grouped.get(group, 0.) + float(weights[i, j])
+            sq = sum(v*v for v in grouped.values())
+            essg[i] = 1./sq if sq > 0 else 0.
+    nearest = np.min(np.where(good, d, np.inf), axis=1)
+    with np.errstate(over='ignore', under='ignore'):
+        support = np.exp(-.5*(nearest/radius)**2)
+    support[denom[:, 0] == 0] = 0.
+    fraction = alpha_max*support*np.divide(essg, essg+strength, out=np.zeros(len(d)), where=(essg+strength)>0)
+    local = (weights*y).sum(axis=1)
+    probability = (1-fraction)*p + fraction*local
+    return BorrowResult(probability, weights, ess, essg, support, fraction, good.sum(axis=1))
+
+
+def _string_ids(s: pd.Series, name: str) -> pd.Series:
+    if s.isna().any() or not s.map(lambda v: isinstance(v, str)).all() or s.str.strip().eq('').any():
+        raise ValueError(f'{name} must contain nonempty string IDs; read ID columns as strings')
+    return s
+
+
+def attach_projection_groups(meta: pd.DataFrame, *, id_col: str = 'eid',
+                             source_group_col: str | None = None,
+                             mapping: pd.DataFrame | None = None,
+                             allow_individual_fallback: bool = False,
+                             internal_group_col: str = '.le8_family') -> pd.DataFrame:
+    """Build projection family IDs from this invocation's inputs, never an old path.
+
+    The production host must validate group-ID namespaces and block full development
+    participant/group overlap. Mapping-only external input need not have the internal
+    group column. Extra mapping rows are allowed; missing/duplicate/conflicting rows fail.
+    """
+    if id_col not in meta:
+        raise ValueError('Missing participant ID')
+    ids = _string_ids(meta[id_col], id_col)
+    if ids.duplicated().any():
+        raise ValueError('Duplicate participant ID')
+    answer = meta.copy()
+    source = None
+    if source_group_col:
+        if source_group_col not in meta:
+            raise ValueError('Explicit source family column is missing')
+        source = _string_ids(meta[source_group_col], source_group_col).to_numpy()
+    mapped = None
+    if mapping is not None:
+        if not {id_col, 'group'} <= set(mapping.columns):
+            raise ValueError('Group file requires participant ID and group columns')
+        _string_ids(mapping[id_col], id_col); _string_ids(mapping['group'], 'group')
+        if mapping[id_col].duplicated().any():
+            raise ValueError('Duplicate group-file ID')
+        mapped_s = mapping.set_index(id_col)['group'].reindex(ids)
+        if mapped_s.isna().any():
+            raise ValueError('External group file does not cover every projection participant')
+        mapped = mapped_s.to_numpy()
+    if mapped is not None and source is not None and not np.array_equal(mapped, source):
+        raise ValueError('Source column and group file disagree')
+    resolved = mapped if mapped is not None else source
+    if resolved is None:
+        if not allow_individual_fallback:
+            raise ValueError('Family-aware model requires explicit projection family information')
+        resolved = ids.to_numpy()
+    if internal_group_col in meta and not np.array_equal(meta[internal_group_col].to_numpy(), resolved):
+        raise ValueError('Supplied internal family column conflicts with the validated source')
+    answer[internal_group_col] = resolved
+    return answer
+
+
+def assert_external_roster(ids: list[str], groups: list[str],
+                           development_ids: set[str], development_groups: set[str]) -> None:
+    if set(ids) & development_ids:
+        raise ValueError('Projection overlaps development participants')
+    if set(groups) & development_groups:
+        raise ValueError('Projection overlaps development families')
+
+
+
+# 🚩 S7 selective attention: outcome-free inputs and frozen geometry
+S7_VERSION = "7.0.0-selective-attention-20261005"
+S7_ROLES = ("build", "tune_model", "tune_gate", "calibration_fit", "calibration_audit", "test")
+
+
+def s7_numerical_code_hash(source):
+	module=ast.parse(source)
+	report_only={'render_abm_figures','figures_main','s7_render_figures','s6_figures'}
+	module.body=[node for node in module.body if not isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) or node.name not in report_only]
+	return hashlib.sha256(ast.dump(module,include_attributes=False).encode()).hexdigest()
+
+
+def s7_manifest(a):
+	data=runtime_manifest(a);data.pop('signature',None)
+	sources=data.pop('configuration_sources',{})
+	data['code']={'abm_numeric_sha256':s7_numerical_code_hash(Path(__file__).read_text()),
+		'dispatcher':fingerprints([HERE/'0.common.py'],True)}
+	data['signature']=digest(data);data['configuration_sources']=sources
+	return data
+
+
+def s7_validate(a):
+	a = s6_validate(a)
+	if a.tree == "none":
+		raise ValueError("S7 needs --tree lightgbm or explicit --tree hist")
+	a.s7_views = words(a.s7_views)
+	a.s7_bandwidth_grid = [float(v) for v in a.s7_bandwidth_grid.split(',')]
+	if not set(a.s7_views) <= {"global", "learned", "tail"} or not set(a.s7_views) & {"global", "learned"}:
+		raise ValueError("S7 views require global or learned and only implemented views")
+	if not all(np.isfinite(v) and v > 0 for v in a.s7_bandwidth_grid):
+		raise ValueError("Invalid S7 bandwidth grid")
+	if not np.isfinite(a.s7_tail_cap) or a.s7_tail_cap <= 0 or a.s7_neighbors_per_view < 1 or a.s7_radius_ref_n < 20:
+		raise ValueError("Invalid S7 tail or neighbor settings")
+	if not np.isfinite(a.s7_prior_strength) or a.s7_prior_strength < 0 or not 0 <= a.s7_max_borrow <= 1:
+		raise ValueError("Invalid S7 shrinkage")
+	if min(a.s7_audit_min_events, a.s7_audit_min_controls) < 1:
+		raise ValueError("Audit minimums must be positive")
+	if not np.allclose(a.selective_split, [.6,.1,.1,.2]):
+		raise ValueError("S7 fixes outer roles at 60:10:10:20; use an explicit outer roster for an existing test")
+	if a.split_file:
+		raise ValueError("S7 uses --outer-roster, not legacy outcome-stratified --split-file")
+	allowed = {"attention_direct_full", "attention_retrieval_full", "attention_retrieval_target_tuned",
+		"attention_retrieval_weighted", "attention_retrieval_random_weighted"}
+	if a.s7_hard_filter:
+		allowed |= {"attention_retrieval_filtered", "attention_retrieval_random_filtered"}
+	if a.s7_primary not in allowed:
+		raise ValueError("--s7-primary must name an enabled attention candidate")
+	# S7 has its own fixed loss definition; old defaults remain numerically intact.
+	a.s7_reconstruction_weight = .05
+	a.s7_gradient_clip = 1.
+	a.s7_epoch_limit = min(a.epochs, 60)
+	a.s7_pretrain_limit = min(a.pretrain_epochs, 20)
+	if a.s7_epoch_limit < 1 or a.s7_pretrain_limit < 0 or a.width % a.heads:
+		raise ValueError("S7 requires epochs>=1, pretrain>=0 and width divisible by heads")
+	if not a.group_namespace or not a.group_namespace.strip():
+		raise ValueError("Empty training group namespace")
+	if a.s7_feature_schema and not Path(a.s7_feature_schema).is_file():
+		raise FileNotFoundError(a.s7_feature_schema)
+	return a
+
+
+def s7_metadata(p, a):
+	columns = list(dict.fromkeys([a.id_col] + ([a.group_col] if a.group_col else []) + words(a.covariates) + words(a.residualize)))
+	return p[columns].copy().reset_index(drop=True)
+
+
+def s7_schema(features, a):
+	d = pd.DataFrame(dict(assay=features, source_index=np.arange(len(features)), kind="infer"))
+	if a.s7_feature_schema:
+		given = pd.read_csv(a.s7_feature_schema, dtype=str)
+		if not {"assay", "kind"} <= set(given) or given.assay.duplicated().any() or given.isna().any().any():
+			raise ValueError("Feature schema requires unique assay/kind rows")
+		if not set(given.assay) <= set(features) or not set(given.kind) <= {"continuous", "binary", "dosage"}:
+			raise ValueError("Feature schema contains unknown assays or kinds")
+		d['kind'] = d.assay.map(given.set_index('assay').kind).fillna('infer')
+	return d
+
+
+@dataclass
+class S7Batch:
+	bulk: np.ndarray
+	tail_up: np.ndarray
+	tail_down: np.ndarray
+	observed: np.ndarray
+	tail_cap_hit: np.ndarray
+	clinical: np.ndarray
+	ids: np.ndarray
+	groups: np.ndarray
+	feature_names: list[str]
+	unknown_category: np.ndarray
+
+	def design(self, bulk_only=False):
+		pieces = [self.bulk]
+		if not bulk_only:
+			pieces += [self.tail_up, self.tail_down, (~self.observed).astype('float32')]
+		return np.c_[*pieces, self.clinical]
+
+	def take(self, ix):
+		return S7Batch(**{k: v if k == 'feature_names' else v[ix] for k,v in vars(self).items()})
+
+	def tensors(self, device):
+		return {k: torch.as_tensor(np.ascontiguousarray(getattr(self,k)), device=device)
+			for k in ('bulk','tail_up','tail_down','observed','clinical')}
+
+
+@dataclass
+class S7FitData:
+	raw: np.ndarray
+	metadata: pd.DataFrame
+	time: np.ndarray
+	event: np.ndarray
+	feature_schema: pd.DataFrame
+	role_name: str
+
+	def survival(self):
+		return pd.DataFrame(dict(time=self.time, event=self.event))
+
+	def take(self, ix, role=None):
+		return S7FitData(self.raw[ix], self.metadata.iloc[ix].reset_index(drop=True),
+			self.time[ix], self.event[ix], self.feature_schema, role or self.role_name)
+
+
+@dataclass
+class S7Prediction:
+	probability: np.ndarray
+	diagnostics: pd.DataFrame
+
+
+class S7Preprocessor:
+	def __init__(self, config):
+		self.config = dict(config)
+
+	def domain(self, raw):
+		x = _matrix(raw)
+		a = SimpleNamespace(**self.config)
+		return molecular_input_qc(x, a.biom, a.demo)
+
+	def scaled(self, raw):
+		x = self.domain(raw)
+		if self.config['transform'] == 'log1p':
+			cols = np.array(self.kinds) == 'continuous'
+			if np.any(x[:,cols] <= -1):
+				raise ValueError("log1p requires x > -1 after domain QC")
+			x[:,cols] = np.log1p(x[:,cols])
+		return x
+
+	def fit(self, raw_X, metadata_X, feature_schema):
+		a = SimpleNamespace(**self.config)
+		self.schema = feature_schema.copy()
+		x = self.domain(raw_X)
+		self.kinds = []
+		for j, kind in enumerate(self.schema.kind):
+			v = x[np.isfinite(x[:,j]),j]
+			self.kinds.append(('binary' if len(v) and np.isin(v,[0,1]).all() else 'continuous') if kind == 'infer' else kind)
+		self.schema['kind'] = self.kinds
+		x = self.scaled(raw_X)
+		self.technical = None
+		self.continuous = np.flatnonzero(np.array(self.kinds) == 'continuous')
+		if words(a.residualize) and len(self.continuous):
+			self.technical_design = S6Clinical(words(a.residualize), words(a.categorical), sparse_output=True).fit(metadata_X)
+			c = self.technical_design.transform(metadata_X)
+			if c.shape[1]:
+				z = x[:,self.continuous].copy()
+				with warnings.catch_warnings():
+					warnings.simplefilter('ignore',RuntimeWarning)
+					lo, hi = np.nanquantile(z,[.005,.995],axis=0)
+					med = np.nanmedian(z,axis=0)
+				med = np.nan_to_num(med)
+				z = np.clip(np.where(np.isfinite(z),z,med),np.nan_to_num(lo),np.nan_to_num(hi))
+				self.technical = Ridge(alpha=10.,solver='lsqr',tol=1e-5).fit(c,z)
+			x = self.correct(x,metadata_X)
+		self.tail = S7TailTransform(a.feature_missing,tail_cap=a.s7_tail_cap).fit(x,self.kinds)
+		self.clinical = S6Clinical(words(a.covariates),words(a.categorical)).fit(metadata_X) if words(a.covariates) else None
+		self.feature_names = self.schema.assay.iloc[self.tail.keep_].tolist()
+		audit = self.tail.audit_.copy().rename(columns={'feature_type':'kind','observed_n':'train_observed_n','bulk_variance_after_clipping':'clipped_variance'})
+		audit['source_assay'] = self.schema.assay.to_numpy()
+		audit['input_qc_exclusions'] = np.sum(~np.isnan(raw_X) & ~np.isfinite(self.domain(raw_X)),axis=0)
+		for name in ('lower','upper','scale','tail_variance'):
+			audit[name] = np.nan
+		audit['scale_fallback'] = 'not_retained'
+		z = self.tail.transform(x)
+		for k,j in enumerate(self.tail.keep_):
+			v = x[np.isfinite(x[:,j]),j]; med = np.median(v)
+			fallback = 'IQR' if np.subtract(*np.quantile(v,[.75,.25]))/1.349 > 1e-12 else 'MAD' if 1.4826*np.median(np.abs(v-med)) > 1e-12 else 'nonzero_deviation'
+			audit.loc[j,['lower','upper','scale','tail_variance']] = [self.tail.lower_[k],self.tail.upper_[k],self.tail.scale_[k],np.var(z['tail_up'][:,k])+np.var(z['tail_down'][:,k])]
+			audit.loc[j,'scale_fallback'] = fallback
+		audit['technical_model_hash'] = joblib.hash(self.technical)
+		self.audit = audit
+		return self
+
+	def correct(self, x, metadata):
+		if self.technical is not None:
+			c = self.technical_design.transform(metadata)
+			for start in range(0,len(x),512):
+				correction = np.asarray(self.technical.predict(c[start:start+512])).reshape(-1, len(self.continuous))
+				x[start:start+512,self.continuous] -= correction
+		return x
+
+	def transform(self, raw_X, metadata_X):
+		a = SimpleNamespace(**self.config)
+		x = self.correct(self.scaled(raw_X),metadata_X)
+		z = self.tail.transform(x)
+		if a.s7_tail_policy == 'bulk_only':
+			z['tail_up'].fill(0); z['tail_down'].fill(0)
+		c = self.clinical.transform(metadata_X) if self.clinical is not None else np.empty((len(x),0),dtype='float32')
+		unknown = self.clinical.unknown(metadata_X) if self.clinical is not None else np.zeros(len(x),bool)
+		if self.technical is not None:
+			unknown |= self.technical_design.unknown(metadata_X)
+		return S7Batch(**z, clinical=c, ids=metadata_X[a.id_col].to_numpy(str),
+			groups=s6_groups(metadata_X,a), feature_names=self.feature_names, unknown_category=unknown)
+
+
+def s7_module_file(a, ids):
+	if not a.module_file:
+		return ''
+	tab = pd.read_csv(a.module_file,sep='\t',dtype=str)
+	if 'provenance' in tab and tab.provenance.eq('external_fixed').all():
+		return a.module_file
+	expected = digest(sorted(map(str,ids)))
+	if 'training_ids_sha256' in tab and tab.training_ids_sha256.eq(expected).all():
+		return a.module_file
+	raise ValueError("S7 module-file requires external_fixed provenance or this fit's exact training_ids_sha256; whole-data supervised C4 modules are not allowed")
+
+
+def s7_split(p,a):
+	outer = s6_split(p,a)
+	groups = s6_groups(p,a)
+	roles = outer.astype(object)
+	for old,new in [('tune',('tune_model','tune_gate')),('calibration',('calibration_fit','calibration_audit'))]:
+		ix = np.flatnonzero(outer == old)
+		fold = s6_group_folds(groups[ix],2,a.seed+(1053 if old=='tune' else 1054))
+		roles[ix] = np.array(new)[fold]
+	return roles
+
+
+def s7_fit_data(raw,p,schema,a,role):
+	return S7FitData(raw,s7_metadata(p,a),p.time.to_numpy(float),p.event.to_numpy(int),schema,role)
+
+
+class S7SklearnLearner:
+	def __init__(self,kind='elasticnet',bulk_only=False):
+		self.kind,self.bulk_only = kind,bulk_only
+
+	def fit(self,train,valid,sample_multiplier,config):
+		self.config = dict(config); a = SimpleNamespace(**config)
+		self.prep = S7Preprocessor(config).fit(train.raw,train.metadata,train.feature_schema)
+		self.km = S6Censoring().fit(train.survival(),a.horizon,a.min_censor_survival)
+		y,w = self.km.labels_weights(train.survival()); vy,vw = self.km.labels_weights(valid.survival())
+		w = w*np.asarray(sample_multiplier)
+		s6_check_events(y,w,a.selective_min_events,'S7 '+train.role_name)
+		x = self.prep.transform(train.raw,train.metadata).design(self.bulk_only)
+		vx = self.prep.transform(valid.raw,valid.metadata).design(self.bulk_only)
+		mask = np.asarray(config.get('validation_mask',np.ones(len(vy),bool))) & (vw>0)
+		if not mask.any(): raise ValueError('Empty model-tuning mask')
+		grid = [a.teacher_c] if config.get('pilot') else a.c_grid
+		if self.kind != 'elasticnet': grid = [15] if config.get('pilot') else [7,15,31]
+		self.tuning = []; best = None
+		for param in grid:
+			try:
+				model = s6_fit_logistic(x,y,w,float(param),.5,a.seed,a.max_iter) if self.kind == 'elasticnet' else s6_fit_tree(s6_make_tree(a,a.seed,int(param)),x,y,w)
+				pred = model.predict_proba(vx)[:,1]
+				loss = float(np.average(s6_loss(vy[mask],pred[mask]),weights=vw[mask]))
+				self.tuning.append(dict(parameter=float(param),validation_logloss=loss,status='completed',selected_epoch=0))
+				if best is None or loss<best[0]: best = loss,model,param
+			except ValueError as exc:
+				self.tuning.append(dict(parameter=float(param),validation_logloss=np.nan,status='failed',reason=str(exc),selected_epoch=0))
+		if best is None: raise ValueError('All S7 '+self.kind+' candidates failed')
+		self.model,self.parameter = best[1:]
+		self.fit_status = dict(architecture='sklearn_elasticnet' if self.kind=='elasticnet' else a.tree,
+			trainable_parameters=int(x.shape[1]+1) if self.kind=='elasticnet' else 0,
+			gradient_steps=0,selected_epoch=0,selected_tensor_changed_count=0)
+		return self
+
+	def predict(self,raw,metadata):
+		b = self.prep.transform(raw,metadata)
+		p = self.model.predict_proba(b.design(self.bulk_only))[:,1]
+		return S7Prediction(p,pd.DataFrame(dict(missing_fraction=1-b.observed.mean(1),
+			tail_assay_count=((b.tail_up+b.tail_down)>0).sum(1),tail_cap_count=b.tail_cap_hit.sum(1),
+			unknown_category=b.unknown_category)))
+
+	def export_state(self):
+		return copy.deepcopy(vars(self))
+
+	@classmethod
+	def restore_state(cls,state,device='cpu'):
+		obj=cls();obj.__dict__.update(copy.deepcopy(state));return obj
+
+
+class S7RowEncoder(RowEncoder):
+	"""Original module-token ContextStack/QK, extended with tail and clinical readouts."""
+	def __init__(self,membership,clinical_dim,rare_states,**kwargs):
+		super().__init__(membership,**kwargs)
+		w=self.width
+		self.upper_embedding=nn.Parameter(torch.randn(self.n_features,w)*.05)
+		self.lower_embedding=nn.Parameter(torch.randn(self.n_features,w)*.05)
+		self.exception_score=nn.Linear(w,1)
+		self.null_exception=nn.Parameter(torch.zeros(1,w))
+		self.register_buffer('rare_states',torch.as_tensor(rare_states,dtype=torch.float32))
+		self.clinical_dim=clinical_dim
+		self.clinical_encoder=nn.Sequential(nn.Linear(clinical_dim,w),nn.GELU()) if clinical_dim else None
+		self.fusion=nn.Sequential(nn.Linear(w*(3 if clinical_dim else 2),2*w),nn.GELU(),nn.Linear(2*w,w),nn.LayerNorm(w))
+
+	def forward(self,bulk,tail_up,tail_down,observed,clinical,decode=False):
+		bulk=torch.where(observed,bulk,torch.zeros_like(bulk))
+		up=torch.where(observed,tail_up,torch.zeros_like(tail_up))
+		down=torch.where(observed,tail_down,torch.zeros_like(tail_down))
+		rare=observed & torch.isfinite(self.rare_states)[None,:] & (bulk==self.rare_states[None,:])
+		tail_embed=up[:,:,None]*self.upper_embedding+down[:,:,None]*self.lower_embedding+rare[:,:,None]*self.value_embedding
+		h=bulk[:,:,None]*self.value_embedding+up[:,:,None]*self.upper_embedding+down[:,:,None]*self.lower_embedding+(~observed)[:,:,None]*self.missing_embedding
+		tokens=h.new_zeros((len(h),self.n_tokens,self.width))
+		tokens.index_add_(1,self.membership,h)
+		tokens=self.input_norm(tokens/self.counts.sqrt()[None,:,None]+self.token_embedding)
+		active=observed & ((up+down>0)|rare)
+		logits=self.exception_score(tail_embed).squeeze(-1).masked_fill(~active,-torch.inf)
+		weights=s7_safe_softmax(logits,active,dim=1)
+		exception=(weights[:,:,None]*tail_embed).sum(1)
+		exception=torch.where(active.any(1)[:,None],exception,self.null_exception)
+		context,_=self.context(torch.cat([self.cls.expand(len(h),-1,-1),tokens,exception[:,None,:]],dim=1))
+		pieces=[context[:,0],context[:,-1]]
+		if self.clinical_encoder is not None: pieces.append(self.clinical_encoder(clinical))
+		row=self.fusion(torch.cat(pieces,dim=1))
+		z=F.normalize(self.project(row),dim=-1)
+		reconstruction=(context[:,1:-1][:,self.membership]*self.decoder_weight).sum(-1)+self.decoder_bias if decode else None
+		return z,self.direct(row).squeeze(-1),reconstruction
+
+
+def s7_safe_softmax(logits,allowed,dim):
+	masked=logits.masked_fill(~allowed,-torch.inf)
+	maximum=masked.amax(dim=dim,keepdim=True)
+	maximum=torch.where(torch.isfinite(maximum),maximum,torch.zeros_like(maximum))
+	exp=torch.exp(masked-maximum)
+	return exp/exp.sum(dim=dim,keepdim=True).clamp_min(1e-30)
+
+
+@torch.no_grad()
+def s7_encode(model,batch,device='cpu',batch_size=256):
+	model.to(device).eval();zs=[];ps=[]
+	for start in range(0,len(batch.ids),batch_size):
+		z,p,_=model(**batch.take(slice(start,start+batch_size)).tensors(device))
+		zs.append(z.cpu().numpy());ps.append(torch.sigmoid(p).cpu().numpy())
+	return np.concatenate(zs),np.concatenate(ps)
+
+
+class S7RetrievalGeometry:
+	"""Query-blocked absolute distances and sparse tail candidates; never N by N."""
+	def fit(self,batch,embeddings,config):
+		self.config=dict(config);a=SimpleNamespace(**config)
+		self.ids=batch.ids.copy();self.groups=batch.groups.copy()
+		self.tie=np.array([s6_seed(v,a.seed+827) for v in self.ids],dtype=np.uint64)
+		self.z={};self.radii={};self.status={}
+		if 'global' in a.s7_views:
+			x=batch.design(); n=min(32,x.shape[1],len(x)-1)
+			self.pca=PCA(n_components=n,svd_solver='randomized',random_state=a.seed).fit(x)
+			self.z['global']=self.pca.transform(x).astype('float32')/np.sqrt(max(n,1))
+		if 'learned' in a.s7_views: self.z['learned']=np.asarray(embeddings,dtype='float32')
+		self.tail_index={};self.rare_states=np.full(batch.bulk.shape[1],np.nan)
+		for j in range(batch.bulk.shape[1]):
+			obs=batch.observed[:,j]; values=batch.bulk[obs,j]
+			if len(values) and np.isin(values,[0,1]).all():
+				for state in (0.,1.):
+					freq=np.mean(values==state)
+					if 0<freq<.05:self.rare_states[j]=state
+		self.train_tail=self.tail_keys(batch)
+		if 'tail' in a.s7_views:
+			for i,keys in enumerate(self.train_tail):
+				for key,value in keys.items():self.tail_index.setdefault(key,[]).append((i,value))
+			self.tail_index={k:(np.array([v[0] for v in entries]),np.array([v[1] for v in entries])) for k,entries in self.tail_index.items()}
+		self.ref=np.argsort(self.tie,kind='stable')[:a.s7_radius_ref_n]
+		for view, coords in self.z.items():
+			dist=[]
+			for i in self.ref:
+				allowed=self.groups!=self.groups[i]
+				k=min(5,len(set(self.groups[allowed])))
+				if k:
+					d=np.linalg.norm(coords[allowed]-coords[i],axis=1)
+					dist.append(np.partition(d,k-1)[k-1])
+			self.set_radius(view,dist)
+		if 'tail' in a.s7_views:
+			dist=[]
+			for i in self.ref:
+				c=self.tail_candidates(self.train_tail[i],self.groups[i],None)
+				k=min(5,len(set(self.groups[list(c)]))) if c else 0
+				if k:dist.append(sorted(c.values())[k-1])
+			self.set_radius('tail',dist)
+		return self
+
+	def set_radius(self,view,dist):
+		d=np.asarray(dist,float); positive=d[d>1e-12]
+		radius=float(np.median(d)) if len(d) else 0.
+		if radius<=1e-12:radius=float(np.median(positive)) if len(positive) else 0.
+		self.radii[view]=radius
+		self.status[view]='available' if radius>0 else 'constant_geometry' if len(d) else 'unavailable'
+
+	def tail_keys(self,batch):
+		keys=[{} for _ in batch.ids]
+		for label,values in [('upper',batch.tail_up),('lower',batch.tail_down)]:
+			for i,j in zip(*np.nonzero(values>0)):
+				if batch.observed[i,j]:keys[i][(int(j),label)]=float(values[i,j])
+		for j,state in enumerate(self.rare_states):
+			if np.isfinite(state):
+				for i in np.flatnonzero(batch.observed[:,j] & (batch.bulk[:,j]==state)):keys[i][(j,'binary')]=1.
+		return keys
+
+	def tail_candidates(self,keys,group,fold,bank_folds=None):
+		result={}
+		for key,value in keys.items():
+			if key not in self.tail_index:continue
+			ix,intensity=self.tail_index[key]
+			allowed=self.groups[ix]!=group
+			if fold is not None:allowed &= bank_folds[ix]!=fold
+			for j,d in zip(ix[allowed],np.abs(intensity[allowed]-value)):
+				result[int(j)]=min(result.get(int(j),np.inf),float(d))
+		return result
+
+	def candidates(self,batch,embeddings,query_folds=None,bank_folds=None):
+		a=SimpleNamespace(**self.config); count=a.s7_neighbors_per_view
+		coords={'learned':embeddings}
+		if 'global' in self.z:coords['global']=self.pca.transform(batch.design()).astype('float32')/np.sqrt(self.pca.n_components_)
+		tail=self.tail_keys(batch); rows=[];diags=[]
+		for i in range(len(batch.ids)):
+			allowed=(self.groups!=batch.groups[i]) & (self.ids!=batch.ids[i])
+			if query_folds is not None:allowed &= bank_folds!=query_folds[i]
+			merged={};diag={}
+			for view in a.s7_views:
+				if view=='tail':
+					found=self.tail_candidates(tail[i],batch.groups[i],None if query_folds is None else query_folds[i],bank_folds)
+					ix=np.array([j for j in found if allowed[j]],dtype=int)
+					d=np.array([found[j] for j in ix])
+				else:
+					ix=np.flatnonzero(allowed)
+					d=np.linalg.norm(self.z[view][ix]-coords[view][i],axis=1)
+				radius=self.radii.get(view,0)
+				diag[view+'_available']=bool(radius>0 and len(ix))
+				diag[view+'_nearest_ratio']=float(np.min(d)/radius) if radius>0 and len(d) else np.nan
+				if view=='tail':diag['tail_supported_group_count']=len(set(self.groups[ix]))
+				if radius<=0:continue
+				order=np.lexsort((self.tie[ix],d))[:count]
+				for j,value in zip(ix[order],d[order]/radius):merged[int(j)]=min(merged.get(int(j),np.inf),float(value))
+			ordered=sorted(merged,key=lambda j:(merged[j],int(self.tie[j])))
+			rows.append([(j,merged[j]) for j in ordered]);diag['candidate_count']=len(ordered)
+			diag.setdefault('tail_supported_group_count',0);diags.append(diag)
+		width=max(1,max(map(len,rows),default=0));indices=np.zeros((len(rows),width),int);ratios=np.full_like(indices,np.inf,dtype=float);allow=np.zeros_like(indices,bool)
+		for i,row in enumerate(rows):
+			if row:
+				indices[i,:len(row)]=[v[0] for v in row];ratios[i,:len(row)]=[v[1] for v in row];allow[i,:len(row)]=True
+		return indices,ratios,allow,pd.DataFrame(diags)
+
+
+@dataclass
+class S7Memory:
+	ids: np.ndarray
+	groups: np.ndarray
+	keys: np.ndarray
+	labels: np.ndarray
+	ipcw: np.ndarray
+	folds: np.ndarray
+	geometry: S7RetrievalGeometry
+
+
+def s7_torch_borrow(model,q,direct,memory,indices,ratios,allowed,temperature,config):
+	device=q.device;dtype=q.dtype
+	keys=torch.as_tensor(memory.keys[indices],device=device,dtype=dtype)
+	h=model.heads;d=model.width//h
+	qh=model.query(q*math.sqrt(model.width)).reshape(-1,h,d)
+	kh=model.key(keys*math.sqrt(model.width)).reshape(len(q),indices.shape[1],h,d)
+	temp=(.02+1.98*torch.sigmoid(model.temperature))*temperature
+	logits=torch.einsum('bhd,bkhd->bkh',qh,kh)/(math.sqrt(d)*temp)
+	ratio=torch.as_tensor(ratios,device=device,dtype=dtype)
+	ipcw=torch.as_tensor(memory.ipcw[indices],device=device,dtype=dtype)
+	good=torch.as_tensor(allowed,device=device)&(ipcw>0)
+	logits=logits-.5*ratio[:,:,None].square()+ipcw.clamp_min(1e-30).log()[:,:,None]
+	head=s7_safe_softmax(logits,good[:,:,None].expand_as(logits),dim=1)
+	weights=(head*torch.softmax(model.gate(q),dim=-1)[:,None,:]).sum(-1)
+	# Candidate banks are small; aggregate family mass without a donor-by-donor matrix.
+	group_codes=np.zeros(indices.shape,int)
+	for i,row in enumerate(memory.groups[indices]):group_codes[i]=np.unique(row,return_inverse=True)[1]
+	code=torch.as_tensor(group_codes,device=device)
+	mass=torch.zeros_like(weights).scatter_add(1,code,weights)
+	ss=mass.square().sum(1); essg=torch.where(ss>0,1/ss.clamp_min(1e-30),torch.zeros_like(ss))
+	ssd=weights.square().sum(1);essd=torch.where(ssd>0,1/ssd.clamp_min(1e-30),torch.zeros_like(ssd))
+	nearest=ratio.masked_fill(~good,torch.inf).amin(1)
+	support=torch.exp(-.5*nearest.square())
+	fraction=config['s7_max_borrow']*support*essg/(essg+config['s7_prior_strength']).clamp_min(1e-30)
+	y=torch.as_tensor(memory.labels[indices],device=device,dtype=dtype)
+	p=(1-fraction)*direct+fraction*(weights*y).sum(1)
+	entropy=-(weights*weights.clamp_min(1e-30).log()).sum(1)
+	return p,dict(weights=weights,ESS_group=essg,ESS_donor=essd,support=support,borrow_fraction=fraction,attention_entropy=entropy,logits=logits)
+
+
+class S7AttentionLearner:
+	def __init__(self,mode='retrieval'):
+		if mode not in {'direct','retrieval'}:raise ValueError('Unknown S7 attention mode')
+		self.mode=mode
+
+	def refresh_memory(self,train,batch,y,w,multiplier,folds):
+		z,_=s7_encode(self.network,batch,self.device,self.config['batch_size'])
+		keep=w>0
+		if self.config.get('supervised_filter'):keep &= multiplier>0
+		if not keep.any():raise ValueError('No known supervised donors')
+		bank=batch.take(np.flatnonzero(keep))
+		bw=w[keep].copy()
+		if self.config['s7_weight_scope']=='loss_and_bank':bw*=multiplier[keep]
+		geometry=S7RetrievalGeometry().fit(bank,z[keep],self.config)
+		self.memory=S7Memory(bank.ids,bank.groups,z[keep],y[keep],bw,folds[keep],geometry)
+		return z
+
+	def masked_reconstruction(self,batch,generator):
+		data=batch.tensors(self.device)
+		mask=torch.as_tensor(generator.random(batch.observed.shape)<self.config['mask_fraction'],device=self.device)&data['observed']
+		masked=dict(data); masked['observed']=data['observed']&~mask
+		for key in ('bulk','tail_up','tail_down'):masked[key]=torch.where(mask,torch.zeros_like(data[key]),data[key])
+		_,_,decoded=self.network(**masked,decode=True)
+		target=data['bulk']+data['tail_up']-data['tail_down']
+		return (decoded[mask]-target[mask]).square().mean() if mask.any() else decoded.sum()*0
+
+	def fit(self,train,valid,sample_multiplier,config):
+		self.config=dict(config);a=SimpleNamespace(**config);self.device=device_for(a.device)
+		torch.manual_seed(a.seed);np.random.seed(a.seed)
+		if torch.cuda.is_available():torch.cuda.manual_seed_all(a.seed)
+		self.prep=S7Preprocessor(config).fit(train.raw,train.metadata,train.feature_schema)
+		b=self.prep.transform(train.raw,train.metadata);v=self.prep.transform(valid.raw,valid.metadata)
+		multiplier=np.asarray(sample_multiplier,float)
+		censor_fit=train.survival().loc[multiplier>0] if config.get('supervised_filter') else train.survival()
+		self.km=S6Censoring().fit(censor_fit,a.horizon,a.min_censor_survival)
+		y,w=self.km.labels_weights(train.survival());vy,vw=self.km.labels_weights(valid.survival())
+		multiplier=np.asarray(sample_multiplier,float);supervised=w*multiplier
+		s6_check_events(y,supervised,a.selective_min_events,'neural '+train.role_name)
+		val_mask=np.asarray(config.get('validation_mask',np.ones(len(vy),bool)))&(vw>0)
+		if not val_mask.any():raise ValueError('Empty neural tuning mask')
+		membership,self.token_names=token_partition(b.bulk,b.feature_names,a.tokens,a.seed,s7_module_file(a,b.ids))
+		rare=np.full(b.bulk.shape[1],np.nan)
+		for j,kind in enumerate(self.prep.tail.feature_types_):
+			if kind=='binary':
+				values=b.bulk[b.observed[:,j],j]
+				for state in (0.,1.):
+					if 0<np.mean(values==state)<.05:rare[j]=state
+		self.network_args=dict(membership=membership,clinical_dim=b.clinical.shape[1],rare_states=rare,
+			width=a.width,heads=a.heads,layers=a.layers,dropout=a.dropout)
+		self.network=S7RowEncoder(**self.network_args).to(self.device)
+		initial={k:t.detach().cpu().clone() for k,t in self.network.state_dict().items()}
+		optimizer=torch.optim.AdamW(self.network.parameters(),lr=a.learning_rate,weight_decay=a.weight_decay)
+		rng=np.random.default_rng(a.seed+412);self.gradient_names=set();steps=pretrain_steps=skipped=0
+		def update(loss):
+			nonlocal steps
+			if not torch.isfinite(loss):raise ValueError('Nonfinite S7 neural loss')
+			optimizer.zero_grad();loss.backward()
+			for name,param in self.network.named_parameters():
+				if param.grad is not None and bool(torch.any(param.grad!=0)):self.gradient_names.add(name)
+			torch.nn.utils.clip_grad_norm_(self.network.parameters(),a.s7_gradient_clip)
+			optimizer.step();steps+=1
+		for epoch in range(a.s7_pretrain_limit):
+			self.network.train()
+			for ix in np.array_split(rng.permutation(len(b.ids)),max(1,math.ceil(len(b.ids)/a.batch_size))):
+				update(self.masked_reconstruction(b.take(ix),rng));pretrain_steps+=1
+		folds=s6_group_folds(b.groups,a.selective_folds,a.seed+642)
+		self.tuning=[];best=None;patience=0
+		grid=[1.] if config.get('pilot') or self.mode=='direct' else a.s7_bandwidth_grid
+		normalizer=float(supervised[(w>0)&(multiplier>0)].mean())
+		for epoch in range(a.s7_epoch_limit+1):
+			z=self.refresh_memory(train,b,y,w,multiplier,folds) if self.mode=='retrieval' else s7_encode(self.network,b,self.device,a.batch_size)[0]
+			if epoch:
+				self.network.train();epoch_steps=0
+				for ix in np.array_split(rng.permutation(len(b.ids)),max(1,math.ceil(len(b.ids)/a.batch_size))):
+					if supervised[ix].sum()<=0:skipped+=1;continue
+					bb=b.take(ix);q,logits,_=self.network(**bb.tensors(self.device));direct=torch.sigmoid(logits)
+					pred=direct
+					if self.mode=='retrieval':
+						jj,ratios,allowed,_=self.memory.geometry.candidates(bb,z[ix],folds[ix],self.memory.folds)
+						pred,_=s7_torch_borrow(self.network,q,direct,self.memory,jj,ratios,allowed,1.,self.config)
+					yy=torch.as_tensor(y[ix],device=self.device,dtype=torch.float32)
+					ww=torch.as_tensor(supervised[ix],device=self.device,dtype=torch.float32)
+					loss=(F.binary_cross_entropy(pred.clamp(1e-6,1-1e-6),yy,reduction='none')*ww).mean()/normalizer
+					if self.mode=='retrieval':loss+=a.direct_weight*(F.binary_cross_entropy_with_logits(logits,yy,reduction='none')*ww).mean()/normalizer
+					if a.s7_reconstruction_weight:loss+=a.s7_reconstruction_weight*self.masked_reconstruction(bb,rng)
+					update(loss);epoch_steps+=1
+				if not epoch_steps:raise ValueError('S7 epoch had no supervised optimizer steps')
+				if self.mode=='retrieval':self.refresh_memory(train,b,y,w,multiplier,folds)
+			improved=False
+			for temperature in grid:
+				pred=self.predict_batch(v,temperature).probability
+				loss=float(np.average(s6_loss(vy[val_mask],pred[val_mask]),weights=vw[val_mask]))
+				self.tuning.append(dict(parameter=temperature,selected_epoch=epoch,validation_logloss=loss,status='completed'))
+				if best is None or loss<best[0]-1e-9:
+					best=(loss,{k:t.detach().cpu().clone() for k,t in self.network.state_dict().items()},epoch,temperature);improved=True
+			patience=0 if improved else patience+1
+			if epoch and patience>=a.patience:break
+		self.network.load_state_dict(best[1]);self.selected_epoch,self.temperature=best[2:]
+		# Refresh only from the selected checkpoint, never from the last rejected epoch.
+		if self.mode=='retrieval':self.refresh_memory(train,b,y,w,multiplier,folds)
+		self.network.cpu().eval();self.device='cpu'
+		changed=sum(not torch.equal(initial[k],v.detach().cpu()) for k,v in self.network.state_dict().items())
+		self.fit_status=dict(architecture='S7RowEncoder_ContextStack_'+self.mode,
+			trainable_parameters=sum(p.numel() for p in self.network.parameters() if p.requires_grad),
+			module_parameters={n:sum(p.numel() for p in m.parameters()) for n,m in self.network.named_children()},
+			gradient_steps=steps,pretrain_steps=pretrain_steps,supervised_steps=steps-pretrain_steps,
+			nonzero_gradient_parameters=len(self.gradient_names),gradient_names=sorted(self.gradient_names),
+			selected_epoch=self.selected_epoch,selected_tensor_changed_count=changed,zero_weight_batches=skipped,
+			checkpoint_status='selected_pretrained_epoch_zero' if self.selected_epoch==0 else 'selected_finetuned_checkpoint',
+			actual_device=device_for(a.device))
+		return self
+
+	@torch.no_grad()
+	def predict_batch(self,batch,temperature=None):
+		self.network.to(self.device).eval();prob=[];diagnostics=[]
+		temperature=temperature if temperature is not None else self.temperature
+		for start in range(0,len(batch.ids),self.config['batch_size']):
+			b=batch.take(slice(start,start+self.config['batch_size']))
+			q,logits,_=self.network(**b.tensors(self.device));direct=torch.sigmoid(logits)
+			p=direct
+			diag=pd.DataFrame(dict(p_direct=direct.cpu().numpy(),missing_fraction=1-b.observed.mean(1),
+				tail_assay_count=((b.tail_up+b.tail_down)>0).sum(1),tail_cap_count=b.tail_cap_hit.sum(1),unknown_category=b.unknown_category))
+			if self.mode=='retrieval':
+				jj,ratios,allowed,geo=self.memory.geometry.candidates(b,q.cpu().numpy())
+				p,d=s7_torch_borrow(self.network,q,direct,self.memory,jj,ratios,allowed,temperature,self.config)
+				for name in ('ESS_group','ESS_donor','support','borrow_fraction','attention_entropy'):diag[name]=d[name].cpu().numpy()
+				diag=pd.concat([diag,geo],axis=1)
+			else:
+				for name in ('ESS_group','ESS_donor','support','borrow_fraction','attention_entropy','tail_supported_group_count'):diag[name]=0.
+			diag['rare_pattern_low_support']=(diag.tail_assay_count>0)&(diag.tail_supported_group_count<2)
+			prob.append(p.cpu().numpy());diagnostics.append(diag)
+		return S7Prediction(np.concatenate(prob),pd.concat(diagnostics,ignore_index=True))
+
+	def predict(self,raw,metadata):
+		return self.predict_batch(self.prep.transform(raw,metadata))
+
+	def export_state(self):
+		state={k:copy.deepcopy(v) for k,v in vars(self).items() if k!='network'}
+		state['state_dict']={k:v.detach().cpu().clone() for k,v in self.network.state_dict().items()}
+		state['device']='cpu'
+		return state
+
+	@classmethod
+	def restore_state(cls,state,device='cpu'):
+		state=copy.deepcopy(state);weights=state.pop('state_dict');obj=cls(state['mode']);obj.__dict__.update(state)
+		obj.network=S7RowEncoder(**obj.network_args);obj.network.load_state_dict(weights)
+		obj.device=device_for(device);obj.network.to(obj.device).eval();return obj
+
+
+class S7EnsembleLearner:
+	def __init__(self,en,tree):
+		self.en,self.tree=en,tree
+		self.fit_status=dict(architecture='raw_equal_weight_ensemble',trainable_parameters=0,gradient_steps=0,selected_epoch=0,selected_tensor_changed_count=0)
+		self.prep=en.prep;self.km=en.km;self.tuning=[]
+	def predict(self,raw,metadata):
+		left=self.en.predict(raw,metadata);right=self.tree.predict(raw,metadata)
+		return S7Prediction(.5*(left.probability+right.probability),left.diagnostics)
+
+
+S7_GATE_COLUMNS = ['p_baseline','p_en','p_tree','p_direct','p_retrieval',
+	'p_retrieval_minus_baseline','p_retrieval_minus_direct','p_en_minus_tree',
+	'log_global_nearest_ratio','log_learned_nearest_ratio','ESS_group','borrow_fraction','attention_entropy',
+	'missing_fraction','tail_assay_count','tail_supported_group_count','tail_cap_count',
+	'global_available','learned_available','tail_available']
+
+
+def s7_gate_features(en,tree,attention,baseline=None):
+	pe,pt,pr=en.probability,tree.probability,attention.probability
+	pb=.5*(pe+pt) if baseline is None else np.asarray(baseline)
+	d=attention.diagnostics
+	pdirect=d.p_direct.to_numpy()
+	result=dict(p_baseline=pb,p_en=pe,p_tree=pt,p_direct=pdirect,p_retrieval=pr,
+		p_retrieval_minus_baseline=pr-pb,p_retrieval_minus_direct=pr-pdirect,p_en_minus_tree=pe-pt)
+	for view in ('global','learned'):
+		ratio=d.get(view+'_nearest_ratio',pd.Series(np.nan,index=d.index)).to_numpy()
+		result['log_'+view+'_nearest_ratio']=np.log1p(ratio)
+	for name in S7_GATE_COLUMNS:
+		if name not in result:result[name]=d.get(name,pd.Series(0.,index=d.index)).to_numpy()
+	return pd.DataFrame(result)[S7_GATE_COLUMNS]
+
+
+class S7ReleaseGate:
+	def fit(self,z,y,w,primary,baseline,config):
+		from sklearn.ensemble import HistGradientBoostingRegressor
+		ok=w>0
+		if not ok.any():raise ValueError('No known gate-training outcomes')
+		s6_check_events(y,w,config['selective_min_events'],'S7 gate training')
+		self.columns=S7_GATE_COLUMNS
+		self.imputer=SimpleImputer(strategy='median',keep_empty_features=True).fit(z[self.columns])
+		x=self.imputer.transform(z[self.columns])
+		self.center=x.mean(0);self.scale=np.maximum(x.std(0),1e-8)
+		x=(x-self.center)/self.scale
+		self.models={}
+		targets={'gain':(y-baseline)**2-(y-primary)**2,'absolute_error':(y-primary)**2}
+		for name,target in targets.items():
+			m=HistGradientBoostingRegressor(max_leaf_nodes=5,learning_rate=.04,max_iter=config['selective_gate_trees'],
+				l2_regularization=10,early_stopping=False,random_state=config['seed']+733)
+			m.fit(x[ok],target[ok],sample_weight=w[ok]/w[ok].mean());self.models[name]=m
+		self.target=dict(primary=config.get('gate_primary','attention_retrieval_pilot'),reference=config.get('gate_reference','baseline_pilot'))
+		return self
+	def predict(self,z):
+		x=(self.imputer.transform(z[self.columns])-self.center)/self.scale
+		return {name:m.predict(x) for name,m in self.models.items()}
+
+
+class S7CoverageRule:
+	def fit(self,score,ids,coverage,seed):
+		self.coverage,self.seed=coverage,seed
+		finite=np.isfinite(score);ix=np.flatnonzero(finite)
+		if not len(ix):raise ValueError('No finite development gate scores')
+		ties=np.array([s6_seed(v,seed) for v in ids],dtype=np.uint64)
+		order=ix[np.lexsort((ties[ix],-np.asarray(score)[ix]))]
+		n=max(1,int(math.ceil(coverage*len(ix))));j=order[n-1]
+		self.threshold=float(score[j]);self.tie=int(ties[j]);return self
+	def apply(self,score,ids):
+		score=np.asarray(score);finite=np.isfinite(score)
+		if self.coverage==1:return finite
+		ties=np.array([s6_seed(v,self.seed) for v in ids],dtype=np.uint64)
+		return finite&((score>self.threshold)|((score==self.threshold)&(ties<=self.tie)))
+
+
+class S7TrainingGateEnsemble:
+	def predict(self,raw,metadata):
+		sums={}
+		for en,tree,attention,gate in self.members:
+			z=s7_gate_features(en.predict(raw,metadata),tree.predict(raw,metadata),attention.predict(raw,metadata))
+			value=gate.predict(z)
+			for name in value:sums[name]=sums.get(name,0)+value[name]/len(self.members)
+		return sums
+
+
+def s7_crossfit_training_gate(train,config,only_recipient_fold=None):
+	a=SimpleNamespace(**config);groups=s6_groups(train.metadata,a);ids=train.metadata[a.id_col].to_numpy(str)
+	result={name:np.zeros(len(ids)) for name in ('weight','hard_mask','score','clinical_risk')};counts=np.zeros(len(ids));records=[]
+	members=[];fold_records=[]
+	for repeat in range(a.selective_repeats):
+		folds=s6_group_folds(groups,a.selective_folds,a.seed+1200+repeat)
+		for fold in range(a.selective_folds):
+			if only_recipient_fold is not None and fold!=only_recipient_fold:continue
+			u=np.flatnonzero(folds==fold);rest=np.flatnonzero(folds!=fold)
+			levels=sorted(set(groups[rest]),key=lambda g:s6_seed(g,a.seed+2000+31*repeat+fold))
+			gset=set(levels[:max(1,round(len(levels)*a.selective_gate_fraction))]);g=rest[np.isin(groups[rest],list(gset))];p=rest[~np.isin(groups[rest],list(gset))]
+			pl=sorted(set(groups[p]),key=lambda v:s6_seed(v,a.seed+2110+31*repeat+fold));stopset=set(pl[:max(1,round(len(pl)*.2))])
+			stop=p[np.isin(groups[p],list(stopset))];fit=p[~np.isin(groups[p],list(stopset))]
+			assert not (set(groups[u]) & (set(groups[g])|set(groups[p])))
+			cfg={**config,'pilot':True,'seed':a.seed+3000+31*repeat+fold}
+			pilot=train.take(fit,'pilot_fit');valid=train.take(stop,'pilot_stop')
+			log('START','S7_crossfit',f'repeat={repeat+1}; fold={fold+1}; pilot_fit={len(fit)}; pilot_stop={len(stop)}; gate={len(g)}; recipient={len(u)}')
+			en=S7SklearnLearner().fit(pilot,valid,np.ones(len(fit)),cfg)
+			tree=S7SklearnLearner(a.tree).fit(pilot,valid,np.ones(len(fit)),cfg)
+			attention=S7AttentionLearner().fit(pilot,valid,np.ones(len(fit)),cfg)
+			def predict(indices):
+				meta=train.metadata.iloc[indices]
+				return s7_gate_features(en.predict(train.raw[indices],meta),tree.predict(train.raw[indices],meta),attention.predict(train.raw[indices],meta))
+			zg=predict(g);yg,wg=en.km.labels_weights(train.take(g).survival())
+			gate=S7ReleaseGate().fit(zg,yg,wg,zg.p_retrieval.to_numpy(),zg.p_baseline.to_numpy(),cfg)
+			zu=predict(u);score=gate.predict(zu)['gain']
+			uninformative=float(np.std(score))<1e-12
+			soft=np.ones(len(u)) if uninformative else a.selective_weight_floor+(1-a.selective_weight_floor)*s6_ranks(score,ids[u],a.seed+92+repeat)
+			hard=np.ones(len(u),bool) if uninformative else S7CoverageRule().fit(score,ids[u],a.selective_coverage,a.seed+91+repeat).apply(score,ids[u])
+			# OOF clinical risk supplies an outcome-blind stratum for random controls.
+			clinical=S6Clinical(words(a.covariates),words(a.categorical)).fit(pilot.metadata) if words(a.covariates) else None
+			yp,wp=en.km.labels_weights(pilot.survival())
+			if clinical is not None:
+				cm=s6_fit_logistic(clinical.transform(pilot.metadata),yp,wp,1.,0,cfg['seed'],a.max_iter)
+				pc=cm.predict_proba(clinical.transform(train.metadata.iloc[u]))[:,1]
+			else:pc=np.full(len(u),np.average(yp,weights=wp))
+			for name,value in [('weight',soft),('hard_mask',hard),('score',score),('clinical_risk',pc)]:result[name][u]+=value
+			counts[u]+=1;members.append((en,tree,attention,gate))
+			fold_records.append(dict(repeat=repeat,fold=fold,pilot_fit_N=len(fit),pilot_stop_N=len(stop),gate_N=len(g),recipient_N=len(u),
+				recipient_groups_hash=digest(sorted(set(groups[u]))),pilot_groups_hash=digest(sorted(set(groups[fit]))),score_sd=float(np.std(score)),
+				status='uninformative_training_gate' if uninformative else 'completed',pilot_state_hash=s7_state_hash(attention.export_state())))
+			records.extend(dict(eid=ids[i],repeat=repeat,fold=fold,weight=float(soft[j]),hard_mask=bool(hard[j])) for j,i in enumerate(u))
+			log('DONE','S7_crossfit',f'repeat={repeat+1}; fold={fold+1}')
+	for name in result:result[name]=np.divide(result[name],counts,out=np.full(len(ids),np.nan),where=counts>0)
+	result['hard_mask']=result['hard_mask']>=.5
+	obj=S7TrainingGateEnsemble();obj.members=members;obj.audit=pd.DataFrame(fold_records);obj.weights=pd.DataFrame(records)
+	return obj,result
+
+
+def s7_state_hash(value):
+	"""Content identity independent of Torch storage addresses and query device."""
+	if isinstance(value,torch.Tensor):return joblib.hash(value.detach().cpu().numpy())
+	if isinstance(value,nn.Module):return s7_state_hash(value.state_dict())
+	if type(value).__module__ == 'c1_abm' and hasattr(value,'__dict__'):return s7_state_hash(vars(value))
+	if isinstance(value,dict):return digest({str(k):s7_state_hash(v) for k,v in sorted(value.items(),key=lambda p:str(p[0]))})
+	if isinstance(value,(list,tuple)):return digest([s7_state_hash(v) for v in value])
+	if isinstance(value,set):return digest(sorted(map(str,value)))
+	return joblib.hash(value)
+
+
+# 🚩 S7 metrics, frozen deployment policy, and host orchestration
+
+class S7ConditionalCensoring:
+	"""Prespecified age-tertile/sex KM sensitivity, fitted only in build."""
+	def fit(self, metadata, survival, config):
+		self.columns = [name for name in ('age', 'sex') if name in words(config['covariates']) and name in metadata]
+		self.age_edges = np.unique(np.nanquantile(pd.to_numeric(metadata.age, errors='coerce'), [1/3, 2/3])) if 'age' in self.columns else []
+		self.models, self.unsupported = {}, {}
+		self.status = 'available' if self.columns else 'unavailable_no_prespecified_baseline_covariates'
+		if self.columns:
+			strata = self.strata(metadata)
+			for key in sorted(set(strata)):
+				try:
+					self.models[key] = S6Censoring().fit(survival.iloc[np.flatnonzero(strata == key)], config['horizon'], config['min_censor_survival'])
+				except ValueError as exc:
+					self.unsupported[key] = str(exc)
+		return self
+
+	def strata(self, metadata):
+		parts = []
+		if 'age' in self.columns:
+			age = pd.to_numeric(metadata.age, errors='coerce').to_numpy()
+			parts.append(np.where(np.isfinite(age), np.searchsorted(self.age_edges, age).astype(str), 'missing'))
+		if 'sex' in self.columns:
+			parts.append(metadata.sex.fillna('missing').astype(str).to_numpy())
+		return np.array(['|'.join(row) for row in zip(*parts)]) if parts else np.full(len(metadata), 'unavailable')
+
+	def metric(self, truth, probability, groups, marginal):
+		strata = truth.censor_stratum.to_numpy(str)
+		missing = sorted(set(strata) - set(self.models))
+		if self.status != 'available' or missing:
+			return dict(status='unavailable_conditional_censoring_support', unsupported_strata=';'.join(missing))
+		y, weight, g = np.zeros(len(truth), int), np.zeros(len(truth)), np.ones(len(truth))
+		for key in sorted(set(strata)):
+			ix = np.flatnonzero(strata == key)
+			y[ix], weight[ix] = self.models[key].labels_weights(truth.iloc[ix])
+			g[ix] = self.models[key].at(truth.time.iloc[ix].to_numpy(), left=True)
+		result = s6_metric(y, weight, probability)
+		result.update(N=len(truth), independent_groups=len(set(groups)), known_N=int(np.sum(weight > 0)),
+			observed_cases=int(y.sum()), known_controls=int(np.sum((weight > 0) & (y == 0))), status='completed_sensitivity',
+			concordance_status='not_estimated_conditional_pair_weights_required')
+		return result
+
+
+def s7_uno(time,event,prob,km):
+	time=np.asarray(time);event=np.asarray(event);prob=np.asarray(prob)
+	levels=np.unique(prob);ranks=np.searchsorted(levels,prob)+1;tree=np.zeros(len(levels)+1)
+	def add(k):
+		while k<len(tree):tree[k]+=1;k+=k&-k
+	def prefix(k):
+		ans=0.
+		while k>0:ans+=tree[k];k-=k&-k
+		return ans
+	order=np.argsort(-time,kind='stable');num=den=0.;later=pairs=start=0
+	while start<len(order):
+		end=start+1
+		while end<len(order) and time[order[end]]==time[order[start]]:end+=1
+		for i in order[start:end]:
+			if event[i]==1 and time[i]<=km.horizon and later:
+				g=float(km.at([time[i]],left=True)[0])
+				if g<km.min_g:return dict(Uno_C_horizon=np.nan,comparable_pairs=pairs,weighted_pair_denominator=np.nan)
+				weight=1/g**2; lower=prefix(int(ranks[i]-1));equal=prefix(int(ranks[i]))-lower
+				num+=weight*(lower+.5*equal);den+=weight*later;pairs+=later
+		for i in order[start:end]:add(int(ranks[i]));later+=1
+		start=end
+	return dict(Uno_C_horizon=num/den if den else np.nan,comparable_pairs=pairs,weighted_pair_denominator=den)
+
+
+def s7_metric(time,event,prob,groups,km):
+	p=pd.DataFrame(dict(time=time,event=event));y,w=km.labels_weights(p)
+	ans=s6_metric(y,w,np.asarray(prob))
+	ans.update(s7_uno(time,event,prob,km))
+	ans.update(N=len(p),independent_groups=len(set(groups)),known_N=int(np.sum(w>0)),
+		observed_cases=int(np.sum(y)),known_controls=int(np.sum((w>0)&(y==0))),horizon=km.horizon,
+		censoring_method='build_only_marginal_KM',estimand='net_risk_under_independent_censoring',
+		status='completed' if len(p) and np.isfinite(ans['Uno_C_horizon']) else 'insufficient_information')
+	return ans
+
+
+def s7_paired_bootstrap(time,event,predictions,mask,groups,km,pairs,count,seed):
+	ix=np.flatnonzero(mask);groups=np.asarray(groups);time=np.asarray(time);event=np.asarray(event)
+	names=sorted(set(v for pair in pairs for v in pair));keys=['AUC_IPCW','Uno_C_horizon','Brier_IPCW','LogLoss_IPCW']
+	point={name:s7_metric(time[ix],event[ix],predictions[name][ix],groups[ix],km) for name in names}
+	units=[ix[groups[ix]==g] for g in sorted(set(groups[ix]))]
+	samples={(m,r,k):[] for m,r in pairs for k in keys};rng=np.random.default_rng(seed)
+	for rep in range(count):
+		if not units:break
+		take=np.concatenate([units[j] for j in rng.integers(0,len(units),len(units))])
+		values={n:s7_metric(time[take],event[take],predictions[n][take],groups[take],km) for n in names}
+		for m,r,k in samples:samples[m,r,k].append(values[m][k]-values[r][k])
+	rows=[]
+	for (m,r,k),values in samples.items():
+		v=np.asarray(values);v=v[np.isfinite(v)]
+		valid=len(v);enough=valid>=max(20,math.ceil(.8*count))
+		lo,hi=np.quantile(v,[.025,.975]) if enough else (np.nan,np.nan)
+		rows.append(dict(model=m,reference=r,metric=k,delta=point[m][k]-point[r][k],lower=lo,upper=hi,
+			valid_boot=valid,requested_boot=count,better_direction='positive' if k in ('AUC_IPCW','Uno_C_horizon') else 'negative',
+			uncertainty='excludes_model_refit_uncertainty',status='completed' if enough else 'insufficient_bootstrap'))
+	return pd.DataFrame(rows)
+
+
+def s7_random_controls(values,seed):
+	# No realized Y enters the strata or the permutation.
+	risk=values['clinical_risk'];edges=np.unique(np.quantile(risk,np.linspace(0,1,11)))
+	strata=np.searchsorted(edges[1:-1],risk,side='right');rng=np.random.default_rng(seed)
+	weight=values['weight'].copy();hard=values['hard_mask'].copy()
+	for level in np.unique(strata):
+		ix=np.flatnonzero(strata==level);order=rng.permutation(ix)
+		weight[ix]=values['weight'][order];hard[ix]=values['hard_mask'][order]
+	return weight,hard
+
+
+def s7_fit_final_models(train,valid,values,target_mask,config):
+	a=SimpleNamespace(**config);models={};registry=[];tuning=[]
+	rand_weight,rand_hard=s7_random_controls(values,a.seed+771)
+	weights={'full':np.ones(len(train.raw)),'target_tuned':np.ones(len(train.raw)),
+		'weighted':values['weight'],'random_weighted':rand_weight,
+		'filtered':values['hard_mask'].astype(float),'random_filtered':rand_hard.astype(float)}
+	def fit(name,learner,strategy,bulk_only=False):
+		cfg={**config,'validation_mask':np.ones(len(valid.raw),bool) if strategy=='full' else target_mask,
+			'supervised_filter':strategy in ('filtered','random_filtered')}
+		log('START','S7_final_model',name)
+		learner.fit(train,valid,weights[strategy],cfg);models[name]=learner
+		registry.append(dict(model_id=name,architecture=learner.fit_status['architecture'],input_channels='bulk+clinical' if bulk_only else 'bulk+tail_up+tail_down+missing+clinical',
+			physical_assays=len(learner.prep.feature_names),training_scope='hard_supervised_filter' if cfg['supervised_filter'] else a.s7_weight_scope if 'weighted' in strategy else 'full',
+			tune_scope='tune_model_all' if strategy=='full' else 'tune_model_common_target',calibration_scope='calibration_fit',
+			pretraining_scope='all_build_X',training_N=len(train.raw),supervised_N=int(np.sum(weights[strategy]>0)),
+			**{k:v for k,v in learner.fit_status.items() if k not in ('architecture','module_parameters','gradient_names')}))
+		for row in learner.tuning:tuning.append(dict(model_id=name,**row))
+		log('DONE','S7_final_model',name)
+		return learner
+	for strategy in ('full','target_tuned'):
+		en=fit('elasticnet_'+strategy,S7SklearnLearner(),strategy)
+		tree=fit(a.tree+'_'+strategy,S7SklearnLearner(a.tree),strategy)
+		models['baseline_ensemble_'+strategy]=S7EnsembleLearner(en,tree)
+	for name,strategy in [('attention_direct_full','full'),('attention_retrieval_full','full'),
+		('attention_retrieval_target_tuned','target_tuned'),('attention_retrieval_weighted','weighted'),
+		('attention_retrieval_random_weighted','random_weighted')]+(
+		[('attention_retrieval_filtered','filtered'),('attention_retrieval_random_filtered','random_filtered')] if a.s7_hard_filter else []):
+		fit(name,S7AttentionLearner('direct' if name=='attention_direct_full' else 'retrieval'),strategy)
+	# A separately named old-channel ablation; not the matched tail-aware fallback.
+	en=fit('elasticnet_bulk_only',S7SklearnLearner(bulk_only=True),'full',True)
+	tree=fit(a.tree+'_bulk_only',S7SklearnLearner(a.tree,bulk_only=True),'full',True)
+	models['baseline_ensemble_bulk_only']=S7EnsembleLearner(en,tree)
+	for name in ('baseline_ensemble_full','baseline_ensemble_target_tuned','baseline_ensemble_bulk_only'):
+		registry.append(dict(model_id=name,architecture='raw_equal_weight_ensemble',physical_assays=len(models[name].prep.feature_names),
+			input_channels='bulk+clinical' if name.endswith('bulk_only') else 'bulk+tail_up+tail_down+missing+clinical',
+			training_scope='full',tune_scope='tune_model_common_target' if name.endswith('target_tuned') else 'tune_model_all',
+			calibration_scope='calibration_fit',trainable_parameters=0,gradient_steps=0))
+	return models,pd.DataFrame(registry),pd.DataFrame(tuning),rand_weight,rand_hard
+
+
+def s7_model_predictions(bundle,raw,metadata):
+	pred={name:learner.predict(raw,metadata) for name,learner in bundle['models'].items()}
+	cal=bundle.get('calibrators',{})
+	for name,value in pred.items():
+		if name in cal:value.probability=cal[name].predict(value.probability)
+	return pred
+
+
+def s7_deployment_inputs(bundle,pred):
+	a=SimpleNamespace(**bundle['config']);primary=copy.deepcopy(pred[bundle['primary']])
+	# Direct probability in the deployed gate is the separately calibrated direct comparator.
+	primary.diagnostics['p_direct']=pred['attention_direct_full'].probability
+	return s7_gate_features(pred['elasticnet_full'],pred[a.tree+'_full'],primary,pred[bundle['fallback']].probability)
+
+
+def s7_predict(bundle,raw,metadata):
+	a=SimpleNamespace(**bundle['config']);metadata=s7_metadata(metadata,a)
+	pred=s7_model_predictions(bundle,raw,metadata);z=s7_deployment_inputs(bundle,pred)
+	gate=bundle['release_gate'].predict(z);ids=metadata[a.id_col].to_numpy(str)
+	d=pred[bundle['primary']].diagnostics
+	qc=(d.missing_fraction.to_numpy()<=a.sample_missing)&~d.unknown_category.to_numpy(bool)&(d.tail_cap_count.to_numpy()==0)
+	research=bundle['coverage_rules'][a.selective_coverage].apply(gate['gain'],ids)
+	candidate=research&(gate['gain']>0)&qc
+	released=candidate&(bundle['audit_state']['status']=='audit_supported_gain')
+	prob={name:value.probability for name,value in pred.items()}
+	policy=np.where(released,prob[bundle['primary']],prob[bundle['fallback']])
+	reasons=np.select([~qc,~research,gate['gain']<=0,~released],['technical_QC','outside_research_coverage','nonpositive_gain','audit_not_supported'],default='released')
+	return pd.DataFrame({a.id_col:ids,**prob,**{k:v.to_numpy() for k,v in z.items()},
+		'gain_score':gate['gain'],'estimated_squared_error':gate['absolute_error'],
+		'clinical_risk':bundle['clinical_model'].predict_proba(bundle['clinical_encoder'].transform(metadata))[:,1] if bundle['clinical_encoder'] is not None else np.full(len(ids),bundle['clinical_constant']),
+		'research_mask':research,'candidate_mask':candidate,'released':released,'prediction_released':released,
+		'technical_QC_pass':qc,'policy_risk':policy,'rejection_reason':reasons})
+
+
+def s7_audit_decision(table,truth,groups,bundle):
+	a=SimpleNamespace(**bundle['config']);mask=table.candidate_mask.to_numpy(bool);km=bundle['censoring']
+	y,w=km.labels_weights(truth);cases=int(np.sum(y[mask]));controls=int(np.sum((w[mask]>0)&(y[mask]==0)))
+	pairs=s7_paired_bootstrap(truth.time.to_numpy(),truth.event.to_numpy(),
+		{name:table[name].to_numpy() for name in (bundle['primary'],bundle['fallback'])},mask,groups,km,
+		[(bundle['primary'],bundle['fallback'])],a.bootstrap,a.seed+812)
+	row=pairs.loc[pairs.metric.eq('Brier_IPCW')].iloc[0]
+	information=cases>=a.s7_audit_min_events and controls>=a.s7_audit_min_controls and row.valid_boot>=max(200,math.ceil(.8*a.bootstrap))
+	status='insufficient_audit_information' if not information else 'audit_supported_gain' if row.upper<0 else 'gain_not_established'
+	return dict(status=status,primary=bundle['primary'],fallback=bundle['fallback'],candidate_N=int(mask.sum()),
+		candidate_groups=len(set(np.asarray(groups)[mask])),observed_cases=cases,known_controls=controls,
+		valid_boot=int(row.valid_boot),Brier_delta=float(row.delta),lower=float(row.lower),upper=float(row.upper),
+		minimum_events=a.s7_audit_min_events,minimum_controls=a.s7_audit_min_controls,minimum_valid_boot=max(200,math.ceil(.8*a.bootstrap)),
+		interpretation='Independent internal audit of one predeclared policy; not an individual guarantee'),pairs
+
+
+def s7_contrasts(bundle):
+	return [('attention_effect','attention_retrieval_full','baseline_ensemble_full'),
+		('retrieval_effect','attention_retrieval_full','attention_direct_full'),
+		('training_weight_effect','attention_retrieval_weighted','attention_retrieval_target_tuned'),
+		('weight_specificity','attention_retrieval_weighted','attention_retrieval_random_weighted'),
+		('combined_method','attention_retrieval_weighted','baseline_ensemble_target_tuned'),
+		('policy_effect','policy_risk',bundle['fallback'])]
+
+
+def s7_selection_masks(bundle,table):
+	ids=table[bundle['config']['id_col']].to_numpy(str);result={}
+	for q,rule in bundle['coverage_rules'].items():result['release_gain',q]=rule.apply(table.gain_score.to_numpy(),ids)
+	scores=dict(absolute_error=-table.estimated_squared_error.to_numpy(),clinical_lowrisk=-table.clinical_risk.to_numpy(),
+		support_only=table.borrow_fraction.to_numpy(),random=np.array([s6_seed(v,bundle['config']['seed']+97)/2**64 for v in ids]))
+	for label,rules in bundle['control_rules'].items():
+		for q,rule in rules.items():result[label,q]=rule.apply(scores[label],ids)
+	return result
+
+
+def s7_freeze_components(bundle):
+	return dict(models=s7_state_hash(bundle['models']),calibrators=s7_state_hash(bundle['calibrators']),
+		release_gate=s7_state_hash(bundle['release_gate']),coverage_rules=s7_state_hash(bundle['coverage_rules']),
+		training_gate=s7_state_hash(bundle['training_gate']),control_rules=s7_state_hash(bundle['control_rules']),
+		clinical_model=s7_state_hash((bundle['clinical_encoder'],bundle['clinical_model'])),
+		censoring=s7_state_hash((bundle['censoring'],bundle.get('conditional_censoring'))))
+
+
+def s7_fit(raw,p,features,a,out):
+	out=Path(out);out.mkdir(parents=True,exist_ok=True)
+	p=p.reset_index(drop=True).copy()
+	if 'role' not in p:p['role']=s7_split(p,a)
+	groups=s6_groups(p,a);parts={name:np.flatnonzero(p.role.eq(name)) for name in S7_ROLES}
+	if min(map(len,parts.values()))<20:raise ValueError('S7 needs >=20 participants in each fixed role')
+	if p.groupby(a.group_col or a.id_col).role.nunique().max()!=1:raise ValueError('Family crosses S7 roles')
+	schema=s7_schema(features,a)
+	data={name:s7_fit_data(raw[ix],p.iloc[ix],schema,a,name) for name,ix in parts.items()}
+	train,valid=data['build'],data['tune_model']
+	gate,values=s7_crossfit_training_gate(train,vars(a))
+	tune_scores=gate.predict(valid.raw,valid.metadata)['gain']
+	target=S7CoverageRule().fit(tune_scores,valid.metadata[a.id_col].to_numpy(str),a.selective_coverage,a.seed+91).apply(tune_scores,valid.metadata[a.id_col].to_numpy(str))
+	models,registry,tuning,random_weight,random_hard=s7_fit_final_models(train,valid,values,target,vars(a))
+	km=S6Censoring().fit(train.survival(),a.horizon,a.min_censor_survival)
+	bundle=dict(format_version=S7_VERSION,design='selective_attention',config=vars(a).copy(),features=list(features),
+		source_feature_schema=models['elasticnet_full'].prep.schema,assay_budget=len(features),models=models,training_gate=gate,
+		primary=a.s7_primary,fallback='baseline_ensemble_full',censoring=km,calibrators={},
+		group_namespace=a.group_namespace,role_hashes={role:digest(sorted(data[role].metadata[a.id_col].astype(str))) for role in S7_ROLES},
+		audit_state={'status':'not_evaluated'},estimand='net_risk_under_independent_censoring',
+		run_id=s7_manifest(a)['signature'][:20],input_fingerprints=s7_manifest(a)['inputs'],
+		effective_parameters=vars(a).copy(),ignored_or_incompatible_parameters=['legacy_attention_panel_options','selective_gate_target (S7 always actual attention gain)'])
+	cal=data['calibration_fit'];yc,wc=km.labels_weights(cal.survival())
+	s6_check_events(yc,wc,a.selective_min_events,'S7 calibration_fit')
+	calraw={name:learner.predict(cal.raw,cal.metadata).probability for name,learner in models.items()}
+	bundle['calibrators']={name:S6Calibrator().fit(pred,yc,wc) for name,pred in calraw.items()}
+	# The release gate sees the actual final candidate and actual separately calibrated fallback.
+	tg=data['tune_gate'];pred=s7_model_predictions(bundle,tg.raw,tg.metadata);zg=s7_deployment_inputs(bundle,pred)
+	yg,wg=km.labels_weights(tg.survival())
+	bundle['release_gate']=S7ReleaseGate().fit(zg,yg,wg,pred[a.s7_primary].probability,pred[bundle['fallback']].probability,
+		{**vars(a),'gate_primary':a.s7_primary,'gate_reference':bundle['fallback']})
+	cp=s7_model_predictions(bundle,cal.raw,cal.metadata);zc=s7_deployment_inputs(bundle,cp);scores=bundle['release_gate'].predict(zc)
+	ids=cal.metadata[a.id_col].to_numpy(str)
+	bundle['coverage_rules']={q:S7CoverageRule().fit(scores['gain'],ids,q,a.seed+91) for q in a.selective_coverages}
+	clinical=S6Clinical(words(a.covariates),words(a.categorical)).fit(train.metadata) if words(a.covariates) else None
+	yb,wb=km.labels_weights(train.survival());bundle['clinical_encoder']=clinical;bundle['clinical_constant']=float(np.average(yb,weights=wb))
+	bundle['clinical_model']=s6_fit_logistic(clinical.transform(train.metadata),yb,wb,1.,0,a.seed,a.max_iter) if clinical is not None else None
+	pc=bundle['clinical_model'].predict_proba(clinical.transform(cal.metadata))[:,1] if clinical is not None else np.full(len(cal.raw),bundle['clinical_constant'])
+	control_scores=dict(absolute_error=-scores['absolute_error'],clinical_lowrisk=-pc,support_only=zc.borrow_fraction.to_numpy(),
+		random=np.array([s6_seed(v,a.seed+97)/2**64 for v in ids]))
+	bundle['control_rules']={name:{q:S7CoverageRule().fit(score,ids,q,a.seed+97) for q in a.selective_coverages} for name,score in control_scores.items()}
+	bundle['conditional_censoring'] = S7ConditionalCensoring().fit(train.metadata, train.survival(), vars(a))
+	before=s7_freeze_components(bundle)
+	audit=data['calibration_audit'];at=s7_predict(bundle,audit.raw,audit.metadata)
+	bundle['audit_state'],audit_pairs=s7_audit_decision(at,audit.survival(),s6_groups(audit.metadata,a),bundle)
+	assert before==s7_freeze_components(bundle)
+	freeze_projection_schema(bundle,p,a,~p.role.eq('test'))
+	bundle['component_hashes']=before
+	bundle['immutable_frozen_hash']=digest({**before,'audit':bundle['audit_state'],'roles':bundle['role_hashes']})
+	bundle['dependency_versions']=s7_manifest(a)['dependencies'];bundle['code_commit']='unavailable_local_checkout_without_git'
+	bundle['model_registry']=registry;bundle['model_tuning']=tuning
+	bundle['preprocessing_audit']=pd.concat([learner.prep.audit.assign(model_id=name) for name,learner in models.items()],ignore_index=True)
+	bundle['gate_training']=pd.DataFrame([dict(gate='training',source_role='pilot_gate_within_build',target='attention_retrieval_pilot',reference='baseline_pilot',score_sd=float(np.std(values['score']))),
+		dict(gate='release',source_role='tune_gate',target=a.s7_primary,reference=bundle['fallback'],score_sd=float(np.std(scores['gain'])))])
+	bundle['fit_status']=dict(status='completed' if bundle['audit_state']['status']=='audit_supported_gain' else 'audit_not_supported',mode='selective_attention',
+		actual_device=device_for(a.device),uses_real_UKB=not a.demo and str(a.omics_file).startswith(str(Path(a.ukb_phe))),
+		native_TabICL=False,gradient_updates=True)
+	# Persist all reference artifacts on CPU. Inference never reopens training input paths.
+	joblib.dump(bundle,out/'model_bundle.joblib',compress=3)
+	frozen=dict(version=S7_VERSION,design='selective_attention',model_sha256=hashlib.sha256((out/'model_bundle.joblib').read_bytes()).hexdigest(),
+		immutable_frozen_hash=bundle['immutable_frozen_hash'],test_outcomes_used_for_fitting=False)
+	dump(out/'MODEL_FROZEN.json',frozen);dump(out/'manifest.json',s7_manifest(a));dump(out/'reference_readiness.json',bundle['audit_state'])
+	for name in ('model_registry','model_tuning','preprocessing_audit','gate_training'):bundle[name].to_csv(out/(name+'.csv'),index=False)
+	gate.audit.to_csv(out/'crossfit_audit.csv',index=False)
+	training=pd.DataFrame({a.id_col:train.metadata[a.id_col],**values,'random_weight':random_weight,'random_hard_mask':random_hard})
+	training.to_csv(out/'training_weights.csv',index=False);gate.weights.to_csv(out/'training_folds.csv',index=False)
+	pd.DataFrame([dict(role=role,N=len(ix),independent_groups=len(set(groups[ix])),events=int(p.event.iloc[ix].sum()),
+		known_N=int(np.sum(km.labels_weights(data[role].survival())[1]>0)),
+		observed_cases=int(np.sum(km.labels_weights(data[role].survival())[0])),
+		known_controls=int(np.sum((km.labels_weights(data[role].survival())[1]>0)&(km.labels_weights(data[role].survival())[0]==0))),
+		source_hash=bundle['role_hashes'][role],family_overlap=False) for role,ix in parts.items()]).to_csv(out/'role_audit.csv',index=False)
+	p[[a.id_col,'role']+([a.group_col] if a.group_col else [])].to_csv(out/'development_roster.csv',index=False)
+	pd.DataFrame([bundle['audit_state']]).to_csv(out/'audit_decision.csv',index=False);audit_pairs.to_csv(out/'audit_contrasts.csv',index=False)
+	pd.DataFrame([bundle['fit_status']]).to_csv(out/'fit_status.csv',index=False)
+	rows=[]
+	for name,model in models.items():
+		if isinstance(model,S7AttentionLearner) and model.mode=='retrieval':
+			rows.extend(dict(model_id=name,view=view,radius=model.memory.geometry.radii[view],status=status,donor_N=len(model.memory.ids),donor_groups=len(set(model.memory.groups))) for view,status in model.memory.geometry.status.items())
+	pd.DataFrame(rows).to_csv(out/'reference_diagnostics.csv',index=False)
+	# Final test access is prediction/evaluation only, after every fitted object and rule is frozen.
+	test=data['test'];tt=s7_predict(bundle,test.raw,test.metadata)
+	tt.to_csv(out/'test_individuals.csv',index=False)
+	test.survival().assign(**{a.id_col:test.metadata[a.id_col].to_numpy(), 'family_group':s6_groups(test.metadata,a),
+		'censor_stratum':bundle['conditional_censoring'].strata(test.metadata)}).to_csv(out/'test_outcomes.csv',index=False)
+	ap=s7_predict(bundle,audit.raw,audit.metadata)
+	pd.DataFrame([dict(model=name,subset='calibration_audit_policy',**s7_metric(audit.time,audit.event,ap[name].to_numpy(),s6_groups(audit.metadata,a),km)) for name in (bundle['primary'],bundle['fallback'],'policy_risk')]).to_csv(out/'development_metrics.csv',index=False)
+	dump(out/'TRAIN_DONE.json',dict(version=S7_VERSION,design='selective_attention'))
+	return bundle
+
+
+def s7_evaluate(out):
+	out=Path(out);frozen=json.loads((out/'MODEL_FROZEN.json').read_text())
+	if frozen.get('design')!='selective_attention':raise ValueError('Not S7')
+	if hashlib.sha256((out/'model_bundle.joblib').read_bytes()).hexdigest()!=frozen['model_sha256']:raise ValueError('Frozen S7 artifact hash mismatch')
+	bundle=joblib.load(out/'model_bundle.joblib');a=SimpleNamespace(**bundle['config']);km=bundle['censoring']
+	table=pd.read_csv(out/'test_individuals.csv',dtype={a.id_col:str});truth=pd.read_csv(out/'test_outcomes.csv',dtype={a.id_col:str,'family_group':str})
+	if not table[a.id_col].equals(truth[a.id_col]):raise ValueError('Test prediction/outcome identity mismatch')
+	time,event=truth.time.to_numpy(),truth.event.to_numpy();groups=truth.family_group.to_numpy();y,w=km.labels_weights(truth)
+	models=list(bundle['models'])+['policy_risk'];pred={name:table[name].to_numpy() for name in models}
+	masks={'all':np.ones(len(table),bool),'research':table.research_mask.to_numpy(bool),'rejected':~table.research_mask.to_numpy(bool),'released':table.released.to_numpy(bool)}
+	def row(name,mask,subset,selector,q):
+		return dict(run_id=bundle['run_id'],primary_id=bundle['primary'],reference_id=bundle['fallback'],model=name,model_id=name,
+			architecture='frozen_fallback_policy' if name=='policy_risk' else bundle['models'][name].fit_status['architecture'],
+			subset=subset,selector=selector,requested_coverage=q,actual_coverage=float(np.mean(mask)),coverage=float(np.mean(mask)),quantile=q,
+			release_coverage=float(table.released.mean()),audit_status=bundle['audit_state']['status'],
+			observed_event_coverage=float(y[mask].sum()/y.sum()) if y.sum() else np.nan,
+			IPCW_event_coverage=float((y[mask]*w[mask]).sum()/(y*w).sum()) if (y*w).sum() else np.nan,
+			**s7_metric(time[mask],event[mask],pred[name][mask],groups[mask],km))
+	metrics=pd.DataFrame([row(name,mask,subset,'release_gain',1. if subset=='all' else a.selective_coverage) for subset,mask in masks.items() for name in models])
+	metrics.to_csv(out/'test_metrics.csv',index=False)
+	curves=pd.DataFrame([row(name,mask,'research',selector,q) for (selector,q),mask in s7_selection_masks(bundle,table).items() for name in models])
+	curves.to_csv(out/'coverage_curve.csv',index=False)
+	contrasts=[]
+	for subset,mask in masks.items():
+		pairs=[(m,r) for label,m,r in s7_contrasts(bundle) if label!='policy_effect' or subset=='all']
+		rows=s7_paired_bootstrap(time,event,pred,mask,groups,km,pairs,a.bootstrap,a.seed+817)
+		labels={(m,r):label for label,m,r in s7_contrasts(bundle)}
+		rows['contrast']=[labels[m,r] for m,r in zip(rows.model,rows.reference)];rows['subset']=subset
+		contrasts.append(rows)
+	pd.concat(contrasts,ignore_index=True).to_csv(out/'paired_contrasts.csv',index=False)
+	if 'conditional_censoring' in bundle:
+		pd.DataFrame([dict(model_id=name, subset=subset, censoring_method='build_only_age_tertile_sex_stratified_KM',
+			estimand='prespecified_conditional_censoring_sensitivity', changes_primary_policy=False,
+			**bundle['conditional_censoring'].metric(truth.loc[mask], pred[name][mask], groups[mask], km))
+			for subset,mask in masks.items() for name in models]).to_csv(out/'censoring_sensitivity.csv',index=False)
+	s7_render_figures(out,bundle,metrics,curves)
+	dump(out/'DONE.json',dict(version=S7_VERSION,design='selective_attention',status=bundle['fit_status']['status']))
+	return metrics
+
+
+def s7_render_figures(out,bundle,metrics,curves):
+	import matplotlib
+	matplotlib.use('Agg')
+	import matplotlib.pyplot as plt
+	data=metrics[metrics.subset.eq('all')]
+	fig,ax=plt.subplots(figsize=(10,max(5,len(data)*.3)));ax.barh(data.model,data.Uno_C_horizon);ax.set(xlabel='Horizon-truncated Uno C',xlim=(0,1),title='Frozen S7 models: identical held-out participants')
+	fig.tight_layout();fig.savefig(out/'Fig_model_comparison.png',dpi=150);plt.close(fig);data.to_csv(out/'Fig_model_comparison.csv',index=False)
+	data=curves[curves.selector.eq('release_gain') & curves.model.isin([bundle['primary'],bundle['fallback'],'attention_direct_full'])]
+	fig,ax=plt.subplots(figsize=(8,5))
+	for name,sub in data.groupby('model'):ax.plot(sub.actual_coverage,sub.Uno_C_horizon,'o-',label=name)
+	ax.set(xlabel='Actual held-out research coverage',ylabel='Horizon-truncated Uno C',title='Frozen gain thresholds; same-mask comparisons');ax.legend(fontsize=7)
+	fig.tight_layout();fig.savefig(out/'Fig_coverage.png',dpi=150);plt.close(fig);data.to_csv(out/'Fig_coverage.csv',index=False)
+
+
+def s7_project(out,request):
+	bundle=joblib.load(Path(out)/'model_bundle.joblib')
+	p,raw,audit=load_projection(bundle,request)
+	for model in bundle['models'].values():
+		if isinstance(model,S7AttentionLearner):model.device=device_for(request.device)
+	table=s7_predict(bundle,raw,p);table['validation_status']=audit['validation_status']
+	Path(request.output).parent.mkdir(parents=True,exist_ok=True);table.to_csv(request.output,index=False)
+	audit['unknown_category_N']=int(np.sum(~table.technical_QC_pass))
+	dump(Path(request.output).with_suffix('.audit.json'),audit)
+	return table
+
+
+def s7_train_from_host(a,out):
+	out=Path(out);prepared=abm_cache_dir(out,'input');prepared.mkdir(parents=True,exist_ok=True)
+	p=prepare(a,prepared);raw=np.load(prepared/'raw.npy');features=(prepared/'features.txt').read_text().splitlines()
+	p,audit=outcomes(p,a);eligible=p.eligible.to_numpy(bool);p=p.loc[eligible].reset_index(drop=True);raw=raw[eligible]
+	p['role']=s7_split(p,a)
+	# Sample QC denominator uses build X only, including assays with rare raw variation.
+	build=p.role.eq('build').to_numpy();temp=S7Preprocessor(vars(a)).fit(raw[build],s7_metadata(p.loc[build],a),s7_schema(features,a))
+	b=temp.transform(raw,s7_metadata(p,a));missing=1-b.observed.mean(1);good=missing<=a.sample_missing
+	pd.DataFrame({a.id_col:p[a.id_col], 'role':p.role,'missing_fraction':missing,'included':good}).to_csv(out/'sample_qc.csv',index=False)
+	return s7_fit(raw[good],p.loc[good].reset_index(drop=True),features,a,out)
+
+
+def s7_main(a):
+	from threadpoolctl import threadpool_limits
+	a=s7_validate(a);a.device=device_for(a.device);torch.set_num_threads(a.cores)
+	if a.check_device:print(json.dumps(dict(device=a.device,CUDA=torch.cuda.is_available())));return
+	preflight_inputs(a)
+	if a.preflight:print('S7 dependencies, configuration and requested device checked; no training performed');return
+	out=output_directory(a)
+	if a.dry_run:print(json.dumps(dict(output=str(out),config=vars(a)),indent=2));return
+	out.mkdir(parents=True,exist_ok=True)
+	with run_lock(out),threadpool_limits(a.cores):
+		if (out/'MODEL_FROZEN.json').exists() and not a.replace:
+			previous=json.loads((out/'manifest.json').read_text())
+			if previous.get('signature')!=s7_manifest(a)['signature']:raise ValueError('Existing S7 fit has different numeric inputs/options; choose new analysis root or explicit --replace')
+			if (out/'DONE.json').exists() or (a.train_only and (out/'TRAIN_DONE.json').exists()):log('SKIP','S7_completed',str(out));return
+			return s7_evaluate(out)
+		if not prepare_run_directory(out,replace=a.replace,train_only=a.train_only):return
+		try:
+			s7_train_from_host(a,out)
+			if not a.train_only:s7_evaluate(out)
+		except Exception as exc:
+			pd.DataFrame([dict(status='failed',mode='selective_attention',reason=str(exc))]).to_csv(out/'fit_status.csv',index=False)
+			raise
 
 
 def s6_bind_host():
@@ -7442,13 +8955,16 @@ def s6_bind_host():
     previous_project=globals()["reference_project"]
     def new_evaluate(out):
         path=Path(out)/"MODEL_FROZEN.json"
+        if path.is_file() and json.loads(path.read_text()).get("design")=="selective_attention":return s7_evaluate(out)
         if path.is_file() and json.loads(path.read_text()).get("design")=="selective":return s6_evaluate(out)
         return previous_evaluate(out)
-    def new_project(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu"):
+    def new_project(out,phe_file,omics_file,output,r_bin="Rscript",met_input="named",device="cpu",projection_request=None):
         path=Path(out)/"MODEL_FROZEN.json"
+        if path.is_file() and json.loads(path.read_text()).get("design")=="selective_attention":
+            return s7_project(out,projection_request or ProjectionRequest(phe_file,omics_file,output,met_input=met_input,r_bin=r_bin,device=device))
         if path.is_file() and json.loads(path.read_text()).get("design")=="selective":
-            return s6_project_from_host(out,phe_file,omics_file,output,r_bin,met_input,device)
-        return previous_project(out,phe_file,omics_file,output,r_bin,met_input,device)
+            return s6_project_from_host(out,phe_file,omics_file,output,r_bin,met_input,device,projection_request=projection_request)
+        return previous_project(out,phe_file,omics_file,output,r_bin,met_input,device,projection_request=projection_request)
     def new_main():
         a=configure(reference_parser().parse_args())
         if a.abm_design=="attention":return previous_main()
@@ -7461,7 +8977,8 @@ def s6_bind_host():
             if not a.run_dir or not a.output:raise ValueError("project requires --run-dir and --output")
             from threadpoolctl import threadpool_limits
             with threadpool_limits(a.cores):
-                return new_project(output_directory(a),a.phe_file,a.omics_file,a.output,a.r_bin,a.met_input,a.device)
+                return new_project(output_directory(a),a.phe_file,a.omics_file,a.output,a.r_bin,a.met_input,a.device,projection_request=projection_request(a))
+        if a.abm_design=="selective_attention":return s7_main(a)
         a=s6_validate(a)
         out=output_directory(a)
         if a.check_device:
@@ -7497,6 +9014,10 @@ def s6_bind_host():
 if "reference_main" in globals() and "reference_parser" in globals():
     s6_bind_host()
 # C1_SELECTIVE_V6_END
+
+for _name, _value in list(globals().items()):
+    if isinstance(_value, type) and (_name.startswith("S7") or _name in {"BorrowResult", "ProjectionRequest"}):
+        _value.__module__ = "c1_abm"
 
 # 🚩 Canonical model serialization
 # A single module identity is used for newly fitted models, including CLI runs.

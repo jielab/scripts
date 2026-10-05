@@ -1,5 +1,5 @@
 """A01/A08 regression tests against production functions and public dispatcher.
-Run with PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v.
+Run with PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s validation -v.
 All synthetic data and outputs live in /tmp.
 """
 from pathlib import Path
@@ -367,7 +367,7 @@ class AuditRegression(TestCase):
 			date_death=[None,None,None,None,'2020-06-01',None,None,None],date_lost=[None]*5+['2020-04-01',None,None],
 			fod_icd10_cvd_cad=['2019-12-31','2020-01-01','2020-12-31','2021-01-01','2020-07-01','2020-04-01',None,None]))
 		file=self.path/'outcomes.csv';p.to_csv(file,index=False)
-		r=subprocess.run(['Rscript',str(ROOT/'tests/audit_acceptance.R'),'--outcomes',str(file)],env=dict(os.environ,DATE_FOLLOW_END=a.end_date),text=True,capture_output=True,check=True)
+		r=subprocess.run(['Rscript',str(ROOT/'validation/audit_acceptance.R'),'--outcomes',str(file)],env=dict(os.environ,DATE_FOLLOW_END=a.end_date),text=True,capture_output=True,check=True)
 		data=json.loads(r.stdout);out,audit=abm.outcomes(p,a)
 		self.assertEqual(data['prevalent'],out.prevalent.astype(int).tolist())
 		self.assertEqual(data['event'],[int(x) if valid else None for x,valid in zip(out.event,out.endpoint_valid)])
