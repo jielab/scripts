@@ -415,7 +415,7 @@ def run(kind=None, argv=None):
 	p.add_argument(
 		"--memory-limit-gb",
 		type=int,
-		default=int(os.getenv("ABM_MEMORY_CAP_GB", "24")),
+		default=int(os.getenv("ABM_MEMORY_CAP_GB", "32")),
 	)
 	p.add_argument(
 		"--memory-swap-gb", type=int, default=int(os.getenv("ABM_SWAP_CAP_GB", "2"))

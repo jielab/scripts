@@ -290,7 +290,7 @@ def main():
     p.add_argument('--cores',type=int,default=int(os.getenv('LE8_TOTAL_CORES',os.getenv('N_CORES','16'))))
     p.add_argument('--workers',type=int,default=int(os.getenv('MRLINK2_WORKERS','4')))
     p.add_argument('--inner-threads',type=int,default=int(os.getenv('MRLINK2_INNER_THREADS','1')))
-    p.add_argument('--memory-gib',type=float,default=float(os.getenv('LE8_RESOURCE_MEMORY_GIB','24')))
+    p.add_argument('--memory-gib',type=float,default=float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')))
     p.add_argument('--job-memory-gib',type=float,default=float(os.getenv('LE8_CPU_TASK_MEMORY_GIB',os.getenv('MRLINK2_JOB_MEMORY_GIB','4'))))
     p.add_argument('--job-base-gib',type=float,default=1);p.add_argument('--ld-workspace-multiplier',type=float,default=8)
     p.add_argument('--cache-root',type=Path,default=Path('/tmp/le8-mrlink2-validated'))

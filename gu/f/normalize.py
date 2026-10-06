@@ -2260,14 +2260,14 @@ not resolve homozygous tract dosage. Male non-PAR X has a haploid denominator.
 Missing chromosomes and untested female X rows are NA, never a negative call.
 """
 
-import argparse, csv, gzip, hashlib, json, os, re, sqlite3, tempfile, shutil, atexit
+import argparse, csv, gzip, hashlib, json, os, re, sqlite3, tempfile, shutil, atexit, errno
 from pathlib import Path
 import numpy as np
 
 load_module("0.common.py")
 from gu_0_common import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 13
+SCHEMA = 14
 SUMMARY_REFERENCES = ("Altai", "Altai.2013", "Chagyr", "Vindija", "Denisova", "Denisova.2013", "Denisova25")
 SUMMARY_GROUPS = {ref: (ref,) for ref in SUMMARY_REFERENCES}
 SUMMARY_GROUPS.update(
@@ -2277,6 +2277,62 @@ SUMMARY_GROUPS.update(
 		"2013 Pair": ("Altai.2013", "Denisova.2013"),
 	}
 )
+
+
+def density_input_stat(path):
+	try:
+		return path.stat() if path.is_file() else None
+	except OSError as error:
+		# Archived manifests can point to a drive that is no longer mounted.
+		if error.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ENODEV, errno.ENXIO):
+			raise
+		return None
+
+
+def density_run_path(raw, database):
+	"""Locate restored run metadata without changing its recorded provenance."""
+	path = Path(raw)
+	if not path.is_absolute():
+		return database.parent / path
+	if density_input_stat(path):
+		return path
+	# Published RDS files restore the original method/target/scope tree under
+	# /tmp. Older databases still record the former absolute analysis root.
+	# Keep the entire run suffix, including the legacy ukb namespace; never
+	# search by chromosome or basename, which could select another cohort.
+	parts = path.parts
+	if "ibdmix" not in parts:
+		return path
+	index = parts.index("ibdmix")
+	if index and parts[index - 1] == "ukb":
+		index -= 1
+	roots = [database.parent.parent]
+	if os.environ.get("GU_ANALYSIS_ROOT"):
+		roots.insert(0, Path(os.environ["GU_ANALYSIS_ROOT"]))
+	for root in roots:
+		candidate = root.joinpath(*parts[index:])
+		if density_input_stat(candidate):
+			return candidate
+	return path
+
+
+def density_run_signature(paths):
+	"""Invalidate missing-data caches when restored metadata/rosters change."""
+	inputs = set(paths)
+	for path in paths:
+		# Include missing roster paths so restoring one also changes the key.
+		inputs.update(path.parent / "samples" / name for name in ("ALL.txt", "male.txt", "X_MALE/ALL.txt", "X_PAR/ALL.txt"))
+		inputs.update(path.parent / "samples" / ("C" + str(chrom)) / "ALL.txt" for chrom in range(1, 23))
+		if density_input_stat(path):
+			for line in path.read_text().splitlines():
+				fields = line.replace("\\t", "\t").split("\t")
+				if "psam" in fields and fields.index("psam") + 1 < len(fields):
+					inputs.add(Path(fields[fields.index("psam") + 1].rsplit(":", 2)[0]))
+	records = []
+	for path in sorted(inputs):
+		stat = density_input_stat(path)
+		records.append((str(path), stat.st_mtime_ns if stat else None, stat.st_size if stat else None))
+	return hashlib.sha256(json.dumps(records).encode()).hexdigest()
 
 
 def whole_chromosome_run(text, chrom):
@@ -2395,6 +2451,11 @@ def add_interval(covered, row, offset, length, bin_bp, left, right):
 
 def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 	stamp = database.stat()
+	con = sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True)
+	run_paths = {
+		raw: density_run_path(raw, database)
+		for (raw,) in con.execute("SELECT DISTINCT raw_file FROM method_runs WHERE method='ibdmix' AND status='complete'")
+	}
 	signature = {
 		"schema": SCHEMA,
 		"database": str(database.resolve()),
@@ -2403,10 +2464,10 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 		"bin_bp": bin_bp,
 		"sample_panel": str(sample_panel) if sample_panel else "",
 		"panel_mtime_ns": sample_panel.stat().st_mtime_ns if sample_panel and sample_panel.exists() else 0,
+		"run_inputs_sha256": density_run_signature(run_paths.values()),
 	}
 	version = hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()[:16]
 	output.mkdir(parents=True, exist_ok=True)
-	con = sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True)
 	units = con.execute(
 		"SELECT DISTINCT dataset_id,genome_build FROM method_runs WHERE method='ibdmix' AND status='complete'"
 	).fetchall()
@@ -2474,15 +2535,26 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 		legacy_chromosomes = sorted({r[0] for r in runs if not str(r[3]).startswith("audited IBDmix ")})
 		profiles = sorted({str(r[3]).split("profile=", 1)[1] for r in runs if "profile=" in str(r[3])})
 		for chrom, _, raw, note in runs:
-			p = Path(raw)
-			p = p if p.is_absolute() else database.parent / p
-			if not p.exists():
+			p = run_paths[raw]
+			if not density_input_stat(p):
+				print(f"DENSITY WARNING {dataset} {build} chr{chrom}: run metadata missing: {p}; coverage remains N/A", flush=True)
 				continue
 			text = p.read_text().replace("\\t", "\t")
 			run_targets = set()
 			if chrom == "X" and "male_haploid_nonpar" in text:
 				x_male = True
+			# Saved caller rosters survive relocation and include zero-call people.
+			# Prefer them over external input files, which may no longer exist.
+			unit = ("X_MALE" if "male_haploid_nonpar" in text else "X_PAR") if chrom == "X" else "C" + chrom
+			actual_roster = p.parent / "samples" / unit / "ALL.txt"
+			roster = p.parent / "samples" / ("male.txt" if chrom == "X" and "male_haploid_nonpar" in text else "ALL.txt")
+			saved_roster = actual_roster if actual_roster.is_file() else roster
+			has_roster = saved_roster.is_file()
+			if has_roster:
+				run_targets = set(saved_roster.read_text().split())
 			for line in text.splitlines():
+				if has_roster:
+					break
 				fields = line.replace("\\t", "\t").split("\t")
 				if "psam" not in fields:
 					continue
@@ -2490,27 +2562,18 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 				if i + 1 >= len(fields):
 					continue
 				psam = Path(fields[i + 1].rsplit(":", 2)[0])
-				if not psam.exists():
+				if not density_input_stat(psam):
 					continue
 				if psam not in psam_cache:
 					with psam.open() as f:
 						header = f.readline().split()
 						ix = header.index("IID") if "IID" in header else header.index("#IID")
 						psam_cache[psam] = {r[ix] for r in (line.split() for line in f) if len(r) > ix}
-				targets.setdefault(chrom, set()).update(psam_cache[psam])
 				run_targets.update(psam_cache[psam])
-			# Native VCF runs retain the actual caller sample roster here.
-			roster = (
-				p.parent / "samples" / ("male.txt" if chrom == "X" and "male_haploid_nonpar" in text else "ALL.txt")
-			)
-			if not run_targets and roster.exists():
-				run_targets = {line.strip() for line in roster.read_text().splitlines() if line.strip()}
+			if run_targets:
 				targets.setdefault(chrom, set()).update(run_targets)
-			unit = ("X_MALE" if "male_haploid_nonpar" in text else "X_PAR") if chrom == "X" else "C" + chrom
-			actual_roster = p.parent / "samples" / unit / "ALL.txt"
-			if actual_roster.exists():
-				run_targets = set(actual_roster.read_text().split())
-				targets[chrom] = run_targets
+			if not run_targets:
+				print(f"DENSITY WARNING {dataset} {build} chr{chrom}: no target sample roster for {p}; coverage remains N/A", flush=True)
 			refs = next((line.split("\t", 1)[1].split() for line in text.splitlines() if line.startswith("refs\t")), [])
 			# Locus-only calls cannot certify an entire chromosome denominator.
 			whole = whole_chromosome_run(text, chrom)

@@ -37,7 +37,9 @@ Coverage 分母为单倍体 X 物理长度减 PAR1/PAR2（GRCh37: 152,301,523 bp
 当前 X 调用为实验性伪二倍体适配，未应用常染色体最终过滤，不能据此推断男女相同。
 常染色体最终缓存中的 Denisovan 结果已扣除全人群 Altai 重叠区域和 AFR ≥30% 高频背景；
 Altai 的最高 0.1% 衍生等位基因区域过滤状态见右侧说明，缺失时不应把全部文献差异归因于参考更新。
-升级后运行 `./gu.sh shiny` 会自动生成两张表的 schema 12 汇总缓存，不需要重新运行 IBDmix。
+升级后运行 `./gu.sh shiny` 会自动生成 schema 14 汇总缓存，不需要重新运行 IBDmix。
+RDS 恢复到 `/tmp/gu-cache/` 后，汇总会按原方法、数据集和分析范围定位运行记录，优先读取保存的实际调用样本名单。
+缓存同时检查运行记录和样本名单的变化；记录缺失时会输出 `DENSITY WARNING` 并保留 `N/A`，恢复后会自动重建。
 各参考使用其发布者的独立质量掩码，统一放在 `F:/gen/archaic/37/mask/<参考名>/`。
 Vindija 的本地目录统一为 `mask/Vindija/`；其参考样本仍为 Vindija33.19，发布者下载 URL 保留原名。
 Altai 和 Denisova 的 minimal filters 也在各自目录，保留原始长文件名，不能以 `chrN_mask.bed.gz` 替代。

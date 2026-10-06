@@ -1568,7 +1568,7 @@ def dispatch_main(argv=None):
 	if min(a.mrlink2_workers,a.mrlink2_inner_threads)<1 or a.gpu_jobs!=1:raise ValueError('Positive MR workers/threads and --gpu-jobs 1 required')
 	if a.mrlink2_inner_threads>a.cores:raise ValueError('MR inner threads exceed allocated cores')
 	if a.cpu_task_memory_gib is not None and (not math.isfinite(a.cpu_task_memory_gib) or a.cpu_task_memory_gib<=0):raise ValueError('Invalid task memory')
-	env.update(LE8_TOTAL_CORES=str(capacity),LE8_RESOURCE_MEMORY_GIB=os.getenv('LE8_RESOURCE_MEMORY_GIB','24'),
+	env.update(LE8_TOTAL_CORES=str(capacity),LE8_RESOURCE_MEMORY_GIB=os.getenv('LE8_RESOURCE_MEMORY_GIB','32'),
 		LE8_POOL_CPUS=os.getenv('LE8_POOL_CPUS',','.join(map(str,sorted(os.sched_getaffinity(0))[:capacity]))),
 		LE8_PWAS_WORKERS=str(a.pwas_workers),LE8_PGS_WORKERS=str(a.pgs_workers),
 		MRLINK2_WORKERS=str(min(a.mrlink2_workers,a.cores//a.mrlink2_inner_threads)),
@@ -1684,7 +1684,7 @@ def dispatch_main(argv=None):
 	def phase(command,label,cores=None,gpu=False,memory=None):
 		if a.preflight:return call(command,env,a.dry_run)
 		budget=float(env['LE8_RESOURCE_MEMORY_GIB'])
-		claim=memory if memory is not None else min(budget,float(a.memory_limit_gb or (24 if gpu else 32)))
+		claim=memory if memory is not None else min(budget,float(a.memory_limit_gb or 32))
 		wrapped=[sys.executable,HERE/'0.resources.py','phase','--label',label,'--cores',str(cores or a.cores),
 			'--memory-gib',str(claim),*(['--gpu'] if gpu else []),'--',*command]
 		call(wrapped,env,a.dry_run)

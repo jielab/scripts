@@ -1666,7 +1666,7 @@ le8_stage <- function(label, expr, detail = "") {
 # Integration requires sourcing this file before parallel_map()/PGS dispatch.
 # No model formula, sample mask, SNP selection, or FDR definition is changed.
 # R tests are supplied but were NOT executed in the delivery environment.
-le8_parallel_workers <- function(n, requested, parent_gib=0, worker_gib=2, budget_gib=16, reserve_gib=4) {
+le8_parallel_workers <- function(n, requested, parent_gib=0, worker_gib=2, budget_gib=32, reserve_gib=4) {
   nums <- c(n,requested,parent_gib,worker_gib,budget_gib,reserve_gib)
   if(any(!is.finite(nums)) || n<0 || requested<1 || worker_gib<=0 || parent_gib<0 || reserve_gib<0)
     stop("Invalid parallel resource request")
@@ -1734,7 +1734,7 @@ le8_worker_plan <- function(n, kind='pwas', requested=NULL) {
         requested <- if(choice=='auto') if(kind=='pgs') 4L else 8L else as.integer(choice)
     }
     if(identical(Sys.getenv('LE8_IN_WORKER'),'1')) return(1L)
-    budget <- as.numeric(Sys.getenv('LE8_PHASE_MEMORY_GIB',Sys.getenv('LE8_RESOURCE_MEMORY_GIB','24')))
+    budget <- as.numeric(Sys.getenv('LE8_PHASE_MEMORY_GIB',Sys.getenv('LE8_RESOURCE_MEMORY_GIB','32')))
     rss <- if(file.exists('/proc/self/status')) readLines('/proc/self/status') else character()
     rss <- rss[grepl('^VmRSS:',rss)]
     parent <- if(length(rss)) as.numeric(gsub('[^0-9]','',rss[1]))/1024^2 else 0

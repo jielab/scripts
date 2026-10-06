@@ -65,7 +65,7 @@ Main options (defaults are set below in this script):
   --r-bin FILE           Rscript
   --port N               3839
   --host ADDRESS         127.0.0.1
-  --memory-limit-gb N    Explicit process-tree RAM cap; 0 disables it
+  --memory-limit-gb N    Process-tree RAM cap; default 32 GiB; 0 disables it
   --memory-swap-gb N     Explicit swap cap
   --abm-backend METHOD   reference | tabicl | both (default reference: selective_attention on CUDA)
   --abm-args STRING      Extra backend arguments, parsed without shell evaluation
@@ -104,6 +104,7 @@ summary report: final/; index: shiny/; execution logs and caches: /tmp/.
 Question-led overview and Fig6–8: final/; Shiny opens the research-question view.
 LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_explain --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
+Shared RAM budget: LE8_RESOURCE_MEMORY_GIB=32 by default (GiB).
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
 ABM requires CUDA by default and checks GPU forward/backward before native scans.
@@ -135,6 +136,7 @@ le8_main() {
 	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-/mnt/f/gwas/met}
 	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-/mnt/f/gen/1kg}
 	export LE8_GRCH=${LE8_GRCH:-auto}
+	export LE8_RESOURCE_MEMORY_GIB=${LE8_RESOURCE_MEMORY_GIB:-32}
 	export RUN_MRlink2=${RUN_MRlink2:-Top} RUN_Dandelion=${RUN_Dandelion:-Top}
 	export RUN_GPU_COLOC=${RUN_GPU_COLOC:-TRUE} FINAL_NESTED_CV=${FINAL_NESTED_CV:-FALSE}
 	export C2_FEATURE_SCOPE=${C2_FEATURE_SCOPE:-all_qtl} C2_MAX_FEATURES=${C2_MAX_FEATURES:-0}

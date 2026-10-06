@@ -125,7 +125,7 @@ def task_signature(task):
     return hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
 
 
-def execute(tasks,outdir,cores=4,memory_gib=16,max_workers=4,pool_path=None,reserve_gib=4):
+def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,reserve_gib=4):
     outdir=Path(outdir).resolve();outdir.mkdir(parents=True,exist_ok=True)
     (outdir/'ALL_COMPLETE.json').unlink(missing_ok=True)
     ids=[str(t['task_id']) for t in tasks]
@@ -273,7 +273,7 @@ def gpu_lease():
         yield
         return
     pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),
-        int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','24')),0)
+        int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')),0)
     slot=None
     while slot is None:
         slot=pool.acquire(0,0,gpu=True)
@@ -291,7 +291,7 @@ def phase_main(argv):
     if not command:raise ValueError('Missing phase command')
     if a.cores<1 or a.memory_gib<=0:raise ValueError('Invalid phase request')
     pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),
-        int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','24')),
+        int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')),
         float(os.getenv('LE8_RESOURCE_RESERVE_GIB','2')))
     slot=None;started=time.monotonic();proc=None
     while slot is None:
