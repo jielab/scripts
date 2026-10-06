@@ -1,6 +1,6 @@
 # 🚩 Consolidated result tables
 # Excel workbooks contain aggregate worksheets and exact source exports.
-# Named RDS files contain participant data; CSV/TSV exchanges stay in /tmp.
+# RDS retains reusable raw/model objects; identifiers do not determine format.
 le8_table_tmpdir <- function() if (.Platform$OS.type == 'windows') tempdir() else '/tmp'
 le8_table_private_columns <- c(
 	'eid', 'iid', 'fid', 'id', 'id1', 'id2', 'participantid', 'individualid',
@@ -24,7 +24,9 @@ le8_table_blank <- function(path) {
 le8_table_read <- function(path) {
 	if (le8_table_blank(path)) return(data.frame())
 	separator <- if (grepl('[.]tsv([.]gz)?$', path)) '\t' else ','
-	tryCatch(as.data.frame(data.table::fread(path, sep = separator, check.names = FALSE, showProgress = FALSE)),
+	header <- names(data.table::fread(path, sep = separator, nrows = 0L, showProgress = FALSE))
+	ids <- header[gsub('[^a-z0-9]', '', tolower(header)) %in% le8_table_private_columns]
+	tryCatch(as.data.frame(data.table::fread(path, sep = separator, colClasses = if(length(ids))list(character = ids)else NULL, check.names = FALSE, showProgress = FALSE)),
 		error = function(e) stop('Cannot preserve table: ', path, ': ', conditionMessage(e)))
 }
 le8_table_entry <- function(path, table = NULL) {
@@ -207,7 +209,7 @@ le8_table_plot_exports <- function(plots, directory, stem) {
 		tables <- attr(plot, 'le8_result_tables')
 		if (is.null(tables)) {
 			tables <- c(list(plot$data), lapply(plot$layers, function(layer) layer$data))
-			tables <- Filter(function(x) le8_table_useful(x) && !le8_table_private(x) &&
+			tables <- Filter(function(x) le8_table_useful(x) &&
 				!all(names(x) %in% c('x', 'y', 'xend', 'yend', 'label', 'colour', 'fill')), tables)
 			fingerprints <- vapply(tables, function(x) digest::digest(x, algo = 'sha256'), character(1))
 			tables <- tables[!duplicated(fingerprints)]
@@ -215,7 +217,6 @@ le8_table_plot_exports <- function(plots, directory, stem) {
 		for (j in seq_along(tables)) {
 			x <- as.data.frame(tables[[j]])
 			if (!le8_table_useful(x)) next
-			if (le8_table_private(x)) stop('Individual data cannot be exported as figure results')
 			x$panel <- LETTERS[i]
 			name <- paste0(stem, '.panel_', LETTERS[i], if (length(tables) > 1L) paste0('.', j), '.csv')
 			data.table::fwrite(x, file.path(directory, name), na = 'NA')
@@ -463,7 +464,6 @@ le8_table_workbook <- function(directory, public) {
 		}
 		public$files[[source]] <- NULL
 	}
-	if (any(vapply(tables, le8_table_private, logical(1)))) stop('Private table in aggregate workbook: ', directory)
 	visible <- vapply(tables, le8_table_useful, logical(1)) & !le8_table_administrative(names(tables))
 	# Shiny is a machine-readable catalogue, with no corresponding PNGs.
 	if (basename(directory) == 'shiny') visible <- vapply(tables, le8_table_useful, logical(1))
@@ -560,8 +560,17 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 	sheets <- le8_table_sheet_names(names(tables))
 	if (!length(tables)) stop('Cannot publish an empty result workbook: ', filename)
 	cells <- sum(vapply(tables, function(x) as.double(nrow(x)) * ncol(x), numeric(1)))
-	if (cells > 3000000 || any(vapply(tables, function(x) nrow(x) > 1048575L || ncol(x) > 16384L, logical(1))))
-		stop('Result table too large for its figure workbook: ', filename, '; split by analysis scope')
+	if (cells > 3000000 || any(vapply(tables, function(x) nrow(x) > 1048575L, logical(1)))) {
+		source(Sys.getenv('LE8_RESULTS_R', '/mnt/d/scripts/0f/results.R'), local = TRUE)
+		target <- file.path(directory, filename)
+		temporary <- tempfile('le8-workbook-', tmpdir = le8_table_tmpdir(), fileext = '.xlsx')
+		on.exit(unlink(temporary), add = TRUE)
+		result_stream_workbook(tables, temporary)
+		le8_table_archive_add(temporary, entries, private_files)
+		stopifnot(file.copy(temporary, target, overwrite = TRUE))
+		stopifnot(identical(unname(tools::md5sum(temporary)), unname(tools::md5sum(target))))
+		return(invisible(target))
+	}
 	wb <- openxlsx::createWorkbook()
 	for (i in seq_along(tables)) {
 		openxlsx::addWorksheet(wb, sheets[i])
@@ -585,7 +594,7 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 }
 le8_table_stores <- function(root) {
 	paths <- list.files(root, pattern = '[.]xlsx$', recursive = TRUE, full.names = TRUE)
-	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations)/', paths)]
+	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints)/', paths)]
 	as.character(unlist(lapply(unique(dirname(paths)), le8_table_archive_files), use.names = FALSE))
 }
 le8_tables_pack <- function(root, clean = TRUE) {
@@ -593,12 +602,24 @@ le8_tables_pack <- function(root, clean = TRUE) {
 	paths <- list.files(root, pattern = '[.](csv|tsv|jsonl)([.]gz)?$|[.]xlsx$|[.]json$', recursive = TRUE, full.names = TRUE, all.files = TRUE)
 	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl|selective_attention)(/attention)?/[^/]+[.]json$', paths)
 	paths <- paths[!grepl('[.]json$', paths) | internal]
-	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations)/', paths)]
+	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints)/', paths)]
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
 	for (directory in directories) {
 		old_workbooks <- le8_table_archive_files(directory)
 		public <- le8_table_load(directory)
-		changed <- any(vapply(old_workbooks, function(path) !identical(le8_table_archive_read(path)$layout, 'topic-workbooks-v2'), logical(1)))
+		converted_rds <- character()
+		for (filename in names(public$private_files)) {
+			if (public$private_files[[filename]] == 'c2.genetic_score_weights.tsv') next
+			p <- file.path(directory, filename)
+			x <- readRDS(p)
+			entry <- attr(x, 'le8_table_export')
+			if (!identical(entry$format, 'le8-private-table-v1')) stop('Expected a table export: ', p)
+			if (is.data.frame(x)) entry$data <- x else entry$sheets <- x
+			public$files[[entry$source]] <- entry
+			public$private_files[[filename]] <- NULL
+			converted_rds <- c(converted_rds, p)
+		}
+		changed <- length(converted_rds) > 0L || any(vapply(old_workbooks, function(path) !identical(le8_table_archive_read(path)$layout, 'topic-workbooks-v2'), logical(1)))
 		paired <- sub('[.]png$', '.xlsx', list.files(directory, pattern = '[.]png$'))
 		changed <- changed || any(!file.exists(file.path(directory, paired)))
 		files <- paths[dirname(paths) == directory]
@@ -626,10 +647,10 @@ le8_tables_pack <- function(root, clean = TRUE) {
 				separator <- if (grepl('[.]tsv([.]gz)?$', path)) '\t' else ','
 				header <- if (le8_table_blank(path)) data.frame() else data.table::fread(path, sep = separator, nrows = 0, showProgress = FALSE)
 				is_private <- le8_table_private(header)
-				x <- if (!intermediate || is_private) le8_table_read(path) else NULL
+				x <- if (!intermediate) le8_table_read(path) else NULL
 				entry <- le8_table_entry(path, x)
 			}
-			if (is_private) {
+			if (name == 'c2.genetic_score_weights.tsv') {
 				public$private_files <- le8_table_private_save(entry, name, directory, public$private_files)
 				public$files[[name]] <- NULL
 			} else public$files[[name]] <- entry
@@ -638,6 +659,8 @@ le8_tables_pack <- function(root, clean = TRUE) {
 			written <- le8_table_workbook(directory, public)
 			unlink(setdiff(old_workbooks, file.path(directory, written)))
 		}
+		# Workbooks and their embedded source checksums passed verification above.
+		if (length(converted_rds)) unlink(converted_rds)
 		# A source XLSX may have the same name as its newly consolidated figure
 		# workbook. Never delete the published replacement while cleaning inputs.
 		if (clean && length(files)) unlink(setdiff(files,le8_table_archive_files(directory)))

@@ -781,14 +781,26 @@ HELP
 
 	GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
 	GU_REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
-	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_DATA_ROOT/analysis/gu}}
+	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu}}
 	export GU_PUBLISHED_ROOT
-	if [[ ${GU_CMD_WORKER:-0} != 1 || ${GU_ANALYSIS_ROOT:-} != /tmp/gu-cache/*/analysis || ! -d ${GU_ANALYSIS_ROOT:-/nonexistent} ]]; then
-		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT")
+	if [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
+		local -a restore_run_args=()
+		case "$METHOD" in phyml) restore_run=${PHYML_OUT:-} ;; ibdmix) restore_run=${IBDMIX_OUT:-} ;; trace) restore_run=${TRACE_OUT:-} ;; as3) restore_run=${AS3_OUT:-} ;; *) restore_run= ;; esac
+		[[ -z $restore_run ]] || restore_run_args=(--run "$restore_run")
+		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD" "${restore_run_args[@]}")
+	else
+		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD")
 	fi
+	GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
 	GU_FINAL_DIR=$GU_ANALYSIS_ROOT/final
-	export GU_ANALYSIS_ROOT GU_FINAL_DIR
+	export GU_ANALYSIS_ROOT GU_FINAL_DIR GU_PUBLISHED_ROOT
 	GU_RUN_TMP_ROOT=/tmp/gu-runs
+	# Explicit overrides must not silently send primary outputs back to /tmp.
+	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT AS3_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
+		if [[ -n ${!result_var:-} ]]; then
+			gu_require_result_path "${!result_var}" >/dev/null || return $?
+		fi
+	done
 	GU_SOFT=${GU_SOFT:-$GU_DATA_ROOT/software/gu}
 	default_build=37
 	[[ $METHOD == as3 ]] && default_build=38
@@ -1266,7 +1278,7 @@ PYKEY
 			echo "ERROR: no $METHOD analysis units selected" >&2
 			return 2
 		}
-		cmd_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE
+		cmd_root=/tmp/gu-commands/$METHOD/$GU_TARGET_NAMESPACE
 		mkdir -p "$cmd_root"
 		list=$cmd_root/${scope_label}.cmd.list
 		list_tmp=$list.tmp.$$
@@ -1307,8 +1319,8 @@ PYKEY
 		GU_PUBLICATION_DEFERRED=1
 		local log_root stamp base log pid_file status_file pid cmd_list job_pattern
 		local runner
-		log_root=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
-		cmd_list=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
+		log_root=/tmp/gu-logs/$METHOD/$GU_TARGET_NAMESPACE
+		cmd_list=/tmp/gu-commands/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
 		mkdir -p "$log_root"
 		stamp=$(date '+%Y%m%d-%H%M%S')
 		# METHOD-specific roots allow different modules to run concurrently.  The
@@ -1507,7 +1519,7 @@ exit "$rc"'
 		mkdir -p "$target_tmp_parent"
 		GU_TARGET_TMP_DIR=$(mktemp -d "$target_tmp_parent/run.XXXXXX")
 		GU_TARGET_VCF_DIR="$GU_TARGET_TMP_DIR/vcf"
-		GU_METHOD_LOG_DIR=$GU_ANALYSIS_ROOT/$METHOD/$GU_TARGET_NAMESPACE/log
+		GU_METHOD_LOG_DIR=/tmp/gu-logs/$METHOD/$GU_TARGET_NAMESPACE
 		mkdir -p "$GU_METHOD_LOG_DIR" "$GU_TARGET_VCF_DIR"
 		GU_CHECK_LOG="$GU_METHOD_LOG_DIR/${METHOD}.${GU_SCOPE_ID}.log"
 		: >"$GU_CHECK_LOG"
@@ -1950,6 +1962,7 @@ exit "$rc"'
 		python3 "$F/phyml.py" report "${report_args[@]}"
 		python3 "$F/normalize.py" density --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --output "${GU_DENSITY_DIR:-$(dirname "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}")/normalize/density}" --sample-panel "$pop_panel"
 		python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method final
+		python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method all
 	}
 
 	maybe_run_final() {
@@ -2317,6 +2330,7 @@ exit "$rc"'
 					publication_args+=(--run "$publication_run")
 				fi
 				python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method "$METHOD" "${publication_args[@]}"
+				python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method "$METHOD" "${publication_args[@]}"
 			fi
 			;;
 	esac

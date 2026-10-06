@@ -38,8 +38,16 @@ MANIFEST = 'github_files.lst'
 MAX_FILE_BYTES = 50_000_000
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 MAX_XML_BYTES = 256 * 1024 * 1024
+# User-confirmed projects without UKB participants. Public 1KG individuals
+# and their formal results may be published without content/ID inspection.
+NON_UKB_PROJECTS = frozenset({'gu'})
+MAX_NON_UKB_FILES = 10_000
+INTERMEDIATE_DIRECTORIES = frozenset({
+	'raw', 'mask', 'masks', 'cache', 'extract', 'infer', 'inputs',
+	'tmp', 'temp', 'normalize', 'storage-migration',
+})
 
-# Check VALUES regardless of header, extension, project, or row position.
+# In UKB scope, check VALUES regardless of header, extension or row position.
 # Boundaries avoid matching rs1234567, longer integers and the fractional part of
 # 0.1234567. Also catch integers exported as 2545852.0 or 2.545852e+06.
 # Seven-digit counts/coordinates are conservatively excluded too.
@@ -50,6 +58,7 @@ SCIENTIFIC = re.compile(
 ESCAPED_CHAR = re.compile(r'\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2})')
 BAD_CONTROL = re.compile(r'[\x00-\x08\x0b\x0e-\x1f]')
 RASTER = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.tif', '.tiff', '.bmp'}
+RESULT_SUFFIXES = RASTER | {'.xlsx', '.xlsm', '.pdf', '.svg'}
 
 
 class Rejected(Exception):
@@ -130,7 +139,7 @@ def relative_parts(relative):
 	parts = relative.split('/')
 	if len(parts) < 2 or any(p in {'', '.', '..'} for p in parts):
 		raise Rejected('unsafe_path')
-	if has_id(relative):
+	if parts[0] not in NON_UKB_PROJECTS and has_id(relative):
 		raise Rejected('ukb_id_in_path')
 	return parts
 
@@ -153,10 +162,46 @@ def version(details):
 
 
 # 🚩 Output exclusions
+def excluded_result_directory(relative):
+	parts = relative.split('/')
+	if parts[0] in NON_UKB_PROJECTS and any(
+		part.lower() in INTERMEDIATE_DIRECTORIES for part in parts[1:]
+	):
+		return 'intermediate_directory'
+	return ''
+
+
+def excluded_result(relative):
+	parts = relative.split('/')
+	if parts[0] not in NON_UKB_PROJECTS:
+		return ''
+	reason = excluded_result_directory('/'.join(parts[:-1]))
+	if reason:
+		return reason
+	path = Path(relative)
+	if path.suffix.lower() in RESULT_SUFFIXES:
+		return ''
+	return 'not_a_result_file'
+
+
+def check_file_count(files):
+	counts = collections.Counter(p.split('/')[0] for p in files)
+	for project in sorted(NON_UKB_PROJECTS):
+		if counts[project] >= MAX_NON_UKB_FILES:
+			raise ValueError(
+				f'{project}: {counts[project]} selected files reaches the '
+				f'{MAX_NON_UKB_FILES}-file limit; narrow the result selection first'
+			)
+
+
 def excluded_artifact(path):
 	name = path.name.lower()
 	if name.endswith('.gz'):
 		name = name[:-3]
+	# RDS may contain individual IDs and is opaque to this scanner. Keep
+	# it out of scan and old sync lists even in confirmed non-UKB projects.
+	if name.endswith('.rds'):
+		return 'rds_file'
 	if name.endswith('.log'):
 		return 'log_file'
 	if name.endswith('.done'):
@@ -170,10 +215,6 @@ def file_policy(path, details):
 	reason = excluded_artifact(path)
 	if reason:
 		raise Rejected(reason)
-	# Rejected RDS/oversized files never enter the copy list, so reading
-	# their participant records would add no safety and waste scan time.
-	if path.suffix.lower() == '.rds':
-		raise Rejected('rds_file')
 	if details.st_size > MAX_FILE_BYTES:
 		raise Rejected('over_50_MB')
 
@@ -395,8 +436,17 @@ def check_pdf(path):
 	return 'pdf_visual_content_needs_manual_review'
 
 
-def content_check(path):
+def content_check(path, check_ids=True):
 	suffix = path.suffix.lower()
+	if not check_ids:
+		# Eligibility relies on the explicit non-UKB project confirmation,
+		# not on treating public genomic coordinates as participant IDs.
+		# This also admits workbooks with embedded exact result tables.
+		if suffix in RASTER:
+			return 'image_pixels_need_manual_review'
+		if suffix == '.pdf':
+			return 'pdf_visual_content_needs_manual_review'
+		return ''
 	if suffix in {'.xlsx', '.xlsm'}:
 		return check_xlsx(path)
 	if suffix in RASTER:
@@ -432,8 +482,12 @@ def inspect(root, relative):
 	try:
 		before = file_stat(root, relative)
 		path = root / relative
+		reason = excluded_artifact(path) or excluded_result(relative)
+		if reason:
+			raise Rejected(reason)
+		check_ids = relative.split('/')[0] not in NON_UKB_PROJECTS
 		file_policy(path, before)
-		review = content_check(path)
+		review = content_check(path, check_ids)
 		if version(before) != version(file_stat(root, relative)):
 			raise Rejected('file_changed_during_check')
 		return before.st_size, review
@@ -541,6 +595,12 @@ def scan(projects):
 	last_progress = time.monotonic()
 	for project in projects:
 		print('Scanning ' + project + ' recursively...', flush=True)
+		if project in NON_UKB_PROJECTS:
+			print(
+				'  User-confirmed non-UKB project: content/ID inspection skipped; '
+				'formal workbooks and figures only; RDS excluded. Size/path/artifact rules still apply.',
+				flush=True,
+			)
 
 		def walk_error(error):
 			raise error
@@ -551,10 +611,14 @@ def scan(projects):
 			keep = []
 			for name in sorted(directories):
 				path = Path(folder) / name
+				relative = path.relative_to(SOURCE).as_posix()
+				reason = excluded_result_directory(relative)
 				if path.is_symlink():
 					excluded.append(
-						(path.relative_to(SOURCE).as_posix() + '/', 'symlink')
+						(relative + '/', 'symlink')
 					)
+				elif reason:
+					excluded.append((relative + '/', reason))
 				else:
 					keep.append(name)
 			directories[:] = keep
@@ -569,6 +633,8 @@ def scan(projects):
 					approved.append(relative)
 					totals[project]['files'] += 1
 					totals[project]['bytes'] += size
+					if project in NON_UKB_PROJECTS and totals[project]['files'] >= MAX_NON_UKB_FILES:
+						check_file_count(approved)
 					if review:
 						reviews.append((relative, review))
 						totals[project]['review'] += 1
@@ -579,16 +645,23 @@ def scan(projects):
 					)
 					last_progress = time.monotonic()
 	approved.sort()
+	check_file_count(approved)
 	header = (
 		'# Generated by github_copy.sh scan. Paths are relative to '
 		+ str(SOURCE)
 		+ '.\n'
 		'# Project scope: ' + ','.join(projects) + '\n'
-		'# Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 50 MB, and UKB IDs (7 digits).\n'
-		'# Log/done exclusions include gzip files; unreadable content is excluded.\n'
+		'# Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf and files over 50 MB in every project.\n'
+		'# Unreadable content and possible UKB IDs (7 digits) are excluded except in non-UKB projects.\n'
+		'# Non-UKB projects (content/ID inspection skipped; formal results only): '
+		+ ','.join(p for p in projects if p in NON_UKB_PROJECTS) + '\n'
+		'# Non-UKB results: XLSX/XLSM and figures only; intermediate directories excluded.\n'
+		f'# Non-UKB selection must contain fewer than {MAX_NON_UKB_FILES} files per project.\n'
+		'# RDS/log/done exclusions include gzip files.\n'
 		'# Images retained by request; visual review list is printed to the terminal.\n'
 		'# sync rechecks an exact staged snapshot before changing destination projects.\n'
 	)
+	print(f'  Inspected {checked} files recursively.')
 	print_summary(projects, approved, excluded, reviews, totals)
 	write_manifest(DEST / MANIFEST, header + ''.join(p + '\n' for p in approved))
 	print(
@@ -625,11 +698,12 @@ def read_manifest(arguments):
 			raise ValueError('invalid scope or duplicate manifest entry')
 		seen.add(line)
 		if parts[0] in projects:
-			reason = excluded_artifact(Path(line))
+			reason = excluded_artifact(Path(line)) or excluded_result(line)
 			if reason:
 				excluded.append((line, reason))
 			else:
 				files.append(line)
+	check_file_count(files)
 	return projects, files, excluded
 
 
@@ -642,8 +716,7 @@ def check_target(project):
 def sync(arguments):
 	projects, files, excluded = read_manifest(arguments)
 	totals = totals_for(projects)
-	reviews = []
-	represented = sorted({p.split('/')[0] for p in files})
+	reviews, staged_files = [], []
 	for project in projects:
 		check_target(project)
 	# Keep all temporary data in /tmp. Publication uses copies because /tmp
@@ -654,23 +727,37 @@ def sync(arguments):
 		backup.mkdir()
 		last_progress = time.monotonic()
 		for index, relative in enumerate(files, 1):
-			before = file_stat(SOURCE, relative)
-			file_policy(SOURCE / relative, before)
-			target = payload / relative
-			target.parent.mkdir(parents=True, exist_ok=True)
-			shutil.copy2(SOURCE / relative, target, follow_symlinks=False)
-			if version(before) != version(file_stat(SOURCE, relative)):
-				raise Rejected('source_changed_during_copy')
-			size, review = inspect(payload, relative)
-			project = relative.split('/')[0]
-			totals[project]['files'] += 1
-			totals[project]['bytes'] += size
-			if review:
-				reviews.append((relative, review))
-				totals[project]['review'] += 1
+			try:
+				before = file_stat(SOURCE, relative)
+			except FileNotFoundError:
+				# A manifest can outlive source cleanup. Only absence at the
+				# initial check is skipped; copy errors and subsequent changes
+				# still abort before any destination project is replaced.
+				excluded.append((relative, 'missing_source_file'))
+			else:
+				file_policy(SOURCE / relative, before)
+				target = payload / relative
+				target.parent.mkdir(parents=True, exist_ok=True)
+				shutil.copy2(SOURCE / relative, target, follow_symlinks=False)
+				if version(before) != version(file_stat(SOURCE, relative)):
+					raise Rejected('source_changed_during_copy')
+				size, review = inspect(payload, relative)
+				staged_files.append(relative)
+				project = relative.split('/')[0]
+				totals[project]['files'] += 1
+				totals[project]['bytes'] += size
+				if review:
+					reviews.append((relative, review))
+					totals[project]['review'] += 1
 			if time.monotonic() - last_progress > 15:
-				print(f'  Staged and rechecked {index}/{len(files)} files.', flush=True)
+				print(
+					f'  Processed {index}/{len(files)} entries; '
+					f'staged and rechecked {len(staged_files)} files.',
+					flush=True,
+				)
 				last_progress = time.monotonic()
+		# Missing-only projects have no payload and must not be rebuilt.
+		represented = sorted({p.split('/')[0] for p in staged_files})
 		# Finish checking and backing up all affected paths before changing any.
 		for project in represented:
 			check_target(project)
@@ -729,8 +816,15 @@ def sync(arguments):
 					+ f'; recovery files retained at {stage}'
 				) from None
 			raise
-	print_summary(projects, files, excluded, reviews, totals)
-	print(f'SYNC OK: {len(represented)} projects rebuilt, {len(files)} files copied.')
+	print_summary(projects, staged_files, excluded, reviews, totals)
+	missing = [path for path, reason in excluded if reason == 'missing_source_file']
+	if missing:
+		print(f'WARNING: skipped {len(missing)} missing source files; manifest unchanged.')
+		for relative in missing[:5]:
+			print('  Missing source: ' + relative)
+		if len(missing) > 5:
+			print(f'  ... and {len(missing) - 5} more missing source files.')
+	print(f'SYNC OK: {len(represented)} projects rebuilt, {len(staged_files)} files copied.')
 	untouched = set(projects) - set(represented)
 	if untouched:
 		print(
@@ -742,22 +836,37 @@ def sync(arguments):
 def main():
 	arguments = sys.argv[1:]
 	if not arguments or arguments[0] in {'-h', '--help', 'help'}:
-		print("""Usage:
+		print(f"""Usage:
+  ./github_copy.sh scan gu
   ./github_copy.sh scan le8,grid,abm,abm_TF
   ./github_copy.sh sync [le8,grid,abm,abm_TF]
 
 scan recursively builds github_files.lst without copying analysis files.
-Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf, files over 50 MB
-(50,000,000 bytes), and files containing UKB IDs. Log/done exclusions include gzip.
-UKB IDs of 7 digits are checked in paths and content, regardless of header or row.
-Ambiguous 7-digit integers are conservatively excluded as possible IDs.
+Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf and files over 50 MB
+(50,000,000 bytes). RDS/log/done exclusions include gzip in every project.
+RDS contents may contain individual IDs and cannot be reliably inspected here;
+all RDS are excluded, including in gu and when listed in an old manifest.
+User-confirmed non-UKB projects: {','.join(sorted(NON_UKB_PROJECTS))}.
+For those projects, content/ID inspection is skipped for formal results only:
+XLSX/XLSM, raster images, SVG and named PDF files.
+Public 1KG individuals, embedded result tables and seven-digit coordinates are allowed.
+Expanded text/native inputs and these intermediate directories are excluded:
+{', '.join(sorted(INTERMEDIATE_DIRECTORIES))}.
+Selecting {MAX_NON_UKB_FILES} or more files in one non-UKB project fails before
+writing the manifest or changing destination projects; narrow the selection first.
+Size, path, symlink and artifact rules still apply in both scan and sync.
+Other projects exclude RDS and inspect possible UKB IDs in paths/content,
+regardless of header or row; ambiguous 7-digit integers are excluded as possible IDs.
 Other file names and directories remain eligible for content inspection.
-Readable text, Excel, PDF and gzip text are inspected; unreadable content is excluded.
+In UKB scope, readable text, Excel, PDF and gzip text are inspected; unreadable content is excluded.
 Images are retained with a manual-review list printed to the terminal (Pillow required).
-Every admitted file is <=50 MB; there is no file-count or directory-depth cap.
+Every admitted file is <=50 MB; eligible directories are scanned recursively.
 sync rechecks staged contents, then rebuilds only projects with selected entries.
+Source files already missing when staging begins are skipped and summarized;
+the manifest is unchanged. Copy errors, file changes and failed checks still abort.
+Only projects with successfully staged files are rebuilt.
 Staging, scratch files and rollback backups live in /tmp; publication copies across filesystems.
-Excluded logs, completion markers and unnamed PDFs are skipped even in old lists.
+Excluded RDS, logs, completion markers and unnamed PDFs are skipped even in old lists.
 Projects without approved entries retain existing results except those artifacts.
 No Git commit or push is performed. PDF inspection uses pdftotext or Ghostscript.
 Roots: GITHUB_COPY_SOURCE_ROOT, GITHUB_COPY_DEST_ROOT.

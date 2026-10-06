@@ -56,8 +56,10 @@ REPLACE=${TRACE_REPLACE:-0}
 TRACE_FINAL=$OUT/final/trace_haplotype_segments.tsv.gz
 for x in python3 bcftools awk sort find gzip stat cmp grep diff comm flock; do need "$x"; done
 if [[ $ACTION != check ]]; then for x in trace-extract trace-infer trace-summarize; do need "$x"; done; fi
-mkdir -p "$OUT"/{manifest,samples/groups,regions,extract,datafiles,infer,calls,final,log}
-exec 9>"$OUT/.run.lock"
+TRACE_LOG_DIR=/tmp/gu-logs/trace/$(printf '%s' "$OUT" | sha256sum | cut -c1-16)
+mkdir -p "$OUT"/{manifest,samples/groups,regions,extract,datafiles,infer,calls,final} "$TRACE_LOG_DIR"
+mkdir -p /tmp/gu-locks
+exec 9>"/tmp/gu-locks/$(printf '%s' "$OUT" | sha256sum | cut -c1-16).lock"
 flock -n 9 || {
 	echo "ERROR: another TRACE run is using $OUT" >&2
 	exit 1
@@ -289,7 +291,7 @@ extract_one() {
 	npost=$(awk -v c="$c" 'NR>1&&$1==c{n++}END{print n+0}' "$OUT/manifest/tree_files.tsv")
 	((npost > 1)) && opts+=(--window-size "$WIN")
 	[[ $TRACE_ARG_METHOD == singer || (-n $LOCI_FILE && $LOCI_MODE == extract) ]] && opts+=(--include-regions "$OUT/regions/chr$c.bed" --chrom "chr$c")
-	python3 "$F/trace.py" output --prefix "$prefix" --suffix .npz -- trace-extract --tree-file "$tree" -t "$TARC" --individuals "$ids" "${opts[@]}" 2>&1 | tee "$OUT/log/extract.${group}.chr${c}.p${post}.log"
+	python3 "$F/trace.py" output --prefix "$prefix" --suffix .npz -- trace-extract --tree-file "$tree" -t "$TARC" --individuals "$ids" "${opts[@]}" 2>&1 | tee "$TRACE_LOG_DIR/extract.${group}.chr${c}.p${post}.log"
 }
 run_extract() {
 	local status=0 gf group c post tree pid
@@ -358,7 +360,7 @@ infer_one() {
 		)
 		opt+=(--genetic-maps "$G")
 	fi
-	python3 "$F/trace.py" output --prefix "$out" "${suffix_args[@]}" -- trace-infer -i "$node" "${opt[@]}" --chroms "$C" 2>&1 | tee "$OUT/log/infer.hap${node}.log"
+	python3 "$F/trace.py" output --prefix "$out" "${suffix_args[@]}" -- trace-infer -i "$node" "${opt[@]}" --chroms "$C" 2>&1 | tee "$TRACE_LOG_DIR/infer.hap${node}.log"
 }
 run_infer() {
 	[[ -s $OUT/samples/node_group.tsv ]] || run_extract
@@ -394,7 +396,7 @@ summarize_one() {
 		IFS=,
 		echo "${chroms[*]}"
 	)
-	trace-summarize -f "$FSTR" -c "$CSTR" --posterior-threshold "$POST" --physical-length-threshold "$MINBP" --genetic-distance-threshold "$MINCM" -o "$out.part" 2>&1 | tee "$OUT/log/summarize.hap${node}.log" && [[ -s $out.part.summary.txt ]] && mv "$out.part.summary.txt" "$out.summary.txt"
+	trace-summarize -f "$FSTR" -c "$CSTR" --posterior-threshold "$POST" --physical-length-threshold "$MINBP" --genetic-distance-threshold "$MINCM" -o "$out.part" 2>&1 | tee "$TRACE_LOG_DIR/summarize.hap${node}.log" && [[ -s $out.part.summary.txt ]] && mv "$out.part.summary.txt" "$out.summary.txt"
 }
 run_segments() {
 	[[ -s $OUT/samples/tree_nodes.txt ]] || run_extract

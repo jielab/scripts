@@ -462,7 +462,7 @@ def vcf_gt_fix_cli():
 	vcf_gt_fix_main()
 
 
-# 🚩 Published results and temporary algorithm workspace
+# 🚩 Persistent native results and RDS exports
 import hashlib
 import shutil
 import subprocess
@@ -470,7 +470,8 @@ import fcntl
 from contextlib import ExitStack
 
 
-RESULT_NAMES = {"phyml": "phyml.haplotypes.rds", "ibdmix": "ibdmix.tracts.rds", "trace": "trace.segments.rds", "as3": "as3.tracts.rds"}
+RESULT_NAMES = {"phyml": "phyml.haplotypes.xlsx", "ibdmix": "ibdmix.tracts.xlsx", "trace": "trace.segments.xlsx", "as3": "as3.tracts.xlsx"}
+LEGACY_RESULT_NAMES = {method: str(Path(name).with_suffix(".rds")) for method, name in RESULT_NAMES.items()}
 
 
 def gu_result_digest(path):
@@ -482,8 +483,35 @@ def gu_result_digest(path):
 
 
 def gu_work_root(published):
-	key = hashlib.sha256(str(Path(published).resolve()).encode()).hexdigest()[:16]
-	return Path('/tmp/gu-cache') / key / 'analysis'
+	root = Path(published).resolve()
+	for temporary in ('/tmp', '/var/tmp', '/dev/shm', '/run'):
+		if root == Path(temporary) or Path(temporary) in root.parents:
+			raise ValueError(f'Main GU results require a persistent directory, not {root}')
+	return root
+
+
+def gu_result_lock(run):
+ directory = Path('/tmp/gu-locks')
+ directory.mkdir(parents=True, exist_ok=True)
+ return directory / (hashlib.sha256(str(Path(run).resolve()).encode()).hexdigest()[:16] + '.lock')
+
+
+def gu_atomic_copy(source, destination):
+	"""Verify a same-directory staged copy before replacing a durable result."""
+	destination = Path(destination)
+	destination.parent.mkdir(parents = True, exist_ok = True)
+	fd, name = tempfile.mkstemp(prefix = '.' + destination.name + '.part.', dir = destination.parent)
+	os.close(fd)
+	stage = Path(name)
+	try:
+		shutil.copy2(source, stage)
+		if gu_result_digest(source) != gu_result_digest(stage):
+			raise IOError(f'Result publication verification failed: {destination}')
+		with stage.open('rb') as handle:
+			os.fsync(handle.fileno())
+		os.replace(stage, destination)
+	finally:
+		stage.unlink(missing_ok = True)
 
 
 def gu_result_r(*arguments):
@@ -496,7 +524,11 @@ def gu_result_r(*arguments):
 			shutil.copy2(source, stage / source.name)
 		environment['GU_RESULTS_R'] = str(stage / 'results.R')
 		environment['GU_PHYML_R'] = str(stage / 'phyml.R')
-		subprocess.run(['/usr/bin/Rscript', str(stage / '0.common.R'), *map(str, arguments)], env = environment, check = True)
+		paired_r = Path(sys.executable).with_name('Rscript')
+		rscript = environment.get('GU_RESULTS_RSCRIPT') or (str(paired_r) if paired_r.is_file() else shutil.which('Rscript'))
+		if not rscript:
+			raise RuntimeError('Rscript is required to recover or export GU RDS results')
+		subprocess.run([rscript, '--vanilla', str(stage / '0.common.R'), *map(str, arguments)], env = environment, check = True)
 
 
 def gu_run_specs(work, output, methods, run_only = None):
@@ -523,6 +555,10 @@ def gu_run_specs(work, output, methods, run_only = None):
 					for name in names:
 						path = Path(directory) / name
 						relative = path.relative_to(run).as_posix()
+						# Exports live beside native results. Never embed an archive
+						# in itself or reinterpret already-published figure names.
+						if path.parent == run and (name.startswith(method + '.')):
+							continue
 						if name.startswith(('.published-', '.result-')) or (path.suffix in ('.log', '.err', '.cmd', '.lock', '.pdf', '.xlsx') and not name.endswith('.phyml.log')) or '.tmp' in name or '.part.' in name:
 							continue
 						if path.suffix == '.png':
@@ -559,11 +595,11 @@ def gu_review_specs(work, output):
 			info = path.stat()
 			files.append({'name': name, 'modified': info.st_mtime, 'size': info.st_size})
 	return [{'method': 'validation', 'source': str(directory), 'source_root': str(work),
-		'destination': str(output / 'final/gu.validation.rds'), 'files': files, 'figures': []}] if files else []
+		'destination': str(output / 'final/gu.validation.xlsx'), 'files': files, 'figures': []}] if files else []
 
 
 def gu_publish_results(work, output, methods, run_only = None):
-	work, output = Path(work).resolve(), Path(output).resolve()
+	work, output = Path(work).resolve(), gu_work_root(output)
 	with ExitStack() as locks, tempfile.TemporaryDirectory(prefix = 'gu-publish-', dir = '/tmp') as temporary:
 		stage = Path(temporary)
 		specs = gu_run_specs(work, stage, methods, run_only)
@@ -571,7 +607,7 @@ def gu_publish_results(work, output, methods, run_only = None):
 			specs.extend(gu_review_specs(work, stage))
 		pending = []
 		for spec in specs:
-			lock_path = Path(spec['source']) / ('.gwas.lock' if spec['method'] == 'phyml' else '.run.lock')
+			lock_path = gu_result_lock(spec['source'])
 			if lock_path.is_file():
 				lock = locks.enter_context(lock_path.open('r'))
 				try:
@@ -603,10 +639,7 @@ def gu_publish_results(work, output, methods, run_only = None):
 			if not source.is_file() or source == specification:
 				continue
 			destination = output / source.relative_to(stage)
-			destination.parent.mkdir(parents = True, exist_ok = True)
-			shutil.copy2(source, destination)
-			if gu_result_digest(source) != gu_result_digest(destination):
-				raise IOError(f'Result publication verification failed: {destination}')
+			gu_atomic_copy(source, destination)
 		for spec in specs:
 			(Path(spec['source']) / '.published-content').write_text(spec['signature'])
 
@@ -634,7 +667,7 @@ def gu_publish_summary(work, stage):
 			frame = frame[[column for column in columns if column in frame]]
 		validation[name.removeprefix('phyml_').removesuffix('_report')] = frame
 	if validation:
-		results.write_workbook(validation, stage / 'final/gu.validation.xlsx')
+		results.write_workbook(validation, stage / 'final/gu.validation.summary.xlsx')
 	groups = {'gu.loci': ['locus_evidence', 'locus_method_support'], 'gu.segments': ['segment_catalog'], 'gu.trajectory': ['locus_trajectory']}
 	for name, names in groups.items():
 		tables = {}
@@ -653,21 +686,33 @@ def gu_publish_summary(work, stage):
 				results.write_workbook(tables, stage / 'final' / (name + '.xlsx'))
 
 
-def gu_restore_results(published):
-	published = Path(published).resolve()
-	work = gu_work_root(published)
+def gu_restore_results(published, method="all", run_only=None):
+	published = work = gu_work_root(published)
 	work.mkdir(parents = True, exist_ok = True, mode = 0o700)
-	with (work.parent / 'restore.lock').open('a') as lock:
+	with (work / '.restore.lock').open('a') as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		jobs = []
 		markers = []
-		for method, name in RESULT_NAMES.items():
-			for source in sorted((published / method).glob('*/*/' + name)):
+		for archive_method in RESULT_NAMES:
+			if method not in ("all", "final", archive_method):continue
+			archives = [run_only / (archive_method + '.raw.tar.gz')] if run_only else sorted((work / archive_method).glob('*/*/*.raw.tar.gz'))
+			for archive in archives:
+				if not archive.is_file():continue
+				marker = archive.parent / '.native-restored'
+				if not marker.exists():
+					gu_extract_native(archive,archive.parent,archive.parent,work)
+					marker.touch()
+		for legacy_method, name in LEGACY_RESULT_NAMES.items():
+			for source in sorted((published / legacy_method).glob('*/*/' + name)):
+				if run_only and source.parent != run_only:continue
+				if (source.parent / (legacy_method + '.raw.tar.gz')).is_file():continue
 				stat = source.stat()
 				key = f'{stat.st_size}:{stat.st_mtime_ns}'
 				target = work / source.parent.relative_to(published)
 				marker = target / '.published-result'
-				if marker.is_file() and marker.read_text() == key:
+				# Native files are authoritative, including partially completed
+				# analyses. RDS is a recovery/export format, never a rollback.
+				if not (target / '.result-restoring').exists() and any((target / name).exists() for name in ('run.meta.tsv', 'loci', 'final', 'results', 'extract')):
 					continue
 				jobs.append({'source': str(source), 'target': str(target)})
 				markers.append((marker, key))
@@ -675,17 +720,22 @@ def gu_restore_results(published):
 		if review.is_file():
 			stat = review.stat(); key = f'{stat.st_size}:{stat.st_mtime_ns}'
 			target = work / 'final/review'; marker = target / '.published-result'
-			if not marker.is_file() or marker.read_text() != key:
+			if (target / '.result-restoring').exists() or not (target / 'phyml_locus_report.tsv').is_file():
 				jobs.append({'source': str(review), 'target': str(target)})
 				markers.append((marker, key))
 		with tempfile.NamedTemporaryFile(mode = 'w', suffix = '.json', dir = '/tmp') as handle:
 			json.dump(jobs, handle); handle.flush()
 			if jobs:
+				for job in jobs:
+					target = Path(job['target'])
+					target.mkdir(parents = True, exist_ok = True)
+					(target / '.result-restoring').write_text(job['source'])
 				gu_result_r('restore', handle.name)
 		for job in jobs:
 			target = Path(job['target'])
 			origin = target / '.result-source-root'
 			gu_rebase_paths(target, Path(origin.read_text().strip()) if origin.is_file() else published, work)
+			(target / '.result-restoring').unlink(missing_ok = True)
 
 		for marker, key in markers:
 			marker.write_text(key)
@@ -693,53 +743,223 @@ def gu_restore_results(published):
 		if source.is_file():
 			stat = source.stat(); key = f'{stat.st_size}:{stat.st_mtime_ns}'
 			marker = work / 'final/.published-database'
-			if not marker.is_file() or marker.read_text() != key:
+			if not (work / 'final/gu.sqlite').is_file():
 				gu_result_r('database-restore', source, work / 'final/gu.sqlite')
 				marker.write_text(key)
-		gu_link_phyml(work)
+		if method == "shiny":gu_prepare_read_view(work)
+		else:gu_link_phyml(work)
 	return work
 
 
 def gu_rebase_paths(target, published, work):
+	if str(published) == str(work):
+		return
 	old, new = str(published).encode(), str(work).encode()
 	for directory, folders, names in os.walk(target, followlinks = False):
 		for name in [*names, *[name for name in folders if (Path(directory) / name).is_symlink()]]:
 			path = Path(directory) / name
-			if name == '.result-source-root':
+			if name in ('.result-source-root', 'run.meta.tsv', 'cache.meta.tsv'):
 				continue
 			if path.is_symlink():
 				link = os.readlink(path)
 				if link.startswith(str(published) + '/'):
 					path.unlink(); path.symlink_to(str(work) + link[len(str(published)):])
-			elif path.suffix == '.json' or (target.name == 'review' and path.suffix == '.tsv'):
+			elif path.suffix in ('.json', '.tsv', '.txt', '.cmd', '.list'):
 				data = path.read_bytes()
 				if old in data:
 					stat = path.stat(); path.write_bytes(data.replace(old, new)); os.utime(path, ns = (stat.st_atime_ns, stat.st_mtime_ns))
 
 
-def gu_link_phyml(work):
+def gu_link_phyml(work, target=None):
 	directory = work / 'final/normalize'
 	directory.mkdir(parents = True, exist_ok = True)
 	link = directory / 'phyml'
+	target = target or work / 'phyml'
+	if link.is_symlink() and os.readlink(link) != str(target):link.unlink()
 	if not link.exists() and not link.is_symlink():
-		link.symlink_to(work / 'phyml', target_is_directory = True)
+		link.symlink_to(target, target_is_directory = True)
+
+
+# 🚩 Compact native results: durable archives, disposable read copies
+import tarfile
+import io
+
+
+def gu_native_files(run, method):
+	for directory, folders, names in os.walk(run, followlinks=False):
+		folders[:] = [n for n in folders if n not in ('tmp', 'mask', 'log', 'logs', '__pycache__')]
+		for name in names:
+			p = Path(directory) / name
+			if p.parent == run and (name.startswith(method + '.') or name.startswith(('.published-', '.result-', '.native-'))):
+				continue
+			if p.suffix in ('.lock', '.cmd', '.err', '.pdf') or (p.suffix == '.log' and not name.endswith('.phyml.log')) or '.part.' in name:
+				continue
+			yield p
+
+
+def gu_native_view_root(work):
+	return Path('/tmp/gu-native-view') / hashlib.sha256(str(work).encode()).hexdigest()[:16]
+
+
+def gu_extract_native(archive, destination, run, work, replace=False):
+	with tarfile.open(archive, 'r:gz') as bundle:
+		manifest = json.load(bundle.extractfile('GU-MANIFEST.json'))
+		for row in manifest['files']:
+			rel = Path(row['path'])
+			if rel.is_absolute() or '..' in rel.parts:
+				raise ValueError('Unsafe native result path')
+			p = destination / rel
+			if p.exists() or p.is_symlink():
+				if not replace:continue
+				p.unlink()
+			p.parent.mkdir(parents=True, exist_ok=True)
+			if 'link' in row:
+				link = row['link']
+				if destination != run:
+					absolute = os.path.abspath(run / rel.parent / link)
+					if absolute.startswith(str(run) + '/'):
+						link = str(destination) + absolute[len(str(run)):]
+					elif absolute.startswith(str(work) + '/'):
+						link = str(gu_native_view_root(work)) + absolute[len(str(work)):]
+				p.symlink_to(link)
+			else:
+				h = hashlib.sha256()
+				fd,temporary = tempfile.mkstemp(prefix='.'+p.name+'.part.',dir=p.parent)
+				try:
+					with bundle.extractfile(row['path']) as source, os.fdopen(fd,'wb') as out:
+						for block in iter(lambda:source.read(4*1024*1024), b''):
+							out.write(block);h.update(block)
+					if h.hexdigest() != row['sha256']:raise ValueError('Native archive checksum mismatch: '+str(p))
+					os.replace(temporary,p)
+					os.utime(p, ns=(row['mtime_ns'],row['mtime_ns']))
+				finally:Path(temporary).unlink(missing_ok=True)
+	return manifest
+
+
+def gu_run_read_view(work, run, method):
+	view = gu_native_view_root(work)
+	archive = run / (method + '.raw.tar.gz')
+	link = view / run.relative_to(work)
+	link.parent.mkdir(parents=True, exist_ok=True)
+	target = run
+	if archive.is_file():
+		info = archive.stat()
+		key = hashlib.sha256(f'{archive}:{info.st_size}:{info.st_mtime_ns}'.encode()).hexdigest()[:24]
+		target = view / '.objects' / key
+		if not (target / '.gu-view-ready').is_file():
+			stage = Path(tempfile.mkdtemp(prefix='.extract-', dir=view))
+			try:
+				gu_extract_native(archive,stage,run,work)
+				(stage / '.gu-view-ready').touch()
+				target.parent.mkdir(parents=True,exist_ok=True)
+				if target.exists():shutil.rmtree(target)
+				os.replace(stage,target)
+				# Internal links were rebased to the staging path before rename.
+				gu_rebase_paths(target,stage,target)
+			finally:
+				if stage.exists():shutil.rmtree(stage)
+	if not link.is_symlink() or os.readlink(link) != str(target):
+		staged = link.with_name('.'+link.name+'.link')
+		staged.unlink(missing_ok=True);staged.symlink_to(target, target_is_directory=True)
+		os.replace(staged,link)
+	return target
+
+
+def gu_prepare_read_view(work):
+	for method in RESULT_NAMES:
+		for run in sorted((work / method).glob('*/*')):
+			if run.is_dir() and run.name not in ('inputs','log','tmp'):
+				gu_run_read_view(work,run,method)
+	gu_link_phyml(work,gu_native_view_root(work) / 'phyml')
+
+
+def gu_archive_run(work, run, method):
+	archive = run / (method + '.raw.tar.gz')
+	files = list(gu_native_files(run,method))
+	# A compact run has no materialized algorithm outputs; keep its archive.
+	if archive.is_file() and not any((run / n).is_dir() for n in ('final','loci','extract','results','raw')):
+		return archive
+	if not files:return None
+	manifest = {'format':'gu-native-v1','method':method,'files':[]}
+	with tempfile.TemporaryDirectory(prefix='gu-archive-',dir='/tmp') as directory:
+		stage = Path(directory) / archive.name
+		with tarfile.open(stage,'w:gz',compresslevel=1) as bundle:
+			for p in files:
+				name = p.relative_to(run).as_posix()
+				if p.is_symlink():row = {'path':name,'link':os.readlink(p)}
+				else:
+					info = p.stat()
+					row = {'path':name,'sha256':gu_result_digest(p).hex(),'mtime_ns':info.st_mtime_ns,'bytes':info.st_size}
+				bundle.add(p,arcname=name,recursive=False)
+				manifest['files'].append(row)
+			data = json.dumps(manifest).encode()
+			entry = tarfile.TarInfo('GU-MANIFEST.json');entry.size=len(data)
+			bundle.addfile(entry,io.BytesIO(data))
+		# Every native file must pass independent read-back before publication.
+		check = Path(directory) / 'verified'
+		gu_extract_native(stage,check,run,work)
+		gu_atomic_copy(stage,archive)
+	return archive
+
+
+def _gu_compact_results(work, methods, run_only=None):
+	work = gu_work_root(work)
+	# Initial view links allow the running Shiny to read each untouched run.
+	gu_prepare_read_view(work)
+	for method in methods:
+		if method not in RESULT_NAMES:continue
+		for run in ([run_only] if run_only is not None else sorted((work / method).glob('*/*'))):
+			if not run.is_dir() or run.name in ('inputs','log','tmp'):continue
+			lock_path = gu_result_lock(run)
+			with lock_path.open('a') as lock:
+				try:fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
+				except BlockingIOError:continue
+				archive = gu_archive_run(work,run,method)
+				if archive is None:continue
+				gu_run_read_view(work,run,method)
+				# Archive and read copy both verified. Keep only user exports and
+				# the small caller roster/provenance required by density summaries.
+				for p in list(run.iterdir()):
+					if p.name.startswith(method + '.') or p.name in ('run.meta.tsv','cache.meta.tsv','.published-content') or '.part.' in p.name:continue
+					if p.name == 'samples' and method == 'ibdmix':
+						for q in list(p.rglob('*')):
+							if q.is_file() and q.name not in ('ALL.txt','male.txt'):q.unlink()
+						continue
+					if p.is_dir() and not p.is_symlink():
+						if p.name in ('mask','log','logs','tmp'):
+							cache = Path('/tmp/gu-intermediate') / hashlib.sha256(str(run).encode()).hexdigest()[:16] / p.name
+							cache.parent.mkdir(parents=True,exist_ok=True)
+							if cache.exists():shutil.rmtree(cache)
+							shutil.move(str(p),cache)
+						else:shutil.rmtree(p)
+					else:p.unlink()
+				print('COMPACT',method,run.name,flush=True)
+	gu_link_phyml(work,gu_native_view_root(work) / 'phyml')
+
+
+def gu_compact_results(work, methods, run_only=None):
+ work = gu_work_root(work)
+ with (work / '.restore.lock').open('a') as lock:
+  fcntl.flock(lock,fcntl.LOCK_EX)
+  _gu_compact_results(work,methods,run_only)
 
 
 def results_cli():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('action', choices = ['work-root', 'restore', 'publish'])
+	parser.add_argument('action', choices = ['work-root', 'restore', 'publish', 'compact'])
 	parser.add_argument('--published', type = Path, required = True)
 	parser.add_argument('--work', type = Path)
 	parser.add_argument('--run', type = Path)
-	parser.add_argument('--method', choices = [*RESULT_NAMES, 'final', 'all'], default = 'all')
+	parser.add_argument('--method', choices = [*RESULT_NAMES, 'final', 'all', 'shiny', 'ukb'], default = 'all')
 	args = parser.parse_args()
 	if args.action == 'work-root':
 		print(gu_work_root(args.published))
 	elif args.action == 'restore':
-		print(gu_restore_results(args.published))
+		print(gu_restore_results(args.published, args.method, args.run))
 	else:
 		methods = [*RESULT_NAMES, 'final'] if args.method == 'all' else [args.method]
-		gu_publish_results(args.work or gu_work_root(args.published), args.published, methods, args.run)
+		if args.action == 'compact':gu_compact_results(args.published,methods,args.run)
+		else:gu_publish_results(args.work or gu_work_root(args.published), args.published, methods, args.run)
 
 
 SUBCOMMANDS = {

@@ -1,7 +1,7 @@
 # 🚩 Named analysis results
 result_private_columns <- function(columns) {
 	names <- tolower(gsub('[^[:alnum:]]', '', columns))
-	names %in% c('eid', 'iid', 'fid', 'sample', 'samples', 'sampleid', 'sampleids',
+	names %in% c('id', 'eid', 'iid', 'fid', 'sample', 'samples', 'sampleid', 'sampleids',
 		'individualid', 'participantid', 'subjectid', 'patientid', 'copyid', 'copyids',
 		'referencesampleid', 'membersamples', 'carriersamples', 'donorid',
 		'memberids', 'carrierids', 'samplenames', 'individuals', 'donorids') |
@@ -33,73 +33,66 @@ result_import_table <- function(source, destination, metadata = NULL) {
 	attr(x, 'table_exchange') <- list(name = basename(source),
 		bytes = readBin(source, 'raw', n = file.size(source)), sha256 = digest::digest(file = source, algo = 'sha256'))
 	if (!is.null(metadata)) attr(x, 'model_info') <- metadata
-	result_write_rds(x, destination)
+	if (grepl('[.]xlsx$', destination, ignore.case = TRUE)) result_write_workbook(list(results = x), destination, source)
+	else result_write_rds(x, destination)
 }
 
 
+# 🚩 Large review tables and migration from table-only RDS
+result_stream_workbook <- function(tables, path, sources = character(), metadata = NULL) {
+ directory <- tempfile('result-stream-', tmpdir = '/tmp')
+ dir.create(directory)
+ on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+ spec <- list(tables = list(), sources = unname(as.list(sources)), metadata = metadata)
+ for (i in seq_along(tables)) {
+  x <- as.data.frame(tables[[i]])
+  source <- file.path(directory, paste0(gsub('[^[:alnum:]_.-]', '_', names(tables)[i]), '.tsv'))
+  types <- vapply(names(x), function(n) {
+   v <- x[[n]]
+   if (result_private_columns(n) || inherits(v, c('Date','POSIXt','integer64'))) 'character'
+   else if (is.numeric(v)) 'numeric' else if (is.logical(v)) 'logical' else 'character'
+  }, character(1))
+  for (n in names(x)) {
+   if (is.list(x[[n]])) x[[n]] <- vapply(x[[n]], function(z) jsonlite::toJSON(z, auto_unbox = TRUE, null = 'null'), character(1))
+   if (types[[n]] == 'character') x[[n]] <- as.character(x[[n]])
+   if (types[[n]] == 'numeric') x[[n]] <- ifelse(is.na(x[[n]]), NA_character_, sprintf('%.17g', x[[n]]))
+  }
+  data.table::fwrite(x, source, sep = '\t', na = '')
+  spec$tables[[i]] <- list(name = names(tables)[i], path = source, types = unname(as.list(types)))
+ }
+ job <- file.path(directory, 'workbook.json')
+ jsonlite::write_json(spec, job, auto_unbox = TRUE, null = 'null')
+ code <- Sys.getenv('RESULTS_PY', '/mnt/d/scripts/0f/results.py')
+ status <- system2(Sys.getenv('RESULTS_PYTHON', 'python3'), c(shQuote(code), 'stream-workbook', shQuote(job), shQuote(path)))
+ if (status != 0L) stop('Workbook publication failed: ', path)
+ invisible(path)
+}
+result_rds_tables <- function(x) {
+ if (is.data.frame(x)) tables <- list(results = x)
+ else if (is.list(x) && is.list(x$tables)) tables <- x$tables
+ else if (is.list(x)) tables <- Filter(is.data.frame, x)
+ else stop('RDS contains a fitted/raw object, not review tables')
+ figure <- attr(x, 'figure_data')
+ if (is.data.frame(figure)) tables$figure_data <- figure
+ else if (is.list(figure)) tables <- c(tables, Filter(is.data.frame, figure))
+ tables <- Filter(function(t) is.data.frame(t) && ncol(t) > 0L, tables)
+ hashes <- vapply(tables, digest::digest, character(1), algo = 'sha256')
+ tables <- tables[!duplicated(hashes)]
+ if (!length(tables)) stop('No reviewable tables in this RDS')
+ tables
+}
+result_convert_rds <- function(source, destination) {
+ x <- readRDS(source)
+ tables <- result_rds_tables(x)
+ result_stream_workbook(tables, destination, metadata = attr(x, 'model_info'))
+ invisible(destination)
+}
+
 # 🚩 Figure workbooks
 result_write_workbook <- function(tables, path, sources = character()) {
-	tables <- Filter(function(x) is.data.frame(x) && nrow(x) > 0L && ncol(x) > 0L, tables)
-	if (!length(tables)) stop('No analysis results for workbook: ', path)
-	if (any(vapply(tables, function(x) any(result_private_columns(names(x))), logical(1))))
-		stop('Individual records belong in a named RDS: ', path)
-	if (any(vapply(tables, function(x) any(vapply(x, function(column) {
-		if (!is.character(column)) return(FALSE)
-		any(grepl('(^|[;,|[:space:]])(HG|NA)[0-9]{5}($|[;,|[:space:]])', column), na.rm = TRUE)
-	}, logical(1))), logical(1)))) stop('Individual identifiers found in workbook cells: ', path)
-	if (any(vapply(tables, function(x) nrow(x) > 1048575L || ncol(x) > 16384L, logical(1))))
-		stop('Split this result table by analysis scope: ', path)
-	sheets <- substr(gsub('[^[:alnum:]_. -]', '_', names(tables)), 1L, 31L)
-	if (any(!nzchar(sheets)) || anyDuplicated(tolower(sheets))) stop('Use distinct, descriptive worksheet names')
-	workbook <- openxlsx::createWorkbook()
-	for (i in seq_along(tables)) {
-		openxlsx::addWorksheet(workbook, sheets[i])
-		openxlsx::writeData(workbook, sheets[i], tables[[i]], withFilter = TRUE)
-		openxlsx::freezePane(workbook, sheets[i], firstRow = TRUE)
-	}
-	temporary <- tempfile('result-workbook-', tmpdir = '/tmp', fileext = '.xlsx')
-	on.exit(unlink(temporary), add = TRUE)
-	openxlsx::saveWorkbook(workbook, temporary, overwrite = TRUE)
-	if (length(sources)) {
-		# Preserve exact aggregate exports for software readers and numerical reuse.
-		stage <- tempfile('result-sources-', tmpdir = '/tmp')
-		dir.create(file.path(stage, 'results', 'exports'), recursive = TRUE)
-		on.exit(unlink(stage, recursive = TRUE), add = TRUE)
-		manifest <- list(format = 'analysis-tables-v1', files = list())
-		for (source in sources) {
-			if (any(result_private_columns(names(result_read_table(source))))) stop('Private workbook source: ', source)
-			name <- basename(source)
-			if (name %in% names(manifest$files)) stop('Duplicate source name: ', name)
-			sha <- digest::digest(file = source, algo = 'sha256')
-			part <- paste0('results/exports/', sha, '.bin')
-			stopifnot(file.copy(source, file.path(stage, part), overwrite = TRUE))
-			manifest$files[[name]] <- list(part = part, sha256 = sha)
-		}
-		jsonlite::write_json(manifest, file.path(stage, 'results/manifest.json'), auto_unbox = TRUE)
-		utils::unzip(temporary, files = '[Content_Types].xml', exdir = stage)
-		types <- file.path(stage, '[Content_Types].xml')
-		xml <- paste(readLines(types, warn = FALSE), collapse = '')
-		for (extension in c('json', 'bin')) if (!grepl(paste0('Extension="', extension, '"'), xml, fixed = TRUE)) {
-			type <- if (extension == 'json') 'application/json' else 'application/octet-stream'
-			xml <- sub('</Types>', paste0('<Default Extension="', extension, '" ContentType="', type, '"/></Types>'), xml, fixed = TRUE)
-		}
-		# Keep the printer-settings .bin default; give exact result exports
-		# explicit types so Excel does not mistake them for printer records.
-		parts <- unique(vapply(manifest$files, `[[`, character(1), 'part'))
-		for (part in parts) {
-			override <- paste0('<Override PartName="/', part, '" ContentType="application/octet-stream"/>')
-			xml <- sub('</Types>', paste0(override, '</Types>'), xml, fixed = TRUE)
-		}
-		writeLines(xml, types, useBytes = TRUE)
-		zip::zip_append(temporary, c('[Content_Types].xml', 'results'), root = stage,
-			compression_level = 6, include_directories = FALSE)
-	}
-	if (any(grepl('/$', utils::unzip(temporary, list = TRUE)$Name))) stop('Unexpected directory entries in workbook: ', path)
-	stopifnot(identical(openxlsx::getSheetNames(temporary), sheets))
-	dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-	if (!file.copy(temporary, path, overwrite = TRUE) ||
-		!identical(unname(tools::md5sum(temporary)), unname(tools::md5sum(path)))) stop('Workbook publication failed: ', path)
-	invisible(path)
+ tables <- Filter(function(x) is.data.frame(x) && ncol(x) > 0L, tables)
+ if (!length(tables)) stop('No analysis results for workbook: ', path)
+ result_stream_workbook(tables, path, sources)
 }
 
 
@@ -112,7 +105,9 @@ if (sys.nframe() == 0L) {
 		quit(save = 'no')
 	}
 	if (length(args) < 3L) stop('A result destination is required')
-	if (args[1] == 'workbook') {
+	if (args[1] == 'convert-rds') {
+		result_convert_rds(args[2], args[3])
+	} else if (args[1] == 'workbook') {
 		spec <- jsonlite::read_json(args[2], simplifyVector = TRUE)
 		tables <- lapply(spec$tables, result_read_table)
 		result_write_workbook(tables, args[3], unlist(spec$tables, use.names = FALSE))

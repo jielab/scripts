@@ -1912,7 +1912,9 @@ def phyml_gwas_main():
 		print("[GU PHYML] original lead, EUR LD and recurrent-haplotype workflow configured")
 		return
 	a.out.mkdir(parents=True, exist_ok=True)
-	with (a.out / ".gwas.lock").open("w") as lock:
+	lock_root = Path("/tmp/gu-locks")
+	lock_root.mkdir(parents=True, exist_ok=True)
+	with (lock_root / (hashlib.sha256(str(a.out.resolve()).encode()).hexdigest()[:16] + ".lock")).open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		raise SystemExit(run_locus(a, rows[0]))
 

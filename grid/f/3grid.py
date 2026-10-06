@@ -855,7 +855,7 @@ def publish_grid_results_cli():
 	}, args.output / "3grid.model.xlsx")
 	write_rds(json.loads((model / "transport_model.json").read_text()), args.output / "3grid.model.rds")
 	for source, name in [("variant_conservation.tsv.gz", "conservation"), ("pair_predictions.tsv.gz", "variant_predictions")]:
-		write_rds(read_result_table(model / source), args.output / f"3grid.{name}.rds")
+		write_result_workbook({name: read_result_table(model / source)}, args.output / f"3grid.{name}.xlsx")
 	write_rds(read_result_table(args.work / "scores/grid.tsv.gz", dtype={"eid": str}), args.output / "3grid.scores.rds")
 	print(f"Published GRID results: {args.output}")
 

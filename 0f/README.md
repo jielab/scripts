@@ -7,7 +7,7 @@
 | `phenotype.R` / `phenotype.sh` | 表型、基因型、GWAS 公用数据处理与配置 |
 | `association.R` | 关联模型 |
 | `prediction.R` | 预测模型 |
-| `results.R` / `results.py` | GRID、GU 共用的结果工作簿、个体 RDS 与临时交换数据 |
+| `results.R` / `results.py` | LE8、GRID、GU 的结果工作簿、可复用原始对象与临时交换数据 |
 | `plotting.R` | 分析图表与主题 |
 | `manhattan_plot.R` | GWAS Manhattan 图 |
 | `configure_ml.R` | R/reticulate 与机器学习环境 |
@@ -19,3 +19,5 @@
 | `img2pdf.sh` | 图像转 PDF |
 
 GWAS 格式化及 BGZF/tabix 索引实现位于 `../gwas/f/format.f.sh`，LE8 通过 `source .../format.f.sh --index` 只加载索引函数。清理依据覆盖 `/mnt/d/scripts` 下源代码、命令模板及配置中的引用；直接入口和动态调用使用的名称保留。已删除 68 个无用函数，剩余函数/类的引用复查通过。运行中仍需各分析项目自己的依赖环境。
+
+结果格式按用途决定：查看和交付的表格使用 XLSX，含 ID 的表也可以写入工作表；RDS 用于后续代码需要复用的大型原始数据或拟合对象。XLSX 保留精确表格源数据，按 Excel 容量拆分工作表，长文本拆分到附加工作表；转换校验成功后才能删除旧 RDS。日志和临时交换文件放在 `/tmp`。

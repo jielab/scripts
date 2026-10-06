@@ -64,7 +64,7 @@ Evaluation:
   --folds N / --seed N      5 / 20260904
   --bootstrap N             200; 0 disables intervals for a smoke run
   --min-n N                 100 per target/bin
-  --write-predictions TRUE|FALSE  FALSE; TRUE writes Yeval.predictions.rds
+  --write-predictions TRUE|FALSE  FALSE; TRUE writes Yeval.predictions.xlsx
   --prevalence SPEC          cohort / K / EUR=...,AFR=...; descriptive context only
   --out-root DIR            /mnt/d/analysis/grid/Yeval
   --allow-missing-scores     Explicit partial report
@@ -78,7 +78,7 @@ COJO scoring if --pt-file is absent:
 Outputs stay in <out-root>/<trait>/; changing outcome type overwrites this report.
 The four-panel distance figure pairs categorical ancestry with continuous distance.
 Yeval.distance_bins.xlsx contains the plotted bin estimates and sample/event counts.
-Each PNG has a same-name XLSX. Participant estimates use 1csx.posterior.rds.
+Each PNG has a same-name XLSX. Individual evaluation results use Yeval.individuals.xlsx.
 Logs, locks and completion markers stay under /tmp/grid/Yeval.
 Set GRID_RSCRIPT to choose an R executable; the activated grid environment is preferred.
 HELP
@@ -171,8 +171,11 @@ if [[ $check == FALSE ]]; then
 		cp -p -- "$file" "$out/$(basename -- "$file")"
 		cmp -s -- "$file" "$out/$(basename -- "$file")"
 	done
-	[[ -f $runtime/report/Yeval.predictions.rds ]] || rm -f -- "$out/Yeval.predictions.rds"
-	[[ -f $runtime/report/1csx.posterior.rds ]] || rm -f -- "$out/1csx.posterior.rds"
+	[[ -f $runtime/report/Yeval.predictions.xlsx ]] || rm -f -- "$out/Yeval.predictions.xlsx"
+	[[ -f $runtime/report/Yeval.individuals.xlsx ]] || rm -f -- "$out/Yeval.individuals.xlsx"
+	# Verified workbook publication replaces these legacy report-only RDS exports.
+	[[ ! -f $runtime/report/Yeval.individuals.xlsx ]] || rm -f -- "$out/1csx.posterior.rds"
+	[[ ! -f $runtime/report/Yeval.predictions.xlsx ]] || rm -f -- "$out/Yeval.predictions.rds"
 	date -Is >"$cache/SUCCESS"
 fi
 # Remove only known obsolete Yeval outputs, after a successful full report.

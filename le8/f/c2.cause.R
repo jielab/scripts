@@ -1589,7 +1589,7 @@ le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir) {
   write_raw_csv(scan,'c2.state_projection.csv',rawdir)
   write_raw_csv(tibble(variable=rownames(b),coefficient=as.numeric(b),lambda=fit$lambda.min),'c2.state_coefficients.csv',rawdir)
   write_raw_csv(bind_rows(calibration),'c2.state_PGS_calibration.csv',rawdir)
-  saveRDS(list(eid=test$eid,group=test$.group,state_score=test$state_score,inherited_state=test$inherited_state),file.path(rawdir,'state_validation_individuals.rds'))
+  write_raw_csv(data.frame(eid=test$eid,group=test$.group,state_score=test$state_score,inherited_state=test$inherited_state),'state_validation_individuals.csv',rawdir)
   saveRDS(list(fit=fit,preprocessing=xx$audit,anchors=selected,center=mu,scale=sd0,training_hash=le8_hash_object(sort(train$eid)),calibration=bind_rows(calibration)),file.path(rawdir,'state_model.rds'))
   list(status=tibble(status='ok',N_train=nrow(train),prevalent_train=sum(train$.prevalent),N_test=nrow(test),events_test=sum(test[[evar]])),results=scan)
 }

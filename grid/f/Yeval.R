@@ -40,7 +40,7 @@ out <- arg("run-dir", file.path(arg("out-root", "/mnt/d/analysis/grid/Yeval"), Y
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 
 
-# 🚩 Figure workbooks and named participant data
+# 🚩 Reviewable result workbooks
 yeval_write_results <- function(out, performance, comparison, distance, centers, coefficients, cohort, individual, predictions = NULL,
 	plot_data = NULL, source_dir = NULL) {
 	dir.create(out, recursive = TRUE, showWarnings = FALSE)
@@ -85,12 +85,12 @@ yeval_write_results <- function(out, performance, comparison, distance, centers,
 		x <- as.data.frame(individual)
 		if (!is.null(plot_data))
 			attr(x, "figure_data") <- plot_data
-		result_write_rds(x, file.path(out, "1csx.posterior.rds"))
+		result_write_workbook(c(list(individuals = x), if (is.data.frame(plot_data)) list(figure_data = plot_data) else plot_data), file.path(out, "Yeval.individuals.xlsx"))
 	}
 	write("distance_performance", geometry, "distance_centers")
 	write("models", list(fold_coefficients = coefficients, cohort = cohort), c("fold_coefficients", "cohort"))
 	if (!is.null(predictions) && nrow(predictions))
-		result_write_rds(as.data.frame(predictions), file.path(out, "Yeval.predictions.rds"))
+		result_write_workbook(list(predictions = as.data.frame(predictions)), file.path(out, "Yeval.predictions.xlsx"))
 	invisible(out)
 }
 intarg <- function(k, v, minimum) {

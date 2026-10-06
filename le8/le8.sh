@@ -17,7 +17,7 @@ Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results keep their original methods/scope; --replace TRUE requests new fits.
 Result workbooks and named participant RDS files restore numerical inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
-Participant tables use descriptive names such as test_individuals.rds; no workbook export.
+Reviewable result tables, including participant IDs, use XLSX; reusable raw/model objects use RDS.
 
 Examples (copy directly; full C1-C5 rerun for both omic layers):
   cd /mnt/d/scripts/le8

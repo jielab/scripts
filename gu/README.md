@@ -23,17 +23,22 @@
 
 正式结果按方法、数据集和位点／染色体组织。每张 PhyML PNG 配同名 XLSX，记录该图实际显示的单倍型计数、分支长度、节点支持度和判定结果；不再生成同图 PDF。树的统计推断和显示筛选方法保持不变。
 
-主要分析结果必须永久保存在 `/mnt/d/analysis/gu/`（或显式配置的非临时结果目录），不得仅保存在 `/tmp`。下列 RDS 保存实际结果数据及恢复所需的原生记录，不是指向临时文件的快捷方式。`/tmp/gu-cache/` 中的已归档结果副本、SQLite 和密度缓存可以从永久结果重新生成；新分析尚未成功发布的运行中数据不属于这一保证。
+所有主要结果永久保存在 `/mnt/d/analysis/gu/`。格式按用途决定：供查看的结果表使用 XLSX（包括含 ID 的表）；可复用原生数据、拟合结果使用紧凑归档；大规模关系数据库另有 RDS 恢复副本。不会仅因为有 `sample_id`、`eid` 等列就强制保存 RDS。
 
-- `phyml.haplotypes.rds`：单倍型、个体携带关系、保存的树及可复用算法结果。
-- `ibdmix.tracts.rds`、`trace.segments.rds`、`as3.tracts.rds`：各方法的个体片段和可复用结果。
-- `final/gu.results.rds`：综合关系数据表；使用 `readRDS()` 可按表名读取。它含个体数据，不属于公开分享包。
-- `final/gu.validation.rds`：个体携带者交叉验证与 Shiny 报告数据。
-- `final/gu.*.xlsx`：独立的汇总证据与质量控制结果。轨迹结果按染色体划分，避免超过 Excel 行数限制。
+| 内容 | 永久文件 |
+|---|---|
+| PhyML | 每个位点的 `phyml.haplotypes.xlsx`、树图 PNG 和同名 XLSX、`phyml.raw.tar.gz` |
+| IBDmix | 每个范围的 `ibdmix.tracts.xlsx`、`ibdmix.raw.tar.gz`、简要运行参数和实际调用样本名单 |
+| TRACE / AS3 | `trace.segments.xlsx` / `as3.tracts.xlsx`，以及对应的 `*.raw.tar.gz` |
+| Final / Shiny | `final/gu.sqlite`、汇总和复核 XLSX、`final/normalize/`、`final/review/` |
+| 数据库恢复 | `final/gu.results.rds` 保存大型关系数据，供数据库恢复复用 |
+| UKB / COJO | `ukb/` 的准备结果和 `phyml/<数据集>/inputs/` 的 lead 转换结果 |
 
-`./gu.sh` 自动在 `/tmp/gu-cache/` 展开算法交换文件与 SQLite 查看缓存，完成后发布 RDS 和图表。Shiny 仍通过 `./gu.sh shiny` 启动，直接运行 `shiny/app.R` 也会从 RDS 准备缓存。`final/normalize` 的重复 PhyML 副本不再保留；临时查看目录通过链接读取同一份方法结果。日志、测试、参考调用缓存与运行参数交换文件均在 `/tmp`。
+计算中的原生结果先写入永久目录。完成后，将可复用序列、树、片段和检查点整合进每次分析的 `*.raw.tar.gz`，逐文件校验后移除分散副本。继续分析时按需恢复到永久目录；Shiny 使用 `/tmp/gu-native-view/` 中可随时重新解压的读取副本。删除 `/tmp` 不会删除唯一的分析结果，重新运行 `./gu.sh shiny` 会恢复所需读取副本。
 
-跨项目的 RDS／XLSX 写入由 `../0f/results.R` 和 `results.py` 共用；GU 的原生结果展开、树图数据和关系数据库结构留在本项目。整理现有结果不重新拟合模型，也不伪造缓存签名。
+日志、锁、生成的 mask、预处理 VCF、命令列表和计算工作区放在 `/tmp`。每个位点的参数和来源记录保存在原生归档内。XLSX 使用多个工作表整合结果，并保留精确表格导出供代码读取；超出 Excel 行数上限时拆分工作表，过长文本按顺序拆到附加工作表，不截断内容。发布使用暂存文件校验后替换。
+
+`GU_ANALYSIS_ROOT` 与 `GU_PUBLISHED_ROOT` 使用同一永久目录；结果路径不能指向 `/tmp`、`/var/tmp`、`/dev/shm` 或 `/run`。跨项目的 XLSX/RDS 读写共用 `../0f/results.R` 和 `results.py`。格式整理不重新拟合模型，也不改变科学结果或伪造分析完成状态。
 
 代码格式遵循公用 R 代码：运算符两侧空格、tab 缩进、使用 `# 🚩` 划分模块。第三方源码保留上游格式。
 

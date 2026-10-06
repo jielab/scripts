@@ -185,8 +185,8 @@ def find_first(root, patterns):
 	return sorted(set(out))
 
 
-# Results are read from the single temporary method workspace. Shiny's
-# relative artifact paths resolve through a directory link in that workspace.
+# Results are read from the persistent method directories. Shiny's relative
+# artifact paths resolve through a link to the same native PhyML results.
 def package_core_results(analysis_root, output_dir):
 	output_dir.mkdir(parents = True, exist_ok = True)
 	link = output_dir / 'phyml'

@@ -141,22 +141,8 @@ gu_b_prepare <- function(bundle, min_copies = 11L) {
 }
 
 gu_b_write_workbook <- function(tables, path) {
-	if (requireNamespace("openxlsx", quietly = TRUE) && requireNamespace("zip", quietly = TRUE)) {
-		result_write_workbook(tables, path)
-		return(invisible(path))
-	}
-	# The analysis environment may omit spreadsheet packages. Keep its plotting runtime and use the existing system R
-	# spreadsheet runtime for this export.
-	temporary <- tempfile("gu-figure-data-", tmpdir = "/tmp", fileext = ".rds")
-	on.exit(unlink(temporary), add = TRUE)
-	saveRDS(tables, temporary)
-	code <- paste0("source(", deparse(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R")), "); result_write_workbook(readRDS(",
-		deparse(temporary), "), ", deparse(path), ")")
-	status <- system2("env", c("-u", "R_HOME", "-u", "R_LIBS", "-u", "R_LIBS_USER", "-u", "R_LIBS_SITE", "-u", "R_ENVIRON_USER",
-		"/usr/bin/Rscript", "-e", shQuote(code)))
-	if (status != 0L)
-		stop("Figure workbook export failed: ", path)
-	invisible(path)
+ result_write_workbook(tables, path)
+ invisible(path)
 }
 
 gu_b_tables <- function(bundle, min_copies = 11L) {

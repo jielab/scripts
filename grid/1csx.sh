@@ -260,7 +260,8 @@ PY
 	exec {lock}>"$work/$trait/run.lock"
 	flock -n "$lock" || _grid_die "Another CSx run is active for $trait"
 	run=$(python3 "$ROOT/f/1csx.py" workspace "$work/$trait" inference "$sig")
-	ref="$run/reference"
+	sumstats=$(python3 "$io" cache-path "$run/sumstats")
+	ref=$(python3 "$io" cache-path "$run/reference")
 	mkdir -p "$ref"
 	ln -sfn "$GRID_CSX_SNPINFO" "$ref/$(basename -- "$GRID_CSX_SNPINFO")"
 	for i in "${!POPS[@]}"; do ln -sfn "${ref_dirs[$i]}" "$ref/ldblk_${ref_type}_${POPS[$i],,}"; done
@@ -273,15 +274,15 @@ PY
 		if [[ $complete == TRUE && $GRID_REPLACE == FALSE ]]; then
 			echo "SKIP $trait inference: matching permanent weights"
 		else
-			mkdir -p "$run/sumstats" "$run/raw" "$run/weights"
+			mkdir -p "$sumstats" "$run/raw" "$run/weights"
 			ng=()
 			for i in "${!POPS[@]}"; do
 				p=${POPS[$i]}
-				std="$run/sumstats/$p.tsv.gz"
-				meta="$run/sumstats/$p.json"
+				std="$sumstats/$p.tsv.gz"
+				meta="$sumstats/$p.json"
 				grid_run_logged "$logdir/$trait/prepare.$p.log" python3 "$ROOT/f/0.common.py" sumstats-cache --input "${gwas[$i]}" --output "$std" --metadata "$meta" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace "$GRID_REPLACE"
 				tail -n 1 "$logdir/$trait/prepare.$p.log"
-				grid_run_logged "$logdir/$trait/split.$p.log" python3 "$ROOT/f/0.common.py" split-sumstats --input "$std" --out-dir "$run/sumstats" --prefix "$p" --chrs "${CHRS[*]}"
+				grid_run_logged "$logdir/$trait/split.$p.log" python3 "$ROOT/f/0.common.py" split-sumstats --input "$std" --out-dir "$sumstats" --prefix "$p" --chrs "${CHRS[*]}"
 				n=$(
 					python3 - "$meta" "$GRID_N_GWAS" "$p" <<'PY'
 import sys,json,re,math
@@ -318,7 +319,7 @@ PYMETA
 				fi
 				rm -f -- "$marker"
 				local files=() cmd=()
-				for p in "${POPS[@]}"; do files+=("$run/sumstats/$p.chr$c.tsv"); done
+				for p in "${POPS[@]}"; do files+=("$sumstats/$p.chr$c.tsv"); done
 				cmd=(env OMP_NUM_THREADS="$GRID_THREADS" OPENBLAS_NUM_THREADS="$GRID_THREADS" MKL_NUM_THREADS="$GRID_THREADS" python3 "$prscx" --ref_dir="$ref" --bim_prefix="$GRID_CSX_BIM_PREFIX" --sst_file="$(join_comma "${files[@]}")" --n_gwas="$(join_comma "${ng[@]}")" --pop="$(join_comma "${POPS[@]}")" --chrom="$c" --n_iter="$GRID_MCMC_ITER" --n_burnin="$GRID_MCMC_BURNIN" --thin="$GRID_MCMC_THIN" --seed="$((GRID_SEED + c))" --out_dir="$raw" --out_name="$trait" --meta=TRUE)
 				cmd+=(--write_pst="$GRID_POSTERIOR")
 				[[ $GRID_PHI == auto ]] || cmd+=(--phi="$GRID_PHI")
@@ -354,7 +355,7 @@ PYMETA
 				publish "$run/weights/$p.csx.gz" "${finals[$i]}"
 				printf '%s\n' "$sig" >"$run/signature"
 				publish "$run/signature" "${finals[$i]}.signature"
-				publish "$run/sumstats/$p.json" "${finals[$i]}.metadata.json"
+				publish "$sumstats/$p.json" "${finals[$i]}.metadata.json"
 			done
 		fi
 	fi
@@ -364,8 +365,17 @@ PYMETA
 	fi
 	csx_score_run
 	if [[ $GRID_POSTERIOR == TRUE ]]; then
+		# Harmonized inputs are disposable; rebuild them without rerunning MCMC.
+		mkdir -p "$sumstats"
+		for i in "${!POPS[@]}"; do
+			p=${POPS[$i]}
+			if [[ ! -s $sumstats/$p.tsv.gz ]]; then
+				grid_run_logged "$logdir/$trait/prepare.$p.log" python3 "$io" sumstats-cache --input "${gwas[$i]}" --output "$sumstats/$p.tsv.gz" --metadata "$sumstats/$p.json" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace FALSE
+			fi
+			grid_run_logged "$logdir/$trait/split.$p.log" python3 "$io" split-sumstats --input "$sumstats/$p.tsv.gz" --out-dir "$sumstats" --prefix "$p" --chrs "${CHRS[*]}"
+		done
 		for c in "${CHRS[@]}"; do need "$run/raw/chr$c/joint_posterior.h5"; done
-		posterior_args=(--raw-dir "$run/raw" --sumstats-dir "$run/sumstats" --target-dir "$GRID_TARGET_DIR"
+		posterior_args=(--raw-dir "$run/raw" --sumstats-dir "$sumstats" --target-dir "$GRID_TARGET_DIR"
 			--output "$score_home/1csx.posterior.rds" --chrs "${CHRS[*]}" --threads "$GRID_THREADS"
 			--memory "$GRID_POSTERIOR_MEMORY" --keep "$GRID_KEEP" --remove "$GRID_REMOVE" --replace "$GRID_REPLACE")
 		[[ -z $GRID_POSTERIOR_FREQ_DIR ]] || posterior_args+=(--frequency-dir "$GRID_POSTERIOR_FREQ_DIR")

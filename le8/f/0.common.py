@@ -1914,6 +1914,7 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 						"__pycache__",
 						".ruff_cache",
 						".pgs_focus_cache",
+				"prepared", "neural", "quality_neural", "checkpoints",
 						"le8_annotations",
 						"logs",
 					}
@@ -2037,9 +2038,9 @@ def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 			text = path.read_text(errors="strict")
 			if str(work) in text:
 				path.write_text(text.replace(str(work), str(root)))
-	# Workbooks retain verified aggregate exports; participant tables use named RDS.
+	# Workbooks contain reviewable results, including IDs; RDS is reserved for reusable raw/model objects.
 	# Rendering and Shiny used the scratch CSV exchanges.
-	print("[LE8] Consolidating result tables into workbooks and RDS...", flush=True)
+	print("[LE8] Consolidating result tables into workbooks...", flush=True)
 	run_table_storage("--tables-pack", work, r_bin, env)
 	published = set()
 	updates = []
@@ -2053,6 +2054,7 @@ def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 				"__pycache__",
 				".ruff_cache",
 				".pgs_focus_cache",
+				"prepared", "neural", "quality_neural", "checkpoints",
 				"le8_annotations",
 				"logs",
 			}
@@ -2079,6 +2081,7 @@ def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 		if (root / relative).is_file()
 		and relative.endswith(
 			(
+				".rds",
 				".csv",
 				".csv.gz",
 				".tsv",

@@ -2,37 +2,25 @@ source(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R"))
 
 
 # 🚩 Reusable method results Tables remain ordinary R data frames. Native fitted objects and exact exchange bytes are
-# kept together so algorithm readers can resume from /tmp.
+# kept together with the permanent native result files.
 gu_pack_result <- function(spec) {
-	tables <- list()
-	native <- list()
-	for (entry in spec$files) {
-		if (!is.null(entry$link)) {
-			native[[entry$name]] <- list(link = entry$link)
-			next
-		}
-		path <- file.path(spec$source, entry$name)
-		bytes <- readBin(path, "raw", n = file.size(path))
-		sha <- digest::digest(bytes, algo = "sha256", serialize = FALSE)
-		native[[entry$name]] <- list(bytes = bytes, sha256 = sha, modified = entry$modified)
-		if (grepl("[.]tsv([.]gz)?$", path) && length(bytes)) {
-			table <- tryCatch(suppressWarnings(result_read_table(path)), error = function(e) NULL)
-			if (!is.null(table))
-				tables[[entry$name]] <- table
-		}
-	}
-	value <- list(tables = tables)
-	attr(value, "native_results") <- native
-	attr(value, "figure_files") <- spec$figures
-	attr(value, "source_root") <- spec$source_root
-	result_write_rds(value, spec$destination)
-	# The exact bytes, links, and parsed tables have all passed readRDS equality.
-	invisible(spec$destination)
+ tables <- list()
+ for (entry in spec$files) {
+  path <- file.path(spec$source, entry$name)
+  if (is.null(entry$link) && grepl('[.]tsv([.]gz)?$', path) && file.size(path) > 0) {
+   x <- tryCatch(suppressWarnings(result_read_table(path)), error = function(e) NULL)
+   if (!is.null(x) && ncol(x)) tables[[entry$name]] <- x
+  }
+ }
+ hashes <- vapply(tables, digest::digest, character(1), algo = 'sha256')
+ tables <- tables[!duplicated(hashes)]
+ if (!length(tables)) tables <- list(availability = data.frame(status = 'No completed tabular results; native inputs are retained in the raw archive'))
+ result_stream_workbook(tables, spec$destination)
+ invisible(spec$destination)
 }
 
+
 gu_restore_result <- function(source, target) {
-	if (!startsWith(normalizePath(target, mustWork = FALSE), "/tmp/"))
-		stop("GU exchanges must stay in /tmp")
 	x <- readRDS(source)
 	dir.create(target, recursive = TRUE, showWarnings = FALSE)
 	writeLines(attr(x, "source_root"), file.path(target, ".result-source-root"))
@@ -42,24 +30,26 @@ gu_restore_result <- function(source, target) {
 		entry <- attr(x, "native_results")[[name]]
 		path <- file.path(target, name)
 		dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+		# Recovery must not replace newer native results or active-run files.
+		link <- Sys.readlink(path)
+		if (file.exists(path) || (!is.na(link) && nzchar(link))) next
 		if (!is.null(entry$link)) {
-			if (nzchar(Sys.readlink(path)))
-				unlink(path)
-			if (!file.exists(path))
-				file.symlink(entry$link, path)
+			file.symlink(entry$link, path)
 		} else {
 			if (!identical(digest::digest(entry$bytes, algo = "sha256", serialize = FALSE), entry$sha256))
 				stop("Native result checksum mismatch")
-			writeBin(entry$bytes, path)
+			stage <- tempfile(paste0(".", basename(path), ".part."), tmpdir = dirname(path))
+			writeBin(entry$bytes, stage)
+			stopifnot(file.rename(stage, path))
 			Sys.setFileTime(path, as.POSIXct(entry$modified, origin = "1970-01-01", tz = "UTC"))
 		}
 	}
 	for (figure in attr(x, "figure_files")) {
 		path <- file.path(target, figure$source)
 		dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-		stopifnot(file.copy(file.path(dirname(source), figure$name), path, overwrite = TRUE))
-		stopifnot(file.copy(file.path(dirname(source), sub("[.]png$", ".xlsx", figure$name)), sub("[.]png$", ".xlsx", path),
-			overwrite = TRUE))
+		if (!file.exists(path)) stopifnot(file.copy(file.path(dirname(source), figure$name), path))
+		workbook <- sub("[.]png$", ".xlsx", path)
+		if (!file.exists(workbook)) stopifnot(file.copy(file.path(dirname(source), sub("[.]png$", ".xlsx", figure$name)), workbook))
 	}
 	invisible(attr(x, "figure_files"))
 }
@@ -78,8 +68,6 @@ gu_pack_database <- function(source, destination) {
 }
 
 gu_restore_database <- function(source, destination) {
-	if (!startsWith(normalizePath(dirname(destination), mustWork = FALSE), "/tmp/"))
-		stop("SQLite is a temporary viewing cache")
 	tables <- readRDS(source)
 	schema <- attr(tables, "sqlite_schema")
 	temporary <- tempfile("gu-database-", tmpdir = "/tmp", fileext = ".sqlite")
@@ -98,7 +86,9 @@ gu_restore_database <- function(source, destination) {
 	stopifnot(DBI::dbGetQuery(con, "PRAGMA quick_check")[[1]] == "ok")
 	DBI::dbDisconnect(con)
 	dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
-	stopifnot(file.copy(temporary, destination, overwrite = TRUE))
+	stage <- tempfile(paste0(".", basename(destination), ".part."), tmpdir = dirname(destination))
+	on.exit(unlink(stage), add = TRUE)
+	stopifnot(file.copy(temporary, stage), file.rename(stage, destination))
 	Sys.chmod(destination, "0600")
 }
 
@@ -130,18 +120,7 @@ gu_result_workbooks <- function(spec) {
 			}
 		}
 	}
-	# Eligibility and locus association results are useful even without a tree.
-	tables <- list()
-	for (name in c("gwas_loci", "gwas_haplotypes", "skipped_loci")) {
-		x <- gu_b_read(file.path(final, paste0(name, ".tsv")))
-		if (nrow(x)) {
-			x <- x[, !result_private_columns(names(x)) & !grepl("(file|path|directory)$", names(x)), drop = FALSE]
-			if (ncol(x))
-				tables[[sub("gwas_", "", name)]] <- x
-		}
-	}
-	if (length(tables))
-		result_write_workbook(tables, file.path(out, "phyml.association.xlsx"))
+	# Association/eligibility tables are included in the main per-run workbook.
 }
 
 

@@ -38,7 +38,7 @@ Coverage 分母为单倍体 X 物理长度减 PAR1/PAR2（GRCh37: 152,301,523 bp
 常染色体最终缓存中的 Denisovan 结果已扣除全人群 Altai 重叠区域和 AFR ≥30% 高频背景；
 Altai 的最高 0.1% 衍生等位基因区域过滤状态见右侧说明，缺失时不应把全部文献差异归因于参考更新。
 升级后运行 `./gu.sh shiny` 会自动生成 schema 14 汇总缓存，不需要重新运行 IBDmix。
-RDS 恢复到 `/tmp/gu-cache/` 后，汇总会按原方法、数据集和分析范围定位运行记录，优先读取保存的实际调用样本名单。
+主要结果和 Shiny 数据保存在 `/mnt/d/analysis/gu/`；原生树、片段和检查点整合在 `*.raw.tar.gz`，Shiny 按需解压到 `/tmp/gu-native-view/` 读取。永久结果不依赖临时目录。汇总按原方法、数据集和分析范围定位运行记录，优先读取保存的实际调用样本名单。
 缓存同时检查运行记录和样本名单的变化；记录缺失时会输出 `DENSITY WARNING` 并保留 `N/A`，恢复后会自动重建。
 各参考使用其发布者的独立质量掩码，统一放在 `F:/gen/archaic/37/mask/<参考名>/`。
 Vindija 的本地目录统一为 `mask/Vindija/`；其参考样本仍为 Vindija33.19，发布者下载 URL 保留原名。
@@ -46,7 +46,7 @@ Altai 和 Denisova 的 minimal filters 也在各自目录，保留原始长文�
 `mask/common/` 保存 1KG strict accessibility 和 genomicSuperDups 原始注释。
 参考资源目录中的 `mask/` 只保存永久输入文件，不写入运行时派生文件。
 分析输出目录的 `mask/derived/cpg/` 保存 CpG 中间计算结果；`mask/derived/combined/` 保存依赖现代样本、参考和参数生成的排除区域。
-例如默认 1KG chr1 分析写入 `/mnt/d/analysis/gu/ibdmix/1kg/chr1/mask/derived/`。
+生成的 mask 位于 `/tmp/gu-intermediate/`，可从参考资源重新生成。
 这些派生文件可在分析不再使用时清理，原始输入齐全时可重新生成；运行中的任务和指向它们的分析链接仍依赖这些文件。
 原始 mask 表示可纳入区域，派生的 `*.exclude.bed` 表示排除区域，不能互换。
 分析目录使用单数 `mask/<分析单元>/`，链接到同一分析输出目录 `mask/derived/` 中的派生结果。

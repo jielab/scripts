@@ -74,7 +74,7 @@ disco_run() {
 	flock -s "$score_read_lock"
 	[[ -z $GRID_REMOVE || -f $GRID_REMOVE ]] || _grid_die "Missing withdrawal file: $GRID_REMOVE"
 	echo "input score file: ${inputs[0]}"
-	echo "output score files: $score_home/2disco.scores.rds; $score_home/2disco.coefficients.rds"
+	echo "output score files: $score_home/2disco.scores.rds; $score_home/2disco.coefficients.xlsx"
 	[[ -z $GRID_REMOVE ]] || inputs+=("$GRID_REMOVE")
 	python3 - "$GRID_DISCO_A" "$GRID_DISTANCE_PCS" <<'PY'
 import math,sys
@@ -96,7 +96,7 @@ PY
 	cache_sig="$work/$trait/disco.signature"
 	exec {lock}>"$work/$trait/run.lock"
 	flock -n "$lock" || _grid_die "Another Disco run is active for $trait"
-	if [[ -s $score_home/2disco.scores.rds && -s $score_home/2disco.coefficients.rds && -s $cache_sig && $(cat "$cache_sig") == "$sig" && $GRID_REPLACE == FALSE ]]; then
+	if [[ -s $score_home/2disco.scores.rds && -s $score_home/2disco.coefficients.xlsx && -s $cache_sig && $(cat "$cache_sig") == "$sig" && $GRID_REPLACE == FALSE ]]; then
 		echo "SKIP $trait: matching permanent Disco results"
 		return 0
 	fi
@@ -107,7 +107,7 @@ PY
 	grid_run_logged "$logdir/$trait/disco.log" "${disco_r[@]}" "$ROOT/f/2disco.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
 	grid_run_logged "$logdir/$trait/validate.log" python3 "$io" disco-output "$run/disco.tsv.gz" "$run"
 	grid_run python3 "$ROOT/f/0.common.py" publish disco "$run/disco.tsv.gz" "$score_home/2disco.scores.rds" --remove "$GRID_REMOVE"
-	grid_run "${disco_r[@]}" "$ROOT/../0f/results.R" import-table "$run/disco.coef.tsv.gz" "$score_home/2disco.coefficients.rds"
+	grid_run "${disco_r[@]}" "$ROOT/../0f/results.R" import-table "$run/disco.coef.tsv.gz" "$score_home/2disco.coefficients.xlsx"
 	printf '%s\n' "$sig" >"$run/signature"
 	publish "$run/signature" "$cache_sig"
 	# Permanent provenance stays usable even after deleting the scratch directory.

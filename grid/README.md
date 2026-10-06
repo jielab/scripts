@@ -186,7 +186,7 @@ LDL 不自动除以 0.7。T2DM 使用 `t2dm.Yt2e` / `t2dm.t2e`，可用 `--event
 4. `Yeval.paired_improvement.png`：DiscoDivas-tuned vs PRS-CSx，放在四面板之后。
 5. `Yeval.distance_bins.png`：单独的经验距离分箱图；t2e 显示 ΔC。
 
-`Yeval.comparison.xlsx` 保存主指标、增益及 RMSE 等；`1csx.posterior.rds` 保存全部个体后验 SD、model-based R²（有尺度时）、对角/交叉协方差贡献、组合权重及源人群距离。参考中心保存在 `Yeval.distance_performance.xlsx`，逐折系数与入组计数保存在 `Yeval.models.xlsx`。
+`Yeval.comparison.xlsx` 保存主指标、增益及 RMSE 等；`Yeval.individuals.xlsx` 保存全部个体后验 SD、model-based R²（有尺度时）、对角/交叉协方差贡献、组合权重及源人群距离。参考中心保存在 `Yeval.distance_performance.xlsx`，逐折系数与入组计数保存在 `Yeval.models.xlsx`。
 
 默认每个祖源最多显示 5000 个真实个体点，全部估计保存在表中。抽样只用于显示，不根据结局或准确度选点。经验分箱使用全部合格样本，并根据事件数减少稀疏箱。
 
@@ -205,9 +205,9 @@ LDL 不自动除以 0.7。T2DM 使用 `t2dm.Yt2e` / `t2dm.t2e`，可用 `--event
 ## 结果文件与临时目录
 
 - `analysis/grid/Yeval/<trait>/`：每张 `Yeval.*.png` 对应同名 XLSX；`Yeval.models.xlsx` 保存逐折系数和入组计数，`report.html` 包含方法说明。
-- 个体评估结果使用 `1csx.posterior.rds`；可选的所有方法预测使用 `Yeval.predictions.rds`。工作簿仅包含汇总结果，个体散点的记录留在 RDS。
-- `data/ukb/pgs/<trait>/`：`1csx.scores.rds`、`1csx.posterior.rds`、`2disco.scores.rds`、`2disco.coefficients.rds` 和 `Yeval.cojo.rds` 保存可复用个体数据；`Yeval.cojo.xlsx` 保存变异匹配质量结果。
-- 新的 GRID 方法输出位于 `analysis/grid/3grid/<trait>/`：`3grid.model.xlsx` 为验证和系数表，`3grid.model.rds` 为模型，`3grid.conservation.rds` 和 `3grid.variant_predictions.rds` 为完整变异结果，`3grid.scores.rds` 为个体评分。
-- PLINK 评分、Disco 输入、PCA 交换文件、日志和锁位于 `/tmp/grid-cache/` 或 `/tmp/grid/Yeval/`；正式目录不保留这些临时副本。已有 PRS-CSx MCMC 后验和 SNP 权重仍保留供复用，不重新运行推断。
-- Python/R 结果读写共用 `../0f/results.py`、`../0f/results.R`。汇总工作簿保存精确的原始数值导出；个体记录不会进入 worksheet。
+- 个体评估结果使用 `Yeval.individuals.xlsx`；可选的所有方法预测使用 `Yeval.predictions.xlsx`。有 ID 的结果表照常进入工作簿。
+- `data/ukb/pgs/<trait>/`：`1csx.scores.rds`、`1csx.posterior.rds`、`2disco.scores.rds` 和 `Yeval.cojo.rds` 保存后续评估会读取的大型评分数据；`2disco.coefficients.xlsx` 保存供查看的个体系数表；`Yeval.cojo.xlsx` 保存变异匹配质量结果。
+- 新的 GRID 方法输出位于 `analysis/grid/3grid/<trait>/`：`3grid.model.xlsx` 为验证和系数表，`3grid.model.rds` 为模型，`3grid.conservation.xlsx` 和 `3grid.variant_predictions.xlsx` 为完整变异结果，`3grid.scores.rds` 为个体评分。
+- PLINK 评分、Disco 输入、PCA 交换文件、拆分的 GWAS 输入、日志和运行锁位于 `/tmp/grid-cache/` 或 `/tmp/grid/Yeval/`；正式目录不保留这些临时副本。已有 PRS-CSx MCMC 后验和 SNP 权重仍保留供复用，不重新运行推断。
+- Python/R 结果读写共用 `../0f/results.py`、`../0f/results.R`。结果工作簿保存精确表格导出；是否含 ID 不决定文件格式。
 - 旧评估未保存 `paired_improvement` 的 bootstrap 区间。整理时保留原 PNG，工作簿明确标记该限制；新运行会保存完整的配对比较结果，不从图片估算区间。

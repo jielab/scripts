@@ -261,8 +261,9 @@ def csx_combined_main():
 	lock = (work / a.trait / "run.lock").open("a")
 	fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 	run = workspace(work / a.trait, inference_name(phi, chrs), sig)
-	logs = run / "logs"
-	logs.mkdir(exist_ok=True)
+	scratch = cache_directory(run)
+	logs = scratch / "logs"
+	logs.mkdir(parents=True,exist_ok=True)
 	command_lock = threading.Lock()
 	env = dict(
 		os.environ, OMP_NUM_THREADS=str(a.threads), OPENBLAS_NUM_THREADS=str(a.threads), MKL_NUM_THREADS=str(a.threads)
@@ -271,7 +272,7 @@ def csx_combined_main():
 	def execute(cmd, name):
 		cmd = list(map(str, cmd))
 		with command_lock:
-			with (run / "commands.jsonl").open("a") as f:
+			with (scratch / "commands.jsonl").open("a") as f:
 				f.write(json.dumps(cmd) + "\n")
 		with (logs / (name + ".log")).open("w") as f:
 			rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode
@@ -289,7 +290,7 @@ def csx_combined_main():
 		if done and a.replace == "FALSE":
 			print("SKIP inference: reuse matching joint population/META posteriors", flush=True)
 		else:
-			ref = run / "reference"
+			ref = scratch / "reference"
 			ref.mkdir(exist_ok=True)
 			for src, nm in [(Path(a.snpinfo).resolve(), name)] + [
 				(d, f"ldblk_{ref_type}_{pop.lower()}") for d, pop in zip(refs, POPS)
@@ -297,8 +298,8 @@ def csx_combined_main():
 				dest = ref / nm
 				if not dest.exists():
 					dest.symlink_to(src)
-			prep = run / "sumstats"
-			prep.mkdir(exist_ok=True)
+			prep = cache_directory(run / "sumstats")
+			prep.mkdir(parents=True,exist_ok=True)
 			sizes = []
 			for pop, src in zip(POPS, inputs):
 				dst = prep / f"{pop}.tsv.gz"

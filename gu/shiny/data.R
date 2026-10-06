@@ -10,8 +10,8 @@ suppressPackageStartupMessages({
 published_root <- Sys.getenv("GU_PUBLISHED_ROOT", Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu"))
 if (!nzchar(Sys.getenv("GU_SQLITE"))) {
 	common_python <- normalizePath(file.path(app_dir, '..', 'f', '0.common.py'))
-	workspace <- system2('python3', c(shQuote(common_python), 'results', 'restore', '--published', shQuote(published_root)), stdout = TRUE)
-	if (!is.null(attr(workspace, 'status')) || length(workspace) != 1L) stop('Cannot prepare GU result workspace')
+	workspace <- system2('python3', c(shQuote(common_python), 'results', 'restore', '--method', 'shiny', '--published', shQuote(published_root)), stdout = TRUE)
+	if (!is.null(attr(workspace, 'status')) || length(workspace) != 1L) stop('Cannot prepare persistent GU results')
 	Sys.setenv(GU_ANALYSIS_ROOT = workspace, GU_FINAL_DIR = file.path(workspace, 'final'))
 }
 default_final <- Sys.getenv('GU_FINAL_DIR', file.path(published_root, 'final'))

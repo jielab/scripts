@@ -64,7 +64,7 @@ helper=$F/ibdmix.py
 # Semantic reuse contract: bump for changes to genotype preparation, calling,
 # filtering or output meaning; path/log/comment edits do not change it.
 pipeline_version=2026-09-14.1
-# Published resources only; generated masks live under $dirout/mask/derived.
+# Published resources only; generated masks are disposable scratch data.
 [[ -z ${IBDMIX_MASK_CACHE:-} ]] || {
 	echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT" >&2
 	exit 2
@@ -151,14 +151,21 @@ for file in "$generate_gt" "$ibdmix_bin" "$helper" "$F/ibdmix.py" "$F/0.common.p
 	echo "ERROR: missing target VCF directory: $target_vcf_dir" >&2
 	exit 1
 }
-mkdir -p "$dirout"/{samples,genotype,raw,segments,final,log,tmp}
-exec 9>"$dirout/.run.lock"
+mkdir -p "$dirout"/{samples,genotype,raw,segments,final}
+ibdmix_cache_key=$(printf '%s' "$dirout" | sha256sum | cut -c1-16)
+mkdir -p /tmp/gu-locks
+exec 9>"/tmp/gu-locks/$ibdmix_cache_key.lock"
 flock -n 9 || {
 	echo "ERROR: another IBDmix run is using $dirout" >&2
 	exit 1
 }
+ibdmix_tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/gu-ibdmix.XXXXXX")
+trap 'rm -rf -- "$ibdmix_tmp_root"' EXIT
+ibdmix_mask_root=/tmp/gu-intermediate/$ibdmix_cache_key/mask
+ibdmix_log_root=/tmp/gu-logs/ibdmix/$ibdmix_cache_key
+mkdir -p "$ibdmix_mask_root" "$ibdmix_log_root"
 
-exec > >(tee "$dirout/ibdmix.log") 2>&1
+exec > >(tee "$ibdmix_log_root/run.log") 2>&1
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 log "CONFIG profile=$profile refs=$refs_arg export_denisovan=$export_denisovan background_filter=$background_filter"
 gzip_ok() { [[ -s $1 ]] && gzip -t "$1" >/dev/null 2>&1; }
@@ -341,9 +348,9 @@ run_record() {
 	[[ -z $loci_file ]] || stat -c 'loci_file\t%n:%s:%Y' "$loci_file"
 	stat -c 'software\t%n:%s:%Y' "$generate_gt" "$ibdmix_bin" "$helper" "$F/0.common.py" "$F/ibdmix.sh"
 	for u in "${analysis_units[@]}"; do
-		[[ ! -f $dirout/mask/$u/manifest.json ]] || printf 'mask_manifest_sha256\t%s\t%s\n' "$u" "$(sha256sum "$dirout/mask/$u/manifest.json" | cut -d' ' -f1)"
+		[[ ! -f $ibdmix_mask_root/$u/manifest.json ]] || printf 'mask_manifest_sha256\t%s\t%s\n' "$u" "$(sha256sum "$ibdmix_mask_root/$u/manifest.json" | cut -d' ' -f1)"
 		for ref in "${refs[@]}"; do
-			printf 'excluded_mask_sha256\t%s\t%s\t%s\n' "$u" "$ref" "$(sha256sum "$dirout/mask/$u/$ref.exclude.bed" | cut -d' ' -f1)"
+			printf 'excluded_mask_sha256\t%s\t%s\t%s\n' "$u" "$ref" "$(sha256sum "$ibdmix_mask_root/$u/$ref.exclude.bed" | cut -d' ' -f1)"
 		done
 	done
 	[[ ! -f $ref_fasta ]] || stat -Lc 'reference_fasta\t%n:%s:%Y' "$ref_fasta"
@@ -353,7 +360,7 @@ run_record() {
 		[[ -z ${seen[$chr]:-} ]] || continue
 		seen[$chr]=1
 		vcf=$(modern_vcf "$chr")
-		meta=${GU_TARGET_TMP_DIR:-$dirout/tmp}/chr${chr}/source.tsv
+		meta=${GU_TARGET_TMP_DIR:-$ibdmix_tmp_root}/chr${chr}/source.tsv
 		if [[ -s $meta ]]; then
 			# The VCF is a disposable pfile export. Track the source pgen/pvar/psam
 			# conversion contract, not the regenerated VCF/index mtimes.
@@ -371,7 +378,7 @@ run_record() {
 	done
 }
 check_run_provenance() {
-	local current=$dirout/run.meta.tsv candidate=$dirout/tmp/run.meta.current.tsv cached=$dirout/cache.meta.tsv comparison
+	local current=$dirout/run.meta.tsv candidate=$ibdmix_tmp_root/run.meta.current.tsv cached=$dirout/cache.meta.tsv comparison
 	comparison=$current
 	[[ ! -s $cached ]] || comparison=$cached
 	run_record >"$candidate"
@@ -454,7 +461,7 @@ prepare_archaic() {
 		if [[ $chr == X ]]; then python3 "$F/0.common.py" fix-vcf-gt --chrom 23 --duplicate-haploid slash; else awk 'BEGIN{OFS="\t"} /^#/{print;next}{sub(/^chr/,"",$1);print}'; fi >"$out"
 }
 prepare_unit_masks() {
-	local u=$1 ref chr=${unit_chr[$1]} out=$dirout/mask/$1
+	local u=$1 ref chr=${unit_chr[$1]} out=$ibdmix_mask_root/$1
 	mkdir -p "$out"
 	if [[ -n $custom_masks ]]; then
 		for ref in "${refs[@]}"; do
@@ -473,16 +480,16 @@ run_population() {
 	if gzip_ok "$raw"; then return 0; fi
 	log "CALL unit=$u ref=$ref population=$pop"
 	"$ibdmix_bin" --genotype <(gzip -dc "$gt") --output "$tmp/$ref.$pop.raw.txt" --sample "$sample_list" \
-		--mask "$dirout/mask/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
+		--mask "$ibdmix_mask_root/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
 		--minor-allele-count-threshold "$minor_allele_count" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
-		--modern-error-proportion "$modern_error_proportion" --more-stats >"$dirout/log/$ref.$u.$pop.ibdmix.log" 2>&1 || return 1
+		--modern-error-proportion "$modern_error_proportion" --more-stats >"$ibdmix_log_root/$ref.$u.$pop.ibdmix.log" 2>&1 || return 1
 	gzip -c "$tmp/$ref.$pop.raw.txt" >"$raw.part" && mv "$raw.part" "$raw" || return 1
 	rm -f "$tmp/$ref.$pop.raw.txt"
 }
 run_ref_unit() {
 	local u=$1 ref=$2 tmp=$3 gt producer archaic_fd modern_fd modern_pid pop _super _n sample_list status=0 producer_status=0 modern_status=0 pid
 	local -a pids=()
-	gt=$dirout/genotype/$ref.$u.gt.txt.gz
+	gt=$tmp/$ref.$u.gt.txt.gz
 	if ref_calls_complete "$u" "$ref"; then
 		rm -f "$gt" "$gt.part.gz"
 		log "REUSE unit=$u ref=$ref population_calls=complete genotype=SKIP"
@@ -498,7 +505,7 @@ run_ref_unit() {
 			prepare_archaic "$u" "$ref" /dev/stdout
 		)
 		producer=$!
-		if ! "$generate_gt" -a "/dev/fd/$archaic_fd" -m "/dev/fd/$modern_fd" -o - 2>"$dirout/log/$ref.$u.generate_gt.log" |
+		if ! "$generate_gt" -a "/dev/fd/$archaic_fd" -m "/dev/fd/$modern_fd" -o - 2>"$ibdmix_log_root/$ref.$u.generate_gt.log" |
 			gzip -1c >"$gt.part.gz"; then
 			exec {archaic_fd}<&-
 			exec {modern_fd}<&-
@@ -549,17 +556,13 @@ ref_calls_complete() {
 }
 
 cleanup_unit() {
-	local ref
 	rm -rf -- "$tmp"
-	for ref in "${refs[@]}"; do
-		rm -f -- "$dirout/genotype/$ref.$u.gt.txt.gz" "$dirout/genotype/$ref.$u.gt.txt.gz.part.gz"
-	done
 }
 
 run_unit() {
 	local u=$1 tmp ref rc=0
 	trap 'rc=$?; log "ERROR unit=$u rc=$rc command=$BASH_COMMAND"; exit "$rc"' ERR
-	tmp=$dirout/tmp/$u
+	tmp=$ibdmix_tmp_root/$u
 	trap cleanup_unit EXIT
 	trap 'exit 129' HUP
 	trap 'exit 130' INT

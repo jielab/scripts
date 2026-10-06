@@ -90,6 +90,17 @@ gu_scope_label() {
 }
 
 # Build one public result directory per analysis unit.
+gu_require_result_path() {
+	local path
+	path=$(realpath -m -- "${1:?}") || return
+	case "$path" in
+		/tmp | /tmp/* | /var/tmp | /var/tmp/* | /dev/shm | /dev/shm/* | /run | /run/*)
+			echo "ERROR: main GU results require a persistent directory, not $path" >&2
+			return 2 ;;
+	esac
+	printf '%s\n' "$path"
+}
+
 gu_chr_result_dir() {
 	local analysis_root=${1:?} method=${2:?} unit_label=${3:?}
 	local target_namespace=${4:-} override=${5:-} request_unit_count=${6:-1} out
@@ -101,7 +112,7 @@ gu_chr_result_dir() {
 		[[ -z $target_namespace ]] || out=$out/$target_namespace
 		out=$out/$unit_label
 	fi
-	printf '%s\n' "$out"
+	gu_require_result_path "$out"
 }
 
 gu_locus_unit_label() {
