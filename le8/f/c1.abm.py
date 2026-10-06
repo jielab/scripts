@@ -551,7 +551,12 @@ def s7_options(p):
 	p.add_argument("--s7-views", default="global,learned,tail")
 	p.add_argument("--s7-neighbors-per-view", type=int, default=64)
 	p.add_argument("--s7-radius-ref-n", type=int, default=2048)
-	p.add_argument("--s7-bandwidth-grid", default="0.5,1,2")
+	p.add_argument("--s7-bandwidth-grid", default=None, help="Deprecated Q/K temperature alias; distance bandwidth remains 1")
+	p.add_argument("--s7-attention-temperature-grid", default=None)
+	p.add_argument("--s7-reconstruction-weight", type=float, default=.05)
+	p.add_argument("--s7-retrieval-device", choices=['cpu','cuda'], default=None)
+	p.add_argument("--s7-query-block", type=int, default=32)
+	p.add_argument("--s7-donor-block", type=int, default=2048)
 	p.add_argument("--s7-prior-strength", type=float, default=20.)
 	p.add_argument("--s7-max-borrow", type=float, default=.8)
 	p.add_argument("--s7-hard-filter", action="store_true")
@@ -7751,7 +7756,7 @@ def assert_external_roster(ids: list[str], groups: list[str],
 
 
 # 🚩 S7 selective attention: outcome-free inputs and frozen geometry
-S7_VERSION = "7.0.0-selective-attention-20261005"
+S7_VERSION = "7.1.0-cuda-parallel-qc-20261006"
 S7_ROLES = ("build", "tune_model", "tune_gate", "calibration_fit", "calibration_audit", "test")
 
 
@@ -7766,6 +7771,7 @@ def s7_manifest(a):
 	data=runtime_manifest(a);data.pop('signature',None)
 	sources=data.pop('configuration_sources',{})
 	data['code']={'abm_numeric_sha256':s7_numerical_code_hash(Path(__file__).read_text()),
+		'retrieval_kernel_sha256':hashlib.sha256(ast.dump(next(node for node in ast.parse((HERE/'0.resources.py').read_text()).body if isinstance(node,ast.ClassDef) and node.name=='BlockedKNN'),include_attributes=False).encode()).hexdigest(),
 		'dispatcher':fingerprints([HERE/'0.common.py'],True)}
 	data['signature']=digest(data);data['configuration_sources']=sources
 	return data
@@ -7776,11 +7782,19 @@ def s7_validate(a):
 	if a.tree == "none":
 		raise ValueError("S7 needs --tree lightgbm or explicit --tree hist")
 	a.s7_views = words(a.s7_views)
-	a.s7_bandwidth_grid = [float(v) for v in a.s7_bandwidth_grid.split(',')]
+	old=a.s7_bandwidth_grid; new=a.s7_attention_temperature_grid
+	parse_grid=lambda v:[float(x) for x in v.split(',')] if isinstance(v,str) else list(v)
+	if old is not None and new is not None and parse_grid(old)!=parse_grid(new):
+		raise ValueError('Conflicting attention temperature and legacy bandwidth grids')
+	a.s7_attention_temperature_grid=parse_grid(new if new is not None else old if old is not None else '0.5,1,2')
+	a.s7_bandwidth_grid=a.s7_attention_temperature_grid
+	if old is not None:log('INFO','temperature_alias','--s7-bandwidth-grid scales Q/K temperature; distance bandwidth is 1')
+	a.s7_retrieval_device=a.s7_retrieval_device or ('cuda' if a.device=='cuda' else 'cpu')
+	if min(a.s7_query_block,a.s7_donor_block)<1:raise ValueError('Retrieval blocks must be positive')
 	if not set(a.s7_views) <= {"global", "learned", "tail"} or not set(a.s7_views) & {"global", "learned"}:
 		raise ValueError("S7 views require global or learned and only implemented views")
-	if not all(np.isfinite(v) and v > 0 for v in a.s7_bandwidth_grid):
-		raise ValueError("Invalid S7 bandwidth grid")
+	if not a.s7_attention_temperature_grid or not all(np.isfinite(v) and v > 0 for v in a.s7_attention_temperature_grid):
+		raise ValueError("Invalid S7 attention temperature grid")
 	if not np.isfinite(a.s7_tail_cap) or a.s7_tail_cap <= 0 or a.s7_neighbors_per_view < 1 or a.s7_radius_ref_n < 20:
 		raise ValueError("Invalid S7 tail or neighbor settings")
 	if not np.isfinite(a.s7_prior_strength) or a.s7_prior_strength < 0 or not 0 <= a.s7_max_borrow <= 1:
@@ -7798,7 +7812,7 @@ def s7_validate(a):
 	if a.s7_primary not in allowed:
 		raise ValueError("--s7-primary must name an enabled attention candidate")
 	# S7 has its own fixed loss definition; old defaults remain numerically intact.
-	a.s7_reconstruction_weight = .05
+	if not np.isfinite(a.s7_reconstruction_weight) or a.s7_reconstruction_weight<0:raise ValueError('Invalid reconstruction weight')
 	a.s7_gradient_clip = 1.
 	a.s7_epoch_limit = min(a.epochs, 60)
 	a.s7_pretrain_limit = min(a.pretrain_epochs, 20)
@@ -8093,109 +8107,197 @@ def s7_encode(model,batch,device='cpu',batch_size=256):
 	return np.concatenate(zs),np.concatenate(ps)
 
 
+def s7_resources():
+    import importlib.util
+    if 'le8_resources' not in sys.modules:
+        spec=importlib.util.spec_from_file_location('le8_resources',HERE/'0.resources.py')
+        module=importlib.util.module_from_spec(spec);sys.modules['le8_resources']=module;spec.loader.exec_module(module)
+    return sys.modules['le8_resources']
+
+
 class S7RetrievalGeometry:
-	"""Query-blocked absolute distances and sparse tail candidates; never N by N."""
-	def fit(self,batch,embeddings,config):
-		self.config=dict(config);a=SimpleNamespace(**config)
-		self.ids=batch.ids.copy();self.groups=batch.groups.copy()
-		self.tie=np.array([s6_seed(v,a.seed+827) for v in self.ids],dtype=np.uint64)
-		self.z={};self.radii={};self.status={}
-		if 'global' in a.s7_views:
-			x=batch.design(); n=min(32,x.shape[1],len(x)-1)
-			self.pca=PCA(n_components=n,svd_solver='randomized',random_state=a.seed).fit(x)
-			self.z['global']=self.pca.transform(x).astype('float32')/np.sqrt(max(n,1))
-		if 'learned' in a.s7_views: self.z['learned']=np.asarray(embeddings,dtype='float32')
-		self.tail_index={};self.rare_states=np.full(batch.bulk.shape[1],np.nan)
-		for j in range(batch.bulk.shape[1]):
-			obs=batch.observed[:,j]; values=batch.bulk[obs,j]
-			if len(values) and np.isin(values,[0,1]).all():
-				for state in (0.,1.):
-					freq=np.mean(values==state)
-					if 0<freq<.05:self.rare_states[j]=state
-		self.train_tail=self.tail_keys(batch)
-		if 'tail' in a.s7_views:
-			for i,keys in enumerate(self.train_tail):
-				for key,value in keys.items():self.tail_index.setdefault(key,[]).append((i,value))
-			self.tail_index={k:(np.array([v[0] for v in entries]),np.array([v[1] for v in entries])) for k,entries in self.tail_index.items()}
-		self.ref=np.argsort(self.tie,kind='stable')[:a.s7_radius_ref_n]
-		for view, coords in self.z.items():
-			dist=[]
-			for i in self.ref:
-				allowed=self.groups!=self.groups[i]
-				k=min(5,len(set(self.groups[allowed])))
-				if k:
-					d=np.linalg.norm(coords[allowed]-coords[i],axis=1)
-					dist.append(np.partition(d,k-1)[k-1])
-			self.set_radius(view,dist)
-		if 'tail' in a.s7_views:
-			dist=[]
-			for i in self.ref:
-				c=self.tail_candidates(self.train_tail[i],self.groups[i],None)
-				k=min(5,len(set(self.groups[list(c)]))) if c else 0
-				if k:dist.append(sorted(c.values())[k-1])
-			self.set_radius('tail',dist)
-		return self
+    """Static global/tail geometry plus refreshable learned coordinates.
 
-	def set_radius(self,view,dist):
-		d=np.asarray(dist,float); positive=d[d>1e-12]
-		radius=float(np.median(d)) if len(d) else 0.
-		if radius<=1e-12:radius=float(np.median(positive)) if len(positive) else 0.
-		self.radii[view]=radius
-		self.status[view]='available' if radius>0 else 'constant_geometry' if len(d) else 'unavailable'
+    Exact matches are allowed ONLY for a matching tail/rare-state key. A constant
+    learned/global embedding remains unsupported. No query label is used.
+    """
+    def fit(self, batch, embeddings, config):
+        self.config = dict(config)
+        a = SimpleNamespace(**config)
+        self.ids, self.groups = batch.ids.copy(), batch.groups.copy()
+        self.tie = np.array([s6_seed(v, a.seed + 827) for v in self.ids], dtype=np.uint64)
+        self.z, self.radii, self.status = {}, {}, {}
+        self.static_build_count = 1
+        self.ref = np.argsort(self.tie, kind='stable')[:a.s7_radius_ref_n]
+        if 'global' in a.s7_views:
+            x = batch.design()
+            n = min(32, x.shape[1], len(x)-1)
+            if n < 1:
+                raise ValueError('At least two donors are needed for global PCA')
+            self.pca = PCA(n_components=n, svd_solver='randomized', random_state=a.seed).fit(x)
+            self.z['global'] = self.pca.transform(x).astype('float32') / np.sqrt(max(n, 1))
+            self._coordinate_radius('global')
+        self.tail_index = {}
+        self.rare_states = np.full(batch.bulk.shape[1], np.nan)
+        for j in range(batch.bulk.shape[1]):
+            values = batch.bulk[batch.observed[:, j], j]
+            if len(values) and np.isin(values, [0, 1]).all():
+                for state in (0., 1.):
+                    if 0 < np.mean(values == state) < .05:
+                        self.rare_states[j] = state
+        self.train_tail = self.tail_keys(batch)
+        if 'tail' in a.s7_views:
+            for i, keys in enumerate(self.train_tail):
+                for key, value in keys.items():
+                    self.tail_index.setdefault(key, []).append((i, value))
+            self.tail_index = {k: (np.array([x[0] for x in v]), np.array([x[1] for x in v]))
+                               for k, v in self.tail_index.items()}
+            distances = []
+            for i in self.ref:
+                matches = self.tail_candidates(self.train_tail[i], self.groups[i], None)
+                k = min(5, len(set(self.groups[list(matches)]))) if matches else 0
+                if k:
+                    distances.append(sorted(matches.values())[k-1])
+            self.set_radius('tail', distances)
+            # No positive distance in the calibration subset does not invalidate
+            # exact same-key matches elsewhere in the complete training bank.
+            if self.radii['tail'] <= 0 and self.tail_index:
+                self.status['tail'] = 'exact_match_only'
+        self.refresh_learned(batch, embeddings)
+        return self
 
-	def tail_keys(self,batch):
-		keys=[{} for _ in batch.ids]
-		for label,values in [('upper',batch.tail_up),('lower',batch.tail_down)]:
-			for i,j in zip(*np.nonzero(values>0)):
-				if batch.observed[i,j]:keys[i][(int(j),label)]=float(values[i,j])
-		for j,state in enumerate(self.rare_states):
-			if np.isfinite(state):
-				for i in np.flatnonzero(batch.observed[:,j] & (batch.bulk[:,j]==state)):keys[i][(j,'binary')]=1.
-		return keys
+    def __getstate__(self):
+        return {k:v for k,v in vars(self).items() if k not in ('_indexes','_runtime_device')}
 
-	def tail_candidates(self,keys,group,fold,bank_folds=None):
-		result={}
-		for key,value in keys.items():
-			if key not in self.tail_index:continue
-			ix,intensity=self.tail_index[key]
-			allowed=self.groups[ix]!=group
-			if fold is not None:allowed &= bank_folds[ix]!=fold
-			for j,d in zip(ix[allowed],np.abs(intensity[allowed]-value)):
-				result[int(j)]=min(result.get(int(j),np.inf),float(d))
-		return result
+    def index(self,view):
+        device=getattr(self,'_runtime_device',self.config.get('s7_retrieval_device','cpu'))
+        if not hasattr(self,'_indexes'):self._indexes={}
+        key=(view,device)
+        if key not in self._indexes:
+            self._indexes[key]=s7_resources().BlockedKNN(self.z[view],self.ids,self.groups,self.tie,
+                device=device,dtype='float64',query_block=self.config.get('s7_query_block',32),
+                donor_block=self.config.get('s7_donor_block',2048))
+        return self._indexes[key]
 
-	def candidates(self,batch,embeddings,query_folds=None,bank_folds=None):
-		a=SimpleNamespace(**self.config); count=a.s7_neighbors_per_view
-		coords={'learned':embeddings}
-		if 'global' in self.z:coords['global']=self.pca.transform(batch.design()).astype('float32')/np.sqrt(self.pca.n_components_)
-		tail=self.tail_keys(batch); rows=[];diags=[]
-		for i in range(len(batch.ids)):
-			allowed=(self.groups!=batch.groups[i]) & (self.ids!=batch.ids[i])
-			if query_folds is not None:allowed &= bank_folds!=query_folds[i]
-			merged={};diag={}
-			for view in a.s7_views:
-				if view=='tail':
-					found=self.tail_candidates(tail[i],batch.groups[i],None if query_folds is None else query_folds[i],bank_folds)
-					ix=np.array([j for j in found if allowed[j]],dtype=int)
-					d=np.array([found[j] for j in ix])
-				else:
-					ix=np.flatnonzero(allowed)
-					d=np.linalg.norm(self.z[view][ix]-coords[view][i],axis=1)
-				radius=self.radii.get(view,0)
-				diag[view+'_available']=bool(radius>0 and len(ix))
-				diag[view+'_nearest_ratio']=float(np.min(d)/radius) if radius>0 and len(d) else np.nan
-				if view=='tail':diag['tail_supported_group_count']=len(set(self.groups[ix]))
-				if radius<=0:continue
-				order=np.lexsort((self.tie[ix],d))[:count]
-				for j,value in zip(ix[order],d[order]/radius):merged[int(j)]=min(merged.get(int(j),np.inf),float(value))
-			ordered=sorted(merged,key=lambda j:(merged[j],int(self.tie[j])))
-			rows.append([(j,merged[j]) for j in ordered]);diag['candidate_count']=len(ordered)
-			diag.setdefault('tail_supported_group_count',0);diags.append(diag)
-		width=max(1,max(map(len,rows),default=0));indices=np.zeros((len(rows),width),int);ratios=np.full_like(indices,np.inf,dtype=float);allow=np.zeros_like(indices,bool)
-		for i,row in enumerate(rows):
-			if row:
-				indices[i,:len(row)]=[v[0] for v in row];ratios[i,:len(row)]=[v[1] for v in row];allow[i,:len(row)]=True
-		return indices,ratios,allow,pd.DataFrame(diags)
+    def _coordinate_radius(self, view):
+        coords = self.z[view]
+        self._indexes={k:v for k,v in getattr(self,'_indexes',{}).items() if k[0]!=view}
+        ix,dist=self.index(view).query(coords[self.ref],self.ids[self.ref],self.groups[self.ref],5)
+        distances=[]
+        for row,i in enumerate(self.ref):
+            k=min(5,len(set(self.groups[self.groups!=self.groups[i]])))
+            if k and np.isfinite(dist[row,k-1]):distances.append(dist[row,k-1])
+        self.set_radius(view,distances)
+
+    def refresh_learned(self, batch, embeddings):
+        if not np.array_equal(self.ids, batch.ids) or not np.array_equal(self.groups, batch.groups):
+            raise ValueError('Bank identity changed; rebuild static geometry')
+        if 'learned' in self.config['s7_views']:
+            z = np.asarray(embeddings, dtype='float32')
+            if z.ndim != 2 or len(z) != len(self.ids) or not np.isfinite(z).all():
+                raise ValueError('Invalid learned donor coordinates')
+            self.z['learned'] = z
+            self._coordinate_radius('learned')
+        return self
+
+    def set_radius(self, view, distances):
+        d = np.asarray(distances, float)
+        if np.any(~np.isfinite(d)) or np.any(d < 0):
+            raise ValueError('Invalid training distance')
+        positive = d[d > 1e-12]
+        radius = float(np.median(d)) if len(d) else 0.
+        if radius <= 1e-12:
+            radius = float(np.median(positive)) if len(positive) else 0.
+        self.radii[view] = radius
+        self.status[view] = 'available' if radius > 0 else 'constant_geometry' if len(d) else 'unavailable'
+
+    def tail_keys(self, batch):
+        result = [{} for _ in batch.ids]
+        for label, values in [('upper', batch.tail_up), ('lower', batch.tail_down)]:
+            for i, j in zip(*np.nonzero(values > 0)):
+                if batch.observed[i, j]:
+                    result[i][(int(j), label)] = float(values[i, j])
+        for j, state in enumerate(self.rare_states):
+            if np.isfinite(state):
+                for i in np.flatnonzero(batch.observed[:, j] & (batch.bulk[:, j] == state)):
+                    result[i][(j, 'binary')] = 1.
+        return result
+
+    def tail_candidates(self, keys, group, fold, bank_folds=None):
+        result = {}
+        if fold is not None and bank_folds is None:
+            raise ValueError('Bank fold IDs required when excluding query fold')
+        for key, value in keys.items():
+            if key not in self.tail_index:
+                continue
+            ix, intensity = self.tail_index[key]
+            allowed = self.groups[ix] != group
+            if fold is not None:
+                allowed &= bank_folds[ix] != fold
+            for j, distance in zip(ix[allowed], np.abs(intensity[allowed] - value)):
+                result[int(j)] = min(result.get(int(j), np.inf), float(distance))
+        return result
+
+    def candidates(self, batch, embeddings, query_folds=None, bank_folds=None):
+        a = SimpleNamespace(**self.config)
+        coords = {'learned': embeddings}
+        if 'global' in self.z:
+            coords['global'] = self.pca.transform(batch.design()).astype('float32') / np.sqrt(self.pca.n_components_)
+        tail = self.tail_keys(batch)
+        retrieved={view:self.index(view).query(coords[view],batch.ids,batch.groups,a.s7_neighbors_per_view,
+            query_folds,bank_folds) for view in self.z}
+        rows, diagnostics = [], []
+        for i in range(len(batch.ids)):
+            allowed = (self.groups != batch.groups[i]) & (self.ids != batch.ids[i])
+            if query_folds is not None:
+                if bank_folds is None:
+                    raise ValueError('Bank fold IDs are missing')
+                allowed &= bank_folds != query_folds[i]
+            merged, diag = {}, {}
+            for view in a.s7_views:
+                if view == 'tail':
+                    found = self.tail_candidates(tail[i], batch.groups[i],
+                        None if query_folds is None else query_folds[i], bank_folds)
+                    ix = np.array([j for j in found if allowed[j]], dtype=int)
+                    d = np.array([found[j] for j in ix], dtype=float)
+                else:
+                    ji,dd=retrieved[view]
+                    good=(ji[i]>=0)&np.isfinite(dd[i])
+                    ix,d=ji[i,good],dd[i,good]
+                radius = self.radii.get(view, 0.)
+                exact = view == 'tail' and radius <= 0 and self.status.get(view) == 'exact_match_only'
+                if exact:
+                    keep = d <= 1e-12  # absolute tolerance on fixed tail representation
+                    ix, d = ix[keep], d[keep]
+                    ratios = np.zeros(len(d))
+                else:
+                    ratios = d / radius if radius > 0 else np.full(len(d), np.inf)
+                available = len(ix) > 0 and (radius > 0 or exact)
+                diag[view+'_available'] = bool(available)
+                diag[view+'_nearest_ratio'] = float(ratios.min()) if available else np.nan
+                diag[view+'_match_mode'] = 'exact_match_only' if exact else self.status.get(view, 'unavailable')
+                if view == 'tail':
+                    diag['tail_supported_group_count'] = len(set(self.groups[ix])) if available else 0
+                if not available:
+                    continue
+                order = np.lexsort((self.tie[ix], d))[:a.s7_neighbors_per_view]
+                for j, ratio in zip(ix[order], ratios[order]):
+                    merged[int(j)] = min(merged.get(int(j), np.inf), float(ratio))
+            ordered = sorted(merged, key=lambda j: (merged[j], int(self.tie[j])))
+            rows.append([(j, merged[j]) for j in ordered])
+            diag['candidate_count'] = len(ordered)
+            diag.setdefault('tail_supported_group_count', 0)
+            diagnostics.append(diag)
+        width = max(1, max(map(len, rows), default=0))
+        indices = np.zeros((len(rows), width), int)
+        ratios = np.full(indices.shape, np.inf)
+        allow = np.zeros(indices.shape, bool)
+        for i, row in enumerate(rows):
+            if row:
+                indices[i, :len(row)] = [x[0] for x in row]
+                ratios[i, :len(row)] = [x[1] for x in row]
+                allow[i, :len(row)] = True
+        return indices, ratios, allow, pd.DataFrame(diagnostics)
 
 
 @dataclass
@@ -8244,17 +8346,30 @@ class S7AttentionLearner:
 		if mode not in {'direct','retrieval'}:raise ValueError('Unknown S7 attention mode')
 		self.mode=mode
 
-	def refresh_memory(self,train,batch,y,w,multiplier,folds):
-		z,_=s7_encode(self.network,batch,self.device,self.config['batch_size'])
-		keep=w>0
-		if self.config.get('supervised_filter'):keep &= multiplier>0
-		if not keep.any():raise ValueError('No known supervised donors')
-		bank=batch.take(np.flatnonzero(keep))
-		bw=w[keep].copy()
-		if self.config['s7_weight_scope']=='loss_and_bank':bw*=multiplier[keep]
-		geometry=S7RetrievalGeometry().fit(bank,z[keep],self.config)
-		self.memory=S7Memory(bank.ids,bank.groups,z[keep],y[keep],bw,folds[keep],geometry)
-		return z
+	def refresh_memory(self, train, batch, y, w, multiplier, folds):
+	    z, _ = s7_encode(self.network, batch, self.device, self.config['batch_size'])
+	    keep = w > 0
+	    if self.config.get('supervised_filter'):
+	        keep &= multiplier > 0
+	    if not keep.any():
+	        raise ValueError('No known supervised donors')
+	    bank = batch.take(np.flatnonzero(keep))
+	    bw = w[keep].copy()
+	    if self.config['s7_weight_scope'] == 'loss_and_bank':
+	        bw *= multiplier[keep]
+	    # Content hash, not label-based similarity. This prevents incorrect reuse
+	    # on refit, changed preprocessing, channel policy, bank rows, or row order.
+	    static_key = joblib.hash((bank.ids, bank.groups, bank.bulk, bank.tail_up,
+	        bank.tail_down, bank.observed, bank.clinical, bank.feature_names,
+	        self.config['s7_views'], self.config['s7_radius_ref_n'], self.config['s7_neighbors_per_view'], self.config['seed'],
+            self.config.get('s7_retrieval_device'),self.config.get('s7_query_block'),self.config.get('s7_donor_block')))
+	    if getattr(self, '_static_geometry_key', None) == static_key:
+	        geometry = self.memory.geometry.refresh_learned(bank, z[keep])
+	    else:
+	        geometry = S7RetrievalGeometry().fit(bank, z[keep], self.config)
+	        self._static_geometry_key = static_key
+	    self.memory = S7Memory(bank.ids, bank.groups, z[keep], y[keep], bw, folds[keep], geometry)
+	    return z
 
 	def masked_reconstruction(self,batch,generator):
 		data=batch.tensors(self.device)
@@ -8292,12 +8407,14 @@ class S7AttentionLearner:
 		initial={k:t.detach().cpu().clone() for k,t in self.network.state_dict().items()}
 		optimizer=torch.optim.AdamW(self.network.parameters(),lr=a.learning_rate,weight_decay=a.weight_decay)
 		rng=np.random.default_rng(a.seed+412);self.gradient_names=set();steps=pretrain_steps=skipped=0
+		gradient_parameters=list(self.network.named_parameters())
+		gradient_seen=torch.zeros(len(gradient_parameters),dtype=torch.bool,device=self.device)
+		if self.device=='cuda':torch.cuda.reset_peak_memory_stats()
 		def update(loss):
 			nonlocal steps
 			if not torch.isfinite(loss):raise ValueError('Nonfinite S7 neural loss')
 			optimizer.zero_grad();loss.backward()
-			for name,param in self.network.named_parameters():
-				if param.grad is not None and bool(torch.any(param.grad!=0)):self.gradient_names.add(name)
+			gradient_seen.logical_or_(torch.stack([torch.any(param.grad!=0) if param.grad is not None else gradient_seen.new_tensor(False) for _,param in gradient_parameters]))
 			torch.nn.utils.clip_grad_norm_(self.network.parameters(),a.s7_gradient_clip)
 			optimizer.step();steps+=1
 		for epoch in range(a.s7_pretrain_limit):
@@ -8306,7 +8423,7 @@ class S7AttentionLearner:
 				update(self.masked_reconstruction(b.take(ix),rng));pretrain_steps+=1
 		folds=s6_group_folds(b.groups,a.selective_folds,a.seed+642)
 		self.tuning=[];best=None;patience=0
-		grid=[1.] if config.get('pilot') or self.mode=='direct' else a.s7_bandwidth_grid
+		grid=[1.] if config.get('pilot') or self.mode=='direct' else a.s7_attention_temperature_grid
 		normalizer=float(supervised[(w>0)&(multiplier>0)].mean())
 		for epoch in range(a.s7_epoch_limit+1):
 			z=self.refresh_memory(train,b,y,w,multiplier,folds) if self.mode=='retrieval' else s7_encode(self.network,b,self.device,a.batch_size)[0]
@@ -8334,12 +8451,14 @@ class S7AttentionLearner:
 				self.tuning.append(dict(parameter=temperature,selected_epoch=epoch,validation_logloss=loss,status='completed'))
 				if best is None or loss<best[0]-1e-9:
 					best=(loss,{k:t.detach().cpu().clone() for k,t in self.network.state_dict().items()},epoch,temperature);improved=True
+			log('INFO','S7_epoch',f'mode={self.mode} epoch={epoch} device={self.device} retrieval={a.s7_retrieval_device} best_logloss={best[0]:.6g} gradient_steps={steps}')
 			patience=0 if improved else patience+1
 			if epoch and patience>=a.patience:break
 		self.network.load_state_dict(best[1]);self.selected_epoch,self.temperature=best[2:]
 		# Refresh only from the selected checkpoint, never from the last rejected epoch.
 		if self.mode=='retrieval':self.refresh_memory(train,b,y,w,multiplier,folds)
 		# Offload idle weights, but keep subsequent neural predictions on the requested device.
+		self.gradient_names={name for (name,_),seen in zip(gradient_parameters,gradient_seen.cpu().tolist()) if seen}
 		self.network.cpu().eval()
 		changed=sum(not torch.equal(initial[k],v.detach().cpu()) for k,v in self.network.state_dict().items())
 		self.fit_status=dict(architecture='S7RowEncoder_ContextStack_'+self.mode,
@@ -8349,12 +8468,16 @@ class S7AttentionLearner:
 			nonzero_gradient_parameters=len(self.gradient_names),gradient_names=sorted(self.gradient_names),
 			selected_epoch=self.selected_epoch,selected_tensor_changed_count=changed,zero_weight_batches=skipped,
 			checkpoint_status='selected_pretrained_epoch_zero' if self.selected_epoch==0 else 'selected_finetuned_checkpoint',
-			actual_device=device_for(a.device))
+			actual_device=device_for(a.device),actual_precision='fp32',amp_requested=bool(getattr(a,'amp',False)),
+			retrieval_device=a.s7_retrieval_device,retrieval_dtype='float64',retrieval_tie_tolerance=1e-10,
+			gpu_peak_allocated_bytes=int(torch.cuda.max_memory_allocated()) if self.device=='cuda' else 0,
+			gpu_peak_reserved_bytes=int(torch.cuda.max_memory_reserved()) if self.device=='cuda' else 0)
 		return self
 
 	@torch.no_grad()
 	def predict_batch(self,batch,temperature=None):
 		self.network.to(self.device).eval();prob=[];diagnostics=[]
+		if self.mode=='retrieval':self.memory.geometry._runtime_device=self.config.get('s7_retrieval_device','cpu') if self.device!='cpu' else 'cpu'
 		temperature=temperature if temperature is not None else self.temperature
 		for start in range(0,len(batch.ids),self.config['batch_size']):
 			b=batch.take(slice(start,start+self.config['batch_size']))
@@ -8373,8 +8496,22 @@ class S7AttentionLearner:
 			prob.append(p.cpu().numpy());diagnostics.append(diag)
 		return S7Prediction(np.concatenate(prob),pd.concat(diagnostics,ignore_index=True))
 
-	def predict(self,raw,metadata):
-		return self.predict_batch(self.prep.transform(raw,metadata))
+	def predict(self, raw, metadata):
+	    """External/pilot inference uses requested device; idle models live on CPU.
+	    Internal epoch validation calls predict_batch directly and stays on-device.
+	    No exception is converted into a CPU computation.
+	    """
+	    try:
+	        return self.predict_batch(self.prep.transform(raw, metadata))
+	    finally:
+	        if str(self.device).startswith('cuda'):
+	            # Cleanup must never replace the original CUDA exception.
+	            import sys as _sys
+	            active_error=_sys.exc_info()[0] is not None
+	            try:self.network.cpu()
+	            except Exception:
+	                if not active_error:raise
+	            if hasattr(self,'memory'):self.memory.geometry._indexes={} 
 
 	def export_state(self):
 		state={k:copy.deepcopy(v) for k,v in vars(self).items() if k!='network'}
@@ -8528,6 +8665,7 @@ def s7_state_hash(value):
 	"""Content identity independent of Torch storage addresses and query device."""
 	if isinstance(value,torch.Tensor):return joblib.hash(value.detach().cpu().numpy())
 	if isinstance(value,nn.Module):return s7_state_hash(value.state_dict())
+	if isinstance(value,S7RetrievalGeometry):return s7_state_hash(value.__getstate__())
 	if isinstance(value,S7AttentionLearner):return s7_state_hash({k:v for k,v in vars(value).items() if k!='device'})
 	if type(value).__module__ == 'c1_abm' and hasattr(value,'__dict__'):return s7_state_hash(vars(value))
 	if isinstance(value,dict):return digest({str(k):s7_state_hash(v) for k,v in sorted(value.items(),key=lambda p:str(p[0]))})
@@ -8605,36 +8743,43 @@ def s7_uno(time,event,prob,km):
 
 
 def s7_metric(time,event,prob,groups,km):
-	p=pd.DataFrame(dict(time=time,event=event));y,w=km.labels_weights(p)
-	ans=s6_metric(y,w,np.asarray(prob))
-	ans.update(s7_uno(time,event,prob,km))
-	ans.update(N=len(p),independent_groups=len(set(groups)),known_N=int(np.sum(w>0)),
-		observed_cases=int(np.sum(y)),known_controls=int(np.sum((w>0)&(y==0))),horizon=km.horizon,
-		censoring_method='build_only_marginal_KM',estimand='net_risk_under_independent_censoring',
-		status='completed' if len(p) and np.isfinite(ans['Uno_C_horizon']) else 'insufficient_information')
-	return ans
+    time,event,prob,groups=map(np.asarray,(time,event,prob,groups))
+    truth=pd.DataFrame(dict(time=time,event=event));y,w=km.labels_weights(truth)
+    available=np.isfinite(prob)
+    ans=s6_metric(y[available],w[available],prob[available])
+    ans.update(s7_uno(time[available],event[available],prob[available],km))
+    ans.update(N=len(time),eligible_N=len(time),policy_available_N=int(available.sum()),abstained_N=int((~available).sum()),
+        prediction_coverage=float(available.mean()) if len(time) else np.nan,
+        available_event_coverage=float(y[available].sum()/y.sum()) if y.sum() else np.nan,
+        independent_groups=len(set(groups)),available_groups=len(set(groups[available])),known_N=int(np.sum(w>0)),
+        observed_cases=int(y.sum()),known_controls=int(np.sum((w>0)&(y==0))),available_cases=int(y[available].sum()),
+        horizon=km.horizon,censoring_method='build_only_marginal_KM',estimand='net_risk_under_independent_censoring',
+        status='completed' if available.any() and np.isfinite(ans['Uno_C_horizon']) else 'insufficient_information')
+    return ans
 
 
 def s7_paired_bootstrap(time,event,predictions,mask,groups,km,pairs,count,seed):
-	ix=np.flatnonzero(mask);groups=np.asarray(groups);time=np.asarray(time);event=np.asarray(event)
-	names=sorted(set(v for pair in pairs for v in pair));keys=['AUC_IPCW','Uno_C_horizon','Brier_IPCW','LogLoss_IPCW']
-	point={name:s7_metric(time[ix],event[ix],predictions[name][ix],groups[ix],km) for name in names}
-	units=[ix[groups[ix]==g] for g in sorted(set(groups[ix]))]
-	samples={(m,r,k):[] for m,r in pairs for k in keys};rng=np.random.default_rng(seed)
-	for rep in range(count):
-		if not units:break
-		take=np.concatenate([units[j] for j in rng.integers(0,len(units),len(units))])
-		values={n:s7_metric(time[take],event[take],predictions[n][take],groups[take],km) for n in names}
-		for m,r,k in samples:samples[m,r,k].append(values[m][k]-values[r][k])
-	rows=[]
-	for (m,r,k),values in samples.items():
-		v=np.asarray(values);v=v[np.isfinite(v)]
-		valid=len(v);enough=valid>=max(20,math.ceil(.8*count))
-		lo,hi=np.quantile(v,[.025,.975]) if enough else (np.nan,np.nan)
-		rows.append(dict(model=m,reference=r,metric=k,delta=point[m][k]-point[r][k],lower=lo,upper=hi,
-			valid_boot=valid,requested_boot=count,better_direction='positive' if k in ('AUC_IPCW','Uno_C_horizon') else 'negative',
-			uncertainty='excludes_model_refit_uncertainty',status='completed' if enough else 'insufficient_bootstrap'))
-	return pd.DataFrame(rows)
+    groups,time,event,mask=map(np.asarray,(groups,time,event,mask))
+    rows=[];keys=['AUC_IPCW','Uno_C_horizon','Brier_IPCW','LogLoss_IPCW']
+    for model,reference in pairs:
+        common=mask&np.isfinite(predictions[model])&np.isfinite(predictions[reference]);ix=np.flatnonzero(common)
+        point={name:s7_metric(time[ix],event[ix],predictions[name][ix],groups[ix],km) for name in (model,reference)}
+        units=[ix[groups[ix]==g] for g in sorted(set(groups[ix]))];samples={key:[] for key in keys}
+        rng=np.random.default_rng(seed)
+        for rep in range(count):
+            if not units:break
+            take=np.concatenate([units[j] for j in rng.integers(0,len(units),len(units))])
+            values={n:s7_metric(time[take],event[take],predictions[n][take],groups[take],km) for n in (model,reference)}
+            for key in keys:samples[key].append(values[model][key]-values[reference][key])
+        for key,values in samples.items():
+            v=np.asarray(values);v=v[np.isfinite(v)];valid=len(v);enough=valid>=max(20,math.ceil(.8*count))
+            lo,hi=np.quantile(v,[.025,.975]) if enough else (np.nan,np.nan)
+            rows.append(dict(model=model,reference=reference,metric=key,delta=point[model][key]-point[reference][key],
+                lower=lo,upper=hi,valid_boot=valid,requested_boot=count,eligible_N=int(mask.sum()),
+                policy_available_N=len(ix),abstained_N=int(mask.sum())-len(ix),comparison_population='common_available_predictions',
+                better_direction='positive' if key in ('AUC_IPCW','Uno_C_horizon') else 'negative',
+                uncertainty='excludes_model_refit_uncertainty',status='completed' if enough else 'insufficient_bootstrap'))
+    return pd.DataFrame(rows)
 
 
 def s7_random_controls(values,seed):
@@ -8688,12 +8833,27 @@ def s7_fit_final_models(train,valid,values,target_mask,config):
 	return models,pd.DataFrame(registry),pd.DataFrame(tuning),rand_weight,rand_hard
 
 
-def s7_model_predictions(bundle,raw,metadata):
-	pred={name:learner.predict(raw,metadata) for name,learner in bundle['models'].items()}
-	cal=bundle.get('calibrators',{})
-	for name,value in pred.items():
-		if name in cal:value.probability=cal[name].predict(value.probability)
-	return pred
+def s7_model_predictions(bundle, raw, metadata):
+    """Predict each constituent once; ensemble raw, THEN calibrate separately."""
+    cache = {}
+    def raw_prediction(learner):
+        key = id(learner)
+        if key not in cache:
+            if isinstance(learner, S7EnsembleLearner):
+                left, right = raw_prediction(learner.en), raw_prediction(learner.tree)
+                value = S7Prediction(.5*(left.probability + right.probability), left.diagnostics.copy(deep=True))
+            else:
+                value = learner.predict(raw, metadata)
+            cache[key] = value
+        return cache[key]
+    result = {}
+    for name, learner in bundle['models'].items():
+        value = raw_prediction(learner)
+        probability = np.asarray(value.probability).copy()
+        if name in bundle.get('calibrators', {}):
+            probability = bundle['calibrators'][name].predict(probability)
+        result[name] = S7Prediction(probability, value.diagnostics.copy(deep=True))
+    return result
 
 
 def s7_deployment_inputs(bundle,pred):
@@ -8713,13 +8873,17 @@ def s7_predict(bundle,raw,metadata):
 	candidate=research&(gate['gain']>0)&qc
 	released=candidate&(bundle['audit_state']['status']=='audit_supported_gain')
 	prob={name:value.probability for name,value in pred.items()}
-	policy=np.where(released,prob[bundle['primary']],prob[bundle['fallback']])
+	policy=np.where(qc,np.where(released,prob[bundle['primary']],prob[bundle['fallback']]),np.nan)
+	source=np.where(~qc,'abstain_technical_QC',np.where(released,'candidate','omics_baseline'))
 	reasons=np.select([~qc,~research,gate['gain']<=0,~released],['technical_QC','outside_research_coverage','nonpositive_gain','audit_not_supported'],default='released')
 	return pd.DataFrame({a.id_col:ids,**prob,**{k:v.to_numpy() for k,v in z.items()},
 		'gain_score':gate['gain'],'estimated_squared_error':gate['absolute_error'],
 		'clinical_risk':bundle['clinical_model'].predict_proba(bundle['clinical_encoder'].transform(metadata))[:,1] if bundle['clinical_encoder'] is not None else np.full(len(ids),bundle['clinical_constant']),
 		'research_mask':research,'candidate_mask':candidate,'released':released,'prediction_released':released,
-		'technical_QC_pass':qc,'policy_risk':policy,'rejection_reason':reasons})
+		'technical_QC_pass':qc,'policy_prediction_available':qc,'policy_source':source,
+        'unknown_category':d.unknown_category.to_numpy(bool),
+        'missingness_QC_fail':d.missing_fraction.to_numpy()>a.sample_missing,
+        'tail_cap_QC_fail':d.tail_cap_count.to_numpy()>0,'policy_risk':policy,'rejection_reason':reasons})
 
 
 def s7_audit_decision(table,truth,groups,bundle):
@@ -8762,7 +8926,8 @@ def s7_freeze_components(bundle):
 		release_gate=s7_state_hash(bundle['release_gate']),coverage_rules=s7_state_hash(bundle['coverage_rules']),
 		training_gate=s7_state_hash(bundle['training_gate']),control_rules=s7_state_hash(bundle['control_rules']),
 		clinical_model=s7_state_hash((bundle['clinical_encoder'],bundle['clinical_model'])),
-		censoring=s7_state_hash((bundle['censoring'],bundle.get('conditional_censoring'))))
+		censoring=s7_state_hash((bundle['censoring'],bundle.get('conditional_censoring'))),
+        calibration_cutpoints=s7_state_hash(bundle.get('calibration_cutpoints',{})))
 
 
 def s7_fit(raw,p,features,a,out):
@@ -8789,7 +8954,7 @@ def s7_fit(raw,p,features,a,out):
 		effective_parameters=vars(a).copy(),ignored_or_incompatible_parameters=['legacy_attention_panel_options','selective_gate_target (S7 always actual attention gain)'])
 	cal=data['calibration_fit'];yc,wc=km.labels_weights(cal.survival())
 	s6_check_events(yc,wc,a.selective_min_events,'S7 calibration_fit')
-	calraw={name:learner.predict(cal.raw,cal.metadata).probability for name,learner in models.items()}
+	calraw={name:value.probability for name,value in s7_model_predictions(bundle,cal.raw,cal.metadata).items()}
 	bundle['calibrators']={name:S6Calibrator().fit(pred,yc,wc) for name,pred in calraw.items()}
 	# The release gate sees the actual final candidate and actual separately calibrated fallback.
 	tg=data['tune_gate'];pred=s7_model_predictions(bundle,tg.raw,tg.metadata);zg=s7_deployment_inputs(bundle,pred)
@@ -8811,10 +8976,15 @@ def s7_fit(raw,p,features,a,out):
 	audit=data['calibration_audit'];at=s7_predict(bundle,audit.raw,audit.metadata)
 	bundle['audit_state'],audit_pairs=s7_audit_decision(at,audit.survival(),s6_groups(audit.metadata,a),bundle)
 	assert before==s7_freeze_components(bundle)
+	calibration_prediction=s7_predict(bundle,cal.raw,cal.metadata)
+	bundle['calibration_cutpoints']={name:np.unique(np.quantile(v[np.isfinite(v)],np.linspace(0,1,11)))[1:-1]
+		if np.isfinite(v).any() else np.array([]) for name,v in
+		((name,calibration_prediction[name].to_numpy()) for name in (bundle['primary'],bundle['fallback'],'policy_risk'))}
+	before=s7_freeze_components(bundle)
 	freeze_projection_schema(bundle,p,a,~p.role.eq('test'))
 	bundle['component_hashes']=before
 	bundle['immutable_frozen_hash']=digest({**before,'audit':bundle['audit_state'],'roles':bundle['role_hashes']})
-	bundle['dependency_versions']=s7_manifest(a)['dependencies'];bundle['code_commit']='unavailable_local_checkout_without_git'
+	bundle['dependency_versions']=s7_manifest(a)['dependencies'];bundle['code_commit']=s7_code_identity()
 	bundle['model_registry']=registry;bundle['model_tuning']=tuning
 	bundle['preprocessing_audit']=pd.concat([learner.prep.audit.assign(model_id=name) for name,learner in models.items()],ignore_index=True)
 	bundle['gate_training']=pd.DataFrame([dict(gate='training',source_role='pilot_gate_within_build',target='attention_retrieval_pilot',reference='baseline_pilot',score_sd=float(np.std(values['score']))),
@@ -8863,8 +9033,10 @@ def s7_evaluate(out):
 	table=pd.read_csv(out/'test_individuals.csv',dtype={a.id_col:str});truth=pd.read_csv(out/'test_outcomes.csv',dtype={a.id_col:str,'family_group':str})
 	if not table[a.id_col].equals(truth[a.id_col]):raise ValueError('Test prediction/outcome identity mismatch')
 	time,event=truth.time.to_numpy(),truth.event.to_numpy();groups=truth.family_group.to_numpy();y,w=km.labels_weights(truth)
-	models=list(bundle['models'])+['policy_risk'];pred={name:table[name].to_numpy() for name in models}
-	masks={'all':np.ones(len(table),bool),'research':table.research_mask.to_numpy(bool),'rejected':~table.research_mask.to_numpy(bool),'released':table.released.to_numpy(bool)}
+	models=list(bundle['models'])+['policy_risk']
+	available=table.get('policy_prediction_available',table.technical_QC_pass).to_numpy(bool)
+	pred={name:np.where(available,table[name].to_numpy(),np.nan) for name in models}
+	masks={'all':np.ones(len(table),bool),'research':table.research_mask.to_numpy(bool),'rejected':~table.research_mask.to_numpy(bool),'released':table.released.to_numpy(bool),'policy_available':available}
 	def row(name,mask,subset,selector,q):
 		return dict(run_id=bundle['run_id'],primary_id=bundle['primary'],reference_id=bundle['fallback'],model=name,model_id=name,
 			architecture='frozen_fallback_policy' if name=='policy_risk' else bundle['models'][name].fit_status['architecture'],
@@ -8888,8 +9060,10 @@ def s7_evaluate(out):
 	if 'conditional_censoring' in bundle:
 		pd.DataFrame([dict(model_id=name, subset=subset, censoring_method='build_only_age_tertile_sex_stratified_KM',
 			estimand='prespecified_conditional_censoring_sensitivity', changes_primary_policy=False,
-			**bundle['conditional_censoring'].metric(truth.loc[mask], pred[name][mask], groups[mask], km))
+			eligible_N=int(mask.sum()),policy_available_N=int((mask&available).sum()),abstained_N=int((mask&~available).sum()),
+			**bundle['conditional_censoring'].metric(truth.loc[mask&available], pred[name][mask&available], groups[mask&available], km))
 			for subset,mask in masks.items() for name in models]).to_csv(out/'censoring_sensitivity.csv',index=False)
+	s7_calibration_evaluate(out,bundle,table,truth)
 	s7_render_figures(out,bundle,metrics,curves)
 	dump(out/'DONE.json',dict(version=S7_VERSION,design='selective_attention',status=bundle['fit_status']['status']))
 	return metrics
@@ -8900,7 +9074,7 @@ def s7_render_figures(out,bundle,metrics,curves):
 	matplotlib.use('Agg')
 	import matplotlib.pyplot as plt
 	data=metrics[metrics.subset.eq('all')]
-	fig,ax=plt.subplots(figsize=(10,max(5,len(data)*.3)));ax.barh(data.model,data.Uno_C_horizon);ax.set(xlabel='Horizon-truncated Uno C',xlim=(0,1),title='Frozen S7 models: identical held-out participants')
+	fig,ax=plt.subplots(figsize=(10,max(5,len(data)*.3)));ax.barh(data.model,data.Uno_C_horizon);ax.set(xlabel='Horizon-truncated Uno C',xlim=(0,1),title='Frozen S7 models: common technically eligible participants')
 	fig.tight_layout();fig.savefig(out/'Fig_model_comparison.png',dpi=150);plt.close(fig);data.to_csv(out/'Fig_model_comparison.csv',index=False)
 	data=curves[curves.selector.eq('release_gain') & curves.model.isin([bundle['primary'],bundle['fallback'],'attention_direct_full'])]
 	fig,ax=plt.subplots(figsize=(8,5))
@@ -8916,9 +9090,81 @@ def s7_project(out,request):
 		if isinstance(model,S7AttentionLearner):model.device=device_for(request.device)
 	table=s7_predict(bundle,raw,p);table['validation_status']=audit['validation_status']
 	Path(request.output).parent.mkdir(parents=True,exist_ok=True);table.to_csv(request.output,index=False)
-	audit['unknown_category_N']=int(np.sum(~table.technical_QC_pass))
+	audit['unknown_category_N']=int(table.unknown_category.sum())
+	audit['missingness_QC_fail_N']=int(table.missingness_QC_fail.sum())
+	audit['tail_cap_QC_fail_N']=int(table.tail_cap_QC_fail.sum())
+	audit['technical_QC_fail_N']=int((~table.technical_QC_pass).sum())
+	audit['policy_available_N']=int(table.policy_prediction_available.sum())
+	audit['abstained_N']=int((~table.policy_prediction_available).sum())
 	dump(Path(request.output).with_suffix('.audit.json'),audit)
 	return table
+
+
+def s7_code_identity():
+    try:
+        head=subprocess.check_output(['git','-C',str(HERE),'rev-parse','HEAD'],stderr=subprocess.DEVNULL,text=True).strip()
+        dirty=bool(subprocess.check_output(['git','-C',str(HERE),'status','--porcelain'],text=True).strip())
+        return dict(commit=head,dirty=dirty)
+    except (OSError,subprocess.CalledProcessError):
+        return dict(commit=None,status='local_checkout_without_git',sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+
+
+def s7_model_preflight(a,features=8):
+    """Actual production encoder and Q/K borrowing kernels, without cohort data."""
+    device=device_for(a.device)
+    model=S7RowEncoder(np.arange(features)%min(features,8),2,np.full(features,np.nan),
+        width=16,heads=2,layers=1,dropout=0).to(device)
+    x=torch.randn((4,features),device=device)
+    z,direct,recon=model(x,torch.zeros_like(x),torch.zeros_like(x),torch.ones_like(x,dtype=torch.bool),
+        torch.zeros((4,2),device=device),decode=True)
+    loss=direct.square().mean()+recon.square().mean()+model.query(z).square().mean()+model.key(z).square().mean()
+    loss.backward()
+    if not any(t.grad is not None and bool(torch.any(t.grad!=0)) for t in model.parameters()):raise RuntimeError('Model preflight has no gradients')
+    if device=='cuda':torch.cuda.synchronize()
+    print('S7_MODEL_PREFLIGHT '+json.dumps(dict(device=device,features=features,actual_precision='fp32',forward_backward='passed')),flush=True)
+
+
+def s7_calibration_evaluate(out,bundle,table,truth):
+    """Descriptive test calibration only; never replaces frozen calibrators."""
+    from scipy.optimize import minimize
+    km=bundle['censoring'];y,w=km.labels_weights(truth)
+    available=table.get('policy_prediction_available',table.technical_QC_pass).to_numpy(bool)
+    masks={'all':np.ones(len(table),bool),'research':table.research_mask.to_numpy(bool),
+        'released':table.released.to_numpy(bool)}
+    for (selector,q),mask in s7_selection_masks(bundle,table).items():masks[f'{selector}:{q:g}']=mask
+    rows=[];bins=[]
+    for name in (bundle['primary'],bundle['fallback'],'policy_risk'):
+        probability=table[name].to_numpy(float)
+        edges=bundle.get('calibration_cutpoints',{}).get(name)
+        for label,mask in masks.items():
+            finite=mask&available&np.isfinite(probability);known=finite&(w>0)
+            row=dict(model_id=name,subset=label,eligible_N=int(mask.sum()),policy_available_N=int(finite.sum()),
+                abstained_N=int(mask.sum()-finite.sum()),known_N=int(known.sum()),horizon=km.horizon,
+                evaluation_only=True,cutpoint_source='calibration_fit',status='insufficient_information')
+            if known.any():
+                pp=np.clip(probability[known],1e-6,1-1e-6);yy=y[known];ww=w[known];xx=logit(pp)
+                row.update(Brier_IPCW=float(np.average((yy-pp)**2,weights=ww)),
+                    observed_expected=float(np.sum(yy*ww)/np.sum(pp*ww)))
+                if np.unique(yy).size==2 and np.std(xx)>1e-8:
+                    def objective(beta):
+                        linear=beta[0]+(beta[1] if len(beta)>1 else 1.)*xx
+                        return float(np.average(np.logaddexp(0,linear)-yy*linear,weights=ww))
+                    offset=minimize(objective,[0.],method='BFGS');joint=minimize(objective,[0.,1.],method='BFGS')
+                    row.update(calibration_intercept_offset=float(offset.x[0]),calibration_joint_intercept=float(joint.x[0]),
+                        calibration_slope=float(joint.x[1]),status='completed' if offset.success and joint.success else 'optimizer_not_converged')
+            if edges is None:row['cutpoint_source']='unavailable_in_frozen_artifact'
+            else:
+                group=np.searchsorted(edges,probability,side='right')
+                bounds=np.r_[-np.inf,edges,np.inf]
+                for j in range(len(bounds)-1):
+                    take=known&(group==j)
+                    bins.append(dict(model_id=name,subset=label,group=j,lower=bounds[j],upper=bounds[j+1],N=int(take.sum()),
+                        observed=float(np.average(y[take],weights=w[take])) if take.any() else np.nan,
+                        expected=float(np.average(probability[take],weights=w[take])) if take.any() else np.nan,
+                        cutpoint_source='calibration_fit',horizon=km.horizon))
+            rows.append(row)
+    pd.DataFrame(rows).to_csv(Path(out)/'test_calibration.csv',index=False)
+    pd.DataFrame(bins).to_csv(Path(out)/'test_calibration_groups.csv',index=False)
 
 
 def s7_train_from_host(a,out):
@@ -8939,7 +9185,7 @@ def s7_main(a):
 	if a.check_device:check_execution_device(a.device);return
 	preflight_inputs(a)
 	a.device=check_execution_device(a.device)
-	if a.preflight:print('S7 dependencies, configuration and requested device checked; no training performed');return
+	if a.preflight:s7_model_preflight(a);print('S7 dependencies and real model forward/backward checked; no cohort training performed');return
 	out=output_directory(a)
 	if a.dry_run:print(json.dumps(dict(output=str(out),config=vars(a)),indent=2));return
 	out.mkdir(parents=True,exist_ok=True)

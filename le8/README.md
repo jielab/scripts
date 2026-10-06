@@ -1,5 +1,27 @@
 # LE8
 
+## 2026-10-06 最新版与完整重跑
+
+当前默认是 `reference / selective_attention / cuda`，版本 `7.1.0-cuda-parallel-qc-20261006`。Transformer 训练及预测必须使用 CUDA；默认检索也在 CUDA，失败直接报错。当前实现和测试以 [FINAL_20261006.md](FINAL_20261006.md) 为准。下文旧日期的修复记录是历史记录；其中提及的临时结果已按用户要求清理，不代表当前还有这些分析结果。
+
+可直接复制（先预检，成功后完整重跑 C1–C5）：
+
+```bash
+cd /mnt/d/scripts/le8
+./le8.sh --Y cvd_cad --biom prot,met --preflight && \
+./le8.sh --Y cvd_cad --biom prot,met --replace TRUE
+```
+
+全部分析完成后：
+
+```bash
+cd /mnt/d/scripts/le8
+./le8.sh final --Y cvd_cad --biom prot,met
+./le8.sh shiny --Y cvd_cad --biom prot,met --no-reindex
+```
+
+`--replace TRUE` 强制重新拟合。中断恢复时使用同样命令但去掉该参数。每个模块成功后立即发布已有结果；后续模块失败不会阻止前面已完成结果发布。定时更新已停用，代码不会再次被定时覆盖。本轮没有运行新的 UKB 全量分析，也没有恢复用户删除的正式结果。
+
 统一入口为 `le8.sh`。`f/` 中公用文件以 `0.` 开头，分析文件以 `c1.` 至 `c5.` 标明归属。全项目整理约定统一见 [根目录 README](../README.md)。
 
 | 模块 | 文件 |

@@ -1,0 +1,5 @@
+{
+  "path": "/mnt/d/scripts/le8",
+  "backup": "/mnt/d/scripts/le8-backups/20261006-080114-predeploy",
+  "method": "atomic file replacements; public entry published last; no running analysis"
+}

@@ -719,10 +719,7 @@ le8_execute_mrlink2 <- function(layer, rawdir, jobs, ygfile, mode = RUN_MRlink2)
 		message("C2/", layer, ": MR-link-2 not run (RUN_MRlink2=None)")
 		return(invisible(0L))
 	}
-	if (cache_valid(complete_file)) {
-		cache_message(paste0("MR-link-2/", layer), complete_file)
-		return(invisible(0L))
-	}
+	# The scheduler validates each task identity/output, including prior complete runs.
 	if (!nrow(jobs)) return(invisible(0L))
 	jobs_file <- file.path(linkdir, "c2.mrlink2.jobs.tsv") ; write_raw_tsv(jobs, basename(jobs_file), linkdir)
 	ref_dir <- Sys.getenv("MRLINK2_REF_PFILE_DIR", unset = "") ; ref_bed <- Sys.getenv("MRLINK2_REF_BED", unset = "")
@@ -737,8 +734,10 @@ le8_execute_mrlink2 <- function(layer, rawdir, jobs, ygfile, mode = RUN_MRlink2)
 		ref_keep <- "" ; ref_samples <- ""
 	}
 	sh <- file.path(Sys.getenv("LE8_FDIR"), "c2.cause.sh")
-	status <- system2("bash", c(sh, "mr-link2", "--jobs", jobs_file, "--cad-gwas", ygfile, "--outdir", linkdir))
-	if (status != 0) warning("MR-link-2 runner returned status ", status) ; invisible(status)
+	python <- Sys.getenv('ABM_PYTHON',Sys.getenv('PYTHON_BIN','/home/huangj/anaconda3/envs/le8/bin/python3'))
+    adapter <- file.path(Sys.getenv('LE8_FDIR'),'c2.parallel.py')
+    status <- system2(shQuote(python),shQuote(c(adapter,'--worker-script',sh,'--jobs',jobs_file,'--cad-gwas',ygfile,'--outdir',linkdir)))
+	if (status != 0 || !file.exists(complete_file)) stop("MR-link-2 incomplete; validated task checkpoints retained; exit=", status) ; invisible(status)
 }
 
 
@@ -2372,12 +2371,7 @@ build_genetic_score_manifest <- function(iv_list, layer) {
 	})
 }
 
-run_mrlink2_step <- function(...) {
-	tryCatch(le8_execute_mrlink2(...), error = function(e) {
-		warning("Optional MR-link-2 failed: ", conditionMessage(e), call. = FALSE)
-		invisible(1L)
-	})
-}
+run_mrlink2_step <- function(...) le8_execute_mrlink2(...)
 
 integrate_c2_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble()) {
 	# Do not pick whichever of cis or trans has the smaller P as causal evidence.
@@ -2485,7 +2479,11 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		old <- tryCatch(readRDS(cache), error = function(e) NULL)
 		if (is.list(old) && identical(old$meta$source_signature,le8_stage_fingerprint()) && identical(old$meta$mode_signature,mode_signature) && identical(old$meta$pgs_signature,pgs_signature) && all(c("meta", "MR", "MR_reverse", "MR_best") %in% names(old)) &&
 			!grepl("^failed", old$DANDELION$status %||% "") && file.exists(file.path(rawdir, "c2.genetic_discovery_scope.csv")) && identical(as.character(data.table::fread(file.path(rawdir, "c2.genetic_discovery_scope.csv"))$scope[1]), C2_FEATURE_SCOPE)) {
-			cache_message(paste0("C2/", layer), cache) ; return(le8_restore_outputs(layer, "c2_cause"))
+			mr_jobs <- file.path(le8_cache_dir("mrlink2",basename(dirname(rawdir)),str_to_lower(RUN_MRlink2),substr(le8_stage_fingerprint(),1,16)),"c2.mrlink2.jobs.tsv")
+            if(RUN_MRlink2=="None" || file.exists(mr_jobs)) {
+                if(RUN_MRlink2!="None") le8_execute_mrlink2(layer,rawdir,as_tibble(data.table::fread(mr_jobs)),ygfile,RUN_MRlink2)
+                cache_message(paste0("C2/", layer), cache) ; return(le8_restore_outputs(layer, "c2_cause"))
+            }
 		}
 		message("C2/", layer, ": cache incomplete; reusing stage caches and rebuilding final outputs")
 	}

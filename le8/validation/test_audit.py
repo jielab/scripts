@@ -135,7 +135,7 @@ class AuditRegression(TestCase):
 			self.assertIn('/tmp/selected-Rscript',cmd)
 			self.assertIn('hist',cmd)
 		self.assertIn('c1_correlate',calls[8])
-		for check,run in zip(calls[:8],calls[9:]): self.assertEqual(check,run+['--preflight'])
+		for check,run in zip(calls[:8],calls[9:]): self.assertEqual(check,run[run.index('--')+1:]+['--preflight'])
 
 	def test_public_abm_defaults_to_cuda_transformer_with_explicit_overrides(self):
 		for backend,extra in [('reference',''),('both',''),('reference','--abm-design selective --device cpu')]:

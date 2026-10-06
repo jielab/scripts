@@ -19,20 +19,17 @@ Result workbooks and named participant RDS files restore numerical inputs in /tm
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
 Participant tables use descriptive names such as test_individuals.rds; no workbook export.
 
-Examples:
+Examples (copy directly; full C1-C5 rerun for both omic layers):
   cd /mnt/d/scripts/le8
-  ./install.sh                         # lightweight report + Shiny dependencies
-  ./install.sh --abm                   # reference ABM dependencies for default analysis
-  ./le8.sh final,shiny --Y cvd_cad,ra --biom prot,met
-  ./le8.sh final --index-only --Y cvd_cad,ra --biom prot,met
-  ./le8.sh shiny --no-reindex --port 3839
-  ./le8.sh c1_correlate --Y cvd_cad --biom prot --preflight
-  ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --dry-run
-  ./le8.sh c4_connect,c4_panel_validation --Y cvd_cad --biom prot
-  ./le8.sh c4_explain --Y cvd_cad --biom prot
-  ./le8.sh c5_cellulation --Y cvd_cad --biom prot
-  ./le8.sh c1_abm --Y cvd_cad --biom prot
-  ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
+  ./le8.sh --Y cvd_cad --biom prot,met --preflight && \
+  ./le8.sh --Y cvd_cad --biom prot,met --replace TRUE
+
+After that analysis succeeds, build the report and open Shiny:
+  ./le8.sh final --Y cvd_cad --biom prot,met
+  ./le8.sh shiny --Y cvd_cad --biom prot,met --no-reindex
+
+Resume an interrupted run with valid checkpoints (no forced refit):
+  ./le8.sh --Y cvd_cad --biom prot,met
 
 Modules:
   c1_correlate   Measured/PGS associations, temporal analyses and enrichment
@@ -53,7 +50,16 @@ Main options (defaults are set below in this script):
   --biom CSV             prot,met
   --analysis-root DIR    /mnt/d/analysis/le8
   --ukb-phe DIR          External phenotype/omics input root (analysis only)
-  --cores N              Explicit worker count; native default 1, ABM 16
+  --cores N              Phase CPU budget; default min(16, available CPUs)
+  --pwas-workers N|auto Dynamic blocks of 4 features; auto up to 8 workers
+  --pgs-workers N|auto  Six-model feature checkpoints; auto up to 4 workers
+  --mrlink2-workers N   Concurrent MR tasks; default 4
+  --mrlink2-inner-threads N  Threads per MR task; default 1
+  --cpu-task-memory-gib N  Per-worker admission estimate (not a hard RAM cap)
+  --gpu-jobs N          Exclusive GPU phases; this release requires 1
+  --s7-retrieval-device cpu|cuda  KNN backend; CUDA with default CUDA model
+  --s7-attention-temperature-grid CSV  Q/K temperatures; default 0.5,1,2
+  --s7-reconstruction-weight X  Actual auxiliary-loss weight; default 0.05
   --seed N               2026
   --replace TRUE|FALSE   FALSE; validate/reuse completed outputs; TRUE refits selected stages
   --r-bin FILE           Rscript
@@ -143,6 +149,10 @@ le8_main() {
 		help | -h | --help)
 			le8_usage
 			return 0
+			;;
+		--pwas-workers | --pgs-workers | --mrlink2-workers | --mrlink2-inner-threads | --cpu-task-memory-gib | --gpu-jobs | --s7-retrieval-device | --s7-attention-temperature-grid | --s7-reconstruction-weight)
+			extra+=("$1" "${2:?option requires a value}")
+			shift 2
 			;;
 		--Y | --trait | -Y)
 			trait_csv=${2:?--Y requires CSV}

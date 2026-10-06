@@ -2742,6 +2742,8 @@ class Questions:
 				("abm_registry", "model_registry.csv"),
 				("abm_release_audit", "audit_decision.csv"),
 				("abm_fit_status", "fit_status.csv"),
+				("abm_calibration", "test_calibration.csv"),
+				("abm_calibration_groups", "test_calibration_groups.csv"),
 			]:
 				d = self.read(run / filename, Y, layer, name + ":" + backend)
 				if d.empty:
@@ -2785,7 +2787,7 @@ class Questions:
 					for _, row in d.iterrows():
 						self.claim(Y, layer, "S7 selective attention", str(row.status),
 							f"预定候选 {row.primary}；实际 fallback {row.fallback}；审计候选 N={row.candidate_N}，家庭数={row.candidate_groups}。",
-							"实际模型架构见 model_registry；研究覆盖率与释放覆盖率分别报告。Uno C 是 horizon 内的 IPCW concordance；未通过独立审计时使用 fallback。", "abm_release_audit")
+							"实际模型架构见 model_registry；研究覆盖率与释放覆盖率分别报告。Uno C 是 horizon 内的 IPCW concordance；技术 QC 失败时 abstain；普通未释放样本使用 baseline。eligible_N 保留总分母，policy_available_N 为同一可预测比较集合；校准仅评价，不重拟合模型。", "abm_release_audit")
 				elif name == "abm_coverage" and backend != "selective_attention":
 					d = abm_gain(d, ["selector", "quantile"] if "selector" in d else ["quantile"])
 				self.add(name, d)
@@ -2891,7 +2893,7 @@ class Questions:
 			"abm_metrics",
 			"abm_coverage",
 			"abm_paired",
-			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision", "abm_registry", "abm_release_audit", "abm_fit_status",
+			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision", "abm_registry", "abm_release_audit", "abm_fit_status", "abm_calibration", "abm_calibration_groups",
 			"genetic",
 			"temporal",
 			"cohort",
@@ -3197,7 +3199,7 @@ def question_figures(out, traits, layers):
 					title=f"Audit: {full.audit_status.iloc[0]}; release {full.release_coverage.iloc[0]:.1%}")
 				ax.legend(fontsize=7)
 			else: absent(ax, "S7 coverage unavailable")
-		save(fig, "Fig9.question_ABM_attention", ["abm_metrics", "abm_coverage", "abm_paired", "abm_registry", "abm_release_audit", "abm_fit_status"],
+		save(fig, "Fig9.question_ABM_attention", ["abm_metrics", "abm_coverage", "abm_paired", "abm_registry", "abm_release_audit", "abm_fit_status", "abm_calibration", "abm_calibration_groups"],
 			"S7 selective_attention only. Architectures and all model IDs remain explicit. The primary is preregistered; the fallback is separately calibrated. Research and release coverage differ. Uno C is horizon-truncated concordance, not ROC AUC. Paired uncertainty is conditional on frozen fitted models.")
 	pd.DataFrame(manifest).to_csv(
 		out / "final.questions.figure_manifest.csv", index=False

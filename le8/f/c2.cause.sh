@@ -379,6 +379,13 @@ EOF
 		esac
 	done
 
+	if [[ "${LE8_MRLINK2_WORKER:-0}" != 1 ]]; then
+		exec "$python_bin" "$script_dir/c2.parallel.py" --worker-script "$script_dir/c2.cause.sh" \
+			--jobs "$jobs" --cad-gwas "$cad_gwas" --outdir "$outdir" \
+			--reference-bed "$ref_bed" --reference-pfile-dir "$ref_pfile_dir" --reference-pop "$ref_pfile_pop" \
+			--reference-id-dir "$ref_id_dir" --reference-samples "$ref_samples" --mrlink2 "$mrlink2" \
+			--p-threshold "$p_threshold" --region-padding "$region_padding" --maf-threshold "$maf_threshold"
+	fi
 	ref_pfile_pop="${ref_pfile_pop^^}"
 	if [[ -z "$ref_pfile_pop" || "$ref_pfile_pop" == *[!A-Z0-9_-]* ]]; then
 		echo "Invalid reference population: $ref_pfile_pop" >&2
@@ -527,6 +534,10 @@ EOF
 		fi
 		local chrom pop_prefix global_prefix pop_bfile_prefix
 		chrom="$(region_chrom "$region")"
+		if bed_prefix_complete "${ref_pfile_dir}/${ref_pfile_pop}/chr${chrom}"; then
+			printf '%s\n' "${ref_pfile_dir}/${ref_pfile_pop}/chr${chrom}"
+			return 0
+		fi
 		pop_prefix="${ref_pfile_dir}/${ref_pfile_pop}.chr${chrom}"
 		global_prefix="${ref_pfile_dir}/chr${chrom}"
 		pop_bfile_prefix="${ref_pfile_dir%/}/../bfile/${ref_pfile_pop}/chr${chrom}"
@@ -581,7 +592,7 @@ EOF
 	standardize_sumstats() {
 		local input="$1"
 		local output="$2"
-		local default_n="${3:-100000}"
+		local default_n="${3:-nan}"
 		local region="${4:-}"
 		if [[ -s "$output" && "$replace_run" != true ]]; then
 			if gzip -t "$output" 2>/dev/null; then
@@ -592,12 +603,12 @@ EOF
 		local output_tmp="${output}.tmp.${BASHPID:-$$}"
 		rm -f "$output_tmp"
 		if [[ -n "$region" ]]; then
-			"$python_bin" "$prep_py" prepare "$input" "$output_tmp" "$default_n" "$region" || {
+			"$python_bin" "$script_dir/c2.parallel.py" prepare "$input" "$output_tmp" "$default_n" "$region" || {
 				rm -f "$output_tmp"
 				return 1
 			}
 		else
-			"$python_bin" "$prep_py" prepare "$input" "$output_tmp" "$default_n" || {
+			"$python_bin" "$script_dir/c2.parallel.py" prepare "$input" "$output_tmp" "$default_n" || {
 				rm -f "$output_tmp"
 				return 1
 			}
@@ -634,12 +645,14 @@ EOF
 		out_prefix="$outdir/results/${safe_trait}.mrlink2"
 		log_file="$outdir/logs/${safe_trait}.log"
 		err_file="$outdir/logs/${safe_trait}.err"
-		if ! standardize_sumstats "$exposure" "$exp_std" 100000 "$region" >"$log_file.prepare" 2>"$err_file.prepare"; then
-			printf "%s\t%s\t%s\t%s\tnot_run\t%s\tstandardization failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
+		if ! standardize_sumstats "$exposure" "$exp_std" "${MRLINK2_EXPOSURE_N:-nan}" "$region" >"$log_file.prepare" 2>"$err_file.prepare"; then
+			status=not_run; grep -q not_run_missing_N "$err_file.prepare" && status=not_run_missing_N
+			printf "%s\t%s\t%s\t%s\t$status\t%s\tstandardization failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
 			continue
 		fi
-		if ! standardize_sumstats "$outcome_file" "$out_std" 100000 "$region" >>"$log_file.prepare" 2>>"$err_file.prepare"; then
-			printf "%s\t%s\t%s\t%s\tnot_run\t%s\toutcome standardization failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
+		if ! standardize_sumstats "$outcome_file" "$out_std" "${MRLINK2_OUTCOME_N:-nan}" "$region" >>"$log_file.prepare" 2>>"$err_file.prepare"; then
+			status=not_run; grep -q not_run_missing_N "$err_file.prepare" && status=not_run_missing_N
+			printf "%s\t%s\t%s\t%s\t$status\t%s\toutcome standardization failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
 			continue
 		fi
 		ref_for_trait="$(prepare_ref_bed "$region" 2>>"$err_file.prepare" || true)"
@@ -647,10 +660,8 @@ EOF
 			printf "%s\t%s\t%s\t%s\tnot_run\t%s\treference conversion failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
 			continue
 		fi
-		if ! match_GRCH --reference "$ref_for_trait" --output "$exp_matched" \
-			--audit "$outdir/prepared/${safe_trait}.exposure.match.tsv" "$exp_std" >>"$log_file.prepare" 2>>"$err_file.prepare" ||
-			! match_GRCH --reference "$ref_for_trait" --output "$out_matched" \
-				--audit "$outdir/prepared/${safe_trait}.outcome.match.tsv" "$out_std" >>"$log_file.prepare" 2>>"$err_file.prepare"; then
+		if ! "$python_bin" "$script_dir/c2.parallel.py" match "$ref_for_trait" "$exp_std" "$exp_matched" "$outdir/prepared/${safe_trait}.exposure.match.tsv" >>"$log_file.prepare" 2>>"$err_file.prepare" ||
+            ! "$python_bin" "$script_dir/c2.parallel.py" match "$ref_for_trait" "$out_std" "$out_matched" "$outdir/prepared/${safe_trait}.outcome.match.tsv" >>"$log_file.prepare" 2>>"$err_file.prepare"; then
 			printf "%s\t%s\t%s\t%s\tnot_run\t%s\treference-ID matching failed; see %s\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" "$err_file.prepare" >>"$status_file"
 			continue
 		fi
@@ -677,7 +688,7 @@ EOF
 		if [[ "$continue_analysis" == "true" || "$continue_analysis" == "TRUE" || "$continue_analysis" == "1" ]]; then
 			cmd+=(--continue_analysis)
 		fi
-		if "${cmd[@]}" >"$log_file" 2>"$err_file"; then
+		if "${cmd[@]}" --tmp "$outdir/tmp/${safe_trait}" >"$log_file" 2>"$err_file"; then
 			if [[ -s "$out_prefix" && "$(wc -l <"$out_prefix")" -gt 1 ]]; then
 				printf "%s\t%s\t%s\t%s\tok\t%s\tcompleted\n" "$omics" "$trait" "$exposure" "$outcome_file" "$out_prefix" >>"$status_file"
 				echo "MR-link-2 [$job_index/$total_jobs]: $safe_trait completed (ok)."
@@ -708,6 +719,11 @@ EOF
 	done < <(awk -F '\t' 'NR>1 && $5=="ok" {key=$1 FS $2; if(!seen[key]++) print $1 FS $2 FS $6}' "$status_file")
 	mv -f "$rebuild_file" "$all_file"
 
+	if ! awk -F '\t' -v expected="$total_jobs" 'NR>1 {n++;if($5!="ok" && $5!="no_estimate")bad=1} END{exit (bad || n!=expected)}' "$status_file"; then
+		rm -f "$complete_file"
+		echo "MR-link-2 incomplete: failed/not_run tasks must be retried" >&2
+		exit 2
+	fi
 	printf "completed\t%s\n" "$(date -Is)" >"$complete_file"
 
 	echo "MR-link-2 status: $status_file"

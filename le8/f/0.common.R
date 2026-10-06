@@ -1662,32 +1662,99 @@ le8_stage <- function(label, expr, detail = "") {
 	if (failed) message("[LE8] FAIL ", label, " ", status) else le8_stage_done(label, started, status)
 	if (value$visible) value$value else invisible(value$value)
 }
-parallel_map <- function(x, fun) {
-	# PGS invokes six one-feature models; the enclosing feature loop owns GC.
-	# Avoid repeatedly walking the entire resident score matrix for each model.
-	if (length(x) <= 1L) return(lapply(x, fun))
-	# Release unreachable model frames before forking so children inherit a
-	# smaller heap. Collect between tasks after fun's local frame has returned;
-	# otherwise each long-lived worker can retain several fits' worth of garbage.
-	invisible(gc())
-	run_one <- function(item) {
-		value <- fun(item)
-		invisible(gc())
-		value
-	}
-	if (.Platform$OS.type != "windows" && N_CORES > 1L && length(x) > 1L) {
-		message("Parallel scan: ", min(N_CORES, length(x)), " workers for ", length(x), " tasks")
-		# Wrap successful results so an intentional NULL can be distinguished from
-		# a child killed by OOM. Never silently save an incomplete association scan.
-		result <- parallel::mclapply(x, function(item) list(value = run_one(item)),
-			mc.cores = min(N_CORES, length(x)), mc.preschedule = TRUE,
-			mc.allow.recursive = FALSE
-		)
-		failed <- vapply(result, function(z) is.null(z) || inherits(z, "try-error"), logical(1))
-		if (any(failed)) stop("Parallel scan worker failed or was killed; refusing partial results. Reduce --cores and inspect the task log.", call. = FALSE)
-		lapply(result, `[[`, "value")
-	} else lapply(x, run_one)
+# Dynamic block scheduling for Linux/WSL R association tasks.
+# Integration requires sourcing this file before parallel_map()/PGS dispatch.
+# No model formula, sample mask, SNP selection, or FDR definition is changed.
+# R tests are supplied but were NOT executed in the delivery environment.
+le8_parallel_workers <- function(n, requested, parent_gib=0, worker_gib=2, budget_gib=16, reserve_gib=4) {
+  nums <- c(n,requested,parent_gib,worker_gib,budget_gib,reserve_gib)
+  if(any(!is.finite(nums)) || n<0 || requested<1 || worker_gib<=0 || parent_gib<0 || reserve_gib<0)
+    stop("Invalid parallel resource request")
+  if(n==0) return(0L)
+  allowance <- floor((budget_gib-parent_gib-reserve_gib)/worker_gib)
+  if(allowance<1) stop("Insufficient declared RAM even for one worker; do not start a fork wave")
+  if(.Platform$OS.type=="windows") return(1L)
+  as.integer(min(n,requested,allowance))
 }
+
+le8_dynamic_map <- function(x,fun,workers=1L,block_size=4L,seed=2026L,task_ids=NULL) {
+  if(!length(x)) return(list())
+  if(workers<1 || block_size<1) stop("workers/block_size must be positive")
+  if(is.null(task_ids)) task_ids <- as.character(seq_along(x))
+  if(length(task_ids)!=length(x) || anyNA(task_ids) || anyDuplicated(task_ids)) stop("Unique stable task IDs are required")
+  # Nested calls must not create a second fork layer. CUDA must run in a separate
+  # process; never fork a Python/reticulate process after CUDA initialization.
+  nested <- identical(Sys.getenv('LE8_IN_WORKER'),'1')
+  if(nested) workers <- 1L
+  old_seed <- if(exists('.Random.seed',.GlobalEnv,inherits=FALSE)) get('.Random.seed',.GlobalEnv) else NULL
+  old_kind <- RNGkind()
+  on.exit({do.call(RNGkind,as.list(old_kind)); if(is.null(old_seed)) {if(exists('.Random.seed',.GlobalEnv,inherits=FALSE)) rm('.Random.seed',envir=.GlobalEnv)} else assign('.Random.seed',old_seed,.GlobalEnv)},add=TRUE)
+  # Independent task seed does not depend on worker count, completion order, or
+  # the subset resumed from checkpoint. Caller must keep task_ids stable.
+  task_seed <- function(id) {
+    if(!requireNamespace('digest',quietly=TRUE)) stop('digest is required for stable task seeds')
+    h <- digest::digest(paste(seed,id,sep=':'),algo='sha256',serialize=FALSE)
+    as.integer(strtoi(substr(h,1,7),16L)+1L)
+  }
+  run_one <- function(i) {
+    thread_names <- c('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','BLIS_NUM_THREADS')
+    old_threads <- Sys.getenv(thread_names,unset=NA_character_)
+    old_dt <- if(requireNamespace('data.table',quietly=TRUE)) data.table::getDTthreads() else NULL
+    on.exit({for(nm in thread_names) if(is.na(old_threads[[nm]])) Sys.unsetenv(nm) else do.call(Sys.setenv,setNames(list(old_threads[[nm]]),nm));if(!is.null(old_dt)) data.table::setDTthreads(old_dt)},add=TRUE)
+    previous <- Sys.getenv('LE8_IN_WORKER',unset=NA_character_)
+    on.exit(if(is.na(previous)) Sys.unsetenv('LE8_IN_WORKER') else Sys.setenv(LE8_IN_WORKER=previous),add=TRUE)
+    Sys.setenv(LE8_IN_WORKER='1',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1',BLIS_NUM_THREADS='1')
+    if(requireNamespace('data.table',quietly=TRUE)) data.table::setDTthreads(1L)
+    if(requireNamespace('RhpcBLASctl',quietly=TRUE)) {
+      RhpcBLASctl::blas_set_num_threads(1L);RhpcBLASctl::omp_set_num_threads(1L)
+    }
+    set.seed(task_seed(task_ids[[i]]))
+    tryCatch(list(index=i,ok=TRUE,value=fun(x[[i]])),error=function(e) list(index=i,ok=FALSE,message=conditionMessage(e)))
+  }
+  blocks <- base::split(seq_along(x),ceiling(seq_along(x)/block_size))
+  execute_block <- function(ix) { value<-lapply(ix,run_one); invisible(gc()); value }
+  result <- if(workers>1 && .Platform$OS.type!='windows') parallel::mclapply(blocks,execute_block,
+      mc.cores=min(workers,length(blocks)),mc.preschedule=FALSE,mc.set.seed=FALSE,mc.allow.recursive=FALSE) else lapply(blocks,execute_block)
+  if(any(vapply(result,function(z) is.null(z)||inherits(z,'try-error'),logical(1)))) stop('Worker died; partial output is not a completed scan')
+  result <- unlist(result,recursive=FALSE)
+  if(any(!vapply(result,`[[`,logical(1),'ok'))) {
+    failed <- result[!vapply(result,`[[`,logical(1),'ok')]
+    stop(paste(vapply(failed,function(z) paste(task_ids[[z$index]],z$message,sep=': '),character(1)),collapse='; '))
+  }
+  result <- result[order(vapply(result,`[[`,integer(1),'index'))]
+  lapply(result,`[[`,'value')
+}
+
+le8_worker_plan <- function(n, kind='pwas', requested=NULL) {
+    if(n==0L) return(0L)
+    cores <- as.integer(Sys.getenv('LE8_PHASE_CORES',as.character(N_CORES)))
+    cores <- min(N_CORES,cores)
+    if(is.null(requested)) {
+        choice <- Sys.getenv(if(kind=='pgs') 'LE8_PGS_WORKERS' else 'LE8_PWAS_WORKERS','auto')
+        requested <- if(choice=='auto') if(kind=='pgs') 4L else 8L else as.integer(choice)
+    }
+    if(identical(Sys.getenv('LE8_IN_WORKER'),'1')) return(1L)
+    budget <- as.numeric(Sys.getenv('LE8_PHASE_MEMORY_GIB',Sys.getenv('LE8_RESOURCE_MEMORY_GIB','24')))
+    rss <- if(file.exists('/proc/self/status')) readLines('/proc/self/status') else character()
+    rss <- rss[grepl('^VmRSS:',rss)]
+    parent <- if(length(rss)) as.numeric(gsub('[^0-9]','',rss[1]))/1024^2 else 0
+    claim <- as.numeric(Sys.getenv('LE8_CPU_TASK_MEMORY_GIB',if(kind=='pgs') '2' else '1'))
+    reserve <- as.numeric(Sys.getenv('LE8_R_RESERVE_GIB','1'))
+    workers <- le8_parallel_workers(n,min(requested,cores),parent,claim,budget,reserve)
+    message('[LE8] RESOURCE ',kind,': workers=',workers,' cores=',cores,' parent_RSS_GiB=',round(parent,3),
+        ' worker_claim_GiB=',claim,' budget_GiB=',budget,' block_size=4; admission estimate, cgroup is the hard limit')
+    workers
+}
+
+parallel_map <- function(x, fun) {
+    if(length(x)<=1L || identical(Sys.getenv('LE8_IN_WORKER'),'1')) return(lapply(x,fun))
+    workers <- le8_worker_plan(length(x),'pwas')
+    ids <- if(is.character(x) && !anyDuplicated(x)) x else vapply(x,function(z) digest::digest(z,algo='sha256'),character(1))
+    if(anyDuplicated(ids)) ids <- paste(ids,seq_along(ids),sep=':')
+    invisible(gc())
+    le8_dynamic_map(x,fun,workers=workers,block_size=4L,seed=SEED,task_ids=ids)
+}
+
 # Third-party analysis packages often print one routine progress line per
 # feature.  With thousands of omic traits that output overwhelms the useful
 # stage-level messages.  Capture ordinary output and messages at the package

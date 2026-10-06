@@ -17,6 +17,7 @@ import csv
 import gzip
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -1179,6 +1180,8 @@ ABM_TABLES = [
 	"masked_reconstruction_summary.csv",
 	"learning_curve.csv",
 	"embedding_diagnostics.csv",
+	"test_calibration.csv",
+	"test_calibration_groups.csv",
 ]
 
 ABM_FIGURES = [
@@ -1404,6 +1407,15 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 	)
 	p.add_argument("--ukb-phe", type=Path, default=None)
 	p.add_argument("--cores", type=int, default=None)
+	for name,variable,default in [('pwas-workers','LE8_PWAS_WORKERS','auto'),('pgs-workers','LE8_PGS_WORKERS','auto')]:
+		p.add_argument('--'+name,default=os.getenv(variable,default))
+	p.add_argument('--mrlink2-workers',type=int,default=int(os.getenv('MRLINK2_WORKERS','4')))
+	p.add_argument('--mrlink2-inner-threads',type=int,default=int(os.getenv('MRLINK2_INNER_THREADS','1')))
+	p.add_argument('--cpu-task-memory-gib',type=float,default=None)
+	p.add_argument('--gpu-jobs',type=int,default=int(os.getenv('LE8_GPU_JOBS','1')))
+	p.add_argument('--s7-retrieval-device',choices=['cpu','cuda'],default=None)
+	p.add_argument('--s7-attention-temperature-grid',default=None)
+	p.add_argument('--s7-reconstruction-weight',type=float,default=None)
 	p.add_argument("--seed", type=int, default=int(os.getenv("SEED", "2026")))
 	p.add_argument("--group-file", type=Path)
 	p.add_argument("--group-col", "--group-column", dest="group_col")
@@ -1546,6 +1558,22 @@ def dispatch_main(argv=None):
 		LE8_SHINY_HOST=a.host,
 		LE8_SHINY_MAX_TABLE_MB=str(a.max_table_mb),
 	)
+	capacity=int(os.getenv('LE8_TOTAL_CORES','16'))
+	if capacity<1:raise ValueError('LE8_TOTAL_CORES must be positive')
+	if a.cores is None:a.cores=min(capacity,len(os.sched_getaffinity(0)))
+	if a.cores>capacity:raise ValueError('--cores exceeds LE8_TOTAL_CORES shared pool')
+	for name in ('pwas_workers','pgs_workers'):
+		v=getattr(a,name)
+		if v!='auto' and (not str(v).isdigit() or int(v)<1):raise ValueError('Invalid '+name)
+	if min(a.mrlink2_workers,a.mrlink2_inner_threads)<1 or a.gpu_jobs!=1:raise ValueError('Positive MR workers/threads and --gpu-jobs 1 required')
+	if a.mrlink2_inner_threads>a.cores:raise ValueError('MR inner threads exceed allocated cores')
+	if a.cpu_task_memory_gib is not None and (not math.isfinite(a.cpu_task_memory_gib) or a.cpu_task_memory_gib<=0):raise ValueError('Invalid task memory')
+	env.update(LE8_TOTAL_CORES=str(capacity),LE8_RESOURCE_MEMORY_GIB=os.getenv('LE8_RESOURCE_MEMORY_GIB','24'),
+		LE8_POOL_CPUS=os.getenv('LE8_POOL_CPUS',','.join(map(str,sorted(os.sched_getaffinity(0))[:capacity]))),
+		LE8_PWAS_WORKERS=str(a.pwas_workers),LE8_PGS_WORKERS=str(a.pgs_workers),
+		MRLINK2_WORKERS=str(min(a.mrlink2_workers,a.cores//a.mrlink2_inner_threads)),
+		MRLINK2_INNER_THREADS=str(a.mrlink2_inner_threads),LE8_GPU_JOBS=str(a.gpu_jobs))
+	if a.cpu_task_memory_gib is not None:env['LE8_CPU_TASK_MEMORY_GIB']=str(a.cpu_task_memory_gib)
 	env.update(shared_env)
 	env["LE8_SHARED_CONFIG_SOURCES"] = json.dumps(config_sources, sort_keys=True)
 	if extra or a.ukb_phe:
@@ -1571,7 +1599,7 @@ def dispatch_main(argv=None):
 
 	def report_base():
 		# Analysis scope remains explicit; aggregate reports include already completed scopes.
-		available = [(d.name, l) for d in a.analysis_root.iterdir() if d.is_dir() and re.fullmatch(r"[A-Za-z0-9_]+", d.name)
+		available = [(d.name, l) for d in (a.analysis_root.iterdir() if a.analysis_root.is_dir() else []) if d.is_dir() and re.fullmatch(r"[A-Za-z0-9_]+", d.name)
 			for l in ("prot", "met") if (d / l).is_dir()]
 		ts = sorted(set(traits) | {t for t, _ in available})
 		ls = sorted(set(layers) | {l for _, l in available})
@@ -1600,6 +1628,8 @@ def dispatch_main(argv=None):
 	if "c1_abm" in modules:
 		py = os.getenv("ABM_PYTHON") or sys.executable
 		more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
+		for key in ('s7_retrieval_device','s7_attention_temperature_grid','s7_reconstruction_weight'):
+			if getattr(a,key) is not None:more += ['--'+key.replace('_','-'),str(getattr(a,key))]
 		mode_parser = argparse.ArgumentParser(add_help=False)
 		mode_parser.add_argument("--abm-design")
 		mode, _ = mode_parser.parse_known_args(more)
@@ -1651,6 +1681,14 @@ def dispatch_main(argv=None):
 			for cmd in abm_commands:
 				call([*cmd, "--preflight"], env, a.dry_run)
 
+	def phase(command,label,cores=None,gpu=False,memory=None):
+		if a.preflight:return call(command,env,a.dry_run)
+		budget=float(env['LE8_RESOURCE_MEMORY_GIB'])
+		claim=memory if memory is not None else min(budget,float(a.memory_limit_gb or (24 if gpu else 32)))
+		wrapped=[sys.executable,HERE/'0.resources.py','phase','--label',label,'--cores',str(cores or a.cores),
+			'--memory-gib',str(claim),*(['--gpu'] if gpu else []),'--',*command]
+		call(wrapped,env,a.dry_run)
+
 	for module in modules:
 		if module == "share":
 			if modules != ["share"]:
@@ -1659,11 +1697,14 @@ def dispatch_main(argv=None):
 			if not a.dry_run:
 				share_viewer(a.analysis_root, output, a.r_bin)
 		elif module in NATIVE:
-			call(["bash", engine, module, *base, *native, *extra], env, a.dry_run)
+			phase(["bash", engine, module, *base, *native, *extra],module,
+                cores=1 if module=='c2_cause' else a.cores,
+                memory=min(3.,float(env['LE8_RESOURCE_MEMORY_GIB'])) if module=='c2_cause' else None,
+                gpu=module=='c3_coloc' and env.get('RUN_GPU_COLOC','TRUE')=='TRUE')
 		elif module == "c1_abm":
 			if not a.preflight:
 				for cmd in abm_commands:
-					call(cmd, env, a.dry_run)
+					phase(cmd,"c1_abm",gpu="cpu" not in cmd)
 		elif module == "c4_explain":
 			if a.preflight:
 				call(
@@ -2159,6 +2200,30 @@ def share_viewer(root, output, r_bin):
 
 def main(argv=None):
 	argv = list(sys.argv[1:] if argv is None else argv)
+	if os.getenv('LE8_TABLE_WORKSPACE')!='1' and not any(v in argv for v in ('--help','-h','--dry-run','--preflight')) and argv[:1]!=['index']:
+		args=argv[1:] if argv[:1]==['dispatch'] else argv
+		parsed,unknown=parser().parse_known_args(args)
+		mods=parsed.modules.split(',')
+		if parsed.run_abm is False:mods=[v for v in mods if v!='c1_abm']
+		if parsed.run_abm and 'c1_abm' not in mods:mods.append('c1_abm')
+		mods=[v for v in ORDER if v in mods]
+		if len(mods)>1 and not set(mods)&{'final','shiny','share'}:
+			options=args[1:] if args and not args[0].startswith('-') else args
+			options=[v for v in options if v not in ('--run-abm','--skip-abm')]
+			abm_options=[];actions=parser()._option_string_actions;i=0
+			while i<len(options):
+				token=options[i];key=token.split('=',1)[0];action=actions.get(key)
+				if action is None:i+=1;continue
+				abm_options.append(token);i+=1
+				if '=' not in token and action.nargs!=0:
+					count=1 if action.nargs is None else action.nargs
+					if not isinstance(count,int):raise ValueError('Unsupported variable-length public option: '+key)
+					abm_options.extend(options[i:i+count]);i+=count
+			if 'c1_abm' in mods:dispatch_main(['c1_abm',*abm_options,'--preflight'])
+			for module in mods:
+				print('[LE8] Module transaction: '+module+'; successful results publish before the next module',flush=True)
+				main(['dispatch',module,*(abm_options if module=='c1_abm' else options)])
+			return
 	if _table_runtime(argv):
 		return
 	if argv and argv[0] == "index":

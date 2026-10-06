@@ -39,6 +39,9 @@ private_columns <- c(
 
 has_private_columns <- function(columns) {
 	names <- tolower(columns)
+	# Match the indexer's S7 aggregate schema: reference_id names a model.
+	if (all(c('run_id', 'model_id', 'primary_id', 'reference_id', 'n', 'uno_c_horizon') %in% names))
+		names <- setdiff(names, 'reference_id')
 	any(gsub('[^a-z0-9]', '', names) %in% gsub('[^a-z0-9]', '', private_columns) |
 		grepl('(^|[_. #])(eid|iid|fid)($|[_. ])', names))
 }
@@ -80,6 +83,7 @@ read_index <- function(name) {
 		if (is.null(entry)) return(data.frame())
 		d <- entry$data
 	}
+	if (has_private_columns(names(d))) stop('Participant identifiers found in prepared index')
 	bool <- grep("^measured_.*supported$|^measured_.*lt_005$|^same_people$|^same_N$|_is_MR$", names(d), value = TRUE)
 	for (k in bool) if (is.character(d[[k]]))
 		d[[k]] <- tolower(d[[k]]) %in% c("true", "t", "1")

@@ -265,10 +265,10 @@ def test_T36_random_controls_match_distribution():
 
 def test_T47_numerical_manifest_and_report_only_changes():
 	source=(ROOT/'f/c1.abm.py').read_text()
-	report=source.replace("title='Frozen S7 models: identical held-out participants'", "title='Updated figure caption'")
+	report=source.replace("title='Frozen S7 models: common technically eligible participants'", "title='Updated figure caption'")
 	assert source!=report
 	assert m.s7_numerical_code_hash(source)==m.s7_numerical_code_hash(report)
-	assert m.s7_numerical_code_hash(source)!=m.s7_numerical_code_hash(source.replace('a.s7_reconstruction_weight = .05','a.s7_reconstruction_weight = .07'))
+	assert m.s7_numerical_code_hash(source)!=m.s7_numerical_code_hash(source.replace('a.s7_prior_strength < 0','a.s7_prior_strength < 1'))
 	a=config();original=m.s7_manifest(a)['signature']
 	a.s7_max_borrow=.7
 	assert m.s7_manifest(a)['signature']!=original

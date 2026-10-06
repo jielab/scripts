@@ -12,8 +12,8 @@ from test_c1_s7_production import m, config
 def test_real_supervised_qk_gradients_and_cpu_restore(device, tmp_path):
 	if device=='cuda' and not m.torch.cuda.is_available():
 		pytest.skip('Real CUDA unavailable; never substitute CPU and call it CUDA')
-	a=config('--device',device,'--epochs','2','--batch-size','128')
-	a.s7_reconstruction_weight=0.;a.group_col=''
+	a=config('--device',device,'--epochs','2','--batch-size','128','--s7-reconstruction-weight','0')
+	assert a.s7_reconstruction_weight==0.;a.group_col=''
 	rng=np.random.default_rng(4);n=500
 	x=rng.normal(size=(n,8));p=pd.DataFrame(dict(eid=[f'device-{i}' for i in range(n)],age=rng.uniform(40,70,n),sex=rng.integers(0,2,n)))
 	time=rng.exponential(8,n);event=(time<9).astype(int);time=np.minimum(time,9)
@@ -37,7 +37,9 @@ def test_real_supervised_qk_gradients_and_cpu_restore(device, tmp_path):
 		forward_devices.clear()
 		full=learner.predict(x[400:],p.iloc[400:]).probability
 		assert forward_devices and set(forward_devices)=={device}
-		assert next(learner.network.parameters()).device.type==device
+		# External prediction has finished on the requested device, then idles on CPU.
+		assert next(learner.network.parameters()).device.type=='cpu'
+		assert learner.device==device
 	with threadpool_limits(2):
 		restored=m.S7AttentionLearner.restore_state(learner.export_state(),'cpu')
 		one=restored.predict(x[400:401],p.iloc[400:401]).probability

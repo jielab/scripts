@@ -1028,7 +1028,8 @@ c1_pgs_checkpoint_scan <- function(score_map, fit_feature, signature, layer, wor
 	}
 	pending <- features[vapply(rows, is.null, logical(1))]
 	resumed <- length(features) - length(pending)
-	workers <- if (.Platform$OS.type == 'windows') 1L else max(1L, min(as.integer(workers), length(pending)))
+	workers <- le8_worker_plan(length(pending),'pgs',
+        if(Sys.getenv('LE8_PGS_WORKERS','auto')=='auto') min(4L,workers) else as.integer(Sys.getenv('LE8_PGS_WORKERS'))) 
 	message('[LE8] PROGRESS C1/PGS ', layer, ': resumed=', resumed, '/', length(features), ' workers=', workers,
 		' checkpoint=', checkpoint)
 	started <- proc.time()[['elapsed']] ; last_report <- started
@@ -1040,26 +1041,15 @@ c1_pgs_checkpoint_scan <- function(score_map, fit_feature, signature, layer, wor
 		invisible(gc())
 		result
 	}
-	batches <- split(pending, ceiling(seq_along(pending) / workers))
-	done <- resumed
-	for (batch in batches) {
-		if (workers > 1L && length(batch) > 1L) {
-			invisible(gc())
-			values <- parallel::mclapply(batch, complete, mc.cores = min(workers, length(batch)),
-				mc.preschedule = TRUE, mc.allow.recursive = FALSE)
-		} else values <- lapply(batch, complete)
-		if (any(vapply(seq_along(batch), function(i) !valid(values[[i]], batch[[i]]), logical(1))))
-			stop('PGS worker failed; completed feature checkpoints retained. Reduce --cores and retry.', call. = FALSE)
-		rows[batch] <- values ; done <- done + length(batch)
-		now <- proc.time()[['elapsed']]
-		if (done == length(features) || done == resumed + length(batch) || now - last_report >= 30) {
-			elapsed <- now - started
-			remaining <- elapsed / (done - resumed) * (length(features) - done) / 60
-			message('[LE8] PROGRESS C1/PGS ', layer, ': ', done, '/', length(features), ' completed; elapsed=',
-				round(elapsed / 60, 1), ' min; estimated remaining=', round(remaining, 1), ' min')
-			last_report <- now
-		}
-	}
+    if(length(pending)) {
+        values <- le8_dynamic_map(as.list(pending),complete,workers=workers,block_size=4L,seed=SEED,task_ids=pending)
+        if(any(vapply(seq_along(pending),function(i) !valid(values[[i]],pending[[i]]),logical(1))))
+            stop('PGS worker failed; completed feature checkpoints retained; scan is incomplete.',call.=FALSE)
+        rows[pending] <- values
+    }
+    message('[LE8] PROGRESS C1/PGS ',layer,': ',length(features),'/',length(features),' validated; resumed=',resumed,
+        '; elapsed=',round((proc.time()[['elapsed']]-started)/60,1),' min')
+
 	unname(rows)
 }
 

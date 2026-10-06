@@ -167,7 +167,7 @@ def run():
             assert np.all(np.isfinite(learner.predict_proba(x[300:310])))
             done("installed LightGBM branch trains and predicts")
         else:print("SKIP LightGBM not installed")
-    assert m.reference_parser().parse_args([]).abm_design=="selective"
+    assert m.reference_parser().parse_args([]).abm_design=="selective_attention"
     done("actual integrated host import and selective CLI")
     print(f"\n{len(passed)} checks passed. Synthetic data only; no UKB training and no R model execution.")
     return passed

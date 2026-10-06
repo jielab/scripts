@@ -1057,6 +1057,10 @@ preflight() {
 				population_keep_required=FALSE
 				ref_probe=""
 				for chr in {1..22}; do
+					if bed_prefix_complete "$ref_dir/$ref_pop/chr$chr"; then
+						[[ -n "$ref_probe" ]] || ref_probe="$ref_dir/$ref_pop"
+						continue
+					fi
 					pop_prefix="$ref_dir/${ref_pop}.chr${chr}"
 					global_prefix="$ref_dir/chr${chr}"
 					pop_bfile_prefix="${ref_dir%/}/../bfile/${ref_pop}/chr${chr}"

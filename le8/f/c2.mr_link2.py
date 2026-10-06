@@ -4,6 +4,7 @@ import sys
 
 def _le8_reference_cli(argv):
     import argparse
+    import os
 
     import fcntl
 
@@ -40,7 +41,7 @@ def _le8_reference_cli(argv):
         binary = shutil.which(plink)
         if binary is None:
             raise ValueError("PLINK2 is required")
-        args = [binary]
+        args = [binary, "--threads", os.getenv("LE8_INNER_THREADS", "1")]
         if kind == "pfile":
             pvar = Path(str(source) + ".pvar")
             args += ["--pfile" , str(source)]
@@ -347,6 +348,8 @@ def le8_prepare_sumstats(input_path , output_path , default_n , region = None):
                     if columns["n"]
                     else default_n
                 )
+                if sample_n is None or not math.isfinite(sample_n) or sample_n<=0:
+                    raise SystemExit('not_run_missing_N: actual per-variant N or an explicitly verified source N is required: '+input_path)
                 sample_n = (
                     int(sample_n)
                     if abs(sample_n - round(sample_n)) < 1e-6
@@ -772,7 +775,7 @@ def identify_regions(
     files_to_remove = []
     subprocess.run(
         [
-            "plink" ,
+            "plink", "--threads", os.getenv("LE8_INNER_THREADS", "1"),
             "--bfile" ,
             bed_prepend ,
             "--maf" ,
@@ -1563,6 +1566,15 @@ def warn_if_only_gws_snps(
         )
 
 
+LE8_MR_NUMERICAL_VERSION = '20261006-outcome-initialization-real-N'
+
+
+def le8_instrument_variance(betas, sample_n, instruments):
+    """Trait-local moment used only as an optimizer starting value."""
+    if not np.isfinite(sample_n) or sample_n<=0:raise ValueError('Positive actual sample N required')
+    return np.sum(np.asarray(betas)[instruments]**2 - 1/sample_n)
+
+
 def mr_link2_on_region(
     region: StartEndRegion ,
     exposure_df: pd.DataFrame ,
@@ -1830,7 +1842,7 @@ def mr_link2_on_region(
     outcome_instruments = select_instruments_by_clumping(
         out_pvals , correlation_mat , clumping_p_threshold = 5e-6 , r_threshold = 0.1
     )  # r is pearson
-    pseudo_instrument_out_h2 = np.sum(exp_betas[outcome_instruments] ** 2 - (1 / n_exp))
+    pseudo_instrument_out_h2 = le8_instrument_variance(out_betas, n_out, outcome_instruments)
 
     if np.isclose(pseudo_instrument_out_h2 , 0.0):
         out_h2_guess = pseudo_out_h2
@@ -1845,7 +1857,18 @@ def mr_link2_on_region(
     sigma_guesses = np.zeros((2) , dtype = float)
     sigma_guesses[:] = float(m_snps / exp_h2_guess) , float(m_snps / out_h2_guess)
 
-    lam , u = np.linalg.eigh(correlation_mat)
+    import importlib.util,json,hashlib
+    from pathlib import Path
+    spec=importlib.util.spec_from_file_location('le8_resources',Path(__file__).with_name('0.resources.py'))
+    resources=importlib.util.module_from_spec(spec);spec.loader.exec_module(resources)
+    backend=os.getenv('MRLINK2_EIGH_BACKEND','cpu')
+    ordered_alleles=[[snp,*ld_matrix_snp_to_allele_dict[snp]] for snp in ordered_snps]
+    lam,u,eigh_audit=resources.cached_eigh(correlation_mat,ordered_alleles,backend)
+    numerical_audit=dict(version=LE8_MR_NUMERICAL_VERSION,region=str(region),N_exposure=n_exp,N_outcome=n_out,
+        ordered_alleles=ordered_alleles,ordered_snps=ordered_snps,ordered_snps_sha256=hashlib.sha256(json.dumps(ordered_snps).encode()).hexdigest(),
+        aligned_beta_sha256=hashlib.sha256(np.c_[exp_betas,out_betas].tobytes()).hexdigest(),
+        ld_sha256=hashlib.sha256(correlation_mat.tobytes()).hexdigest(),sigma_initial=sigma_guesses.tolist(),eigh=eigh_audit)
+    resources.atomic_json(str(tmp_prepend)+'_numerical_audit.json',numerical_audit)
 
     if verbosity:
         print(f"original lambda {lam.shape}")
@@ -1865,8 +1888,8 @@ def mr_link2_on_region(
             np.argmin(variances_explained <= var_explained)
         ]
 
-        correlation_variance_explained = sum(lam[lam > threshold]) / sum(lam)
-        n_components_selected = np.sum(lam > threshold)
+        correlation_variance_explained = sum(lam[lam >= threshold]) / sum(lam)
+        n_components_selected = np.sum(lam >= threshold)
 
         if verbosity:
             print(
@@ -1885,6 +1908,12 @@ def mr_link2_on_region(
             sigma_guesses[0] ,
             sigma_guesses[1] ,
         )
+        numerical_audit.setdefault('optimizations',[]).append(dict(var_explained=var_explained,
+            selected_components=int(n_components_selected),selected_variance=float(correlation_variance_explained),
+            result={k:(v.item() if hasattr(v,'item') else v) for k,v in mr_link2_point_estimate.items()}))
+        resources.atomic_json(str(tmp_prepend)+'_numerical_audit.json',numerical_audit)
+        if not all(mr_link2_point_estimate[k] for k in ('optim_alpha_h0_success','optim_sigma_y_h0_success','optim_ha_success')):
+            raise RuntimeError('MR-link2 optimizer did not converge; numerical audit retained')
         if verbosity:
             print(mr_link2_point_estimate)
 
@@ -2065,7 +2094,7 @@ def read_ld_matrix_plink(
 
     subprocess.run(
         [
-            "plink" ,
+            "plink", "--threads", os.getenv("LE8_INNER_THREADS", "1"),
             "--bfile" ,
             bed_prepend ,
             "--extract" ,
@@ -2376,6 +2405,7 @@ Pleiotropy robust cis Mendelian randomization
         help = "Set to 1 if you want to read more output, for debugging purposes " ,
     )
 
+    parser.add_argument("--tmp",help="Private task prefix for temporary files and persistent numerical audit")
     args = parser.parse_args()
 
     # necessary params
@@ -2429,7 +2459,8 @@ Pleiotropy robust cis Mendelian randomization
     }
 
     with tempfile.TemporaryDirectory() as tmp_prepend:
-        tmp_dir = f"{tmp_prepend}/tmp_"
+        tmp_dir = args.tmp or f"{tmp_prepend}/tmp_"
+        os.makedirs(os.path.dirname(os.path.abspath(tmp_dir)),exist_ok=True)
         # This is some preprocessing of the summary statistic files to make sure that we filter for at least 95% sample size
         sumstats_necessary_colnames = {
             "rsid" ,
@@ -2742,11 +2773,7 @@ Pleiotropy robust cis Mendelian randomization
                             run_other_functions = args.run_other_cis_mr_and_coloc ,
                         )
                     except Exception as x:
-                        exceptions.append((region , x))
-                        print(
-                            f"Unable to make an MR-link2 estimate in {region} due to {x}"
-                        )
-                        continue
+                        raise RuntimeError(f"MR-link2 failed in {region}: {type(x).__name__}: {x}") from x
 
                     if regional_results is None:
                         exceptions.append((region , "NONE_RESULT"))

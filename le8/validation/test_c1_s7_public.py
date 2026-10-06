@@ -19,7 +19,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_public_cpu_frozen_roundtrip_and_final():
 	root=Path(os.getenv('LE8_S7_PUBLIC_DIR') or tempfile.mkdtemp(prefix='s7-public-',dir='/tmp'))
-	inputs=Path(os.getenv('LE8_S7_INPUT_DIR') or root/'synthetic_input')
+	inputs=Path(os.getenv('LE8_S7_INPUT_DIR') or root.parent/(root.name+'-synthetic-input'))
 	root.mkdir(parents=True,exist_ok=True)
 	if not (inputs/'phe.csv').exists():
 		subprocess.run([sys.executable,str(ROOT/'validation/make_s7_smoke_data.py'),'--out',str(inputs)],check=True)
