@@ -46,7 +46,7 @@ result_stream_workbook <- function(tables, path, sources = character(), metadata
  spec <- list(tables = list(), sources = unname(as.list(sources)), metadata = metadata)
  for (i in seq_along(tables)) {
   x <- as.data.frame(tables[[i]])
-  source <- file.path(directory, paste0(gsub('[^[:alnum:]_.-]', '_', names(tables)[i]), '.tsv'))
+  source <- file.path(directory, paste0(sprintf('%04d_', i), gsub('[^[:alnum:]_.-]', '_', names(tables)[i]), '.tsv'))
   types <- vapply(names(x), function(n) {
    v <- x[[n]]
    if (result_private_columns(n) || inherits(v, c('Date','POSIXt','integer64'))) 'character'

@@ -42,7 +42,7 @@ Evaluation:
                             ct uses covariate-adjusted squared prediction correlation.
                             t2e also reports covariates-only C and paired delta C.
   --disco-tune TRUE|FALSE    TRUE; FALSE evaluates only the saved untuned Disco score.
-  --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2disco.sh).
+  --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2.disco.sh).
   --min-anchor N            100 training people per ancestry and fold
   --posterior-file FILE      Default <score-dir>/<trait>/1csx.posterior.rds
   --posterior-mode required|off  required; off explicitly disables individual posterior analysis.

@@ -7,6 +7,12 @@ set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
 LE8_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# One logger covers the public dispatcher and all of its children.
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/tmp/le8-logs/runs}
+if [[ $# == 0 && ${SCRIPT_CONSOLE_ACTIVE:-0} != 1 && ${SCRIPT_VERBOSE:-0} != 1 ]]; then
+	exec python3 "$LE8_ROOT/../0f/console_run.py" --script "$LE8_ROOT/le8.sh" --
+fi
+source "$LE8_ROOT/../0f/console.sh"
 
 le8_usage() {
 	cat <<'HELP'
@@ -15,7 +21,7 @@ Usage: ./le8.sh [module[,module...]] [options]
 No module list: C1 + CUDA selective-attention ABM -> C2 -> C3 -> C4 (connect/panel validation) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results keep their original methods/scope; --replace TRUE requests new fits.
-Result workbooks and named participant RDS files restore numerical inputs in /tmp.
+Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
 Reviewable result tables, including participant IDs, use XLSX; reusable raw/model objects use RDS.
 
@@ -52,7 +58,7 @@ Main options (defaults are set below in this script):
   --ukb-phe DIR          External phenotype/omics input root (analysis only)
   --cores N              Phase CPU budget; default min(16, available CPUs)
   --pwas-workers N|auto Dynamic blocks of 4 features; auto up to 8 workers
-  --pgs-workers N|auto  Six-model feature checkpoints; auto up to 4 workers
+  --pgs-workers N|auto  Six-model checkpoints; auto up to 4, RAM may reduce to serial
   --mrlink2-workers N   Concurrent MR tasks; default 4
   --mrlink2-inner-threads N  Threads per MR task; default 1
   --cpu-task-memory-gib N  Per-worker admission estimate (not a hard RAM cap)
@@ -105,6 +111,8 @@ Question-led overview and Fig6–8: final/; Shiny opens the research-question vi
 LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_explain --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
 Shared RAM budget: LE8_RESOURCE_MEMORY_GIB=32 by default (GiB).
+Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
+SCRIPT_VERBOSE=1 streams all diagnostics to the terminal.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
 ABM requires CUDA by default and checks GPU forward/backward before native scans.

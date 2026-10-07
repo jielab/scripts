@@ -132,9 +132,48 @@ def locus_message(event, unit, line):
 		return f"DONE {unit}"
 
 
+class Le8Console:
+	"""Keep full diagnostics in the log and emit bounded stage summaries."""
+	def __init__(self):
+		self.failure = ""
+		self.pending_r_error = ""
+		self.warnings = False
+		self.workspace = ""
+		self.last_stage = ""
+
+	def feed(self, line):
+		if "Diagnostic workspace: " in line:
+			self.workspace = line.split("Diagnostic workspace: ", 1)[1]
+		if re.search(r"(?i)\bwarning\b|^警告", line):
+			self.warnings = True
+		if self.pending_r_error and line and not re.match(r"^(Calls:|In addition|Execution halted)", line):
+			self.failure = line[:320]
+			self.pending_r_error = ""
+		if re.match(r"^\[(LE8|ABM)\] (FAIL|ERROR)\b", line):
+			if not self.failure:
+				self.failure = line[:320]
+			return None
+		if re.match(r"^Error in\b", line) and not self.failure:
+			self.pending_r_error = line[:320]
+		elif re.match(r"(?i)^(error|fatal)(?:\b|:)|^\w+(?:Error|Exception):", line) and not self.failure:
+			if not line.startswith("ERROR: Command ["):
+				self.failure = line[:320]
+		# Package warnings, traceback continuations, commands and resource JSON
+		# are never forwarded. The enclosing logger retains their exact bytes.
+		major = re.match(r"^\[LE8\] (START|DONE|SKIP|PROGRESS)\b", line)
+		reuse = re.match(r"^\[(ABM|C1 selective)\] SKIP\b", line)
+		abm = re.match(r"^\[(ABM|C1 selective)\] (START|DONE) (S7_crossfit|S7_final_model|selective_crossfit|final_fit|input|project)\b", line)
+		info = re.match(r"^\[LE8\] (Module transaction:|Waiting |.*; waiting for |Shiny is already|Share package:)", line)
+		if (major or reuse or abm or info) and line != self.last_stage:
+			self.last_stage = line
+			return line[:320]
+		return None
+
+
 def run(script, args):
 	script = Path(script).resolve()
 	label = console_label(script, args)
+	le8_console = Le8Console() if label == "le8" else None
 	completion_only_gu = label == "gu" and args[:1] in (["phyml"], ["ibdmix"])
 	quiet_gu = completion_only_gu
 	default_log_dir = Path("/mnt/d/analysis") / script.parent.name / "logs"
@@ -193,6 +232,11 @@ def run(script, args):
 			original = raw.decode(errors="replace")
 			line = original.strip()
 			if not line:
+				return
+			if le8_console is not None:
+				visible = le8_console.feed(line)
+				if visible:
+					print(visible, flush=True)
 				return
 			if completion_only_gu:
 				created = re.match(r"^\[GU CMD\] created=(\d+)", line)
@@ -323,8 +367,18 @@ def run(script, args):
 			rc = 128 + cancelled[0][0]
 		state = "已停止" if cancelled else "完成" if rc == 0 else f"失败（退出码 {rc}）"
 		counts = f"；完成 {done}，失败 {failed}" if (done or failed) and not quiet_gu else ""
-		print(f"[{label}] {state}{counts}；日志：{log}", flush=True)
-		if rc and not cancelled and not quiet_gu:
+		detail = ""
+		if le8_console is not None:
+			if rc and not cancelled:
+				reason = le8_console.failure or le8_console.pending_r_error
+				if reason:
+					detail += f"；原因：{reason}"
+			if le8_console.warnings:
+				detail += "；警告详见日志"
+			if le8_console.workspace:
+				detail += f"；诊断目录：{le8_console.workspace}"
+		print(f"[{label}] {state}{counts}{detail}；日志：{log}", flush=True)
+		if rc and not cancelled and not quiet_gu and le8_console is None:
 			print("\n".join(console_text(line) for line in recent), file=sys.stderr, flush=True)
 		return rc if rc >= 0 else 128 - rc
 

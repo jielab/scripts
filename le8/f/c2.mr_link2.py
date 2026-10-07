@@ -1569,6 +1569,18 @@ def warn_if_only_gws_snps(
 LE8_MR_NUMERICAL_VERSION = '20261006-outcome-initialization-real-N'
 
 
+def le8_optimization_audit(result):
+    """Record undefined diagnostics as JSON null without altering fitted values.
+
+    A boundary variance estimate can have no likelihood-ratio standard error.
+    Strict result validation still rejects invalid primary alpha inference.
+    """
+    values = {k: (v.item() if hasattr(v, 'item') else v) for k, v in result.items()}
+    nonfinite = [k for k, v in values.items() if isinstance(v, float) and not np.isfinite(v)]
+    return dict(result={k: (None if k in nonfinite else v) for k, v in values.items()},
+                nonfinite_result_fields=nonfinite)
+
+
 def le8_instrument_variance(betas, sample_n, instruments):
     """Trait-local moment used only as an optimizer starting value."""
     if not np.isfinite(sample_n) or sample_n<=0:raise ValueError('Positive actual sample N required')
@@ -1910,7 +1922,7 @@ def mr_link2_on_region(
         )
         numerical_audit.setdefault('optimizations',[]).append(dict(var_explained=var_explained,
             selected_components=int(n_components_selected),selected_variance=float(correlation_variance_explained),
-            result={k:(v.item() if hasattr(v,'item') else v) for k,v in mr_link2_point_estimate.items()}))
+            **le8_optimization_audit(mr_link2_point_estimate)))
         resources.atomic_json(str(tmp_prepend)+'_numerical_audit.json',numerical_audit)
         if not all(mr_link2_point_estimate[k] for k in ('optim_alpha_h0_success','optim_sigma_y_h0_success','optim_ha_success')):
             raise RuntimeError('MR-link2 optimizer did not converge; numerical audit retained')
@@ -2402,6 +2414,7 @@ Pleiotropy robust cis Mendelian randomization
     parser.add_argument(
         "--verbose" ,
         default = 0 ,
+        type = int ,
         help = "Set to 1 if you want to read more output, for debugging purposes " ,
     )
 

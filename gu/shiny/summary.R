@@ -107,3 +107,45 @@ gu_ibdmix_summary_table <- function(s, burden, x_male = FALSE) {
 			if(x_male)"chrX 为实验性男性单倍体转伪二倍体 IBDmix 分析，未应用常染色体最终过滤；不能直接与上表或 Cell 2020 的常染色体 Mb 比较。Denisovan 匹配不等于已确认的 Denisovan 渗入。AFR (5) 为 ESN、GWD、LWK、MSL、YRI 的合计，下方缩进行分别展示这五个人群。" else "Altai、Chagyr、Vindija 为 Neanderthal 参考；Denisova、Denisova25 为 Denisovan 参考。常染色体 Denisovan 列已去除全人群 Altai 重叠区及 AFR 高频背景；2013 版本配对使用 Altai.2013 和 Denisova.2013；Denisova25 使用扩展过滤，但不能直接等同于已确认的渗入来源。AFR (5) 为 ESN、GWD、LWK、MSL、YRI 的合计，下方缩进行分别展示这五个人群。Cell 2020 为 Altai 单参考近似值，复现比较请使用 Altai.2013 列。")
 	)
 }
+
+
+# Saved aggregate viewing requires neither an individual database nor raw sequences.
+gu_summary_read_workbook <- function(path, table, optional = FALSE) {
+	if (!file.exists(path)) return(data.frame())
+	directory <- tempfile("gu-summary-", tmpdir = "/tmp")
+	dir.create(directory)
+	on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+	utils::unzip(path, files = "results/manifest.json", exdir = directory)
+	manifest <- jsonlite::read_json(file.path(directory, "results/manifest.json"))
+	entries <- Filter(function(x) identical(x$name, table), manifest$tables)
+	if (length(entries) == 0L && optional) return(data.frame())
+	if (length(entries) != 1L) stop("Missing or ambiguous saved summary table: ", table)
+	entry <- manifest$files[[entries[[1L]]$source]]
+	if (!grepl("^[a-f0-9]{64}$", entry$sha256) || !identical(entry$part, paste0("results/exports/", entry$sha256, ".bin"))) stop("Invalid saved summary source")
+	utils::unzip(path, files = entry$part, exdir = directory)
+	source <- file.path(directory, entry$part)
+	if (!identical(digest::digest(file = source, algo = "sha256"), entry$sha256)) stop("Saved summary checksum mismatch")
+	as.data.frame(data.table::fread(source, showProgress = FALSE, na.strings = c("", "NA")))
+}
+
+gu_summary_only_app <- function(path, phyml_path) {
+	burden <- gu_summary_read_workbook(path, "population_burden")
+	paired <- gu_summary_read_workbook(path, "same_males_X_autosomes", optional = TRUE)
+	phyml <- gu_summary_read_workbook(phyml_path, "locus")
+	ui <- bslib::page_fluid(
+		shiny::tags$h2("GU · 保存的科学汇总"),
+		shiny::tags$p("汇总查看模式：读取正式分析保存的 XLSX，不重新计算、不补零或外推未检测染色体。"),
+		shiny::tags$p("个体查询、片段浏览、序列比对和交互树图不可用：需要完整数据库及原生结果。"),
+		shiny::selectInput("scope", "范围", choices = unique(burden$scope)),
+		shiny::selectInput("reference", "参考", choices = unique(burden$reference)),
+		bslib::navset_card_tab(
+			bslib::nav_panel("IBDmix 人群负荷", DT::DTOutput("burden")),
+			bslib::nav_panel("同一男性 X / 常染色体", DT::DTOutput("paired")),
+			bslib::nav_panel("全部 PhyML 位点状态", DT::DTOutput("phyml"))))
+	server <- function(input, output, session) {
+		output$burden <- DT::renderDT(DT::datatable(burden[burden$scope == input$scope & burden$reference == input$reference, , drop = FALSE], rownames = FALSE, options = list(scrollX = TRUE)))
+		output$paired <- DT::renderDT(DT::datatable(if(nrow(paired))paired else data.frame(状态 = "没有保存可比的完整同一男性队列"), rownames = FALSE, options = list(scrollX = TRUE)))
+		output$phyml <- DT::renderDT(DT::datatable(if(nrow(phyml))phyml else data.frame(状态 = "未提供 PhyML 汇总"), rownames = FALSE, options = list(scrollX = TRUE)))
+	}
+	shiny::shinyApp(ui, server)
+}

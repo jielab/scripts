@@ -300,6 +300,7 @@ runtime=${AS3_RUNTIME:-$script_dir/as3}
 model_dir=${AS3_MODEL_DIR:-${dir_ref:-/mnt/f/gen}/archaic/38/models}
 data=${AS3_DATA_IN:?AS3_DATA_IN is required; run this internal helper through gu.sh}
 out=${AS3_OUT:-/mnt/d/analysis/gu/as3}
+log_root=/tmp/gu-logs/as3/$(printf '%s' "$out" | sha256sum | cut -c1-16)
 runtime_work=${AS3_RUNTIME_WORK_DIR:?AS3_RUNTIME_WORK_DIR is required; run this internal helper through gu.sh}
 gpus=${AS3_GPUS:-0}
 merge=${AS3_MERGE:-10000}
@@ -439,7 +440,7 @@ fi
 	echo "ERROR AS3 manifest missing after automatic preparation: $manifest" >&2
 	exit 1
 }
-mkdir -p "$out"/{log,results}
+mkdir -p "$log_root" "$out/results"
 
 unit_selected() {
 	local unit=$1 c
@@ -713,7 +714,12 @@ run_task() (
 	mkdir -p "$runtime_work"
 	local -a resource_scope=(systemd-run --user --scope --quiet --collect
 		-p "MemoryHigh=$memory_high" -p "MemoryMax=$memory_max" -p "MemorySwapMax=$memory_swap_max")
-	log_file=$out/log/${key}.log
+	log_file=$log_root/${key}.log
+	# The tool writes run.log inside its output folder; keep that log disposable.
+	if [[ -f $run_dir/run.log && ! -L $run_dir/run.log ]]; then
+		mv -- "$run_dir/run.log" "$log_root/${key}.tool.log"
+	fi
+	ln -sfn -- "$log_root/${key}.tool.log" "$run_dir/run.log"
 	set +e
 	if ((resume == 1)); then
 		(cd "$runtime_work" && CUDA_VISIBLE_DEVICES=$gpu "${resource_scope[@]}" "$as3_python" "$exe" -t "$target" -r "$ref" -m "$map" \
@@ -770,7 +776,7 @@ for gpu_index in "${!gpu_array[@]}"; do
 done
 for pid in $(jobs -p); do wait "$pid" || status=1; done
 ((status == 0)) || {
-	echo "ERROR one or more AS3 tasks failed; see $out/log" >&2
+	echo "ERROR one or more AS3 tasks failed; see $log_root" >&2
 	exit 1
 }
 cp "$manifest" "$out/input.manifest.tsv"

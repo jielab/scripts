@@ -8,7 +8,7 @@ suppressPackageStartupMessages({
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x) || !nzchar(x)) y else x
 
 published_root <- Sys.getenv("GU_PUBLISHED_ROOT", Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu"))
-if (!nzchar(Sys.getenv("GU_SQLITE"))) {
+if (!nzchar(Sys.getenv("GU_SQLITE")) && Sys.getenv("GU_SUMMARY_ONLY") != "1") {
 	common_python <- normalizePath(file.path(app_dir, '..', 'f', '0.common.py'))
 	workspace <- system2('python3', c(shQuote(common_python), 'results', 'restore', '--method', 'shiny', '--published', shQuote(published_root)), stdout = TRUE)
 	if (!is.null(attr(workspace, 'status')) || length(workspace) != 1L) stop('Cannot prepare persistent GU results')
@@ -16,8 +16,10 @@ if (!nzchar(Sys.getenv("GU_SQLITE"))) {
 }
 default_final <- Sys.getenv('GU_FINAL_DIR', file.path(published_root, 'final'))
 db_path <- Sys.getenv('GU_SQLITE', file.path(default_final, 'gu.sqlite'))
-if (!file.exists(db_path)) stop('GU results not found; run ./gu.sh final')
-db_path <- normalizePath(db_path, mustWork = TRUE)
+.gu_summary_only <- Sys.getenv('GU_SUMMARY_ONLY') == '1' || !file.exists(db_path)
+.gu_summary_file <- file.path(default_final, 'gu.ibdmix.summary.xlsx')
+if (.gu_summary_only && !file.exists(.gu_summary_file)) stop('GU results not found: gu.sqlite / gu.results.rds / gu.ibdmix.summary.xlsx')
+db_path <- normalizePath(db_path, mustWork = !.gu_summary_only)
 normalize_root <- dirname(db_path)
 .gu_resolve_artifact <- function(path) {
 	value <- as.character(path[[1]])

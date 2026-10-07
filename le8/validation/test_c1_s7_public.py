@@ -45,7 +45,9 @@ def test_public_cpu_frozen_roundtrip_and_final():
 	before=sha();cached=run(train,'cache')
 	assert 'SKIP' in cached.stdout and sha()==before
 	assert not list(out.glob('*.csv'))
-	assert (out/'test_individuals.rds').is_file()
+	assert not (out/'test_individuals.rds').exists()
+	from zipfile import ZipFile
+	assert any('test_individuals.csv' in json.loads(ZipFile(p).read('le8/manifest.json')).get('files', {}) for p in out.glob('*.xlsx') if 'le8/manifest.json' in ZipFile(p).namelist())
 	external=root.parent/(root.name+'-external');external.mkdir(exist_ok=True)
 	p=pd.read_csv(inputs/'phe.csv').iloc[:12][['eid','age','sex']].copy()
 	x=pd.read_csv(inputs/'prot.csv').iloc[:12].copy()
@@ -99,5 +101,5 @@ def test_public_cpu_frozen_roundtrip_and_final():
 	assert roles.groupby('.le8_family').role.nunique().max()==1
 	assert 'tune_gate' in set(roles.role)
 	(root.parent/(root.name+'-verification.json')).write_text(json.dumps(dict(public_cpu=True,cache=True,
-		private_RDS_roundtrip=True,outcome_free_external=True,training_inputs_unavailable=True,model_sha256=sha(),
+		individual_XLSX_roundtrip=True,outcome_free_external=True,training_inputs_unavailable=True,model_sha256=sha(),
 		final_registered_models=int(registry.model_id.nunique()),synthetic_only=True),indent=2))

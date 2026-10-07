@@ -16,7 +16,7 @@ if "gu_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from gu_0_common import load_module
+from gu_0_common import load_module, reference_role, evidence_sql, x_nonpar_intervals
 
 
 # 🚩 normalize_results
@@ -42,6 +42,7 @@ SEG_COLS = [
 	"method",
 	"source",
 	"source_class",
+	"reference_role",
 	"chr",
 	"start",
 	"end",
@@ -169,6 +170,7 @@ def finish(df, method, build, raw, batch="", dataset=None):
 	df["length_bp"] = (df.end - df.start).astype("int64")
 	df["source"] = df["source"].fillna("unknown").astype(str)
 	df["source_class"] = df["source"].map(source_class)
+	df["reference_role"] = df["source"].map(reference_role)
 	return df[SEG_COLS]
 
 
@@ -257,6 +259,16 @@ def batch_from_path(f, method):
 	return ""
 
 
+
+def active_ibdmix_run(run):
+	"""MAC2/3 are independent sensitivity runs; prefer completed v2 MAC1 to legacy X."""
+	if re.search(r"[.]nonpar-v2[.]mac[23]$", run.name):
+		return False
+	if not run.name.endswith(".nonpar-v2.mac1") and (run.with_name(run.name + ".nonpar-v2.mac1") / ".complete").exists():
+		return False
+	return True
+
+
 def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=None, audits=None):
 	load_module("ibdmix.py")
 	from gu_ibdmix import prepare
@@ -269,6 +281,8 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 		],
 	)
 	for f in files:
+		if not active_ibdmix_run(f.parent.parent):
+			continue
 		if completed_runs is not None and f.parent.parent not in completed_runs:
 			continue  # jobs finishing after this final snapshot belong to the next one
 		meta = read_run_meta(f.parent.parent / "run.meta.tsv")
@@ -278,7 +292,20 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 		if meta.get("pipeline_version") and not (f.parent.parent / ".complete").exists():
 			continue  # never integrate an interrupted or partially replaced run
 		batch = batch_from_path(f, "ibdmix")
-		filtered, audit = prepare(f, filter_output or root / "final/ibdmix_filters", meta, daf_mask)
+		ukb_candidate = dataset_from_path(f, "ibdmix").startswith("ukb-")
+		if ukb_candidate:
+			# Imputed/site-restricted UKB calls have a different ascertainment
+			# and no AFR5 background panel. Keep their native candidate calls;
+			# the frozen Cell 2020 postprocessing remains the non-UKB branch.
+			if not (f.parent.parent / "inputs/ukb.preparation.qc.json").is_file():
+				raise ValueError(f"UKB preparation QC is missing: {f.parent.parent}")
+			filtered = f
+			chrom_match = re.search(r"(?:^|[/_.-])chr([0-9]+|X)(?:$|[/_.-])", str(f), re.I)
+			audit = {"status": "ukb_exploratory_not_cell2020", "daf": {"status": "not_applied_ukb_pilot"},
+				"chrom": chrom_norm(chrom_match.group(1)) if chrom_match else "",
+				"reference_affinity_only": True, "strict_evidence_eligible": False}
+		else:
+			filtered, audit = prepare(f, filter_output or root / "final/ibdmix_filters", meta, daf_mask)
 		if audits is not None:
 			audits.append(
 				(
@@ -293,7 +320,8 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 				)
 			)
 		print(f"[GU FINAL] IBDmix {f.parent.parent.name}: {audit['status']}; DAF={audit['daf']['status']}", flush=True)
-		for d in pd.read_csv(filtered, sep="\t", compression="infer", chunksize=200000):
+		read_options = {"dtype": {"ID": str, "sample_id": str}} if ukb_candidate else {}
+		for d in pd.read_csv(filtered, sep="\t", compression="infer", chunksize=200000, **read_options):
 			ren = {}
 			for a, b in [
 				("ID", "sample_id"),
@@ -523,6 +551,9 @@ def discover_method_runs(root, fallback_build):
 				note = "legacy IBDmix: invalid SNP-only archaic preparation / pooled populations; rerun required"
 			else:
 				note = "audited IBDmix " + meta["pipeline_version"] + "; profile=" + meta.get("profile", "unknown")
+		if method == "ibdmix" and not any(reference_role(ref) == "scientific_reference" for ref in meta.get("refs", "").split()):
+			eligible = 0
+			note = "IBDmix reproduction-only references; no cross-method evidence"
 		if chrom == "X" and method == "ibdmix":
 			eligible = 0
 			note = "experimental male-X pseudo-diploid adaptation; excluded from GU evidence score"
@@ -531,12 +562,23 @@ def discover_method_runs(root, fallback_build):
 			note = "AS3 Ref1028/model is autosomes-only; chrX is unsupported"
 		elif method == "trace":
 			note = "haplotype-node call; validity depends on the full-chromosome ARG backend and calibration"
+		if method == "ibdmix" and dataset_from_path(path, method).startswith("ukb-"):
+			eligible = 0
+			qualification = "experimental UKB reference-affinity candidates; imputation and site ascertainment require calibration; no Cell 2020 AFR5 background subtraction"
+			if chrom == "X":
+				qualification += "; male non-PAR X pseudo-diploid LOD model is uncalibrated"
+			if meta.get("pipeline_version"):
+				note = "audited IBDmix " + meta["pipeline_version"] + "; " + qualification + "; profile=" + meta.get("profile", "unknown")
+			else:
+				note += "; " + qualification
 		key = (dataset_from_path(path, method), build, chrom, method)
 		if key in rows and rows[key][4] == "complete" and status != "complete":
 			return
 		rows[key] = (*key, status, eligible, note, str(path))
 
 	for marker in sorted(root.glob("ibdmix/**/.complete")) + sorted(root.glob("ukb/ibdmix/**/.complete")):
+		if not active_ibdmix_run(marker.parent):
+			continue
 		meta = marker.parent / "run.meta.tsv"
 		values = read_run_meta(meta)
 		text = meta.read_text(errors="replace") if meta.is_file() else ""
@@ -677,8 +719,36 @@ def iter_reference_callsets(path, dataset_id="AS3_1KG"):
 			yield from parse_reference_handle(h, str(f), dataset_id)
 
 
-def sample_population_table(path):
+def sample_population_table(path, dataset_id="1kg", analysis_root=None):
 	cols = ["dataset_id", "sample_id", "population", "super_population", "raw_file"]
+	if dataset_id != "1kg":
+		# A UKB population label is not a 1KG population. Keep its own dataset
+		# key and preserve IDs as strings; missing metadata must not become EUR.
+		if not path or not Path(path).is_file():
+			panels = []
+			if analysis_root and re.fullmatch(r"[A-Za-z0-9_.-]+", dataset_id):
+				for method in ("ibdmix", "trace", "as3", "phyml"):
+					panels.extend(sorted((Path(analysis_root) / method / dataset_id).glob("**/inputs/ukb.samples.tsv")))
+					panels.extend(sorted((Path(analysis_root) / method / dataset_id).glob("**/inputs/sample.panel.tsv")))
+			if not panels:
+				raise ValueError(f"Sample metadata is required for dataset {dataset_id}; restore its native archives or provide --sample-panel")
+			out = pd.concat([sample_population_table(p, dataset_id) for p in panels], ignore_index=True)
+			labels = out[["sample_id", "population", "super_population"]].drop_duplicates()
+			if labels.sample_id.duplicated().any():
+				raise ValueError("Archived UKB sample panels disagree on population labels")
+			return out.drop_duplicates("sample_id")[cols]
+		d = pd.read_csv(path, sep=r"\s+", dtype=str, keep_default_na=False)
+		low = {str(c).lower().lstrip("#"): c for c in d.columns}
+		sample = next((low[x] for x in ("sample", "sample_id", "iid") if x in low), None)
+		pop = next((low[x] for x in ("population", "pop") if x in low), None)
+		super_pop = next((low[x] for x in ("super_population", "super_pop", "superpopulation") if x in low), None)
+		if sample is None or pop is None or super_pop is None or d.empty:
+			raise ValueError("Sample panel requires nonempty sample, pop and super_pop columns")
+		out = pd.DataFrame({"dataset_id": dataset_id, "sample_id": d[sample], "population": d[pop].str.upper(),
+			"super_population": d[super_pop].str.upper(), "raw_file": str(path)})
+		if out.sample_id.duplicated().any() or out[["sample_id", "population", "super_population"]].isin(["", ".", "NA", "NAN"]).any().any():
+			raise ValueError("Sample metadata contains duplicate IDs or missing identity/population labels")
+		return out[cols]
 	if not path or not Path(path).is_file():
 		return pd.DataFrame(columns=cols)
 	try:
@@ -877,7 +947,27 @@ def loci_tables(root, fallback_build):
 						),
 						"archaic_map",
 					)
+					audit = {k: None if pd.isna(v) else v for k, v in r.items()}
+					if r.get("selection_method") == "gwas_lead_ld_core":
+						audit.update(load_module("phyml.py").saved_locus_audit(f, audit))
 					yield {
+						'n_panel': scalar_int(audit.get('n_panel')),
+						'n_panel_copies': scalar_int(audit.get('n_panel_copies')),
+						'n_lead_called': scalar_int(audit.get('n_lead_called')),
+						'n_lead_called_copies': scalar_int(audit.get('n_lead_called_copies')),
+						'n_recurrent_copies': scalar_int(audit.get('n_recurrent_copies')),
+						'n_singleton_copies': scalar_int(audit.get('n_singleton_copies')),
+						'input_status': scalar_text(audit.get('input_status')),
+						'ld_status': scalar_text(audit.get('ld_status')),
+						'alignment_status': scalar_text(audit.get('alignment_status')),
+						'tree_run_status': scalar_text(audit.get('tree_run_status')),
+						'topology_status': scalar_text(audit.get('topology_status')),
+						'sequence_qc': scalar_text(audit.get('sequence_qc')),
+						'lead_retained_for_tree': scalar_int(audit.get('lead_retained_for_tree')),
+						'high_ld_sites_retained_for_tree': scalar_int(audit.get('high_ld_sites_retained_for_tree')),
+						'unique_archaic_sequences': scalar_int(audit.get('unique_archaic_sequences')),
+						'high_ld_max_gap_bp': scalar_int(audit.get('high_ld_max_gap_bp')),
+						'site_missingness_audit': scalar_text(audit.get('site_missingness_audit')),
 						"dataset_id": dataset,
 						"method": method,
 						"trait": None,
@@ -936,6 +1026,7 @@ def loci_tables(root, fallback_build):
 def init_db(con):
 	con.executescript("""
     PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE;
+    DROP VIEW IF EXISTS segments_evidence;
     DROP TABLE IF EXISTS segments_raw; DROP TABLE IF EXISTS loci; DROP TABLE IF EXISTS coord_catalog;
     DROP TABLE IF EXISTS segment_catalog; DROP TABLE IF EXISTS segments; DROP TABLE IF EXISTS carriers;
     DROP TABLE IF EXISTS reference_callsets; DROP TABLE IF EXISTS reference_callset_overlaps; DROP TABLE IF EXISTS database_summary;
@@ -944,8 +1035,8 @@ def init_db(con):
     DROP TABLE IF EXISTS method_runs;
     DROP TABLE IF EXISTS sample_populations; DROP TABLE IF EXISTS sample_burden; DROP TABLE IF EXISTS burden_union_chr;
     DROP TABLE IF EXISTS temp.reference_callsets_raw;
-    CREATE TABLE segments_raw(dataset_id TEXT,sample_id TEXT,method TEXT,source TEXT,source_class TEXT,chr TEXT,start INTEGER,end INTEGER,length_bp INTEGER,haplotype TEXT,method_haplotype_index TEXT,score REAL,posterior REAL,trait TEXT,locus_id TEXT,genome_build TEXT,batch_id TEXT,raw_file TEXT);
-    CREATE TABLE loci(dataset_id TEXT,method TEXT,trait TEXT,locus_id TEXT,chr TEXT,start INTEGER,end INTEGER,input_start INTEGER,input_end INTEGER,analysis_start INTEGER,analysis_end INTEGER,flank_bp INTEGER,anchor_pos INTEGER,selection_method TEXT,ld_r2_threshold REAL,n_search_sites INTEGER,n_ld_sites INTEGER,n_ancestral_sites INTEGER,n_sites INTEGER,best_archaic TEXT,best_lineage TEXT,n_compared INTEGER,n_match INTEGER,prop_match REAL,source TEXT,source_class TEXT,status TEXT,direct_match_pass INTEGER,n_carriers INTEGER,genome_build TEXT,tree_status TEXT,tree_file TEXT,stats_file TEXT,plot_file TEXT,n_bootstrap_nodes INTEGER,bootstrap_min REAL,bootstrap_median REAL,bootstrap_max REAL,candidate_lineage TEXT,tree_has_ancestral_outgroup INTEGER,candidate_clade_pass INTEGER,candidate_clade_rule TEXT,candidate_clade_bootstrap REAL,candidate_clade_node TEXT,candidate_clade_side TEXT,candidate_clade_n_tips INTEGER,candidate_clade_modern_tips INTEGER,candidate_clade_archaic_tips INTEGER,candidate_clade_specificity REAL,candidate_clade_tips TEXT,tree_newick TEXT,raw_file TEXT);
+    CREATE TABLE segments_raw(dataset_id TEXT,sample_id TEXT,method TEXT,source TEXT,source_class TEXT,reference_role TEXT,chr TEXT,start INTEGER,end INTEGER,length_bp INTEGER,haplotype TEXT,method_haplotype_index TEXT,score REAL,posterior REAL,trait TEXT,locus_id TEXT,genome_build TEXT,batch_id TEXT,raw_file TEXT);
+    CREATE TABLE loci(dataset_id TEXT,method TEXT,trait TEXT,locus_id TEXT,chr TEXT,start INTEGER,end INTEGER,input_start INTEGER,input_end INTEGER,analysis_start INTEGER,analysis_end INTEGER,flank_bp INTEGER,anchor_pos INTEGER,selection_method TEXT,ld_r2_threshold REAL,n_search_sites INTEGER,n_ld_sites INTEGER,n_ancestral_sites INTEGER,n_sites INTEGER,best_archaic TEXT,best_lineage TEXT,n_compared INTEGER,n_match INTEGER,prop_match REAL,source TEXT,source_class TEXT,status TEXT,direct_match_pass INTEGER,n_carriers INTEGER,genome_build TEXT,tree_status TEXT,tree_file TEXT,stats_file TEXT,plot_file TEXT,n_bootstrap_nodes INTEGER,bootstrap_min REAL,bootstrap_median REAL,bootstrap_max REAL,candidate_lineage TEXT,tree_has_ancestral_outgroup INTEGER,candidate_clade_pass INTEGER,candidate_clade_rule TEXT,candidate_clade_bootstrap REAL,candidate_clade_node TEXT,candidate_clade_side TEXT,candidate_clade_n_tips INTEGER,candidate_clade_modern_tips INTEGER,candidate_clade_archaic_tips INTEGER,candidate_clade_specificity REAL,candidate_clade_tips TEXT,tree_newick TEXT,n_panel INTEGER,n_panel_copies INTEGER,n_lead_called INTEGER,n_lead_called_copies INTEGER,n_recurrent_copies INTEGER,n_singleton_copies INTEGER,input_status TEXT,ld_status TEXT,alignment_status TEXT,tree_run_status TEXT,topology_status TEXT,sequence_qc TEXT,lead_retained_for_tree INTEGER,high_ld_sites_retained_for_tree INTEGER,unique_archaic_sequences INTEGER,high_ld_max_gap_bp INTEGER,site_missingness_audit TEXT,raw_file TEXT);
     CREATE TABLE coord_catalog(dataset_id TEXT,genome_build TEXT,source_class TEXT,chr TEXT,start INTEGER,end INTEGER,segment_code TEXT);
     CREATE TABLE segment_catalog(segment_code TEXT PRIMARY KEY,dataset_id TEXT,source_class TEXT,chr TEXT,start INTEGER,end INTEGER,length_bp INTEGER,n_distinct_boundaries INTEGER,genome_build TEXT);
     CREATE TABLE reference_callsets(dataset_id TEXT,population TEXT,genome_build TEXT,chr TEXT,start INTEGER,end INTEGER,source_class TEXT,reference_role TEXT,raw_file TEXT);
@@ -999,13 +1090,13 @@ def code_for(dataset, build, src, chrom, start, end):
 
 def build_catalog(con, build, threshold):
 	groups = con.execute(
-		'SELECT DISTINCT dataset_id,genome_build,source_class,chr FROM segments_raw ORDER BY dataset_id,genome_build,source_class, CASE WHEN chr GLOB "[0-9]*" THEN CAST(chr AS INT) ELSE 99 END, chr'
+		'SELECT DISTINCT dataset_id,genome_build,source_class,chr FROM segments_raw WHERE ' + evidence_sql() + ' ORDER BY dataset_id,genome_build,source_class, CASE WHEN chr GLOB "[0-9]*" THEN CAST(chr AS INT) ELSE 99 END, chr'
 	).fetchall()
 	ins_coord = []
 	ins_cat = []
 	for dataset, group_build, src, chrom in groups:
 		cur = con.execute(
-			"SELECT DISTINCT start,end FROM segments_raw WHERE dataset_id=? AND genome_build=? AND source_class=? AND chr=? ORDER BY start,end",
+			"SELECT DISTINCT start,end FROM segments_raw WHERE dataset_id=? AND genome_build=? AND source_class=? AND chr=? AND " + evidence_sql() + " ORDER BY start,end",
 			(dataset, group_build, src, chrom),
 		)
 		coords = cur.fetchall()
@@ -1054,7 +1145,8 @@ def build_catalog(con, build, threshold):
 	con.commit()
 	con.executescript("""
       CREATE INDEX idx_coord ON coord_catalog(dataset_id,genome_build,source_class,chr,start,end);
-      CREATE TABLE segments AS SELECT s.*, c.segment_code FROM segments_raw s JOIN coord_catalog c USING(dataset_id,genome_build,source_class,chr,start,end);
+      CREATE TABLE segments AS SELECT s.*, c.segment_code FROM segments_raw s LEFT JOIN coord_catalog c USING(dataset_id,genome_build,source_class,chr,start,end);
+      CREATE VIEW segments_evidence AS SELECT * FROM segments WHERE __EVIDENCE_SQL__;
       CREATE INDEX idx_segments_sample ON segments(dataset_id,sample_id); CREATE INDEX idx_segments_region ON segments(dataset_id,genome_build,chr,start,end); CREATE INDEX idx_segments_code ON segments(segment_code);
       CREATE INDEX idx_segments_method_source ON segments(dataset_id,genome_build,method,source_class,chr,start);
       CREATE INDEX idx_segments_build_region ON segments(genome_build,chr,start,end);
@@ -1065,9 +1157,9 @@ def build_catalog(con, build, threshold):
                COUNT(DISTINCT method) AS n_methods,
                GROUP_CONCAT(DISTINCT method) AS methods_support,
                MAX(score) AS max_score, MAX(posterior) AS max_posterior
-        FROM segments WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None') GROUP BY dataset_id,sample_id,segment_code,source_class;
+        FROM segments_evidence WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None') GROUP BY dataset_id,sample_id,segment_code,source_class;
       CREATE INDEX idx_carriers_sample ON carriers(dataset_id,sample_id); CREATE INDEX idx_carriers_code ON carriers(segment_code);
-    """)
+    """.replace("__EVIDENCE_SQL__", evidence_sql()))
 	con.commit()
 
 
@@ -1089,7 +1181,7 @@ def build_reference_overlaps(con, raw_table="temp.reference_callsets_raw"):
       );
     """)
 	n_results = con.execute(
-		"SELECT COUNT(*) FROM segments WHERE method='as3' AND source_class='Neanderthal'"
+		"SELECT COUNT(*) FROM segments_evidence WHERE method='as3' AND source_class='Neanderthal'"
 	).fetchone()[0]
 	has_reference_samples = con.execute(
 		f"SELECT COUNT(*) FROM {raw_table} WHERE reference_sample_id IS NOT NULL AND reference_sample_id!=''"
@@ -1112,7 +1204,7 @@ def build_reference_overlaps(con, raw_table="temp.reference_callsets_raw"):
                    CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start)
                  ) AS reciprocal_overlap,
                  r.reference_role,s.raw_file,r.raw_file
-          FROM segments s
+          FROM segments_evidence s
           JOIN {raw_table} r
             ON r.reference_sample_id=s.sample_id
            AND r.genome_build=s.genome_build AND r.source_class=s.source_class AND r.chr=s.chr
@@ -1137,7 +1229,7 @@ def build_reference_overlaps(con, raw_table="temp.reference_callsets_raw"):
                    CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start)
                  ),
                  r.reference_role,s.raw_file,r.raw_file
-          FROM segments s
+          FROM segments_evidence s
           JOIN reference_callsets r
             ON r.genome_build=s.genome_build AND r.source_class=s.source_class AND r.chr=s.chr
            AND r.end>s.start AND r.start<s.end
@@ -1268,7 +1360,7 @@ def build_burden(con):
       );
       INSERT INTO sample_burden
         SELECT dataset_id,sample_id,method,source_class,genome_build,'raw_call',COUNT(*),NULL,COUNT(DISTINCT chr),SUM(length_bp),SUM(length_bp)
-        FROM segments WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None')
+        FROM segments_evidence WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None')
         GROUP BY dataset_id,sample_id,method,source_class,genome_build;
       CREATE TEMP TABLE burden_union_chr(
         dataset_id TEXT,sample_id TEXT,method TEXT,source_class TEXT,genome_build TEXT,chr TEXT,burden_type TEXT,
@@ -1281,7 +1373,7 @@ def build_burden(con):
 		con,
 		"""
       SELECT dataset_id,sample_id,method,source_class,genome_build,chr,start,end
-      FROM segments WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None')
+      FROM segments_evidence WHERE sample_id IS NOT NULL AND sample_id NOT IN ('','nan','None')
       ORDER BY dataset_id,sample_id,method,source_class,genome_build,chr,start,end
     """,
 		"nonredundant_union",
@@ -1363,7 +1455,7 @@ def build_locus_support(con, trajectory_bins=120):
                MAX(s.score) AS max_segment_score,MAX(s.posterior) AS max_posterior
         FROM tested t
         JOIN loci l ON l.dataset_id=t.dataset_id AND l.genome_build=t.genome_build AND l.locus_id=t.locus_id
-        JOIN segments s ON s.dataset_id=t.dataset_id AND s.genome_build=t.genome_build AND s.sample_id=t.sample_id
+        JOIN segments_evidence s ON s.dataset_id=t.dataset_id AND s.genome_build=t.genome_build AND s.sample_id=t.sample_id
                        AND s.chr=l.chr AND (
                          s.method='trace'
                          OR (t.phyml=1 AND INSTR(','||COALESCE(t.matched_source_classes,'')||',',','||s.source_class||',')>0)
@@ -1408,7 +1500,7 @@ def build_locus_support(con, trajectory_bins=120):
 	available = {
 		(d, b, c, m)
 		for d, b, c, m in con.execute(
-			"SELECT DISTINCT dataset_id,genome_build,chr,method FROM segments WHERE method IN ('ibdmix','trace','as3') UNION SELECT dataset_id,genome_build,chr,method FROM method_runs"
+			"SELECT DISTINCT dataset_id,genome_build,chr,method FROM segments_evidence WHERE method IN ('ibdmix','trace','as3') UNION SELECT dataset_id,genome_build,chr,method FROM method_runs"
 		)
 	}
 	run_info = {
@@ -1558,7 +1650,7 @@ def build_locus_support(con, trajectory_bins=120):
 
 		query = """
           SELECT s.method,s.sample_id,COALESCE(ls.population,''),ls.phyml,s.start,s.end
-          FROM segments s JOIN locus_sample_support ls
+          FROM segments_evidence s JOIN locus_sample_support ls
             ON ls.dataset_id=s.dataset_id AND ls.genome_build=s.genome_build AND ls.sample_id=s.sample_id
            AND ls.locus_id=?
           WHERE s.dataset_id=? AND s.genome_build=? AND s.chr=? AND (
@@ -1730,7 +1822,7 @@ def build_locus_evidence(con):
           SELECT MAX(CASE WHEN method='ibdmix' THEN score END),
                  MAX(CASE WHEN method='trace' THEN posterior END),
                  MAX(CASE WHEN method='as3' THEN score END)
-          FROM segments WHERE dataset_id=? AND genome_build=? AND chr=? AND end>? AND start<?
+          FROM segments_evidence WHERE dataset_id=? AND genome_build=? AND chr=? AND end>? AND start<?
             AND (method='trace' OR source_class=?)
         """,
 			(d, b, chrom, start, end, src),
@@ -1813,6 +1905,40 @@ def build_locus_evidence(con):
 	con.executemany(
 		"INSERT INTO locus_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows
 	)
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_panel INTEGER")
+	con.execute("UPDATE locus_evidence SET n_panel=(SELECT n_panel FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_panel_copies INTEGER")
+	con.execute("UPDATE locus_evidence SET n_panel_copies=(SELECT n_panel_copies FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_lead_called INTEGER")
+	con.execute("UPDATE locus_evidence SET n_lead_called=(SELECT n_lead_called FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_lead_called_copies INTEGER")
+	con.execute("UPDATE locus_evidence SET n_lead_called_copies=(SELECT n_lead_called_copies FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_recurrent_copies INTEGER")
+	con.execute("UPDATE locus_evidence SET n_recurrent_copies=(SELECT n_recurrent_copies FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_singleton_copies INTEGER")
+	con.execute("UPDATE locus_evidence SET n_singleton_copies=(SELECT n_singleton_copies FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN input_status TEXT")
+	con.execute("UPDATE locus_evidence SET input_status=(SELECT input_status FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN ld_status TEXT")
+	con.execute("UPDATE locus_evidence SET ld_status=(SELECT ld_status FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN alignment_status TEXT")
+	con.execute("UPDATE locus_evidence SET alignment_status=(SELECT alignment_status FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN tree_run_status TEXT")
+	con.execute("UPDATE locus_evidence SET tree_run_status=(SELECT tree_run_status FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN topology_status TEXT")
+	con.execute("UPDATE locus_evidence SET topology_status=(SELECT topology_status FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN sequence_qc TEXT")
+	con.execute("UPDATE locus_evidence SET sequence_qc=(SELECT sequence_qc FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN lead_retained_for_tree INTEGER")
+	con.execute("UPDATE locus_evidence SET lead_retained_for_tree=(SELECT lead_retained_for_tree FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN high_ld_sites_retained_for_tree INTEGER")
+	con.execute("UPDATE locus_evidence SET high_ld_sites_retained_for_tree=(SELECT high_ld_sites_retained_for_tree FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN unique_archaic_sequences INTEGER")
+	con.execute("UPDATE locus_evidence SET unique_archaic_sequences=(SELECT unique_archaic_sequences FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN high_ld_max_gap_bp INTEGER")
+	con.execute("UPDATE locus_evidence SET high_ld_max_gap_bp=(SELECT high_ld_max_gap_bp FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
+	con.execute("ALTER TABLE locus_evidence ADD COLUMN site_missingness_audit TEXT")
+	con.execute("UPDATE locus_evidence SET site_missingness_audit=(SELECT site_missingness_audit FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
 	con.executescript("""
       CREATE UNIQUE INDEX idx_locus_evidence_pk ON locus_evidence(dataset_id,genome_build,locus_id);
       CREATE INDEX idx_locus_evidence_state ON locus_evidence(dataset_id,genome_build,evidence_state,phyml_qc);
@@ -1872,7 +1998,8 @@ def normalize_results_main():
 	)
 	ap.add_argument("--reference-cache", type=Path, help="Prepared persistent published-callset SQLite cache")
 	ap.add_argument("--reference-dataset-id", default="AS3_1KG")
-	ap.add_argument("--sample-panel", type=Path, help="1KG sample metadata with sample/pop/super_pop columns")
+	ap.add_argument("--sample-panel", type=Path, help="Sample metadata with sample/pop/super_pop columns")
+	ap.add_argument("--sample-panel-dataset", default="1kg", help="Dataset owning this sample panel; default preserves the 1KG interface")
 	ap.add_argument(
 		"--ibdmix-daf-mask",
 		type=Path,
@@ -1889,6 +2016,10 @@ def normalize_results_main():
 		path = args.output_dir / obsolete
 		if path.exists():
 			path.unlink()
+	if args.sample_panel_dataset.startswith("ukb-"):
+		# The shared PhyML summary link needs a directory even when this UKB
+		# pilot has only IBDmix calls. An empty directory certifies no method.
+		(args.analysis_root / "phyml").mkdir(parents=True, exist_ok=True)
 	packaged = package_core_results(args.analysis_root, args.output_dir)
 	parse_root = args.output_dir
 	db = (args.database or (args.analysis_root / "final" / "gu.sqlite")).resolve()
@@ -1907,11 +2038,17 @@ def normalize_results_main():
 		init_db(con)
 		counts = {}
 		method_runs = discover_method_runs(args.analysis_root, args.build)
+		ukb_datasets = {row[0] for row in method_runs if row[0].startswith("ukb-")}
+		if ukb_datasets:
+			ukb_prep = load_module("0.ukb.py")
+			for dataset in sorted(ukb_datasets):
+				if ukb_prep.validate_result_cohort(args.analysis_root, dataset) is None:
+					raise ValueError(f"UKB method results lack archived preparation QC: {dataset}")
 		if method_runs:
 			con.executemany("INSERT INTO method_runs VALUES(?,?,?,?,?,?,?,?)", method_runs)
 		con.execute("CREATE INDEX idx_method_runs_unit ON method_runs(dataset_id,genome_build,chr,method)")
 		counts["completed_method_units"] = len(method_runs)
-		populations = sample_population_table(args.sample_panel)
+		populations = sample_population_table(args.sample_panel, args.sample_panel_dataset, args.analysis_root)
 		if not populations.empty:
 			insert_df(con, "sample_populations", populations)
 		nref = 0
@@ -1942,7 +2079,7 @@ def normalize_results_main():
 		counts["external_reference"] = con.execute("SELECT COUNT(*) FROM reference_callsets").fetchone()[0]
 		completed_ibdmix = {Path(row[7]).parent for row in method_runs if row[3] == "ibdmix" and row[4] == "complete"}
 		ibdmix_audits = []
-		if completed_ibdmix and args.ibdmix_daf_mask is None:
+		if any(not dataset_from_path(path, "ibdmix").startswith("ukb-") for path in completed_ibdmix) and args.ibdmix_daf_mask is None:
 			print(
 				"[GU FINAL] WARNING: Altai DAF filter NOT applied: author exclusion BED unavailable; set GU_IBDMIX_DAF_MASK. Denisovan filters remain enabled.",
 				flush=True,
@@ -2267,7 +2404,7 @@ import numpy as np
 load_module("0.common.py")
 from gu_0_common import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 14
+SCHEMA = 15
 SUMMARY_REFERENCES = ("Altai", "Altai.2013", "Chagyr", "Vindija", "Denisova", "Denisova.2013", "Denisova25")
 SUMMARY_GROUPS = {ref: (ref,) for ref in SUMMARY_REFERENCES}
 SUMMARY_GROUPS.update(
@@ -2296,8 +2433,8 @@ def density_run_path(raw, database):
 		return database.parent / path
 	if density_input_stat(path):
 		return path
-	# Published RDS files restore the original method/target/scope tree under
-	# /tmp. Older databases still record the former absolute analysis root.
+	# Older databases can retain a former absolute analysis root. Resolve the
+	# original method/target/scope tree under the current permanent root.
 	# Keep the entire run suffix, including the legacy ukb namespace; never
 	# search by chromosome or basename, which could select another cohort.
 	parts = path.parts
@@ -2366,13 +2503,6 @@ def shared_reference_targets(reference_targets, references, chromosomes=tuple(ma
 		if samples:
 			common[chrom] = samples
 	return common
-
-
-def x_nonpar_intervals(build, length):
-	"""BED0 complement of PAR1/PAR2, matching comm.sh target validation."""
-	bounds = {"GRCh37": (60000, 2699520, 154931043, 155260560), "GRCh38": (10000, 2781479, 155701382, 156030895)}
-	p1s, p1e, p2s, p2e = bounds[build]
-	return [(lo, min(hi, length)) for lo, hi in [(0, p1s), (p1e, p2s), (p2e, length)] if lo < min(hi, length)]
 
 
 def reference_summary(con, dataset, build, samples, lengths, targets, reference, x_male=False):
@@ -2447,6 +2577,60 @@ def add_interval(covered, row, offset, length, bin_bp, left, right):
 		return
 	for b in range(left // bin_bp, (right - 1) // bin_bp + 1):
 		covered[row, offset + b] += min(right, (b + 1) * bin_bp) - max(left, b * bin_bp)
+
+
+
+def population_burdens(rows, metadata, dataset, build, scope, population_samples, filters):
+	"""Saved descriptive data: zero calls require a certified tested denominator."""
+	by_ref = {}
+	for row in rows: by_ref.setdefault(row["reference"], {})[row["sample_id"]] = row
+	groups = {"ALL": set(population_samples)}
+	for sample in population_samples:
+		pop, superpop = metadata.get(sample, ("UNKNOWN", "UNKNOWN"))
+		groups.setdefault(pop, set()).add(sample)
+		groups.setdefault(superpop, set()).add(sample)
+		if pop in {"ESN", "GWD", "LWK", "MSL", "YRI"}: groups.setdefault("AFR (5)", set()).add(sample)
+	result = []
+	for ref, values in by_ref.items():
+		for group, members in groups.items():
+			measured = [values[s] for s in members if s in values and values[s]["tested_bp"] > 0 and values[s]["archaic_bp"] != ""]
+			n = len(measured)
+			chroms = sorted({r["chromosomes"] for r in measured})
+			denoms = [r["tested_bp"] for r in measured]
+			total = sum(r["archaic_bp"] for r in measured)
+			result.append(dict(dataset_id=dataset, genome_build=build, scope=scope, group=group, reference=ref,
+				reference_role="ibdmix_reproduction_only" if ref == "2013 Pair" else reference_role(ref) if ref in SUMMARY_REFERENCES else "scientific_reference_group",
+				n_panel=len(members), n_tested=n, n_positive=sum(r["archaic_bp"] > 0 for r in measured), n_zero=sum(r["archaic_bp"] == 0 for r in measured), n_untested=len(members)-n,
+				total_union_bp=total if n else None, mean_mb=total/n/1e6 if n else None,
+				coverage_pct=sum(r["coverage_pct"] for r in measured)/n if n else None,
+				physical_denominator_bp=denoms[0] if denoms and len(set(denoms)) == 1 else None,
+				denominator_min_bp=min(denoms) if denoms else None, denominator_max_bp=max(denoms) if denoms else None,
+				chromosomes=";".join(chroms), comparable_scope=int(len(chroms) == 1),
+				complete_chromosomes=int(bool(measured) and all(r["n_chromosomes"] == (1 if scope == "male_nonpar_X" else 22) for r in measured)),
+				filter_status=json.dumps(filters, sort_keys=True), denominator_definition="physical_nonPAR_haploid" if scope == "male_nonpar_X" else "physical_autosomes_diploid_not_dosage_or_callable",
+				mask_history="see_native_qc;unknown_if_not_saved", model_calibration="experimental_pseudodiploid_LOD_uncalibrated" if scope == "male_nonpar_X" else "existing_autosomal_profile"))
+	return result
+
+
+def paired_male_burdens(x_rows, auto_rows, metadata, dataset, build):
+	"""Same people, same reference, certified full X and 22-autosome coverage."""
+	autos = {(r["reference"], r["sample_id"]): r for r in auto_rows if r["n_chromosomes"] == 22 and r["tested_bp"] > 0}
+	pairs = []
+	for x in x_rows:
+		a = autos.get((x["reference"], x["sample_id"]))
+		if a is None or x["n_chromosomes"] != 1 or x["tested_bp"] <= 0: continue
+		pairs.append((x, a))
+	groups = {}
+	for x, a in pairs:
+		pop, sp = metadata.get(x["sample_id"], ("UNKNOWN", "UNKNOWN"))
+		for group in set(("ALL", pop, sp)) | ({"AFR (5)"} if pop in {"ESN", "GWD", "LWK", "MSL", "YRI"} else set()):
+			groups.setdefault((x["reference"], group), []).append((x, a))
+	return [dict(dataset_id=dataset, genome_build=build, reference=ref, group=group, n_same_males=len(rr),
+		x_mean_mb=sum(x["archaic_bp"] for x,a in rr)/len(rr)/1e6, autosome_mean_mb=sum(a["archaic_bp"] for x,a in rr)/len(rr)/1e6,
+		x_coverage_pct=sum(x["coverage_pct"] for x,a in rr)/len(rr), autosome_coverage_pct=sum(a["coverage_pct"] for x,a in rr)/len(rr),
+		x_physical_bp=rr[0][0]["tested_bp"], autosome_diploid_bp=rr[0][1]["tested_bp"],
+		definition="same_men;22_autosomes_and_nonPAR_X;union_physical_coverage_not_ancestry_dosage;X_LOD_uncalibrated")
+		for (ref, group), rr in groups.items()]
 
 
 def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
@@ -2625,11 +2809,12 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 						chr=chrom,
 						start=left,
 						end=min(length, left + bin_bp),
-						tested=int(chrom in tested),
+						tested=int(chrom in tested and (chrom != "X" or not x_male or any(max(left, lo) < min(left + bin_bp, hi) for lo, hi in x_nonpar_intervals(build, length)))),
+						physical_bp=sum(max(0, min(length, left + bin_bp, hi) - max(left, lo)) for lo, hi in x_nonpar_intervals(build, length)) if chrom == "X" and x_male else min(length, left + bin_bp) - left,
 					)
 				)
 		print(f"DENSITY building {dataset} {build}: {len(samples)} individuals x {len(bins)} bins", flush=True)
-		widths = np.array([b["end"] - b["start"] for b in bins])
+		widths = np.array([b["physical_bp"] for b in bins])
 		ploidy = np.array([1 if b["chr"] == "X" and x_male else 2 for b in bins])
 		unions = {}
 		for lineage, filename in [("Neanderthal", "matrix.tsv.gz"), ("Denisovan", "denisovan_matrix.tsv.gz")]:
@@ -2642,11 +2827,13 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 			for sample, chrom, left, right in merged_intervals(rows):
 				if chrom not in lengths:
 					continue
-				add_interval(covered, sample_index[sample], offsets[chrom], lengths[chrom], bin_bp, left, right)
+				spans = x_nonpar_intervals(build, lengths[chrom]) if chrom == "X" and x_male else [(0, lengths[chrom])]
+				for lo, hi in spans:
+					add_interval(covered, sample_index[sample], offsets[chrom], lengths[chrom], bin_bp, max(left, lo), min(right, hi))
 				unions[lineage] += 1
 			if np.any(covered > widths):
 				raise ValueError("union coverage exceeds bin length")
-			density = np.round(100 * covered / (widths * ploidy), 3)
+			density = np.round(np.divide(100 * covered, widths * ploidy, out=np.full(covered.shape, np.nan), where=widths > 0), 3)
 			for j, b in enumerate(bins):
 				eligible = lineage_targets[lineage].get(b["chr"], set())
 				for i, sample in enumerate(samples):
@@ -2667,7 +2854,7 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 				for i, s in enumerate(samples)
 			],
 		)
-		write_tsv_rows(stage / "bins.tsv", ["bin_index", "chr", "start", "end", "tested"], bins)
+		write_tsv_rows(stage / "bins.tsv", ["bin_index", "chr", "start", "end", "tested", "physical_bp"], bins)
 		print(f"DENSITY summarizing Neanderthal autosomes: {len(summary_targets)}/22 chromosomes", flush=True)
 		reference_rows = []
 		for ref, members in SUMMARY_GROUPS.items():
@@ -2726,6 +2913,12 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 					(dataset, build),
 				)
 			]
+		x_population = set().union(*(v.get("X", set()) for v in reference_targets.values()))
+		aggregates = population_burdens(reference_rows, metadata, dataset, build, "autosomes", set(samples), filters)
+		aggregates += population_burdens(x_rows, metadata, dataset, build, "male_nonpar_X", x_population, filters)
+		paired = paired_male_burdens(x_rows, reference_rows, metadata, dataset, build)
+		write_tsv_rows(stage / "population_summary.tsv", list(aggregates[0]) if aggregates else ["dataset_id", "scope"], aggregates)
+		write_tsv_rows(stage / "same_males_X_autosomes.tsv", list(paired[0]) if paired else ["dataset_id", "reference", "n_same_males"], paired)
 		(stage / "manifest.json").write_text(
 			json.dumps(
 				dict(

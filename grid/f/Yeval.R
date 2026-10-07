@@ -163,7 +163,7 @@ load_posterior <- function() {
 		return(NULL)
 	f <- arg("posterior-file", file.path(score_dir, "1csx.posterior.rds"))
 	if (!file.exists(f))
-		stop("Missing individual posterior: ", f, ". Run 1csx.sh --posterior TRUE; --posterior-mode off is only for a benchmark without individual posterior panels.")
+		stop("Missing individual posterior: ", f, ". Run 1.csx.sh --posterior TRUE; --posterior-mode off is only for a benchmark without individual posterior panels.")
 	posterior <- readRDS(f)
 	md <- attr(posterior, "model_info")
 	if (is.null(md) || md$schema != "grid_csx_moments_v1" || md$centering != "discovery_EAF")
@@ -989,7 +989,7 @@ if (nrow(individual)) {
 		if (individual_metric == "reliability")
 			paste0("Model-based reliability is distinct from empirical prediction R² in b; ", missing_prior, " people lack a variance scale.") else "Posterior SD is shown; lower values mean less uncertainty. This is not a prediction R².")
 } else {
-	pd <- ggplot() + theme_void() + labs(title = "Individual posterior analysis disabled", subtitle = "Run 1csx.sh --posterior TRUE, then Yeval with --posterior-mode required") +
+	pd <- ggplot() + theme_void() + labs(title = "Individual posterior analysis disabled", subtitle = "Run 1.csx.sh --posterior TRUE, then Yeval with --posterior-mode required") +
 		small_theme
 	posterior_caption <- "Individual posterior estimates disabled explicitly."
 }

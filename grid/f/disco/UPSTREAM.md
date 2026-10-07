@@ -1,7 +1,7 @@
 Source: https://github.com/YunfengRuan/DiscoDivas
 Commit: ee8e5d996e6fc6ffaf04255e1cf0fa8ecce68524
 License: MIT (LICENSE in this directory).
-Program: ../2disco.R; moved without algorithm changes during layout consolidation.
+Program: ../2.disco.R; moved without algorithm changes during layout consolidation.
 
 The official distance-matrix inversion, distance interpolation, shrinkage and
 PCA residualization are retained. Two local correctness fixes:

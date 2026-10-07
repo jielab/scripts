@@ -592,9 +592,15 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 	if (!identical(unname(tools::md5sum(temporary)), unname(tools::md5sum(target)))) stop('Workbook copy verification failed: ', target)
 	invisible(target)
 }
+le8_table_result_paths <- function(paths, root) {
+	# Runtime audits are retained as logs, not interpreted as analysis tables.
+	# Match below root so a caller may itself live under a directory named logs.
+	relative <- substring(paths, nchar(sub('/+$', '', root)) + 2L)
+	paths[!grepl('(^|/)(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints|logs)/', relative)]
+}
 le8_table_stores <- function(root) {
 	paths <- list.files(root, pattern = '[.]xlsx$', recursive = TRUE, full.names = TRUE)
-	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints)/', paths)]
+	paths <- le8_table_result_paths(paths, root)
 	as.character(unlist(lapply(unique(dirname(paths)), le8_table_archive_files), use.names = FALSE))
 }
 le8_tables_pack <- function(root, clean = TRUE) {
@@ -602,22 +608,25 @@ le8_tables_pack <- function(root, clean = TRUE) {
 	paths <- list.files(root, pattern = '[.](csv|tsv|jsonl)([.]gz)?$|[.]xlsx$|[.]json$', recursive = TRUE, full.names = TRUE, all.files = TRUE)
 	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl|selective_attention)(/attention)?/[^/]+[.]json$', paths)
 	paths <- paths[!grepl('[.]json$', paths) | internal]
-	paths <- paths[!grepl('/(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints)/', paths)]
+	paths <- le8_table_result_paths(paths, root)
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
 	for (directory in directories) {
 		old_workbooks <- le8_table_archive_files(directory)
 		public <- le8_table_load(directory)
 		converted_rds <- character()
+		converted_sources <- character()
 		for (filename in names(public$private_files)) {
 			if (public$private_files[[filename]] == 'c2.genetic_score_weights.tsv') next
 			p <- file.path(directory, filename)
+			if (!file.exists(p)) next  # An aggregate-only workspace may omit reusable data.
 			x <- readRDS(p)
 			entry <- attr(x, 'le8_table_export')
-			if (!identical(entry$format, 'le8-private-table-v1')) stop('Expected a table export: ', p)
+			if (!identical(entry$format, 'le8-private-table-v1') || !identical(entry$source, public$private_files[[filename]])) stop('Expected a table export: ', p)
 			if (is.data.frame(x)) entry$data <- x else entry$sheets <- x
 			public$files[[entry$source]] <- entry
 			public$private_files[[filename]] <- NULL
 			converted_rds <- c(converted_rds, p)
+			converted_sources <- c(converted_sources, entry$source)
 		}
 		changed <- length(converted_rds) > 0L || any(vapply(old_workbooks, function(path) !identical(le8_table_archive_read(path)$layout, 'topic-workbooks-v2'), logical(1)))
 		paired <- sub('[.]png$', '.xlsx', list.files(directory, pattern = '[.]png$'))
@@ -625,7 +634,7 @@ le8_tables_pack <- function(root, clean = TRUE) {
 		files <- paths[dirname(paths) == directory]
 		files <- setdiff(files, old_workbooks)
 		if (Sys.getenv('LE8_TABLE_WORKSPACE') == '1') {
-			removed <- setdiff(names(public$files), basename(files))
+			removed <- setdiff(names(public$files), c(basename(files), converted_sources))
 			if (length(removed)) { public$files[removed] <- NULL ; changed <- TRUE }
 		}
 		intermediate <- any(strsplit(directory, '/', fixed = TRUE)[[1]] %in% c('prepared', 'neural', 'quality_neural'))
@@ -660,7 +669,11 @@ le8_tables_pack <- function(root, clean = TRUE) {
 			unlink(setdiff(old_workbooks, file.path(directory, written)))
 		}
 		# Workbooks and their embedded source checksums passed verification above.
-		if (length(converted_rds)) unlink(converted_rds)
+		if (length(converted_rds)) {
+			saved <- le8_table_load(directory)
+			if (!all(converted_sources %in% names(saved$files))) stop('Converted tables were not all preserved in workbooks: ', directory)
+			unlink(converted_rds)
+		}
 		# A source XLSX may have the same name as its newly consolidated figure
 		# workbook. Never delete the published replacement while cleaning inputs.
 		if (clean && length(files)) unlink(setdiff(files,le8_table_archive_files(directory)))
@@ -956,6 +969,19 @@ le8_validate_ids <- function(d, label = "input") {
 	d$eid <- as.character(d$eid)
 	if (anyNA(d$eid) || any(!nzchar(trimws(d$eid))) || anyDuplicated(d$eid)) stop(label, " contains missing/duplicate eid")
 	d
+}
+le8_join_pgs <- function(d, scores, score_map) {
+	d <- le8_validate_ids(d, "Measured omics")
+	scores <- le8_validate_ids(scores, "PGS")
+	if (!length(score_map)) return(list(data = d, score_map = score_map))
+	columns <- unique(unname(score_map))
+	scores <- scores[, c("eid", columns), drop = FALSE]
+	# A score may use the measured feature's name. Keep both values distinct,
+	# including when the input already contains one of our internal names.
+	internal <- tail(make.unique(c(names(d), paste0(".le8_pgs_", seq_along(columns)))), length(columns))
+	names(scores)[-1L] <- internal
+	list(data = dplyr::inner_join(d, scores, by = "eid"),
+		score_map = setNames(internal[match(unname(score_map), columns)], names(score_map)))
 }
 le8_participant_groups <- function(d) {
 	d <- le8_validate_ids(d)
@@ -1688,15 +1714,21 @@ le8_stage <- function(label, expr, detail = "") {
 # Dynamic block scheduling for Linux/WSL R association tasks.
 # Integration requires sourcing this file before parallel_map()/PGS dispatch.
 # No model formula, sample mask, SNP selection, or FDR definition is changed.
-# R tests are supplied but were NOT executed in the delivery environment.
-le8_parallel_workers <- function(n, requested, parent_gib=0, worker_gib=2, budget_gib=32, reserve_gib=4) {
-  nums <- c(n,requested,parent_gib,worker_gib,budget_gib,reserve_gib)
-  if(any(!is.finite(nums)) || n<0 || requested<1 || worker_gib<=0 || parent_gib<0 || reserve_gib<0)
+le8_parallel_workers <- function(n, requested, parent_gib=0, worker_gib=2, budget_gib=32, reserve_gib=4,
+                                 fork_copy_gib=0) {
+  nums <- c(n,requested,parent_gib,worker_gib,budget_gib,reserve_gib,fork_copy_gib)
+  if(any(!is.finite(nums)) || n<0 || requested<1 || worker_gib<=0 || parent_gib<0 || reserve_gib<0 || fork_copy_gib<0)
     stop("Invalid parallel resource request")
   if(n==0) return(0L)
   allowance <- floor((budget_gib-parent_gib-reserve_gib)/worker_gib)
-  if(allowance<1) stop("Insufficient declared RAM even for one worker; do not start a fork wave")
+  if(allowance<1) stop(sprintf(
+    "Insufficient declared RAM even for one worker: budget=%.3f GiB, parent RSS=%.3f GiB, worker=%.3f GiB, reserve=%.3f GiB; do not start a fork wave",
+    budget_gib,parent_gib,worker_gib,reserve_gib),call.=FALSE)
   if(.Platform$OS.type=="windows") return(1L)
+  # One worker executes in the parent. Forks also need room for inherited
+  # pages dirtied by R allocation/GC, even when score columns are read-only.
+  # If fewer than two forks fit, retain the serial path already checked above.
+  allowance <- max(1, floor((budget_gib-parent_gib-reserve_gib)/(worker_gib+fork_copy_gib)))
   as.integer(min(n,requested,allowance))
 }
 
@@ -1758,14 +1790,24 @@ le8_worker_plan <- function(n, kind='pwas', requested=NULL) {
     }
     if(identical(Sys.getenv('LE8_IN_WORKER'),'1')) return(1L)
     budget <- as.numeric(Sys.getenv('LE8_PHASE_MEMORY_GIB',Sys.getenv('LE8_RESOURCE_MEMORY_GIB','32')))
-    rss <- if(file.exists('/proc/self/status')) readLines('/proc/self/status') else character()
-    rss <- rss[grepl('^VmRSS:',rss)]
+    status <- if(file.exists('/proc/self/status')) readLines('/proc/self/status') else character()
+    rss <- status[grepl('^VmRSS:',status)]
     parent <- if(length(rss)) as.numeric(gsub('[^0-9]','',rss[1]))/1024^2 else 0
+    swap <- status[grepl('^VmSwap:',status)]
+    swap <- if(length(swap)) as.numeric(gsub('[^0-9]','',swap[1]))/1024^2 else 0
+    # Full-cohort PGS can retain a ~20 GiB R heap. Repeated model fits and GC
+    # can privatize that heap in each child; a fixed 2 GiB workspace estimate
+    # alone admitted four forks under a 32 GiB cap and caused a cgroup OOM.
+    # Swapped parent pages may become resident again during the next fit.
+    parent_working <- parent + if(kind=='pgs') swap else 0
+    fork_copy <- if(kind=='pgs') parent_working else 0
     claim <- as.numeric(Sys.getenv('LE8_CPU_TASK_MEMORY_GIB',if(kind=='pgs') '2' else '1'))
     reserve <- as.numeric(Sys.getenv('LE8_R_RESERVE_GIB','1'))
-    workers <- le8_parallel_workers(n,min(requested,cores),parent,claim,budget,reserve)
+    workers <- le8_parallel_workers(n,min(requested,cores),parent_working,claim,budget,reserve,
+        fork_copy_gib=fork_copy)
     message('[LE8] RESOURCE ',kind,': workers=',workers,' cores=',cores,' parent_RSS_GiB=',round(parent,3),
-        ' worker_claim_GiB=',claim,' budget_GiB=',budget,' block_size=4; admission estimate, cgroup is the hard limit')
+        ' parent_swap_GiB=',round(swap,3),' worker_claim_GiB=',claim,' fork_copy_GiB=',round(fork_copy,3),
+        ' budget_GiB=',budget,' block_size=4; admission estimate, cgroup is the hard limit')
     workers
 }
 

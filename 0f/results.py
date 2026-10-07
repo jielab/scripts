@@ -106,29 +106,48 @@ def workbook_sources(path):
 		return manifest.get("files", {})
 
 
+def workbook_tables(manifest):
+	if manifest.get("format") != "analysis-tables-v1":
+		raise ValueError("Unsupported result workbook format")
+	return manifest.get("tables") or [
+		{"name": name.removesuffix(".gz").removesuffix(".tsv").removesuffix(".csv"), "source": name}
+		for name in manifest.get("files", {})
+	]
+
+
 def materialize_workbook(path, table=None):
- path = Path(path)
- with zipfile.ZipFile(path) as archive:
-  manifest = json.loads(archive.read('results/manifest.json'))
-  candidates = manifest.get('tables', [])
-  if table is not None:candidates = [x for x in candidates if x['name'] == table or x['source'] == table]
-  if len(candidates) != 1:
-   raise ValueError('Select one named table from this workbook: ' + str(path))
-  name = candidates[0]['source']
-  entry = manifest['files'][name]
-  directory = Path('/tmp/analysis-results') / entry['sha256']
-  directory.mkdir(parents=True, exist_ok=True)
-  target = directory / Path(name).name
-  if not target.is_file():
-   fd,temporary = tempfile.mkstemp(dir=directory);os.close(fd)
-   digest = hashlib.sha256()
-   try:
-    with archive.open(entry['part']) as source, open(temporary,'wb') as output:
-     for block in iter(lambda:source.read(4*1024*1024),b''):output.write(block);digest.update(block)
-    if digest.hexdigest() != entry['sha256']:raise ValueError('Workbook source checksum mismatch')
-    os.replace(temporary,target)
-   finally:Path(temporary).unlink(missing_ok=True)
- return target
+	path = Path(path)
+	with zipfile.ZipFile(path) as archive:
+		manifest = json.loads(archive.read("results/manifest.json"))
+		candidates = workbook_tables(manifest)
+		if table is not None:
+			candidates = [x for x in candidates if table in (x["name"], x["source"])]
+		if len(candidates) != 1:
+			raise ValueError("Select one named table from this workbook: " + str(path))
+		name = candidates[0]["source"]
+		entry = manifest["files"][name]
+		sha = entry["sha256"]
+		if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha) or entry["part"] != f"results/exports/{sha}.bin":
+			raise ValueError("Invalid workbook export path")
+		directory = Path("/tmp/analysis-results") / sha
+		directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+		target = directory / Path(name).name
+		# Validate the archive even when a prior materialization exists: a warm
+		# cache must not conceal corrupt or replaced embedded scientific data.
+		fd, temporary = tempfile.mkstemp(dir=directory)
+		os.close(fd)
+		digest = hashlib.sha256()
+		try:
+			with archive.open(entry["part"]) as source, open(temporary, "wb") as output:
+				for block in iter(lambda: source.read(4*1024*1024), b""):
+					output.write(block)
+					digest.update(block)
+			if digest.hexdigest() != sha:
+				raise ValueError("Workbook source checksum mismatch")
+			os.replace(temporary, target)
+		finally:
+			Path(temporary).unlink(missing_ok=True)
+	return target
 
 
 def resolve_table(path):
@@ -145,22 +164,7 @@ def resolve_table(path):
 		entry = workbook_sources(workbook).get(path.name)
 		if entry is None:
 			continue
-		part = f"results/exports/{entry['sha256']}.bin"
-		if entry["part"] != part or len(entry["sha256"]) != 64:
-			raise ValueError("Invalid workbook export path")
-		directory = Path("/tmp/analysis-results") / entry["sha256"]
-		directory.mkdir(parents = True, exist_ok = True, mode = 0o700)
-		target = directory / path.name
-		if not target.is_file():
-			with zipfile.ZipFile(workbook) as archive:
-				data = archive.read(part)
-			if hashlib.sha256(data).hexdigest() != entry["sha256"]:
-				raise ValueError(f"Workbook export checksum mismatch: {workbook}")
-			with tempfile.NamedTemporaryFile(dir = directory, delete = False) as stream:
-				stream.write(data)
-				name = stream.name
-			os.replace(name, target)
-		return target
+		return materialize_workbook(workbook, path.name)
 	return path
 
 
@@ -232,6 +236,7 @@ def stream_workbook(specification, destination):
 		with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive, ExitStack() as handles:
 			for table_index,table in enumerate(spec['tables']):
 				location['table'] = table['name']
+				empty_strings = {tuple(cell) for cell in table.get('empty_string_cells', [])}
 				path = Path(table['path'])
 				opener = gzip.open if path.suffix == '.gz' else open
 				with opener(path, 'rt', newline='', encoding='utf-8-sig') as stream:
@@ -259,9 +264,9 @@ def stream_workbook(specification, destination):
 						if sheet_rows == 1048575:close_sheet();start_sheet()
 						cells = []
 						location['row'] = count + 1
-						for column,value,kind in zip(header,row,types):
+						for column_index,(column,value,kind) in enumerate(zip(header,row,types), 1):
 							location['column'] = column
-							if value == '':cells.append('<c/>')
+							if value == '':cells.append(string_cell('') if (count + 1, column_index) in empty_strings else '<c/>')
 							elif kind == 'numeric' and math.isfinite(float(value)):cells.append('<c><v>'+escape(value)+'</v></c>')
 							elif kind == 'logical' and value in ('TRUE','FALSE'):cells.append('<c t="b"><v>'+str(int(value == 'TRUE'))+'</v></c>')
 							else:cells.append(string_cell(value))
@@ -321,46 +326,90 @@ def stream_workbook(specification, destination):
 
 
 def upgrade_workbook(path):
- """Repackage an early streaming workbook for Excel and R interoperability."""
- import math
- from xml.etree import ElementTree as ET
- path = Path(path)
- with tempfile.TemporaryDirectory(prefix='result-upgrade-',dir='/tmp') as directory:
-  root = Path(directory)
-  with zipfile.ZipFile(path) as archive:
-   manifest = json.loads(archive.read('results/manifest.json'))
-   if manifest.get('writer') == 'shared-strings-v2':return False
-   spec = {'tables': [], 'sources': [], 'metadata': manifest.get('metadata')}
-   sheet = 1
-   for table in manifest['tables']:
-    parts = max(1, math.ceil(table['rows'] / 1048575))
-    if table['source'].endswith('.long_text.tsv'):
-     sheet += parts;continue
-    types = table.get('types', [None] * table['columns'])
-    for index in range(sheet,sheet+parts):
-     if all(types):break
-     with archive.open(f'xl/worksheets/sheet{index}.xml') as source:
-      for event,row in ET.iterparse(source, events=('end',)):
-       if not row.tag.endswith('}row'):continue
-       if row.get('r') != '1':
-        for i,cell in enumerate(row):
-         if i >= len(types) or types[i] or not len(cell):continue
-         types[i] = 'character' if cell.get('t') in ('s','inlineStr','str') else 'logical' if cell.get('t') == 'b' else 'numeric'
-       row.clear()
-       if all(types):break
-    types = [t or 'character' for t in types]
-    name = Path(table['source']).name
-    entry = manifest['files'][table['source']]
-    target = root / name
-    digest = hashlib.sha256()
-    with archive.open(entry['part']) as source,target.open('wb') as output:
-     for block in iter(lambda:source.read(4*1024*1024),b''):digest.update(block);output.write(block)
-    if digest.hexdigest()!=entry['sha256']:raise ValueError('Stored workbook source checksum mismatch')
-    spec['tables'].append({'name':table['name'],'path':str(target),'types':types})
-    sheet += parts
-  job = root / 'spec.json';job.write_text(json.dumps(spec))
-  stream_workbook(job,path)
- return True
+	"""Re-export legacy workbooks, preserving exact sources, cell values and types."""
+	import csv
+	from xml.etree import ElementTree as ET
+	import re
+	path = Path(path)
+	ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+	with tempfile.TemporaryDirectory(prefix="result-upgrade-", dir="/tmp") as directory:
+		root = Path(directory)
+		with zipfile.ZipFile(path) as archive:
+			manifest = json.loads(archive.read("results/manifest.json")) if "results/manifest.json" in archive.namelist() else {}
+			if manifest.get("writer") == "shared-strings-v2":
+				return False
+			strings = []
+			if "xl/sharedStrings.xml" in archive.namelist():
+				strings = ["".join(x.itertext()) for x in ET.fromstring(archive.read("xl/sharedStrings.xml"))]
+			book = ET.fromstring(archive.read("xl/workbook.xml"))
+			names = [x.attrib["name"] for x in book.find("m:sheets", ns)]
+			spec = {"tables": [], "sources": [], "metadata": manifest.get("metadata")}
+			for i, name in enumerate(names, 1):
+				target = root / f"sheet{i:04d}.tsv"
+				kinds = []
+				empty_strings = []
+				with archive.open(f"xl/worksheets/sheet{i}.xml") as stream, target.open("w", newline="") as output:
+					writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+					for _, row in ET.iterparse(stream, events=("end",)):
+						if not row.tag.endswith("}row"):
+							continue
+						values = [""] * len(kinds)
+						for cell in row:
+							col = 0
+							for c in re.match(r"[A-Z]+", cell.attrib["r"])[0]:
+								col = col * 26 + ord(c) - 64
+							while len(values) < col: values.append("")
+							while len(kinds) < col: kinds.append(set())
+							type_ = cell.get("t", "n")
+							v = cell.find("m:v", ns)
+							value = "" if v is None or v.text is None else v.text
+							if type_ == "s": value = strings[int(value)] if value else ""
+							elif type_ == "inlineStr": value = "".join(cell.find("m:is", ns).itertext())
+							elif type_ == "b": value = "TRUE" if value == "1" else "FALSE"
+							if value == "" and type_ in ("s", "str", "inlineStr") and row.get("r") != "1":
+								empty_strings.append([int(row.get("r")) - 1, col])
+							values[col-1] = value
+							if row.get("r") != "1" and value != "":
+								kinds[col-1].add("logical" if type_ == "b" else "numeric" if type_ == "n" else "character")
+						writer.writerow(values)
+						row.clear()
+				types = [next(iter(k)) if len(k) == 1 else "character" for k in kinds]
+				spec["tables"].append({"name": name, "path": str(target), "types": types, "empty_string_cells": empty_strings})
+			# Preserve exact embedded bytes under their original names as well.
+			for name, entry in manifest.get("files", {}).items():
+				data = archive.read(entry["part"])
+				if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+					raise ValueError("Stored workbook source checksum mismatch")
+				target = root / Path(name).name
+				if target.exists(): raise ValueError("Conflicting legacy source name")
+				target.write_bytes(data)
+				spec["sources"].append(str(target))
+		job = root / "spec.json"
+		job.write_text(json.dumps(spec))
+		staged = root / "upgraded.xlsx"
+		stream_workbook(job, staged)
+		with zipfile.ZipFile(staged) as archive:
+			new = json.loads(archive.read("results/manifest.json"))
+			for name, entry in manifest.get("files", {}).items():
+				if new["files"][name]["sha256"] != entry["sha256"]:
+					raise ValueError("Legacy source changed during migration")
+		# Keep original table selection semantics for files-only legacy manifests.
+		# New sheet exports are equivalent display data; original sources are exact.
+		if manifest.get("files") and not manifest.get("tables"):
+			new["tables"] = workbook_tables(manifest)
+			with zipfile.ZipFile(staged) as archive, zipfile.ZipFile(root / "selected.xlsx", "w", compression=zipfile.ZIP_DEFLATED) as result:
+				for item in archive.infolist():
+					result.writestr(item, json.dumps(new).encode() if item.filename == "results/manifest.json" else archive.read(item.filename))
+			os.replace(root / "selected.xlsx", staged)
+		import shutil
+		fd, installed = tempfile.mkstemp(prefix="." + path.name + ".part.", dir=path.parent)
+		os.close(fd)
+		try:
+			shutil.copyfile(staged, installed)
+			os.replace(installed, path)
+		finally:
+			Path(installed).unlink(missing_ok=True)
+	return True
 
 
 if __name__ == '__main__':

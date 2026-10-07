@@ -595,7 +595,7 @@ grid_configure() {
 					;;
 
 				-h | --help)
-					bash "$GRID_ROOT/3grid.sh" --help
+					bash "$GRID_ROOT/grid.sh" --help
 					exit 0
 					;;
 				*) _grid_die "unknown option '$1'" ;;

@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -37,6 +38,10 @@ class StorageTests(unittest.TestCase):
   self.assertEqual(restored.read_bytes(),(self.root/'source.tsv').read_bytes())
   # Older software using the former .rds name can resolve the replacement.
   self.assertEqual(io.resolve_table(dest.with_suffix('.rds')),restored)
+ def test_r_reader_interoperability(self):
+  dest=self.workbook([['eid','estimate'],['00001','1.234567890123456']],['character','numeric'])
+  script='x<-openxlsx::read.xlsx(commandArgs(TRUE)[1]);stopifnot(identical(x$eid,"00001"),identical(x$estimate,1.234567890123456))'
+  subprocess.run(['/usr/bin/Rscript','-e',script,str(dest)],check=True,capture_output=True,text=True)
  def test_long_text_is_split_without_loss(self):
   value='AGCT'*20000
   dest=self.workbook([['id','sequence'],['00001',value]],['character','character'])
@@ -59,9 +64,10 @@ class StorageTests(unittest.TestCase):
   with self.assertRaises(ValueError):io.stream_workbook(spec,dest)
   self.assertEqual(dest.read_bytes(),b'prior verified output')
  def test_persistent_native_archive_survives_tmp_cleanup(self):
-  with tempfile.TemporaryDirectory(prefix='gu-storage-test-',dir='/mnt/d/analysis/result-format-audit-20261006') as directory:
+  with tempfile.TemporaryDirectory(prefix='gu-storage-test-',dir=HERE) as directory:
    root=Path(directory);run=root/'ibdmix/test/chr1';(run/'final').mkdir(parents=True);(run/'samples/C1').mkdir(parents=True)
    (run/'run.meta.tsv').write_text('refs\tAltai\n');(run/'samples/C1/ALL.txt').write_text('00001\n')
+   (run/'linked_final').symlink_to('final',target_is_directory=True)
    (run/'final/segments.tsv').write_text('sample_id\tstart\tend\n00001\t1\t20\n')
    gu.gu_publish_results(root,root,['ibdmix'])
    self.assertTrue((run/'ibdmix.tracts.xlsx').is_file())
@@ -71,6 +77,7 @@ class StorageTests(unittest.TestCase):
    view=gu.gu_native_view_root(root)
    shutil.rmtree(view);gu.gu_prepare_read_view(root)
    self.assertIn('00001',(view/'ibdmix/test/chr1/final/segments.tsv').read_text())
+   self.assertTrue((view/'ibdmix/test/chr1/linked_final/segments.tsv').is_file())
    gu.gu_restore_results(root,'ibdmix',run)
    self.assertTrue((run/'final/segments.tsv').is_file())
    # Partial newer work must not be overwritten by a previously archived run.

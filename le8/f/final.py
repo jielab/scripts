@@ -549,7 +549,7 @@ class Report:
 					"warning",
 					v.get("analysis_class", "Primary eligibility unverified")
 					+ "; exclude from independent causal confirmation counts.",
-					"dandelion", "dandelion_lolo", "dandelion_native", "state_projection", "age_models",
+					"dandelion;dandelion_lolo;dandelion_native;state_projection;age_models",
 				)
 		components = self.get(trait, layer, "pgs_components")
 		boot = self.get(trait, layer, "pgs_bootstrap")

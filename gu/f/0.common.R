@@ -3,12 +3,28 @@ source(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R"))
 
 # 🚩 Reusable method results Tables remain ordinary R data frames. Native fitted objects and exact exchange bytes are
 # kept together with the permanent native result files.
+gu_read_metadata <- function(path) {
+	lines <- readLines(path, warn = FALSE)
+	lines <- lines[nzchar(lines)]
+	parts <- strsplit(gsub("\\t", "\t", lines, fixed = TRUE), "\t", fixed = TRUE)
+	width <- max(c(2L, lengths(parts)))
+	x <- matrix("", nrow = length(parts), ncol = width)
+	for (i in seq_along(parts)) x[i, seq_along(parts[[i]])] <- parts[[i]]
+	x <- as.data.frame(x, stringsAsFactors = FALSE)
+	names(x) <- c("key", paste0("value", seq_len(width - 1L)))
+	x$record_line <- seq_along(lines)
+	x$raw_record <- lines
+	stopifnot(nrow(x) == length(lines))
+	x
+}
+
 gu_pack_result <- function(spec) {
  tables <- list()
  for (entry in spec$files) {
   path <- file.path(spec$source, entry$name)
   if (is.null(entry$link) && grepl('[.]tsv([.]gz)?$', path) && file.size(path) > 0) {
-   x <- tryCatch(suppressWarnings(result_read_table(path)), error = function(e) NULL)
+   x <- if (grepl('(^|/)(run|cache)[.]meta[.]tsv$', path)) gu_read_metadata(path) else
+    withCallingHandlers(result_read_table(path), warning = function(w) stop('Incomplete result table: ', path, ': ', conditionMessage(w)))
    if (!is.null(x) && ncol(x)) tables[[entry$name]] <- x
   }
  }
@@ -61,7 +77,8 @@ gu_pack_database <- function(source, destination) {
 	on.exit(DBI::dbDisconnect(con), add = TRUE)
 	stopifnot(DBI::dbGetQuery(con, "PRAGMA quick_check")[[1]] == "ok")
 	schema <- DBI::dbGetQuery(con, "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC, name")
-	tables <- setNames(lapply(DBI::dbListTables(con), function(name) DBI::dbReadTable(con, name)), DBI::dbListTables(con))
+	table_names <- schema$name[schema$type == "table"]
+	tables <- setNames(lapply(table_names, function(name) DBI::dbReadTable(con, name)), table_names)
 	attr(tables, "sqlite_schema") <- schema
 	result_write_rds(tables, destination)
 	message("Database tables preserved: ", length(tables), "; rows: ", sum(vapply(tables, nrow, integer(1))))
@@ -116,6 +133,9 @@ gu_result_workbooks <- function(spec) {
 						next
 				minimum <- if (grepl(".full.png", figure$source, fixed = TRUE))
 						2L else 11L
+				dir.create(out, recursive = TRUE, showWarnings = FALSE)
+				grDevices::png(file.path(out, figure$name), width = 2400, height = 2500, res = 240, type = "cairo")
+				tryCatch(gu_draw_panel_b(bundle, minimum), finally = grDevices::dev.off())
 				result_write_workbook(gu_b_tables(bundle, minimum), file.path(out, sub("[.]png$", ".xlsx", figure$name)))
 			}
 		}
@@ -133,6 +153,8 @@ if (sys.nframe() == 0L) {
 			gu_result_workbooks(spec)
 			message("Packed ", spec$method, ": ", basename(spec$source))
 		}
+	} else if (args[1] == "plots") {
+		for (spec in jsonlite::read_json(args[2])) gu_result_workbooks(spec)
 	} else if (args[1] == "restore") {
 		for (spec in jsonlite::read_json(args[2])) gu_restore_result(spec$source, spec$target)
 	} else if (args[1] == "database-pack")

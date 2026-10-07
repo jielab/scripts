@@ -3268,11 +3268,10 @@ le8_c1_additions <- function(dat, layer, covars, tvar, evar) {
 		scores <- read_c1_pgs(sf)
 		mp <- map_c1_pgs_columns(anchors, names(scores))
 		if (length(mp)) {
-			scores <- scores[, unique(c("eid", unname(mp))), drop = FALSE]
-			d <- dat
-			d$eid <- as.character(d$eid)
-			d <- inner_join(d, scores, by = "eid")
-			rm(scores)
+			joined <- le8_join_pgs(dat, scores, mp)
+			d <- joined$data
+			mp <- joined$score_map
+			rm(scores, joined)
 			invisible(gc())
 			paired <- map_dfr(names(mp), function(x) {
 				z <- d[, unique(c(x, mp[[x]], tvar, evar, covars)), drop = FALSE]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PRS-CSx: GWAS preparation -> joint MCMC -> permanent SNP weights -> UKB PRS.
 # Inference, population/combined scores and resource caps are orchestrated here.
-# Python helpers: f/1csx.py; official PRS-CSx code: f/csx/.
+# Python helpers: f/1.csx.py; official PRS-CSx code: f/csx/.
 # Reference: https://github.com/getian107/PRScsx
 set -euo pipefail
 usage() {
@@ -10,15 +10,15 @@ PRS-CSx — height / ldl / t2dm, jointly using AFR,EAS,EUR,SAS GWAS
 
 Usage examples (WSL):
   cd /mnt/d/scripts/grid
-  ./1csx.sh --traits height,ldl,t2dm --check
-  ./1csx.sh --traits height,ldl,t2dm --jobs 4 --threads 4
+  ./1.csx.sh --traits height,ldl,t2dm --check
+  ./1.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 4
 
   # The full run above enables --posterior TRUE by default.
   # Optional: append only auto/meta scores (does not generate individual posterior scores).
-  ./1csx.sh --traits height,ldl,t2dm --models auto,meta --jobs 4 --threads 4
+  ./1.csx.sh --traits height,ldl,t2dm --models auto,meta --jobs 4 --threads 4
   # Optional: run inference and scoring separately; retain the inference directory.
-  ./1csx.sh --trait height --stage weights --jobs 4 --threads 4
-  ./1csx.sh --trait height --stage score --jobs 4 --threads 4
+  ./1.csx.sh --trait height --stage weights --jobs 4 --threads 4
+  ./1.csx.sh --trait height --stage score --jobs 4 --threads 4
 
 Modules:
   weights  Normalize BETA+SE GWAS -> joint four-population PRS-CSx by chromosome.
@@ -86,7 +86,7 @@ case "${1:-}" in -h | --help | help)
 esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source "$ROOT/f/0.common.sh"
-memory_cap_enter csx "${GRID_MEMORY_CAP_GB:-16}" "${GRID_SWAP_CAP_GB:-2}" "$ROOT/1csx.sh" "$@"
+memory_cap_enter csx "${GRID_MEMORY_CAP_GB:-16}" "${GRID_SWAP_CAP_GB:-2}" "$ROOT/1.csx.sh" "$@"
 set -- "${MEMORY_CAP_ARGS[@]}"
 export GRID_MEMORY_CAP_GB=$MEMORY_CAP_GB
 
@@ -110,8 +110,8 @@ csx_score_run() {
 	done
 	[[ -z $GRID_KEEP ]] || score_inputs+=("$GRID_KEEP")
 	[[ -z $GRID_REMOVE ]] || score_inputs+=("$GRID_REMOVE")
-	score_sig=$(python3 "$ROOT/f/1csx.py" score-config "$sig" "$GRID_KEEP" "$GRID_REMOVE" --files "${score_inputs[@]}")
-	score_run=$(python3 "$ROOT/f/1csx.py" workspace "$run/scores" run "$score_sig")
+	score_sig=$(python3 "$ROOT/f/1.csx.py" score-config "$sig" "$GRID_KEEP" "$GRID_REMOVE" --files "${score_inputs[@]}")
+	score_run=$(python3 "$ROOT/f/1.csx.py" workspace "$run/scores" run "$score_sig")
 	mkdir -p "$score_home"
 	score_cache="$(python3 "$ROOT/f/0.common.py" cache-path "$work/scores")/$trait${suffix:+/${suffix#.}}"
 	mkdir -p "$score_cache"
@@ -183,10 +183,10 @@ csx_combined_run() {
 		--burnin "$GRID_MCMC_BURNIN" --thin "$GRID_MCMC_THIN" --seed "$GRID_SEED" --phi "$GRID_PHI"
 		--n-gwas "$GRID_N_GWAS" --remove "$GRID_REMOVE" --keep "$GRID_KEEP" --stage "$GRID_STAGE" --replace "$GRID_REPLACE")
 	[[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]] || args+=(--check)
-	printf 'python3 %q combined ' "$ROOT/f/1csx.py" >>"$GRID_COMMAND_FILE"
+	printf 'python3 %q combined ' "$ROOT/f/1.csx.py" >>"$GRID_COMMAND_FILE"
 	printf '%q ' "${args[@]}" >>"$GRID_COMMAND_FILE"
 	printf '\n' >>"$GRID_COMMAND_FILE"
-	python3 "$ROOT/f/1csx.py" combined "${args[@]}"
+	python3 "$ROOT/f/1.csx.py" combined "${args[@]}"
 }
 
 
@@ -255,11 +255,14 @@ PY
 		return 0
 	}
 	# Keep settings/input metadata in JSON; choose readable directories independently.
-	sig=$(python3 "$ROOT/f/1csx.py" signature "$GRID_PHI" "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_N_GWAS" "${CHRS[*]}" "$GRID_CSX_SNPINFO" "$GRID_CSX_BIM_PREFIX" "${gwas[@]}" "${ld_files[@]}")
+	sig=$(python3 "$ROOT/f/1.csx.py" signature "$GRID_PHI" "$GRID_MCMC_ITER" "$GRID_MCMC_BURNIN" "$GRID_MCMC_THIN" "$GRID_SEED" "$GRID_N_GWAS" "${CHRS[*]}" "$GRID_CSX_SNPINFO" "$GRID_CSX_BIM_PREFIX" "${gwas[@]}" "${ld_files[@]}")
 	mkdir -p "$work/$trait" "$logdir/$trait"
-	exec {lock}>"$work/$trait/run.lock"
+	local lock_dir
+	lock_dir=$(python3 "$io" cache-path "$work/$trait")
+	mkdir -p "$lock_dir"
+	exec {lock}>"$lock_dir/run.lock"
 	flock -n "$lock" || _grid_die "Another CSx run is active for $trait"
-	run=$(python3 "$ROOT/f/1csx.py" workspace "$work/$trait" inference "$sig")
+	run=$(python3 "$ROOT/f/1.csx.py" workspace "$work/$trait" inference "$sig")
 	sumstats=$(python3 "$io" cache-path "$run/sumstats")
 	ref=$(python3 "$io" cache-path "$run/reference")
 	mkdir -p "$ref"
@@ -348,7 +351,7 @@ PYMETA
 				inputs=()
 				for c in "${CHRS[@]}"; do
 					w="$run/weights/$p.chr$c.tsv"
-					grid_run python3 "$ROOT/f/1csx.py" normalize-weights --input "$run/raw/chr$c/$p/$p.chr$c.pst_eff.txt" --output "$w"
+					grid_run python3 "$ROOT/f/1.csx.py" normalize-weights --input "$run/raw/chr$c/$p/$p.chr$c.pst_eff.txt" --output "$w"
 					inputs+=("$w")
 				done
 				grid_run python3 "$io" weights "$run/weights/$p.csx.gz" "${inputs[@]}"
@@ -379,7 +382,7 @@ PYMETA
 			--output "$score_home/1csx.posterior.rds" --chrs "${CHRS[*]}" --threads "$GRID_THREADS"
 			--memory "$GRID_POSTERIOR_MEMORY" --keep "$GRID_KEEP" --remove "$GRID_REMOVE" --replace "$GRID_REPLACE")
 		[[ -z $GRID_POSTERIOR_FREQ_DIR ]] || posterior_args+=(--frequency-dir "$GRID_POSTERIOR_FREQ_DIR")
-		grid_run_logged "$logdir/$trait/posterior.log" python3 "$ROOT/f/1csx.py" posterior "${posterior_args[@]}"
+		grid_run_logged "$logdir/$trait/posterior.log" python3 "$ROOT/f/1.csx.py" posterior "${posterior_args[@]}"
 		echo "DONE $trait: individual posterior covariance in $score_home/1csx.posterior.rds"
 	fi
 }

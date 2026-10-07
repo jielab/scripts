@@ -116,6 +116,21 @@ gu_b_tip_angles <- function(p, nt) {
 
 
 # 🚩 Saved tree data used by both PNG and XLSX
+gu_b_split <- function(tr, node) {
+	a <- sort(tr$tip.label[gu_b_desc(tr, node)])
+	b <- sort(setdiff(tr$tip.label, a))
+	if (min(length(a), length(b)) < 2L) return(NA_character_)
+	if (length(a) > length(b) || (length(a) == length(b) && paste(a, collapse = ",") > paste(b, collapse = ","))) a <- b
+	paste(a, collapse = ",")
+}
+gu_b_supports <- function(tr) {
+	nodes <- intersect(tr$edge[, 2], ape::Ntip(tr) + seq_len(tr$Nnode))
+	keys <- vapply(nodes, function(n) gu_b_split(tr, n), character(1))
+	values <- tr$node.label[nodes - ape::Ntip(tr)]
+	good <- !is.na(keys) & !is.na(values) & nzchar(values)
+	if (anyDuplicated(keys[good])) stop("Ambiguous support labels on the same unrooted split")
+	setNames(values[good], keys[good])
+}
 gu_b_prepare <- function(bundle, min_copies = 11L) {
 	tr <- bundle$tree
 	ring <- bundle$ring
@@ -131,8 +146,13 @@ gu_b_prepare <- function(bundle, min_copies = 11L) {
 	}
 	if (sum(keep) >= 3 && any(!keep))
 		tr <- ape::drop.tip(tr, tr$tip.label[!keep])
-	if ("Ancestral" %in% tr$tip.label)
-		tr <- tryCatch(ape::root(ape::unroot(tr), "Ancestral", resolve.root = TRUE), error = function(e) tr)
+	if ("Ancestral" %in% tr$tip.label) {
+		unrooted <- ape::unroot(tr)
+		before <- gu_b_supports(unrooted)
+		tr <- ape::root(unrooted, "Ancestral", resolve.root = TRUE, edgelabel = TRUE)
+		after <- gu_b_supports(tr)
+		if (!identical(before[sort(names(before))], after[sort(names(after))])) stop("Rerooting changed split support")
+	}
 	# Preserve ancestral and all other branch lengths; do not shorten to fit.
 	tr <- ape::ladderize(tr)
 	nt <- ape::Ntip(tr)
@@ -158,6 +178,7 @@ gu_b_tables <- function(bundle, min_copies = 11L) {
 	edges$child_label <- ifelse(edges$child_node <= length(labels), labels[edges$child_node], "")
 	nodes <- data.frame(node = length(labels) + seq_len(tr$Nnode), bootstrap = if (is.null(tr$node.label))
 		rep(NA_character_, tr$Nnode) else tr$node.label)
+	nodes$unrooted_split_side <- vapply(nodes$node, function(n) gu_b_split(tr, n), character(1))
 	evidence <- data.frame(locus = bundle$locus, lineage = bundle$lineage, state = bundle$state, candidate_bootstrap = bundle$bootstrap,
 		display_min_copies = prepared$min_copies, displayed_tips = length(labels), inferred_tips = prepared$original_n, bar_scale_max_copies = if (nrow(ring))
 			max(ring$n, na.rm = TRUE) else 1)

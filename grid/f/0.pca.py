@@ -52,7 +52,7 @@ def pca_cache_cli():
 """Build DISCOVERY centres in the same PC coordinates as the target projection.
 
 Accepts projected discovery participants, or precomputed discovery PC centres.
-For linear dosage-sum projections (the current 0pca.sh), discovery EAF can
+For linear dosage-sum projections (the current 0.pca.sh), discovery EAF can
 also produce mean PC coordinates without access to discovery genotypes.
 """
 import argparse, json
@@ -71,7 +71,7 @@ def training_geometry_main():
 	p.add_argument("--pca-space", required=True, help="Coordinate-system identifier shared with Yeval --pca-space")
 	p.add_argument("--source", required=True, help="Discovery cohort/projection provenance")
 	p.add_argument(
-		"--pca-weights", help="Current 0pca dosage-sum weight table: SNP col2, scored allele col6, PCs col7 onward"
+		"--pca-weights", help="Current 0.pca dosage-sum weight table: SNP col2, scored allele col6, PCs col7 onward"
 	)
 	p.add_argument("--projection-snps", help="Exact SNP set used in target projection (one ID per line)")
 	p.add_argument("--frequency-allele", required=False, help="EAF mode: name of effect-allele column, typically A1")

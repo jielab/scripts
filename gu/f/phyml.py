@@ -16,7 +16,7 @@ if "gu_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from gu_0_common import load_module
+from gu_0_common import load_module, reference_role, scientific_segment
 
 
 # 🚩 phyml_contract
@@ -153,7 +153,7 @@ def vcf_samples(vcf: Path) -> tuple[str, ...]:
 def query_rows(vcf: Path, region: str, include_aa: bool = False) -> tuple[list[str], Iterator[list[str]]]:
 	samples = list(vcf_samples(vcf))
 	fmt = "%CHROM\t%POS\t%ID\t%REF\t%ALT" + ("\t%INFO/AA" if include_aa else "") + "[\t%GT]\n"
-	command = ["bcftools", "query", "-r", region, "-f", fmt, str(vcf)]
+	command = ["bcftools", "query", *(["--allow-undef-tags"] if include_aa else []), "-r", region, "-f", fmt, str(vcf)]
 
 	def stream():
 		# Do not retain the full sample-by-variant text or millions of GT strings.
@@ -228,6 +228,7 @@ def modern_data(
 	x_male_only: bool,
 	x_par_diploid: bool,
 	ancestral_any_base: bool = False,
+	audit=None,
 ):
 	samples, rows = query_rows(vcf, f"{contig}:{locus['start'] + 1}-{locus['end']}", include_aa=True)
 	if not samples:
@@ -255,6 +256,8 @@ def modern_data(
 		) == (locus["chrom"], pos_i, ref.upper(), alt.upper())
 		if locus["name"] in vid.split(";") or coordinate_match:
 			anchors.append((pos_i, ref, alt))
+		if audit is not None:
+			audit.append(dict(pos=pos_i, ref=ref, alt=alt, modern_status="non_biallelic_SNP", retained_modern=0))
 		if len(ref) != 1 or len(alt) != 1 or ref.upper() not in BASES or alt.upper() not in BASES:
 			continue
 		haps = []
@@ -277,6 +280,8 @@ def modern_data(
 			dosage_values.append(dose)
 		haps = "".join(haps)
 		counts = Counter(x for x in haps if x in BASES)
+		if audit is not None:
+			audit[-1].update(modern_status="MAC_below_threshold" if len(counts) < 2 or min(counts.values()) < min_mac else "retained", modern_called_copies=sum(counts.values()), retained_modern=int(len(counts) >= 2 and min(counts.values()) >= min_mac))
 		if len(counts) < 2 or min(counts.values()) < min_mac:
 			continue
 		sites.append(
@@ -302,7 +307,7 @@ def modern_data(
 
 # 🚩 Archaic haplotypes
 def archaic_calls(
-	vcf: Path, contig: str, locus: dict, modern_sites: list[dict], allow_third_allele: bool = False
+	vcf: Path, contig: str, locus: dict, modern_sites: list[dict], allow_third_allele: bool = False, audit=None
 ) -> dict[int, str]:
 	_, rows = query_rows(vcf, f"{contig}:{locus['start'] + 1}-{locus['end']}")
 	wanted = {x["pos"]: x for x in modern_sites}
@@ -330,6 +335,10 @@ def archaic_calls(
 			)
 			else "N"
 		)
+		if audit is not None:
+			audit[pos_i] = ("callable" if calls[pos_i] in BASES else "missing_GT" if any("." in gt for gt in gts) else "heterozygous" if len(set(observed) & BASES) > 1 else "incompatible_allele_or_GT")
+	if audit is not None:
+		for pos in wanted: audit.setdefault(pos, "record_absent")
 	return calls
 
 
@@ -606,7 +615,7 @@ def prepare(a):
 	provenance.update(n_leads=len(leads), n_skipped=len(audit))
 	(out / "manifest.json").write_text(json.dumps(provenance, indent=2) + "\n")
 	print(
-		f"[GU GWAS] {len(leads)} original leads retained; {len(audit)} skipped; LD=1KG EUR; cores will be defined by r² > 0.98",
+		f"[GU GWAS] {len(leads)} original leads retained; {len(audit)} skipped; LD cohort is set by the target; cores will be defined by r² > 0.98",
 		flush=True,
 	)
 	print(
@@ -1070,6 +1079,9 @@ def command(path):
 	args = argv[2:]
 	if args[:1] == ["run"]:
 		args = args[1:]
+	for flag in ("--keep-males",):
+		if flag in args:
+			args.insert(args.index(flag) + 1, "TRUE")
 	if len(args) % 2 or any(not k.startswith("--") for k in args[::2]):
 		raise ValueError("unsupported worker arguments")
 	opts = dict(zip(args[::2], args[1::2]))
@@ -1103,6 +1115,12 @@ def phyml_locus_cache_request(cmd, archaic_root):
 	if not panel:
 		raise ValueError("sample panel unavailable")
 	sources.append(Path(panel))
+	if opts.get("--keep"): sources.append(Path(opts["--keep"]))
+	if opts.get("--keep-psam"): sources.append(Path(opts["--keep-psam"].rsplit(',', 2)[0]))
+	if opts.get("--target", "").startswith("ukb-"):
+		aa_root = Path(env.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf")
+		aa_source = vcf_path(aa_root, ch)
+		sources += [aa_source, Path(str(aa_source) + '.tbi'), Path(str(aa_source) + '.csi')]
 	root = Path(archaic_root)
 	if not root.is_dir():
 		raise ValueError("archaic root unavailable")
@@ -1435,6 +1453,24 @@ def run_verified_tree(command):
 	return result
 
 
+def annotate_ukb_ancestor(sites, chrom, locus):
+	root = Path(os.environ.get("PHYML_ANCESTRAL_VCF_DIR", os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf"))
+	source = vcf_path(root, chrom)
+	contig = vcf_contig(source, chrom)
+	wanted = {(s["pos"], s["ref"], s["alt"]) for s in sites}
+	_, records = query_rows(source, f"{contig}:{locus['start']+1}-{locus['end']}", include_aa=True)
+	bases = {}
+	for fields in records:
+		key = (int(fields[1]), fields[3].upper(), fields[4].upper())
+		if key not in wanted: continue
+		base = ancestral_allele(fields[5], key[1], key[2], True)
+		bases[key] = base if key not in bases or bases[key] == base else "N"
+	for site in sites:
+		site["ancestral"] = bases.get((site["pos"], site["ref"], site["alt"]), "N")
+	return dict(ancestral_source=str(source) + "; GRCh37 exact POS/REF/ALT INFO/AA; unmatched remains N",
+		ancestral_annotated_sites=sum(s["ancestral"] in BASES for s in sites))
+
+
 def run_locus(a, row):
 	out = a.out
 	final = out / "final"
@@ -1462,7 +1498,7 @@ def run_locus(a, row):
 		p_j=row["p_j"],
 		beta_j=row["beta_j"],
 		effect_allele=row["effect_allele"],
-		ld_population="1KG EUR",
+		ld_population="selected UKB cohort" if a.dataset.startswith("ukb-") else "1KG EUR",
 		ld_r2_threshold=0.98,
 		selection_method="gwas_lead_ld_core",
 		analysis_start=int(row["search_start"]),
@@ -1477,6 +1513,13 @@ def run_locus(a, row):
 		risk_allele="",
 		n_ld_sites=None,
 		n_sites=None,
+		n_panel=None,
+		n_panel_copies=None,
+		n_lead_called=None,
+		n_lead_called_copies=None,
+		n_recurrent_copies=None,
+		n_singleton_copies=None,
+		x_mode="male_haploid_nonpar" if haploid else "diploid",
 		n_risk_copies=None,
 		n_candidate_haplotypes=None,
 		n_candidate_copies=None,
@@ -1523,14 +1566,17 @@ def run_locus(a, row):
 		samples, records = query_rows(vcf, f"{contig}:{pos}-{pos}")
 		if any(s not in meta for s in samples):
 			raise ValueError("sample panel must include every VCF sample and population")
-		eur = [
+		eur = list(range(len(samples))) if a.dataset.startswith("ukb-") else [
 			i
 			for i, s in enumerate(samples)
 			if meta[s].get("super_pop", "") == "EUR" or meta[s].get("pop", "") in {"CEU", "GBR", "FIN", "IBS", "TSI"}
 		]
 		if not eur:
 			raise ValueError("No EUR samples in --sample-panel; LD cannot use all populations as a fallback")
+		ident["ld_population"] = ("UKB selected cohort: " + ",".join(sorted({meta[s].get("pop", "UKB") for s in samples}))) if a.dataset.startswith("ukb-") else "1KG EUR"
+		ident.update(n_panel=len(samples), n_panel_copies=len(samples) * (1 if haploid else 2))
 		lead = exact_lead(row, records, len(samples), haploid)
+		ident.update(n_lead_called=sum(any(x >= 0 for x in lead["copies"][2*i:2*i+2]) for i in range(len(samples))), n_lead_called_copies=sum(x >= 0 for x in lead["copies"]))
 		ident.update(
 			risk_allele=lead["risk_allele"],
 			target_variant=f"{ch}:{pos}:{lead['ref']}:{lead['alt']}",
@@ -1539,15 +1585,26 @@ def run_locus(a, row):
 		)
 		indexes = [2 * i + h for i in eur for h in range(1 if haploid else 2)]
 		eur_called = [lead["copies"][i] for i in indexes if lead["copies"][i] >= 0]
-		ident["risk_frequency_EUR"] = sum(eur_called) / len(eur_called) if eur_called else None
+		ident["n_LD_individuals"] = len(eur)
+		ident["risk_frequency_LD"] = sum(eur_called) / len(eur_called) if eur_called else None
+		ident["risk_frequency_EUR"] = ident["risk_frequency_LD"] if not a.dataset.startswith("ukb-") else None
+		if a.dataset.startswith("ukb-"): ident["n_EUR_individuals"] = None
+		modern_audit = []
+		pending_tables["modern_site_qc.tsv"] = modern_audit
 		_, sites, _ = modern_data(
-			vcf, contig, locus, 2, read_sexes(a.sample_file), a.x_male_only, a.x_par_diploid, ancestral_any_base=True
+			vcf, contig, locus, 2, read_sexes(a.sample_file), a.x_male_only, a.x_par_diploid, ancestral_any_base=True, audit=modern_audit
 		)
+		if a.dataset.startswith("ukb-"):
+			ident.update(annotate_ukb_ancestor(sites, ch, locus))
 		# Multiple records at one coordinate cannot be matched to an archaic
 		# base unambiguously; exclude them rather than merge unrelated alleles.
 		counts = Counter(s["pos"] for s in sites)
+		for q in modern_audit:
+			if counts[q["pos"]] > 1: q.update(modern_status="duplicate_position", retained_modern=0)
 		sites = [s for s in sites if counts[s["pos"]] == 1]
 		core, ld, start, end = define_core(sites, lead, indexes)
+		if a.dataset.startswith("ukb-"):
+			for marker in ld: marker["n_LD_copies"] = marker.pop("n_EUR_copies")
 		pending_tables["ld.tsv"] = ld
 		ident.update(
 			core_start=start,
@@ -1564,17 +1621,30 @@ def run_locus(a, row):
 		# finite window, and a marker near an edge requests a wider search.
 		ident["search_edge_warning"] = int(start - locus["start"] < 10000 or locus["end"] - end < 10000)
 		calls = {}
+		callability = {ref: {} for ref in REFS}
 		for ref in REFS:
 			av = archaic_vcf(a.archaic_root, ref, ch)
 			calls[ref] = archaic_calls(
-				av, vcf_contig(av, ch), dict(locus, start=start, end=end), core, allow_third_allele=True
+				av, vcf_contig(av, ch), dict(locus, start=start, end=end), core, allow_third_allele=True, audit=callability[ref]
 			)
 		markers = {r["pos"]: r["risk_linked_allele"] for r in high}
 		for ref in REFS:
 			called = [(p, b) for p, b in markers.items() if calls[ref].get(p, "N") in BASES]
 			ident[ref + "_LD_matches"] = sum(calls[ref][p] == b for p, b in called)
 			ident[ref + "_LD_called"] = len(called)
+		pending_tables["site_qc.tsv"] = [dict(
+			chr=ch, pos=site["pos"], lead=int(site["pos"] == pos), high_ld=int(site["pos"] in markers),
+			ancestral=site["ancestral"], risk_linked_allele=markers.get(site["pos"], ""),
+			risk_equals_ancestral=int(markers[site["pos"]] == site["ancestral"]) if site["pos"] in markers and site["ancestral"] in BASES else None,
+			retained_alignment=int(all(calls[r].get(site["pos"], "N") in BASES for r in REFS)),
+			**{ref + "_callability": callability[ref][site["pos"]] for ref in REFS},
+			**{ref + "_base": calls[ref].get(site["pos"], "N") for ref in REFS},
+		) for site in core]
 		sites, haps, grouped = prepare_sequences(core, calls, samples, lead, haploid)
+		ident.update(n_core_sites_before_reference_filter=len(core), lead_retained_for_tree=int(any(site["pos"] == pos for site in sites)), high_ld_sites_retained_for_tree=sum(site["pos"] in markers for site in sites),
+			high_ld_max_gap_bp=max((b-a for a,b in zip(sorted(markers), sorted(markers)[1:])), default=0),
+			ld_ancestral_risk_matches=sum(q["risk_equals_ancestral"] == 1 for q in pending_tables["site_qc.tsv"]),
+			n_recurrent_copies=sum(h["n"] for h in haps))
 		ident.update(
 			n_sites=len(sites),
 			n_compared=len(sites),
@@ -1589,6 +1659,8 @@ def run_locus(a, row):
 			raise SkipLocus("insufficient five-reference callable core sites", "insufficient_tree_sites")
 		arch = {r: "".join(calls[r][s["pos"]] for s in sites) for r in REFS}
 		ancestor = "".join(s["ancestral"] for s in sites)
+		ident.update(unique_archaic_sequences=len(set(arch.values())), all_archaic_different_sites=sum(len(set(column)) > 1 for column in zip(*arch.values())),
+			neanderthal_vs_denisovan_fixed_differences=sum(len({arch[r][i] for r in LINEAGE_REFS["Neanderthal"]}) == 1 and len({arch[r][i] for r in LINEAGE_REFS["Denisovan"]}) == 1 and arch["Altai"][i] != arch["Denisova"][i] for i in range(len(sites))))
 		pending_tables["sites.tsv"] = [
 			dict(chr=ch, pos=s["pos"], id=s["vid"], ref=s["ref"], alt=s["alt"]) for s in sites
 		]
@@ -1682,7 +1754,7 @@ def run_locus(a, row):
 		ident.update(status="tree_not_requested", reason="sequence_prepared")
 		if a.action == "run" and a.plot_phy == "TRUE":
 			print(
-				f"[GU PHYML] {lid}: EUR={len(eur)}; core={ch}:{start + 1}-{end}; LD markers={ident['n_ld_sites']}; tree sites={len(sites)}; recurrent haplotypes={len(haps)}; bootstrap=100",
+				f"[GU PHYML] {lid}: LD cohort={len(eur)}; core={ch}:{start + 1}-{end}; LD markers={ident['n_ld_sites']}; tree sites={len(sites)}; recurrent haplotypes={len(haps)}; bootstrap=100",
 				flush=True,
 			)
 			cmd = [
@@ -1758,22 +1830,31 @@ def run_locus(a, row):
 	except SkipLocus as e:
 		if preserve:
 			require_replace(loc / "haplotypes.phy", f"new analysis would skip completed locus: {e.code}")
-		ident.update(status=e.code, reason=str(e))
-		tree["tree_call_reason"] = str(e)
+		reason = str(e).replace("EUR r²", "selected UKB cohort r²") if a.dataset.startswith("ukb-") else str(e)
+		ident.update(status=e.code, reason=reason)
+		tree["tree_call_reason"] = reason
 		if e.code == "risk_nonrisk_sequence_unresolved":
 			copyrows = []
 		if e.details and "ld" in e.details:
+			if a.dataset.startswith("ukb-"):
+				for marker in e.details["ld"]:
+					if "n_EUR_copies" in marker: marker["n_LD_copies"] = marker.pop("n_EUR_copies")
 			pending_tables["ld.tsv"] = e.details["ld"]
 			ident.update(n_ld_sites=sum(r["core_marker"] for r in e.details["ld"]), n_search_sites=len(e.details["ld"]))
-		print(f"[GU PHYML] SKIP {lid}: {e.code}: {e}", flush=True)
-	for name in ("sites.tsv", "archaic.tsv", "ancestral.tsv", "haplotypes.tsv", "ld.tsv"):
+		print(f"[GU PHYML] SKIP {lid}: {e.code}: {reason}", flush=True)
+	for name in ("sites.tsv", "archaic.tsv", "ancestral.tsv", "haplotypes.tsv", "ld.tsv", "site_qc.tsv", "modern_site_qc.tsv"):
 		(loc / name).unlink(missing_ok=True)
 	for name, table in pending_tables.items():
 		write(loc / name, table)
 	ident["call"] = ident["status"]
+	ident.update(locus_stage_fields(ident))
 	# A length-model sensitivity statistic, not a calibrated locus-specific P.
 	if ident.get("core_kb"):
 		ident["ils_probability"] = ils_probability(ident["core_end"] - ident["core_start"])
+		ident["ld_span_bp"] = ident["core_end"] - ident["core_start"]
+		ident["archaic_shared_tract_bp"] = None
+		ident["local_genetic_length_cm"] = None
+		ident["ils_statistic_scope"] = "LD_span_sensitivity_only;not_shared_tract_evidence"
 		ident["ils_model"] = "assumed_0.53cM/Mb_29yr_550k_split_50k_archaic_age;not_local_map;uncorrected"
 	summaries, lineage_trees, lineage_details = lineage_results(ident, tree, detail, haps, arch if detail else {})
 	write(final / "gwas_loci.tsv", summaries)
@@ -1800,13 +1881,13 @@ def run_locus(a, row):
 	write(final / "gwas_lead.tsv", [row])
 	parameters = dict(
 		workflow=WORKFLOW,
-		ld_population="1KG EUR",
+		ld_population=ident["ld_population"],
 		ld_rule="phased_r2 > 0.98",
 		lead=row,
-		tree_populations="all target 1KG samples",
+		tree_populations="selected target cohort: " + a.dataset,
 		minimum_haplotype_copies=2,
 		minimum_minor_allele_copies=2,
-		ancestral_source="target VCF INFO/AA; unknown remains N; not verified as Ensembl release 100",
+		ancestral_source=ident.get("ancestral_source", "target VCF INFO/AA; unknown remains N; not verified as Ensembl release 100"),
 		references=list(REFS),
 		heterozygous_archaic_policy="mask_as_N",
 		bootstrap=100,
@@ -1900,16 +1981,16 @@ def phyml_gwas_main():
 	p.add_argument("--x-male-only", action="store_true")
 	p.add_argument("--x-par-diploid", action="store_true")
 	a = p.parse_args()
-	if a.dataset != "1kg":
+	if not (a.dataset == "1kg" or a.dataset.startswith(("ukb-", "1kg-subset-"))):
 		raise ValueError(
-			"This EUR LD workflow currently requires target 1kg; another target needs a separate fixed 1KG EUR LD reference"
+			"PhyML supports 1KG EUR LD or an explicitly selected UKB cohort"
 		)
 	names = [line.split()[3] for line in a.loci.read_text().splitlines() if line.strip() and not line.startswith("#")]
 	rows = [r for r in read(a.lead_table) if r["locus_id"] in names]
 	if len(rows) != 1 or len(names) != 1:
 		raise ValueError("Each worker requires exactly one original GWAS lead")
 	if a.action == "check":
-		print("[GU PHYML] original lead, EUR LD and recurrent-haplotype workflow configured")
+		print("[GU PHYML] original lead, " + ("selected UKB cohort" if a.dataset.startswith("ukb-") else "1KG EUR") + " LD and recurrent-haplotype workflow configured")
 		return
 	a.out.mkdir(parents=True, exist_ok=True)
 	lock_root = Path("/tmp/gu-locks")
@@ -1970,7 +2051,8 @@ def validate(copies, con, threshold=0.8):
 						run["_scope"].append((int(fields[1]), int(fields[2])))
 		if unit[3] == "ibdmix":
 			meta = dict(line.split("\t", 1) for line in text.splitlines() if "\t" in line)
-			refs = meta.get("refs", "").split()
+			refs = [ref for ref in meta.get("refs", "").split() if reference_role(ref) == "scientific_reference"]
+			run["_male_nonpar"] = meta.get("x_mode") == "male_haploid_nonpar"
 			run["_tested_lineages"] = set()
 			if set(refs) & {"Altai", "Vindija", "Chagyr", "Chagyrskaya"}:
 				run["_tested_lineages"].add("Neanderthal")
@@ -2006,6 +2088,8 @@ def validate(copies, con, threshold=0.8):
 				(*unit, en, st),
 			):
 				r = dict(r)
+				if not scientific_segment(r):
+					continue
 				key = tuple(r.values())
 				if key in seen:
 					continue
@@ -2029,12 +2113,17 @@ def validate(copies, con, threshold=0.8):
 			pool = segments.get((*unit, c["sample_id"], method), [])
 			pool = [s for s in pool if method == "trace" or s["source_class"] == c["lineage"]]
 			samephase = [s for s in pool if str(s.get("haplotype")) == str(c["haplotype"])] if method == "trace" else []
+			best_tract = max((s for s in pool if min(interval[1], s["end"]) > max(interval[0], s["start"])), key=lambda s: min(interval[1], s["end"]) - max(interval[0], s["start"]), default={})
 			m = coverage(interval, [(s["start"], s["end"]) for s in pool])
 			p = coverage(interval, [(s["start"], s["end"]) for s in samephase])
 			result.append(
 				dict(
 					c,
 					method=method,
+					matching_tract_start=best_tract.get("start"),
+					matching_tract_end=best_tract.get("end"),
+					matching_tract_reference=best_tract.get("source"),
+					ld_span_bp=interval[1]-interval[0],
 					method_complete=int(complete),
 					comparison_available=int(compared),
 					evidence_eligible=int(eligible),
@@ -2048,7 +2137,7 @@ def validate(copies, con, threshold=0.8):
 					phase_overlap_pass=int(p["best_single_fraction"] >= threshold)
 					if compared and method == "trace"
 					else None,
-					phase_note="same_sample_only_unphased"
+					phase_note=("same_male_nonpar_X_copy;LOD_uncalibrated" if run.get("_male_nonpar") else "same_sample_only_unphased")
 					if method == "ibdmix"
 					else "same_sample_and_stored_haplotype_index",
 					lineage_note="same_lineage" if method == "ibdmix" else "ghost_unknown_not_lineage_validation",
@@ -2103,6 +2192,108 @@ def attach_validation(rows, validation, runs, by_hap=False):
 			)
 
 
+
+def locus_stage_fields(row):
+	status = row.get("status", row.get("call", "not_evaluable"))
+	complete = status in ("tree_supported", "tree_not_supported")
+	n = int(float(row.get("n_sites") or 0))
+	return dict(input_status="lead_unresolved" if status in ("lead_absent_or_ambiguous", "lead_allele_mismatch") else "lead_resolved" if row.get("risk_allele") else "unknown",
+		ld_status="insufficient" if status == "insufficient_high_LD_markers" else "defined" if row.get("core_kb") else "not_evaluated",
+		alignment_status="risk_nonrisk_unresolved" if status == "risk_nonrisk_sequence_unresolved" else "retained" if n else "not_available",
+		tree_run_status="complete" if complete else "failed" if status == "tree_failed" else "not_run",
+		topology_status="supported" if status == "tree_supported" else "not_supported" if complete else "not_evaluated",
+		sequence_qc="archaic_references_identical" if str(row.get("unique_archaic_sequences")) == "1" else "adequate" if n >= 10 else "low_information" if n else "not_available",
+		probability_calibrated=0)
+
+
+
+def local_map_audit(row):
+	"""Optional explicitly documented X map; never substitute zero male recombination."""
+	result = dict(local_genetic_length_cm=None, genetic_map_status="not_supplied", genetic_map_sex_convention="unknown")
+	path = os.environ.get("PHYML_X_GENETIC_MAP", "")
+	if str(row.get("chr")) != "X" or not path or not row.get("core_kb"):
+		return result
+	convention = os.environ.get("PHYML_X_MAP_SEX_CONVENTION", "")
+	if convention not in ("sex_averaged", "female_meiosis", "historical_X"):
+		raise ValueError("Set PHYML_X_MAP_SEX_CONVENTION to sex_averaged, female_meiosis or historical_X")
+	points = sorted((int(r["pos"]), float(r["cM"])) for r in read(Path(path)) if str(r["chr"]).lower().removeprefix("chr") in ("x", "23"))
+	if len(points) < 2 or any(b[0] <= a[0] or b[1] < a[1] or not math.isfinite(b[1]) for a,b in zip(points, points[1:])) or not math.isfinite(points[0][1]):
+		raise ValueError("X genetic map requires unique positions and finite nondecreasing cM")
+	result.update(genetic_map_sex_convention=convention, genetic_map_source=str(Path(path).resolve()), genetic_map_sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest())
+	left, right = int(row["core_start"]) + 1, int(row["core_end"])
+	if left < points[0][0] or right > points[-1][0]:
+		result["genetic_map_status"] = "outside_map_no_extrapolation"
+		return result
+	from bisect import bisect_left
+	def interpolate(pos):
+		i = bisect_left([p[0] for p in points], pos)
+		if points[i][0] == pos: return points[i][1]
+		p, q = points[i-1], points[i]
+		return p[1] + (q[1]-p[1]) * (pos-p[0]) / (q[0]-p[0])
+	result.update(local_genetic_length_cm=interpolate(right)-interpolate(left), genetic_map_status="LD_span_only_not_shared_tract", genetic_map_coordinate_system="1-based;GRCh37")
+	return result
+
+
+def saved_locus_audit(path, row):
+	loc = path.parent.parent / "loci"
+	read_saved = lambda p: read(p) if p.is_file() and p.stat().st_size else []
+	sites, ld, haps = read_saved(loc / "sites.tsv"), read_saved(loc / "ld.tsv"), read_saved(loc / "haplotypes.tsv")
+	arch = {r["archaic"]: r["seq"] for r in read_saved(loc / "archaic.tsv")}
+	anc = read_saved(loc / "ancestral.tsv")
+	positions = {int(r["pos"]) for r in sites}
+	high = [r for r in ld if str(r.get("core_marker")) == "1"]
+	markers = sorted(int(r["pos"]) for r in high)
+	result = {}
+	receipt = path.parent.parent / '.phyml.locus.complete.json'
+	if receipt.is_file() and not row.get('n_panel') and str(row.get('chr')) != 'X':
+		request = json.loads(receipt.read_text()).get('request', {})
+		male = str(request.get('environment', {}).get('GU_CHRX_MALE_ONLY', '')).upper() in ('1', 'TRUE')
+		wanted = ('chrX.male' if str(row.get('chr')) == 'X' and male else 'chr' + str(row.get('chr'))) + '.psam'
+		for filename, stamp in request.get('sources', {}).items():
+			original = Path(filename)
+			if original.name != wanted: continue
+			candidates = [original]
+			if '/1kg/' in filename:
+				candidates.append(Path(os.environ.get('GU_REF_ROOT', '/mnt/f/gen')) / '1kg' / filename.split('/1kg/', 1)[1])
+			for source in candidates:
+				try:
+					stat = source.stat()
+				except OSError:
+					continue
+				if [stat.st_size, stat.st_mtime_ns] != stamp: continue
+				with source.open() as handle:
+					header = handle.readline().split()
+					ids = [line.split()[header.index('IID') if 'IID' in header else header.index('#IID')] for line in handle if line.strip()]
+				result.update(n_panel=len(set(ids)), n_panel_copies=len(set(ids)) * (1 if male else 2), panel_count_source='verified_saved_psam_fingerprint')
+				if male: result['x_mode'] = 'male_haploid_nonpar'
+				break
+	if sites:
+		result.update(lead_retained_for_tree=int(int(row["lead_pos"]) in positions), high_ld_sites_retained_for_tree=sum(p in positions for p in markers))
+	if ld:
+		result["high_ld_max_gap_bp"] = max((b-a for a,b in zip(markers, markers[1:])), default=0)
+	if haps:
+		result["n_recurrent_copies"] = sum(int(r["n"]) for r in haps)
+		if row.get("n_singleton_copies") not in (None, ""):
+			result["n_lead_called_copies"] = result["n_recurrent_copies"] + int(row["n_singleton_copies"])
+			if result.get("x_mode", row.get("x_mode")) == "male_haploid_nonpar": result["n_lead_called"] = result["n_lead_called_copies"]
+		# This is a called-copy denominator, never an invented input panel count.
+	if arch and all(ref in arch for ref in REFS):
+		result["unique_archaic_sequences"] = len(set(arch.values()))
+		result["all_archaic_different_sites"] = sum(len(set(col)) > 1 for col in zip(*arch.values()))
+		result["neanderthal_vs_denisovan_fixed_differences"] = sum(len({arch[r][i] for r in LINEAGE_REFS["Neanderthal"]}) == 1 and len({arch[r][i] for r in LINEAGE_REFS["Denisovan"]}) == 1 and arch["Altai"][i] != arch["Denisova"][i] for i in range(min(map(len, arch.values()))))
+	if anc and sites:
+		ancestor = dict(zip([int(r["pos"]) for r in sites], anc[0]["seq"]))
+		result["ld_ancestral_risk_matches_retained"] = sum(ancestor.get(int(r["pos"]), "N") == r.get("risk_linked_allele") for r in high)
+	result["site_qc_file"] = str(loc / "site_qc.tsv") if (loc / "site_qc.tsv").is_file() else ""
+	result["site_missingness_audit"] = "recorded" if (loc / "site_qc.tsv").is_file() else "unknown_historical_per_reference_calls_not_saved"
+	result["ld_span_bp"] = int(row["core_end"]) - int(row["core_start"]) if row.get("core_kb") else None
+	result["archaic_shared_tract_bp"] = None
+	result["ils_statistic_scope"] = "LD_span_sensitivity_only;not_shared_tract_evidence"
+	result.update(local_map_audit(row))
+	result.update(locus_stage_fields(dict(row, **result)))
+	return result
+
+
 def gwas_rows(path):
 	summaries = read(path)
 	details = read(path.with_name("gwas_haplotypes.tsv"))
@@ -2113,6 +2304,7 @@ def gwas_rows(path):
 	all_copies = []
 	for s in summaries:
 		s = dict(s)
+		s.update(saved_locus_audit(path, s))
 		lineage = s.get("lineage") or "Neanderthal"
 		if lineage == "Denisova":
 			lineage = "Denisovan"
@@ -2137,7 +2329,7 @@ def gwas_rows(path):
 			locus_key=key,
 			lineage=lineage,
 			core_interval=f"{s['core_start'] + 1}–{s['core_end']}" if s.get("core_kb") else "未定义",
-			ld_rule="> 0.98 (EUR)",
+			ld_rule="> 0.98 (" + s.get("ld_population", "1KG EUR") + ")",
 			risk_haplotypes=f"{s['n_candidate_haplotypes']} / {s['n_candidate_copies']}"
 			if s.get("n_candidate_haplotypes") not in (None, "")
 			else None,
@@ -2215,7 +2407,7 @@ def phyml_report_main():
 				n_loci=len({r["locus_key"] for r in summary}),
 				n_lineage_tests=len(summary),
 				n_haplotype_rows=len(details),
-				ld_population="1KG EUR",
+				ld_population=sorted({r.get("ld_population", "1KG EUR") for r in summary}),
 				ld_rule="r2 > 0.98",
 				risk_definition="COJO refA and bJ; original lead retained",
 				coverage_threshold=0.8,

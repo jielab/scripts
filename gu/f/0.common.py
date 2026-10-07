@@ -152,6 +152,41 @@ CHROM_LENGTHS = {
 	},
 }
 
+
+# Reference purpose is independent of lineage. Historical calls remain available
+# to the IBDmix reproduction tables, but never contribute cross-method evidence.
+SCIENTIFIC_REFERENCES = ("Altai", "Chagyr", "Vindija", "Denisova", "Denisova25")
+REPRODUCTION_REFERENCES = ("Altai.2013", "Denisova.2013")
+
+
+def reference_role(source):
+	source = {"Chagyrskaya": "Chagyr"}.get(str(source), str(source))
+	if source in REPRODUCTION_REFERENCES:
+		return "ibdmix_reproduction_only"
+	return "scientific_reference" if source in SCIENTIFIC_REFERENCES else "unclassified"
+
+
+def scientific_segment(row):
+	source = row.get("source", row.get("anc", ""))
+	if reference_role(source) == "ibdmix_reproduction_only":
+		return False
+	return row.get("method") != "ibdmix" or reference_role(source) == "scientific_reference"
+
+
+def evidence_sql(alias=""):
+	prefix = alias + "." if alias else ""
+	refs = ",".join("'" + ref + "'" for ref in (*SCIENTIFIC_REFERENCES, "Chagyrskaya"))
+	return f"({prefix}source NOT IN ('Altai.2013','Denisova.2013') AND ({prefix}method!='ibdmix' OR {prefix}source IN ({refs})))"
+
+
+def x_nonpar_intervals(build, length=None):
+	"""BED0 complement of the assembly's two PARs (VCF positions are POS-1)."""
+	build = str(build).removeprefix("GRCh").removeprefix("b")
+	bounds = {"37": (60000, 2699520, 154931043, 155260560), "38": (10000, 2781479, 155701382, 156030895)}
+	p1s, p1e, p2s, p2e = bounds[build]
+	length = CHROM_LENGTHS[build]["X"] if length is None else length
+	return [(lo, min(hi, length)) for lo, hi in ((0, p1s), (p1e, p2s), (p2e, length)) if lo < min(hi, length)]
+
 """Expand normalized BED loci while retaining an auditable core/analysis map."""
 import argparse
 import re
@@ -403,6 +438,7 @@ def vcf_gt_fix_main() -> None:
 	p.add_argument("--duplicate-haploid", choices=["slash", "pipe"])
 	p.add_argument("--require-diploid", action="store_true")
 	p.add_argument("--require-phased", action="store_true")
+	p.add_argument("--x-nonpar-build", choices=["37", "38"], help="Filter both X input streams to identical non-PAR positions")
 	args = p.parse_args()
 
 	n_records = n_calls = n_haploid = n_unphased_het = 0
@@ -413,6 +449,12 @@ def vcf_gt_fix_main() -> None:
 		fields = raw.rstrip("\n").split("\t")
 		if len(fields) < 10:
 			raise SystemExit(f"Malformed VCF line {line_no}: expected >=10 columns")
+		if args.x_nonpar_build:
+			if fields[0].lower().removeprefix("chr") not in ("x", "23"):
+				raise SystemExit("Non-X record in the X scoring stream")
+			pos0 = int(fields[1]) - 1
+			if not any(lo <= pos0 < hi for lo, hi in x_nonpar_intervals(args.x_nonpar_build)):
+				continue
 		n_records += 1
 		if args.chrom:
 			fields[0] = args.chrom
@@ -559,7 +601,7 @@ def gu_run_specs(work, output, methods, run_only = None):
 						# in itself or reinterpret already-published figure names.
 						if path.parent == run and (name.startswith(method + '.')):
 							continue
-						if name.startswith(('.published-', '.result-')) or (path.suffix in ('.log', '.err', '.cmd', '.lock', '.pdf', '.xlsx') and not name.endswith('.phyml.log')) or '.tmp' in name or '.part.' in name:
+						if name.startswith(('.published-', '.result-', '.native-')) or (path.suffix in ('.log', '.err', '.cmd', '.lock', '.pdf', '.xlsx') and not name.endswith('.phyml.log')) or '.tmp' in name or '.part.' in name:
 							continue
 						if path.suffix == '.png':
 							if method != 'phyml' or '.panelB' not in name:
@@ -598,6 +640,46 @@ def gu_review_specs(work, output):
 		'destination': str(output / 'final/gu.validation.xlsx'), 'files': files, 'figures': []}] if files else []
 
 
+
+def gu_export_signature():
+	return hashlib.sha256(b''.join(gu_result_digest(p) for p in (
+		Path(__file__).with_name('phyml.R'), Path(__file__).with_suffix('.R'), Path(__file__).parents[2] / '0f/results.py',
+		Path(__file__).parents[2] / '0f/results.R'))).hexdigest()
+
+
+def gu_refresh_phyml_exports(work, run_only=None):
+	"""Redraw saved Newick trees. This path never invokes a tree/calling model."""
+	work = Path(work).resolve()
+	runs = [run_only] if run_only else sorted({p.parent for p in (work / 'phyml').glob('*/*/phyml.raw.tar.gz')} | {p.parent.parent for p in (work / 'phyml').glob('*/*/final/evidence_trees.tsv')})
+	for run in runs:
+		archive = run / 'phyml.raw.tar.gz'
+		trees = run / 'final/evidence_trees.tsv'
+		inputs = [p for p in (archive, trees) if p.is_file()]
+		signature = hashlib.sha256((gu_export_signature() + repr([(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in inputs])).encode()).hexdigest()
+		marker = run / '.published-plots'
+		if marker.is_file() and marker.read_text() == signature: continue
+		lock = gu_result_lock(run)
+		with lock.open('a') as handle:
+			try: fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+			except BlockingIOError: continue
+			if trees.is_file():
+				view_root, view = work, run
+			else:
+				gu_run_read_view(work, run, 'phyml')
+				view_root = gu_native_view_root(work)
+				view = view_root / run.relative_to(work)
+			with tempfile.TemporaryDirectory(prefix='gu-redraw-', dir='/tmp') as temporary:
+				stage = Path(temporary)
+				specs = gu_run_specs(view_root, stage, ['phyml'], view)
+				if specs:
+					job = stage / 'plots.json'; job.write_text(json.dumps(specs))
+					gu_result_r('plots', job)
+					for spec in specs:
+						for source in Path(spec['destination']).parent.glob('phyml.*'):
+							gu_atomic_copy(source, run / source.name)
+			marker.write_text(signature)
+
+
 def gu_publish_results(work, output, methods, run_only = None):
 	work, output = Path(work).resolve(), gu_work_root(output)
 	with ExitStack() as locks, tempfile.TemporaryDirectory(prefix = 'gu-publish-', dir = '/tmp') as temporary:
@@ -616,7 +698,7 @@ def gu_publish_results(work, output, methods, run_only = None):
 					print('Result publication deferred for active run:', spec['source'], file = sys.stderr)
 					continue
 			marker = Path(spec['source']) / '.published-content'
-			signature = hashlib.sha256(json.dumps([str(output), spec['files'], spec['figures']], sort_keys = True).encode()).hexdigest()
+			signature = hashlib.sha256(json.dumps([str(output), spec['files'], spec['figures'], gu_export_signature()], sort_keys = True).encode()).hexdigest()
 			existing = output / Path(spec['destination']).relative_to(stage)
 			if existing.is_file() and marker.is_file() and marker.read_text() == signature:
 				continue
@@ -629,10 +711,11 @@ def gu_publish_results(work, output, methods, run_only = None):
 		for spec in specs:
 			for figure in spec['figures']:
 				destination = Path(spec['destination']).parent / figure['name']
-				shutil.copy2(Path(spec['source']) / figure['source'], destination)
+				if not destination.is_file(): shutil.copy2(Path(spec['source']) / figure['source'], destination)
 				if not destination.with_suffix('.xlsx').is_file():
 					raise ValueError(f'Missing numerical results: {destination}')
 		if 'final' in methods and (work / 'final/gu.sqlite').is_file():
+			gu_refresh_phyml_exports(work)
 			gu_result_r('database-pack', work / 'final/gu.sqlite', stage / 'final/gu.results.rds')
 			gu_publish_summary(work, stage)
 		for source in stage.rglob('*'):
@@ -668,6 +751,21 @@ def gu_publish_summary(work, stage):
 		validation[name.removeprefix('phyml_').removesuffix('_report')] = frame
 	if validation:
 		results.write_workbook(validation, stage / 'final/gu.validation.summary.xlsx')
+	burdens, paired, provenance = [], [], []
+	for pointer in sorted((work / 'final/normalize/density').glob('*/current.tsv')):
+		selected = read_tsv_rows(pointer)
+		if len(selected) != 1: raise ValueError('Invalid density cache pointer')
+		directory = pointer.parent / selected[0]['directory']
+		manifest = json.loads((directory / 'manifest.json').read_text())
+		for filename, frames in [('population_summary.tsv', burdens), ('same_males_X_autosomes.tsv', paired)]:
+			path = directory / filename
+			if path.is_file(): frames.append(pd.read_csv(path, sep='\t', float_precision='round_trip'))
+		provenance.append(dict(dataset_id=manifest['dataset'], genome_build=manifest['build'], database=manifest['database'],
+			cache_schema=manifest['schema'], input_signature=json.dumps(manifest, sort_keys=True)))
+	if burdens:
+		results.write_workbook({'population_burden': pd.concat(burdens, ignore_index=True),
+			'same_males_X_autosomes': pd.concat(paired, ignore_index=True) if paired else pd.DataFrame(),
+			'provenance': pd.DataFrame(provenance)}, stage / 'final/gu.ibdmix.summary.xlsx')
 	groups = {'gu.loci': ['locus_evidence', 'locus_method_support'], 'gu.segments': ['segment_catalog'], 'gu.trajectory': ['locus_trajectory']}
 	for name, names in groups.items():
 		tables = {}
@@ -689,7 +787,7 @@ def gu_publish_summary(work, stage):
 def gu_restore_results(published, method="all", run_only=None):
 	published = work = gu_work_root(published)
 	work.mkdir(parents = True, exist_ok = True, mode = 0o700)
-	with (work / '.restore.lock').open('a') as lock:
+	with gu_result_lock(work).open('a') as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		jobs = []
 		markers = []
@@ -788,7 +886,7 @@ import io
 def gu_native_files(run, method):
 	for directory, folders, names in os.walk(run, followlinks=False):
 		folders[:] = [n for n in folders if n not in ('tmp', 'mask', 'log', 'logs', '__pycache__')]
-		for name in names:
+		for name in names + [n for n in folders if (Path(directory) / n).is_symlink()]:
 			p = Path(directory) / name
 			if p.parent == run and (name.startswith(method + '.') or name.startswith(('.published-', '.result-', '.native-'))):
 				continue
@@ -939,20 +1037,31 @@ def _gu_compact_results(work, methods, run_only=None):
 
 def gu_compact_results(work, methods, run_only=None):
  work = gu_work_root(work)
- with (work / '.restore.lock').open('a') as lock:
+ with gu_result_lock(work).open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX)
   _gu_compact_results(work,methods,run_only)
 
 
 def results_cli():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('action', choices = ['work-root', 'restore', 'publish', 'compact'])
+	parser.add_argument('action', choices = ['work-root', 'read-view', 'restore', 'publish', 'compact', 'refresh-plots', 'upgrade-workbooks'])
 	parser.add_argument('--published', type = Path, required = True)
 	parser.add_argument('--work', type = Path)
 	parser.add_argument('--run', type = Path)
 	parser.add_argument('--method', choices = [*RESULT_NAMES, 'final', 'all', 'shiny', 'ukb'], default = 'all')
 	args = parser.parse_args()
-	if args.action == 'work-root':
+	if args.action == 'read-view':
+		if args.run is None or args.method not in RESULT_NAMES:
+			parser.error('read-view requires --run and an analysis --method')
+		print(gu_run_read_view(args.published, args.run, args.method))
+	elif args.action == 'refresh-plots':
+		gu_refresh_phyml_exports(args.published, args.run)
+	elif args.action == 'upgrade-workbooks':
+		spec = spec_from_file_location('gu_results_upgrade', Path(__file__).parents[2] / '0f/results.py')
+		module = module_from_spec(spec); spec.loader.exec_module(module)
+		for path in sorted((args.run or args.published).rglob('*.xlsx')):
+			if module.upgrade_workbook(path): print('Re-exported', path)
+	elif args.action == 'work-root':
 		print(gu_work_root(args.published))
 	elif args.action == 'restore':
 		print(gu_restore_results(args.published, args.method, args.run))

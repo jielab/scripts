@@ -10,10 +10,13 @@ if ("--review" %in% commandArgs(trailingOnly = TRUE)) {
 	quit(status = 0)
 }
 source(file.path(app_dir, "data.R"), local = TRUE)
-source(file.path(app_dir, "ui.R"), local = TRUE)
-source(file.path(app_dir, "server.R"), local = TRUE)
-
-app <- shiny::shinyApp(ui, server)
+if (.gu_summary_only) {
+	app <- gu_summary_only_app(.gu_summary_file, file.path(default_final, "gu.validation.summary.xlsx"))
+} else {
+	source(file.path(app_dir, "ui.R"), local = TRUE)
+	source(file.path(app_dir, "server.R"), local = TRUE)
+	app <- shiny::shinyApp(ui, server)
+}
 .gu_ui_handler <- app$httpHandler
 app$httpHandler <- function(req) {
 	response <- gu_igv_reference_response(req, .gu_reference_resources)

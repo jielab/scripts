@@ -48,6 +48,10 @@ lod_cut=${lod_cut:-4}
 len_cut=${len_cut:-50000}
 emit_lod_cut=${emit_lod_cut:-$lod_cut}
 minor_allele_count=${minor_allele_count:-1}
+IBDMIX_X_PROFILE=${IBDMIX_X_PROFILE:-nonpar-v2}
+IBDMIX_X_MINOR_ALLELE_COUNT=${IBDMIX_X_MINOR_ALLELE_COUNT:-1}
+[[ $IBDMIX_X_PROFILE == nonpar-v2 || $IBDMIX_X_PROFILE == legacy ]] || { echo "ERROR: X profile must be nonpar-v2 or legacy" >&2; exit 2; }
+[[ $IBDMIX_X_MINOR_ALLELE_COUNT =~ ^[123]$ ]] || { echo "ERROR: X MAC sensitivity must be 1, 2 or 3" >&2; exit 2; }
 archaic_error=${archaic_error:-0.01}
 modern_error_max=${modern_error_max:-0.002}
 modern_error_proportion=${modern_error_proportion:-2}
@@ -344,6 +348,9 @@ run_record() {
 	printf 'export_denisovan\t%s\ndenisovan_call_definition\tnative_reference_matching_no_African_Denisova_subtraction\n' "$export_denisovan"
 	printf 'genome_build\t%s\nx_mode\t%s\nloci_flank_bp\t%s\nrefs\t%s\nlod_cut\t%s\nlen_cut\t%s\nemit_lod_cut\t%s\nminor_allele_count\t%s\narchaic_error\t%s\nmodern_error_max\t%s\nmodern_error_proportion\t%s\n' \
 		"$genome_build" "$x_mode" "$IBDMIX_LOCUS_FLANK_BP" "$refs_arg" "$lod_cut" "$len_cut" "$emit_lod_cut" "$minor_allele_count" "$archaic_error" "$modern_error_max" "$modern_error_proportion"
+	if [[ $x_mode == male_haploid_nonpar && $IBDMIX_X_PROFILE != legacy ]]; then
+		printf 'x_scoring_profile\t%s\nx_minor_allele_count\t%s\nx_calling_cohort_sha256\t%s\n' "$IBDMIX_X_PROFILE" "$IBDMIX_X_MINOR_ALLELE_COUNT" "$(for u in "${analysis_units[@]}"; do [[ ${unit_chr[$u]} != X ]] || cat "$dirout/samples/$u/ALL.txt"; done | sort -u | sha256sum | cut -d' ' -f1)"
+	fi
 	stat -c 'sample_file\t%n:%s:%Y' "$sample_file"
 	[[ -z $loci_file ]] || stat -c 'loci_file\t%n:%s:%Y' "$loci_file"
 	stat -c 'software\t%n:%s:%Y' "$generate_gt" "$ibdmix_bin" "$helper" "$F/0.common.py" "$F/ibdmix.sh"
@@ -382,6 +389,16 @@ check_run_provenance() {
 	comparison=$current
 	[[ ! -s $cached ]] || comparison=$cached
 	run_record >"$candidate"
+	if [[ $IBDMIX_X_PROFILE != legacy && $IBDMIX_X_MINOR_ALLELE_COUNT != 1 ]] && grep -q '^x_scoring_profile' "$candidate"; then
+		local baseline=${IBDMIX_X_BASELINE_DIR:-${dirout%.mac[123]}.mac1}
+		if [[ ( ! -s $baseline/run.meta.tsv || ! -e $baseline/.complete ) && -s $baseline/ibdmix.raw.tar.gz ]]; then
+			baseline=$(python3 "$F/0.common.py" results read-view --published "$(dirname -- "$baseline")" --run "$baseline" --method ibdmix) || return 1
+		fi
+		[[ -s $baseline/run.meta.tsv && -e $baseline/.complete ]] || { echo "ERROR: X sensitivity requires completed MAC1 baseline: $baseline" >&2; return 1; }
+		cmp -s <(awk '$1=="x_calling_cohort_sha256"{print}' "$baseline/run.meta.tsv") <(awk '$1=="x_calling_cohort_sha256"{print}' "$candidate") || {
+			echo "ERROR: X sensitivity calling cohort differs from MAC1 baseline" >&2; return 1;
+		}
+	fi
 	if [[ -s $comparison ]] && ! python3 "$F/ibdmix.py" provenance "$comparison" "$candidate"; then
 		if [[ $IBDMIX_REPLACE != 1 ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f ! -name '*.part*' -print -quit) ]]; then
 			echo "ERROR: IBDmix inputs, profile or implementation changed; old results cannot be reused. Rerun with --replace-ibdmix TRUE." >&2
@@ -423,6 +440,7 @@ prepare_modern() {
 	# beforehand can incorrectly turn that site into a homozygous-reference call.
 	local -a fix=()
 	[[ $chr != X ]] || fix=(--chrom 23 --duplicate-haploid slash)
+	[[ $chr != X || ${unit_sex[$u]} != male || $IBDMIX_X_PROFILE == legacy ]] || fix+=(--x-nonpar-build "${genome_build#b}")
 	bcftools "${view[@]}" | bcftools +setGT -Ou -- -t . -n . |
 		bcftools +fixploidy -Ou -- -f 2 |
 		bcftools annotate -x INFO,^FORMAT/GT -Ov |
@@ -435,6 +453,8 @@ prepare_archaic() {
 	region=$(unit_region "$u")
 	unit_chr_current=$chr
 	adapted=$(adapt_region "$vcf" "$region")
+	local -a fix=(--chrom 23 --duplicate-haploid slash)
+	[[ $chr != X || ${unit_sex[$u]} != male || $IBDMIX_X_PROFILE == legacy ]] || fix+=(--x-nonpar-build "${genome_build#b}")
 	local -a view=(view -Ou)
 	[[ $ref != *.2013 ]] || view=(view -Ov)
 	[[ -z $adapted ]] || view+=(-r "$adapted")
@@ -458,7 +478,7 @@ prepare_archaic() {
 		else cat; fi | bcftools +setGT -Ou -- -t . -n . |
 		bcftools +fixploidy -Ou -- -f 2 |
 		bcftools annotate -x INFO,^FORMAT/GT -Ov |
-		if [[ $chr == X ]]; then python3 "$F/0.common.py" fix-vcf-gt --chrom 23 --duplicate-haploid slash; else awk 'BEGIN{OFS="\t"} /^#/{print;next}{sub(/^chr/,"",$1);print}'; fi >"$out"
+		if [[ $chr == X ]]; then python3 "$F/0.common.py" fix-vcf-gt "${fix[@]}"; else awk 'BEGIN{OFS="\t"} /^#/{print;next}{sub(/^chr/,"",$1);print}'; fi >"$out"
 }
 prepare_unit_masks() {
 	local u=$1 ref chr=${unit_chr[$1]} out=$ibdmix_mask_root/$1
@@ -472,6 +492,48 @@ prepare_unit_masks() {
 	else
 		python3 "$helper" mask --root "$mask_root" --chrom "$chr" --modern "$(modern_vcf "$chr")" --fasta "$ref_fasta" --upstream "$dirsoft" --output "$out" --archaic-root "$dirarch" --refs "${refs[@]}"
 	fi
+	python3 - "$out" "$out/scientific.qc.tsv" "$chr" "$genome_build" "$F/0.common.py" <<'PYQC'
+import hashlib,json,sys
+from pathlib import Path
+root,target,chrom,build,common_file=map(str,sys.argv[1:])
+import importlib.util
+spec=importlib.util.spec_from_file_location("mask_common",common_file);common=importlib.util.module_from_spec(spec);spec.loader.exec_module(common)
+spans=common.x_nonpar_intervals(build) if chrom == "X" else [(0,common.CHROM_LENGTHS[build.removeprefix("b")][chrom])]
+manifest=Path(root)/'manifest.json'
+m=json.loads(manifest.read_text()) if manifest.exists() else {}
+rows=[]
+for p in sorted(Path(root).glob('*.exclude.bed')):
+ ref=p.name.removesuffix('.exclude.bed')
+ excluded=sum(max(0,min(hi,int(f[2]))-max(lo,int(f[1]))) for f in (line.split() for line in p.read_text().splitlines() if line.strip() and not line.startswith(('#','track','browser'))) for lo,hi in spans)
+ available=sum(hi-lo for lo,hi in spans)-excluded
+ rows.append([ref,chrom,build,'nonPAR_X' if chrom == 'X' else 'whole_autosome',m.get('cpg_filter','unknown'),m.get('strict_accessibility','unknown'),str(available),hashlib.sha256(p.read_bytes()).hexdigest(),str(manifest)])
+Path(target).write_text('reference\tchr\tbuild\tmask_scope\tcpg_status\tstrict_status\tavailable_bp\texcluded_sha256\tmanifest_source\n'+''.join('\t'.join(r)+'\n' for r in rows))
+PYQC
+}
+
+
+persist_mask_qc() {
+	local u=$1 ref=$2 reused=$3
+	mkdir -p "$dirout/qc/masks"
+	python3 - "$ibdmix_mask_root/$u/scientific.qc.tsv" "$dirout/qc/masks/$u.$ref.tsv" "$ref" "$reused" <<'PYQC'
+import csv,sys
+from pathlib import Path
+source,target,ref,reused=sys.argv[1:]
+if Path(target).is_file() and reused == '1':
+ raise SystemExit(0)
+with open(source) as handle:
+ rows=[r for r in csv.DictReader(handle,delimiter='\t') if r['reference']==ref]
+if len(rows)!=1: raise ValueError('Missing mask QC reference')
+row=rows[0]
+row['manifest_source']=str(Path(target).with_suffix('.preparation.json')) if Path(source).with_name('manifest.json').is_file() else ''
+row['execution_scope']='new_population_calls' if reused == '0' else 'mixed_reused_population_calls;historical_component_execution_unknown'
+if reused == '1': row.update(cpg_status='unknown',strict_status='unknown')
+with open(target,'w') as handle:
+ writer=csv.DictWriter(handle,fieldnames=list(row),delimiter='\t',lineterminator='\n');writer.writeheader();writer.writerow(row)
+PYQC
+	if [[ -s $ibdmix_mask_root/$u/manifest.json ]]; then
+		cp "$ibdmix_mask_root/$u/manifest.json" "$dirout/qc/masks/$u.$ref.preparation.json"
+	fi
 }
 
 run_population() {
@@ -479,16 +541,35 @@ run_population() {
 	raw=$dirout/raw/$u/$ref.$pop.raw.txt.gz
 	if gzip_ok "$raw"; then return 0; fi
 	log "CALL unit=$u ref=$ref population=$pop"
+	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male && $IBDMIX_X_PROFILE != legacy ]]; then
+		local part part_raw count=0
+		: >"$tmp/$ref.$pop.raw.txt"
+		for part in "$gt".nonpar.*.gz; do
+			# Header-only components have no informative sites and no calls.
+			[[ $(gzip -dc "$part" | wc -l) -gt 1 ]] || continue
+			part_raw="$tmp/$ref.$pop.part.$count.txt"
+			"$ibdmix_bin" --genotype <(gzip -dc "$part") --output "$part_raw" --sample "$sample_list" \
+				--mask "$ibdmix_mask_root/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
+				--minor-allele-count-threshold "$IBDMIX_X_MINOR_ALLELE_COUNT" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
+				--modern-error-proportion "$modern_error_proportion" --more-stats >>"$ibdmix_log_root/$ref.$u.$pop.ibdmix.log" 2>&1 || return 1
+			if ((count == 0)); then cat "$part_raw" >>"$tmp/$ref.$pop.raw.txt"; else tail -n +2 "$part_raw" >>"$tmp/$ref.$pop.raw.txt"; fi
+			rm -f "$part_raw"
+			count=$((count + 1))
+		done
+		((count > 0)) || { echo "ERROR: no non-PAR genotype components" >&2; return 1; }
+	else
 	"$ibdmix_bin" --genotype <(gzip -dc "$gt") --output "$tmp/$ref.$pop.raw.txt" --sample "$sample_list" \
 		--mask "$ibdmix_mask_root/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
 		--minor-allele-count-threshold "$minor_allele_count" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
 		--modern-error-proportion "$modern_error_proportion" --more-stats >"$ibdmix_log_root/$ref.$u.$pop.ibdmix.log" 2>&1 || return 1
+	fi
 	gzip -c "$tmp/$ref.$pop.raw.txt" >"$raw.part" && mv "$raw.part" "$raw" || return 1
 	rm -f "$tmp/$ref.$pop.raw.txt"
 }
 run_ref_unit() {
-	local u=$1 ref=$2 tmp=$3 gt producer archaic_fd modern_fd modern_pid pop _super _n sample_list status=0 producer_status=0 modern_status=0 pid
+	local u=$1 ref=$2 tmp=$3 gt producer archaic_fd modern_fd modern_pid pop _super _n sample_list status=0 producer_status=0 modern_status=0 pid reused_population_calls=0
 	local -a pids=()
+	[[ -z $(find "$dirout/raw/$u" -name "$ref.*.raw.txt.gz" -print -quit 2>/dev/null) ]] || reused_population_calls=1
 	gt=$tmp/$ref.$u.gt.txt.gz
 	if ref_calls_complete "$u" "$ref"; then
 		rm -f "$gt" "$gt.part.gz"
@@ -524,9 +605,16 @@ run_ref_unit() {
 			rm -f "$gt.part.gz"
 			return 1
 		fi
-		python3 "$helper" validate-genotypes --path "$gt.part.gz" --output "$dirout/genotype/$ref.$u.qc.json"
+		local -a qc_args=()
+		[[ ${unit_chr[$u]} != X || ${unit_sex[$u]} != male || $IBDMIX_X_PROFILE == legacy ]] || qc_args=(--x-nonpar-build "${genome_build#b}")
+		python3 "$helper" validate-genotypes --path "$gt.part.gz" --output "$dirout/genotype/$ref.$u.qc.json" "${qc_args[@]}"
+		mkdir -p "$dirout/qc/genotypes"
+		cp "$dirout/genotype/$ref.$u.qc.json" "$dirout/qc/genotypes/$ref.$u.json"
 		mv "$gt.part.gz" "$gt"
 		log "GENOTYPE unit=$u ref=$ref stage=complete"
+	fi
+	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male && $IBDMIX_X_PROFILE != legacy ]]; then
+		python3 "$helper" split-x-genotypes --path "$gt" --output "$gt.nonpar" --build "$genome_build"
 	fi
 	mkdir -p "$dirout/raw/$u"
 	while IFS=$'\t' read -r pop _super _n sample_list; do
@@ -540,6 +628,7 @@ run_ref_unit() {
 		fi
 	done <"$dirout/samples/$u/populations.tsv"
 	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	if ((status == 0)); then persist_mask_qc "$u" "$ref" "$reused_population_calls"; fi
 	rm -f "$gt" "$gt.part.gz"
 	((status == 0))
 }

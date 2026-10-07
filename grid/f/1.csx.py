@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""1csx.py: signature, score-config, workspace, combined, posterior, normalize-weights."""
+"""1.csx.py: signature, score-config, workspace, combined, posterior, normalize-weights."""
 
 from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
@@ -258,7 +258,9 @@ def csx_combined_main():
 	if a.check:
 		return
 	(work / a.trait).mkdir(parents=True, exist_ok=True)
-	lock = (work / a.trait / "run.lock").open("a")
+	lock_dir = cache_directory(work / a.trait)
+	lock_dir.mkdir(parents=True, exist_ok=True)
+	lock = (lock_dir / "run.lock").open("a")
 	fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 	run = workspace(work / a.trait, inference_name(phi, chrs), sig)
 	scratch = cache_directory(run)

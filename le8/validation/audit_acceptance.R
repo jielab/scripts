@@ -88,6 +88,14 @@ check('A04 cis null/trans strong remain in separate layers and failed rows survi
 	stopifnot(!e$forward_support[e$feature=='P'&e$scope=='primary'],e$forward_support[e$feature=='P'&e$scope=='secondary'],e$forward_status[e$feature=='failed'&e$scope=='primary']=='failed_or_not_estimable')
 	stopifnot(le8_select_mr(mr,'protein')$pval[1]==.3)
 })
+check('A04 C2 directionality receives the explicit omics layer',{
+	fw<-tibble(exposure='P',analysis=c('cis','local','trans','distal'),b=c(.1,.2,.9,.8),pval=c(.01,.02,1e-9,1e-8),FDR_all=c(.03,.04,1e-8,1e-7))
+	c1<-list(directionality=tibble(term='P',reactive_compatible=FALSE,distal_support=TRUE,p_incident=.01))
+	protein<-integrate_c2_directionality(fw,c1,layer='protein')
+	metabolite<-integrate_c2_directionality(fw,c1,layer='metabolite')
+	stopifnot(nrow(protein)==1L,protein$MR_analysis=='cis',protein$MR_beta==.1,
+	          nrow(metabolite)==1L,metabolite$MR_analysis=='local',metabolite$MR_beta==.2)
+})
 mr<-tibble(exposure='P',analysis='cis',FDR_all=.01,instrument_chr='1',instrument_pos_min=100,instrument_pos_max=100,instrument_positions='1:100',instrument_snps='rsA')
 co<-tibble(feature='P',locus='chr1:90-110',chr='1',start=90,end=110,status='ok',PP.H4_robust_min=.75,locus_class='cis',aligned_MR_IVs='rsA',beta_scale_status='verified',prior_complete=TRUE)
 check('A05 posterior 0.75 fails 0.8 everywhere; passes 0.7 as region evidence',{

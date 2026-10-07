@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-source /mnt/d/scripts/0f/console.sh
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPYCACHEPREFIX=/tmp/gu-python-cache
@@ -10,7 +9,117 @@ SHINY=$ROOT/shiny
 GU_ORIGINAL_ARGS=("$@")
 # shellcheck source=f/0.common.sh
 source "$F/0.common.sh"
+source "$F/0.resources.sh"
 [[ -s "$ROOT/gu.env" ]] && source "$ROOT/gu.env"
+
+
+# 🚩 UKB PGEN preparation
+# Preparation validates its own tools and does not restore analysis results.
+case "${1:-}:${2:-}" in
+	ukb:inspect-pgen | ukb:make-panel-pgen | ukb:pilot | ukb:pgen-vcf)
+		if [[ ${CONDA_DEFAULT_ENV:-} != ${GU_ENV_NAME:-gu} && ${GU_ENV_REEXEC:-0} != 1 ]]; then
+			conda_owner=${GU_CONDA_EXE:-${GU_CONDA_BASE:-$HOME/anaconda3}/bin/conda}
+			[[ -x $conda_owner ]] || { echo "ERROR: activate the GU conda environment before UKB preparation" >&2; exit 2; }
+			export GU_ENV_REEXEC=1
+			exec "$conda_owner" run --no-capture-output -n "${GU_ENV_NAME:-gu}" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
+		fi
+		shift
+		exec bash "$F/0.prep.sh" ukb "$@"
+		;;
+esac
+# shellcheck source=../0f/console.sh
+source "$ROOT/../0f/console.sh"
+
+
+# 🚩 Prepared UKB analysis identity
+gu_ukb_prepared_context() {
+	[[ ${GU_UKB_DIRECT:-0} != 1 ]] || return 0
+	local target=${TARGET_INPUT:-${GU_TARGET:-}} panel=${SAMPLE_PANEL_INPUT:-${GU_SAMPLE_PANEL:-}} root value result_var protected
+	if [[ ${GU_UKB_PGEN_PREPARED:-0} != 1 ]]; then
+		if [[ $target == ukb-* && ${METHOD:-} != ukb ]]; then
+			echo "ERROR: target=$target is reserved for the prepared UKB workflow; source its gu-target.env before inference or final/Shiny" >&2
+			return 2
+		fi
+		return 0
+	fi
+	[[ $target == ukb-* && -n ${GU_UKB_RESULTS_ROOT:-} ]] || {
+		echo "ERROR: prepared UKB data require target=ukb-* and GU_UKB_RESULTS_ROOT; source the generated gu-target.env" >&2
+		return 2
+	}
+	root=$(gu_require_result_path "$GU_UKB_RESULTS_ROOT") || return $?
+	for protected in /mnt/d/analysis/gu "${GU_DATA_ROOT:-/mnt/d}/analysis/gu"; do
+		protected=$(realpath -m -- "$protected") || return $?
+		[[ $root != "$protected" && $root != "$protected/"* ]] || {
+			echo "ERROR: UKB results must use an independent root outside the 1KG results: $root" >&2
+			return 2
+		}
+	done
+	for result_var in GU_ANALYSIS_ROOT GU_PUBLISHED_ROOT; do
+		value=${!result_var:-}
+		[[ -n $value && $(realpath -m -- "$value") == "$root" ]] || {
+			echo "ERROR: $result_var must equal GU_UKB_RESULTS_ROOT=$root for prepared UKB data" >&2
+			return 2
+		}
+	done
+	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT AS3_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR; do
+		value=${!result_var:-}
+		[[ -n $value ]] || continue
+		value=$(realpath -m -- "$value") || return $?
+		[[ $value == "$root/"* ]] || {
+			echo "ERROR: prepared UKB output $result_var must remain under $root" >&2
+			return 2
+		}
+	done
+	for value in "$root"/{phyml,ibdmix,trace,as3}/1kg; do
+		[[ ! -d $value ]] || {
+			echo "ERROR: the UKB results root already contains 1KG analysis data: $value" >&2
+			return 2
+		}
+	done
+	GU_ANALYSIS_ROOT=$root
+	GU_PUBLISHED_ROOT=$root
+	GU_SAMPLE_PANEL=$panel
+	export GU_ANALYSIS_ROOT GU_PUBLISHED_ROOT GU_UKB_RESULTS_ROOT GU_SAMPLE_PANEL
+	# Published results contain their cohort metadata; final/Shiny must remain
+	# usable after temporary genotype exchange files have been removed.
+	case "${METHOD:-}" in final | shiny) return 0 ;; esac
+	[[ -n ${GU_TARGET_NATIVE_VCF_PREFIX:-} && -n ${GU_TARGET_ROOT:-} && -s $panel ]] || {
+		echo "ERROR: prepared UKB VCF prefix, preparation directory, or sample panel is missing; rerun pgen-vcf" >&2
+		return 2
+	}
+	[[ $(basename -- "$GU_TARGET_NATIVE_VCF_PREFIX") == chr ]] || {
+		echo "ERROR: prepared UKB VCF prefix must match the certified chrN exports" >&2
+		return 2
+	}
+	[[ $(realpath -m -- "$panel") == "$(realpath -m -- "$GU_TARGET_ROOT/samples.txt")" ]] || {
+		echo "ERROR: prepared UKB must use its verified $GU_TARGET_ROOT/samples.txt cohort metadata" >&2
+		return 2
+	}
+	if [[ -n ${TARGET_DIR_INPUT:-} ]]; then
+		[[ $(realpath -m -- "$TARGET_DIR_INPUT") == "$(realpath -m -- "$GU_TARGET_NATIVE_VCF_PREFIX")" ]] || {
+			echo "ERROR: --target-dir differs from the verified UKB VCF prefix; source the matching gu-target.env" >&2
+			return 2
+		}
+	fi
+	GU_TARGET_GEN_PREFIX=$GU_TARGET_NATIVE_VCF_PREFIX
+	GU_TARGET_DIR=$GU_TARGET_NATIVE_VCF_PREFIX
+	GU_NORMALIZE_SAMPLE_PANEL=$panel
+	export GU_TARGET_GEN_PREFIX GU_TARGET_DIR GU_NORMALIZE_SAMPLE_PANEL
+	case "${METHOD:-}" in
+		phyml | trace | as3)
+			[[ ${GU_UKB_PHASE_CHECKED:-0} == 1 ]] || {
+				echo "ERROR: prepared UKB $METHOD requires phase-certified exports; rerun pgen-vcf --ukb-require-phase true. Each chromosome's full export receipt will be rechecked before inference" >&2
+				return 2
+			}
+			;;
+		ibdmix)
+			[[ -z ${LOCI_INPUT:-} ]] || {
+				echo "ERROR: prepared UKB IBDmix currently accepts whole-chromosome --chr requests; --loci would conflict with independent chrX nonPAR blocks" >&2
+				return 2
+			}
+			;;
+	esac
+}
 
 
 # 🚩 Shared functions
@@ -53,9 +162,34 @@ TRACE_JOB_EXTRACT=2 TRACE_JOB_INFER=4 TRACE_JOB_SUMMARIZE=4 ./gu.sh trace \
 
 ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg \
   --target-dir /mnt/f/gen/1kg/38/pfile/chr --jobs 4 --foreground TRUE
+# UKB: real phased haplotypes for PhyML; imputed genotypes for IBDmix.
+# --keep is a PLINK sample list; --keep-males uses SEX from PSAM.
+# --keep-psam FILE,SIZE,INDEX selects a 1-based chunk before sex filtering.
+# --keep and --keep-psam are mutually exclusive; either accepts --keep-males.
+# UKB concurrency is limited by --memory-cap (default 32G: at most 2 workers,
+# 8192 MiB PLINK workspace each, with memory reserved for other processes).
+./gu.sh ibdmix --grch 37 --target ukb --target-dir /mnt/f/gen/ukb/37/imp/chr \
+  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males
+./gu.sh phyml --loci /path/leads.jma.cojo --loci-format cojo --grch 38 \
+  --target ukb --target-dir /mnt/f/gen/ukb/37/hap/chr --keep /path/batch01.txt --keep-males
+./gu.sh ibdmix --grch 37 --target ukb --target-dir /mnt/f/gen/ukb/37/imp/chr \
+  --keep /path/batch01.txt --keep-males
+
 ./gu.sh final
 # Shiny application: shiny/app.R, shiny/ui.R, shiny/server.R and shiny/www/
 ./gu.sh shiny
+
+# 4. UKB PGEN: inspect dense imputed data, then prepare one fixed pilot cohort.
+./gu.sh ukb inspect-pgen --ukb-source imp --chr 22 --grch 37
+./gu.sh ukb pilot --help
+./gu.sh ukb pgen-vcf --help
+# Source the generated gu-target.env before UKB inference/final commands.
+# UKB results use a separate persistent root; preprocessing files stay in /tmp.
+# UKB IBDmix accepts --chr requests, uses post-QC observed sites and independent
+# chrX nonPAR blocks, and defaults to Altai,Vindija exploratory reference matches.
+# TRACE needs phase-certified exports plus completed matching ARGs; AS3 also
+# requires GRCh38 autosomes. UKB PhyML still needs UKB LD and INFO/AA adapters;
+# UKB GWAS leads may be examined with the existing 1KG sequence workflow.
 
 HELP
 	}
@@ -112,6 +246,11 @@ HELP
 	GRCH_INPUT=""
 	TARGET_INPUT=""
 	TARGET_DIR_INPUT=""
+	GU_KEEP=${GU_KEEP:-}
+	GU_KEEP_PSAM=""
+	KEEP_SET=0
+	KEEP_PSAM_SET=0
+	GU_MALE_ONLY=${GU_MALE_ONLY:-0}
 	ARCHAIC_PATH_INPUT=""
 	ARCHAIC_GEN_INPUT=""
 	TARGET_INPUT_SET=0
@@ -220,6 +359,14 @@ HELP
 				TARGET_INPUT_SET=1
 				shift 2
 				;;
+			--keep)
+				[[ $# -ge 2 && -s $2 ]] || { echo "ERROR: --keep requires a nonempty PLINK sample list" >&2; exit 2; }
+				GU_KEEP=$(realpath -- "$2"); KEEP_SET=1; shift 2 ;;
+			--keep-psam)
+				[[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --keep-psam requires FILE,CHUNK_SIZE,CHUNK_INDEX" >&2; exit 2; }
+				GU_KEEP_PSAM=$2; KEEP_PSAM_SET=1; shift 2 ;;
+			--keep-males)
+				GU_MALE_ONLY=1; shift ;;
 			--target-dir)
 				[[ $# -ge 2 && -n ${2:-} ]] || {
 					echo "ERROR: --target-dir requires a per-chromosome prefix" >&2
@@ -623,6 +770,12 @@ HELP
 				;;
 		esac
 	fi
+	if ((KEEP_SET && KEEP_PSAM_SET)); then
+		echo "ERROR: --keep and --keep-psam are mutually exclusive" >&2; exit 2
+	fi
+	if [[ -n $GU_KEEP || -n $GU_KEEP_PSAM || $GU_MALE_ONLY == 1 ]] && [[ $METHOD != phyml && $METHOD != ibdmix ]]; then
+		echo "ERROR: --keep/--keep-psam/--keep-males are supported by phyml and ibdmix" >&2; exit 2
+	fi
 	if ((TARGET_INPUT_SET != TARGET_DIR_INPUT_SET)); then
 		echo "ERROR: --target and --target-dir must be supplied together" >&2
 		exit 2
@@ -781,9 +934,63 @@ HELP
 
 	GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
 	GU_REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
+	if [[ -n $GU_KEEP_PSAM ]]; then
+		local chunk_context
+		chunk_context=$(python3 "$F/0.target.py" --chunk-only --keep-psam "$GU_KEEP_PSAM") || return $?
+		eval "$chunk_context"
+	else
+		unset GU_KEEP_PSAM_INFO GU_KEEP_PSAM_SHA256
+	fi
+	# Explicit UKB PGEN prefixes identify UKB even when an old command says target=1kg.
+	if [[ ${GU_UKB_DIRECT:-0} != 1 && ${GU_UKB_PGEN_PREPARED:-0} != 1 && -n $TARGET_DIR_INPUT && ( $TARGET_DIR_INPUT == */ukb/* || $TARGET_INPUT == ukb* ) ]]; then
+		local -a cohort_args=(--prefix "$TARGET_DIR_INPUT")
+		[[ -z $GU_KEEP ]] || cohort_args+=(--keep "$GU_KEEP")
+		[[ $GU_MALE_ONLY != 1 ]] || cohort_args+=(--keep-males)
+		[[ -z $SAMPLE_PANEL_INPUT ]] || cohort_args+=(--sample-panel "$SAMPLE_PANEL_INPUT")
+		local cohort_context
+		cohort_context=$(python3 "$F/0.target.py" "${cohort_args[@]}") || return $?
+		eval "$cohort_context"
+	fi
+	if [[ ${GU_UKB_DIRECT:-0} != 1 && ${GU_UKB_PGEN_PREPARED:-0} != 1 && ${GU_FILTERED_TARGET:-0} != 1 && ( -n $GU_KEEP || $GU_MALE_ONLY == 1 ) ]]; then
+		local cohort_context
+		local -a cohort_args=(--prefix "$TARGET_DIR_INPUT" --dataset "$TARGET_INPUT")
+		[[ -z $GU_KEEP ]] || cohort_args+=(--keep "$GU_KEEP")
+		[[ $GU_MALE_ONLY != 1 ]] || cohort_args+=(--keep-males)
+		cohort_args+=(--sample-panel "${SAMPLE_PANEL_INPUT:-$GU_REF_ROOT/1kg/38/samples.txt}")
+		cohort_context=$(python3 "$F/0.target.py" "${cohort_args[@]}") || return $?
+		eval "$cohort_context"
+	fi
+	if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+		GU_TARGET=${TARGET_INPUT:-$GU_TARGET}
+		GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu-$GU_TARGET}
+		GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
+		GU_TARGET_NATIVE_VCF_PREFIX=""
+		export GU_FILTERED_TARGET GU_TARGET_NATIVE_VCF_PREFIX GU_KEEP GU_MALE_ONLY GU_SAMPLE_PANEL
+	fi
+	if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+		GU_TARGET=$TARGET_INPUT
+		GU_UKB_RESULTS_ROOT=${GU_UKB_RESULTS_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu-$GU_TARGET}}
+		GU_UKB_RESULTS_ROOT=$(python3 - "$F" "$GU_UKB_RESULTS_ROOT" <<'PYROOT'
+import importlib.util,sys
+from pathlib import Path
+s=importlib.util.spec_from_file_location('gu_ukb',Path(sys.argv[1])/'0.ukb.py');m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m)
+print(m.permanent_path(sys.argv[2]))
+PYROOT
+) || return $?
+		GU_ANALYSIS_ROOT=$GU_UKB_RESULTS_ROOT
+		GU_PUBLISHED_ROOT=$GU_UKB_RESULTS_ROOT
+		export GU_UKB_RESULTS_ROOT GU_UKB_DIRECT GU_UKB_PGEN_PREFIX GU_UKB_SOURCE GU_KEEP GU_MALE_ONLY GU_TARGET GU_SAMPLE_PANEL
+		echo "[GU UKB] dataset=$GU_TARGET results=$GU_UKB_RESULTS_ROOT; keep=$GU_KEEP male_only=$GU_MALE_ONLY"
+	fi
+	gu_ukb_prepared_context || return $?
+	if [[ ($METHOD == ibdmix || $METHOD == phyml) && (${GU_UKB_DIRECT:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1) ]]; then
+		gu_plan_ukb_resources "$MEMORY_CAP_INPUT" "$GU_UNIT_JOBS" || return $?
+	fi
 	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu}}
 	export GU_PUBLISHED_ROOT
-	if [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
+	if [[ $METHOD == shiny && ${GU_SUMMARY_ONLY:-0} == 1 ]]; then
+		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results work-root --published "$GU_PUBLISHED_ROOT")
+	elif [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
 		local -a restore_run_args=()
 		case "$METHOD" in phyml) restore_run=${PHYML_OUT:-} ;; ibdmix) restore_run=${IBDMIX_OUT:-} ;; trace) restore_run=${TRACE_OUT:-} ;; as3) restore_run=${AS3_OUT:-} ;; *) restore_run= ;; esac
 		[[ -z $restore_run ]] || restore_run_args=(--run "$restore_run")
@@ -823,6 +1030,22 @@ HELP
 		echo "ERROR: target name must contain only letters, numbers, '.', '_' or '-', and must not be '.' or '..'" >&2
 		exit 2
 	}
+	if [[ ${GU_UKB_DIRECT:-0} == 1 || ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+		mkdir -p "$GU_ANALYSIS_ROOT"
+		local result_env=$GU_ANALYSIS_ROOT/gu-target.env result_env_part
+		result_env_part=$(mktemp "$GU_ANALYSIS_ROOT/.gu-target.XXXXXX")
+		{
+			printf '# Saved cohort context for final/Shiny after temporary inputs are cleaned.\n'
+			printf 'export GU_TARGET=%q\nexport GU_BUILD=%q\n' "$GU_TARGET" "$([[ $METHOD == phyml ]] && printf 37 || printf '%s' "$GU_BUILD")"
+			printf 'export GU_ANALYSIS_ROOT=%q\nexport GU_PUBLISHED_ROOT=%q\n' "$GU_ANALYSIS_ROOT" "$GU_PUBLISHED_ROOT"
+			if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+				printf 'export GU_UKB_PGEN_PREPARED=1\nexport GU_UKB_RESULTS_ROOT=%q\n' "$GU_UKB_RESULTS_ROOT"
+			else
+				printf 'export GU_FILTERED_TARGET=1\n'
+			fi
+		} >"$result_env_part"
+		mv -f "$result_env_part" "$result_env"
+	fi
 	# GWAS build describes the original leads; all sequences and LD use GRCh37.
 	if [[ $LOCI_FORMAT == cojo ]]; then
 		COJO_SOURCE_BUILD=$GU_BUILD
@@ -955,6 +1178,26 @@ PYKEY
 		scope_label=$(gu_scope_label "" "$GU_CHRS")
 	fi
 	if [[ $METHOD == ibdmix ]]; then
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 || ${GU_UKB_DIRECT:-0} == 1 ]]; then
+			IBDMIX_PROFILE=${IBDMIX_PROFILE:-multi_reference}
+			IBDMIX_REFS=${IBDMIX_REFS:-Altai Vindija}
+			IBDMIX_AFR_DENISOVAN_FILTER=${IBDMIX_AFR_DENISOVAN_FILTER:-0}
+			[[ $IBDMIX_PROFILE == multi_reference && $IBDMIX_AFR_DENISOVAN_FILTER == 0 && $GU_BUILD == 37 ]] || {
+				echo "ERROR: prepared UKB IBDmix requires GRCh37, profile=multi_reference and IBDMIX_AFR_DENISOVAN_FILTER=0; no AFR5 control cohort is supplied" >&2
+				return 2
+			}
+			IBDMIX_REFS=$(python3 "$F/ibdmix.py" normalize-refs "$IBDMIX_REFS") || return $?
+			for ukb_reference in $IBDMIX_REFS; do
+				case "$ukb_reference" in Altai | Chagyr | Vindija | Denisova | Denisova25) ;;
+					*)
+						echo "ERROR: this UKB pilot supports Altai, Chagyr, Vindija, Denisova and Denisova25 reference matches; .2013 references are reserved for IBDmix replication" >&2
+						return 2
+						;;
+				esac
+			done
+			export IBDMIX_AFR_DENISOVAN_FILTER
+			echo "[GU UKB] Exploratory archaic reference matches, not confirmed lineage assignments; African Denisova subtraction is OFF. Keep a fixed cohort across chromosomes and references; separate sample batches change IBDmix frequencies."
+		fi
 		IBDMIX_PROFILE=${IBDMIX_PROFILE:-multi_reference}
 		if [[ -z ${IBDMIX_REFS:-} ]]; then
 			if [[ $IBDMIX_PROFILE == multi_reference ]]; then
@@ -1074,7 +1317,12 @@ PYKEY
 			trace) override=${TRACE_OUT:-} ;;
 			as3) override=${AS3_OUT:-} ;;
 		esac
-		gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$METHOD" "$unit_label" "$GU_TARGET_NAMESPACE" "$override" "$request_units"
+		local result
+		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$METHOD" "$unit_label" "$GU_TARGET_NAMESPACE" "$override" "$request_units")
+		if [[ $METHOD == ibdmix && $unit_label == chrX* && ${IBDMIX_X_PROFILE:-nonpar-v2} != legacy && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
+			[[ $result == *.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1} ]] || result="$result.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
+		fi
+		printf '%s\n' "$result"
 	}
 
 	gu_write_analysis_unit_cmd() {
@@ -1122,6 +1370,12 @@ PYKEY
 		cmd_args+=(--grch "$GU_BUILD")
 		cmd_args+=(--memory-cap "$MEMORY_CAP_INPUT")
 		cmd_args+=(--target "$GU_TARGET" --target-dir "$GU_TARGET_GEN_PREFIX")
+		if [[ -n $GU_KEEP_PSAM ]]; then
+			cmd_args+=(--keep-psam "$GU_KEEP_PSAM")
+		else
+			[[ -z $GU_KEEP ]] || cmd_args+=(--keep "$GU_KEEP")
+		fi
+		[[ $GU_MALE_ONLY != 1 ]] || cmd_args+=(--keep-males)
 		case "$METHOD" in
 			phyml)
 				cmd_args+=(--plot-phy "$PLOT_PHY_INPUT" --replace-phyml "$REPLACE_PHYML_INPUT"
@@ -1153,13 +1407,29 @@ PYKEY
 		{
 			printf '#!/usr/bin/env bash\nset -euo pipefail\n'
 			printf 'export GU_CMD_WORKER=1\n'
+			[[ -z ${GU_UKB_EFFECTIVE_JOBS:-} ]] || printf 'export GU_PREP_MEMORY_MB=%q\n' "$GU_PREP_MEMORY_MB"
+			[[ -z $GU_KEEP_PSAM ]] || printf 'export GU_KEEP_PSAM_SHA256=%q\n' "$GU_KEEP_PSAM_SHA256"
+			[[ -z ${PHYML_ANCESTRAL_VCF_DIR:-} ]] || printf 'export PHYML_ANCESTRAL_VCF_DIR=%q\n' "$PHYML_ANCESTRAL_VCF_DIR"
+			[[ ${GU_FILTERED_TARGET:-0} != 1 ]] || printf 'export GU_FILTERED_TARGET=1\n'
+			if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+				printf 'export GU_UKB_DIRECT=1\nexport GU_UKB_PGEN_PREFIX=%q\nexport GU_UKB_SOURCE=%q\nexport GU_UKB_RESULTS_ROOT=%q\n' "$GU_UKB_PGEN_PREFIX" "$GU_UKB_SOURCE" "$GU_UKB_RESULTS_ROOT"
+			fi
 			[[ $METHOD != phyml ]] || printf 'export GU_PHYML_LEAD_TABLE=%q\n' "${GU_PHYML_LEAD_TABLE:?}"
 			if [[ $METHOD == ibdmix ]]; then
+				printf 'export IBDMIX_X_PROFILE=%q\nexport IBDMIX_X_MINOR_ALLELE_COUNT=%q\n' "${IBDMIX_X_PROFILE:-nonpar-v2}" "${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
 				printf 'export IBDMIX_PROFILE=%q\nexport IBDMIX_REFS=%q\n' "$IBDMIX_PROFILE" "$IBDMIX_REFS"
 				printf 'export IBDMIX_AFR_DENISOVAN_FILTER=%q\nexport IBDMIX_MASK_DIR=%q\n' "${IBDMIX_AFR_DENISOVAN_FILTER:-1}" "${IBDMIX_MASK_DIR:-}"
 			fi
 			printf 'export GU_ANALYSIS_ROOT=%q\n' "$GU_ANALYSIS_ROOT"
 			printf 'export GU_PUBLISHED_ROOT=%q\n' "$GU_PUBLISHED_ROOT"
+			if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
+				printf 'export GU_UKB_PGEN_PREPARED=1\nexport GU_UKB_RESULTS_ROOT=%q\n' "$GU_UKB_RESULTS_ROOT"
+				printf 'export GU_UKB_PHASE_CHECKED=%q\n' "${GU_UKB_PHASE_CHECKED:-0}"
+				printf 'export GU_TARGET_ROOT=%q\nexport GU_TARGET_NATIVE_VCF_PREFIX=%q\n' "$GU_TARGET_ROOT" "$GU_TARGET_NATIVE_VCF_PREFIX"
+				printf 'export GU_BUILD_CHECK_INPUT=%q\nexport GU_NORMALIZE_SAMPLE_PANEL=%q\n' "${GU_BUILD_CHECK_INPUT:-}" "${GU_NORMALIZE_SAMPLE_PANEL:-$GU_SAMPLE_PANEL}"
+				printf 'export GU_UKB_SCORED_SAMPLE_PANEL=%q\n' "${GU_UKB_SCORED_SAMPLE_PANEL:-}"
+				[[ $METHOD != ibdmix ]] || printf 'export IBDMIX_MASK_ROOT=%q\n' "${IBDMIX_MASK_ROOT:-$(dirname -- "$GU_ARCHAIC_ROOT")/mask}"
+			fi
 			[[ -z $output_var ]] || printf 'export %s=%q\n' "$output_var" "$out"
 			printf 'exec'
 			printf ' %q' "${cmd_args[@]}"
@@ -1252,6 +1522,7 @@ PYKEY
 	gu_orchestrate_analysis_cmds() {
 		local request_units cmd_root list list_tmp chr core_start core_end analysis_start analysis_end locus flank unit_label unit_kind
 		local command_chrs=$GU_CHRS effective_jobs=$GU_UNIT_JOBS
+		[[ -z ${GU_UKB_EFFECTIVE_JOBS:-} ]] || effective_jobs=$GU_UKB_EFFECTIVE_JOBS
 		if [[ -z $GU_LOCI_MAP_FILE && -z $command_chrs ]]; then
 			case "$METHOD" in
 				as3) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22" ;;
@@ -1265,7 +1536,7 @@ PYKEY
 					request_units=$(awk 'END{print (NR > 0 ? NR - 1 : 0)}' "$GU_LOCI_MAP_FILE")
 					unit_kind=locus
 					;;
-				trace | as3)
+				phyml | trace | as3)
 					request_units=$(awk -F'\t' 'NR>1&&!seen[$1]++{n++}END{print n+0}' "$GU_LOCI_MAP_FILE")
 					unit_kind=loci_chr
 					;;
@@ -1278,6 +1549,7 @@ PYKEY
 			echo "ERROR: no $METHOD analysis units selected" >&2
 			return 2
 		}
+		((effective_jobs <= request_units)) || effective_jobs=$request_units
 		cmd_root=/tmp/gu-commands/$METHOD/$GU_TARGET_NAMESPACE
 		mkdir -p "$cmd_root"
 		list=$cmd_root/${scope_label}.cmd.list
@@ -1416,9 +1688,31 @@ exit "$rc"'
 	gu_detect_target_chr() {
 		local c=$1 base native_base native_provenance_ok=0 pvar=""
 		base=$(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" "$c")
+		if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+			base=$GU_UKB_PGEN_PREFIX$c
+			[[ -s $base.pgen && -s $base.psam ]] || return 4
+			for pvar in "$base.pvar" "$base.pvar.zst"; do [[ -s $pvar ]] && break; done
+			[[ -s $pvar ]] || return 4
+			GU_DETECT_FORMAT=pfile GU_DETECT_SOURCE=$base GU_DETECT_INDEX="" GU_DETECT_PVAR=$pvar GU_DETECT_PSAM=$base.psam
+			return 0
+		fi
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
+			# The preparation receipt certifies this exact export. A neighbouring
+			# pfile must not silently replace it, including for male chrX.
+			native_base=$GU_TARGET_NATIVE_VCF_PREFIX$c
+			[[ $c != X ]] || native_base+=.male
+			[[ -s $native_base.vcf.gz ]] || return 3
+			[[ -s $native_base.vcf.gz.tbi ]] || return 3
+			GU_DETECT_FORMAT=vcf
+			GU_DETECT_SOURCE=$native_base.vcf.gz
+			GU_DETECT_INDEX=$native_base.vcf.gz.tbi
+			GU_DETECT_PVAR=""
+			GU_DETECT_PSAM=""
+			return 0
+		fi
 		# IBDmix autosomes prefer the target directory's native VCF below,
 		# avoiding a whole-chromosome pfile export. Preserve chrX routing.
-		if [[ $METHOD != as3 && ($METHOD != ibdmix || $c == X) && -s $base.pgen && -s $base.psam ]]; then
+		if [[ $METHOD != as3 && ($METHOD != ibdmix || $c == X || ${GU_FILTERED_TARGET:-0} == 1) && -s $base.pgen && -s $base.psam ]]; then
 			for pvar in "$base.pvar" "$base.pvar.zst"; do [[ -s $pvar ]] && break; done
 			[[ -s $pvar ]] || return 4
 			GU_DETECT_FORMAT=pfile
@@ -1599,12 +1893,13 @@ exit "$rc"'
 					*) gu_check_fail "target chr$c not found; expected $(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" "$c").vcf.gz or $(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" "$c").{pgen,pvar,psam}" ;;
 				esac
 			fi
+			if [[ ${GU_FILTERED_TARGET:-0} == 1 && $GU_DETECT_FORMAT != pfile ]]; then gu_check_fail "--keep/--keep-males require PGEN/PSAM inputs"; fi
 			GU_TARGET_SOURCE[$c]=$GU_DETECT_SOURCE
 			GU_TARGET_INDEX[$c]=${GU_DETECT_INDEX:-}
 			GU_TARGET_PVAR[$c]=$GU_DETECT_PVAR
 			GU_TARGET_PSAM[$c]=$GU_DETECT_PSAM
 			GU_TARGET_FORMAT[$c]=$GU_DETECT_FORMAT
-			if [[ $c == X && $GU_DETECT_FORMAT == pfile ]]; then
+			if [[ $c == X && $GU_DETECT_FORMAT == pfile && ${GU_UKB_DIRECT:-0} != 1 ]]; then
 				if ((GU_CHRX_PAR_DIPLOID)); then
 					gu_validate_chrxy_pfile "$GU_DETECT_SOURCE" "$GU_BUILD" | tee -a "$GU_CHECK_LOG" || gu_check_fail "invalid chrXY target pfile: $GU_DETECT_SOURCE"
 				else
@@ -1690,7 +1985,7 @@ exit "$rc"'
 		fi
 		if ((GU_CHRX_MALE_ONLY)) && [[ ${GU_TARGET_FORMAT[X]:-} == vcf ]]; then
 			[[ -n $GU_SAMPLE_PANEL && -s $GU_SAMPLE_PANEL ]] || gu_check_fail "native chrX.male.vcf.gz input requires --sample-panel with sample and sex columns"
-			gu_validate_chrx_male_vcf "${GU_TARGET_SOURCE[X]}" "$GU_BUILD" "$GU_SAMPLE_PANEL" | tee -a "$GU_CHECK_LOG" || gu_check_fail "invalid chrX.male target VCF: ${GU_TARGET_SOURCE[X]}"
+			gu_validate_chrx_male_vcf "${GU_TARGET_SOURCE[X]}" "$GU_BUILD" "${GU_UKB_SCORED_SAMPLE_PANEL:-$GU_SAMPLE_PANEL}" | tee -a "$GU_CHECK_LOG" || gu_check_fail "invalid chrX.male target VCF: ${GU_TARGET_SOURCE[X]}"
 			gu_check_log "native chrX.male VCF contract=PASS: ${GU_TARGET_SOURCE[X]}"
 		fi
 		if ((GU_CHRX_PAR_DIPLOID)) && [[ ${GU_TARGET_FORMAT[X]:-} != pfile ]]; then
@@ -1780,6 +2075,9 @@ exit "$rc"'
 			fi
 		fi
 		printf 'schema\t4\nformat\tpfile\nchromosome\t%s\nx_mode\t%s\n' "$c" "$x_mode"
+		if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+			printf 'keep_sha256\t%s\nmale_only\t%s\n' "$(sha256sum "$GU_KEEP" | cut -d' ' -f1)" "$GU_MALE_ONLY"
+		fi
 		stat -c 'pgen\t%n:%s:%Y' "${pbase}.pgen"
 		stat -c 'pvar\t%n:%s:%Y' "$pvar"
 		stat -c 'psam\t%n:%s:%Y' "$psam"
@@ -1792,6 +2090,19 @@ exit "$rc"'
 
 	gu_target_native_vcf_record() {
 		local c=$1 source=$2 index=$3
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
+			python3 - "$GU_TARGET_ROOT" "$c" <<'PYCONTRACT'
+import hashlib,json,sys
+from pathlib import Path
+name='.chr'+sys.argv[2]+('.male' if sys.argv[2]=='X' else '')+'.complete.json'
+saved=json.loads((Path(sys.argv[1])/name).read_text())
+print('schema\tukb-pgen-v1')
+print('format\tvcf')
+print('chromosome\t'+sys.argv[2])
+print('preparation_contract_sha256\t'+hashlib.sha256(json.dumps(saved['contract'],sort_keys=True).encode()).hexdigest())
+PYCONTRACT
+			return
+		fi
 		printf 'schema\t4\nformat\tvcf\nchromosome\t%s\n' "$c"
 		stat -Lc 'vcf\t%n:%s:%Y' "$source"
 		stat -Lc 'index\t%n:%s:%Y' "$index"
@@ -1800,6 +2111,30 @@ exit "$rc"'
 	gu_prepare_target_vcfs() {
 		local c chr_tmp source prepared prepared_index dest src_index dest_index part_prefix info pbase pvar psam info_prefix meta meta_part need_pfile=0 extract_bed
 		command -v bcftools >/dev/null 2>&1 || gu_check_fail "bcftools is required"
+		if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+			export GU_BUILD_CHECK_INPUT=${GU_BUILD_CHECK_INPUT:-$GU_TARGET_BUILD_SOURCE}
+			local ukb_work=/tmp/gu-ukb-prepared/$GU_TARGET/$GU_UKB_SOURCE/$METHOD/$GU_SCOPE_KEY
+			mkdir -p "$ukb_work"
+			local -a ukb_args=(pgen-vcf --existing-pgen --ukb-pgen-root "$(dirname -- "$GU_UKB_PGEN_PREFIX")" --ukb-source "$GU_UKB_SOURCE"
+				--chr "$GU_CHRS" --grch "$GU_BUILD" --keep "$GU_KEEP" --sample-panel "$GU_SAMPLE_PANEL" --dataset "$GU_TARGET"
+				--ukb-work "$ukb_work" --ukb-results-root "$GU_UKB_RESULTS_ROOT" --ukb-max-export-samples "${UKB_MAX_EXPORT_SAMPLES:-2147483647}"
+				--ukb-ref-fasta "${UKB_REF_FASTA:-$GU_REF_ROOT/1hgp/$GU_BUILD/GRCH$GU_BUILD.fasta.gz}" --ukb-threads "${GU_PREP_THREADS:-2}"
+				--ukb-memory-mb "$GU_PREP_MEMORY_MB")
+			[[ $GU_MALE_ONLY != 1 ]] || ukb_args+=(--keep-males)
+			[[ $METHOD != phyml ]] || ukb_args+=(--ukb-require-phase true)
+			if [[ -n $GU_LOCI_FILE ]]; then
+				if [[ ! -f $ukb_work/request.bed ]] || ! cmp -s "$GU_LOCI_FILE" "$ukb_work/request.bed"; then cp "$GU_LOCI_FILE" "$ukb_work/request.bed"; fi
+				ukb_args+=(--regions "$ukb_work/request.bed")
+			fi
+			python3 "$F/0.ukb.py" "${ukb_args[@]}" >>"$GU_CHECK_LOG" 2>&1 || { tail -20 "$GU_CHECK_LOG" >&2; gu_check_fail "UKB PGEN preparation failed"; }
+			source "$ukb_work/gu-target.env"
+			for c in "${target_check_array[@]}"; do
+				source=$GU_TARGET_NATIVE_VCF_PREFIX$c
+				[[ $c != X ]] || source+=.male
+				GU_TARGET_FORMAT[$c]=vcf GU_TARGET_SOURCE[$c]=$source.vcf.gz GU_TARGET_INDEX[$c]=$source.vcf.gz.tbi
+				GU_TARGET_PVAR[$c]="" GU_TARGET_PSAM[$c]=""
+			done
+		fi
 		for c in "${target_check_array[@]}"; do [[ ${GU_TARGET_FORMAT[$c]} != pfile ]] || need_pfile=1; done
 		if ((need_pfile)); then
 			command -v plink2 >/dev/null 2>&1 || gu_check_fail "plink2 is required for pfile input"
@@ -1857,7 +2192,9 @@ exit "$rc"'
 				meta_part=$chr_tmp/.source.$$
 				gu_target_vcf_conversion_record "$c" "$pbase" "$pvar" "$psam" >"$meta_part"
 				part_prefix=$chr_tmp/.chr${c}.part.$$
-				local -a extract_args=()
+				local -a extract_args=() sample_args=()
+				[[ -z $GU_KEEP ]] || sample_args+=(--keep "$GU_KEEP")
+				[[ $GU_MALE_ONLY != 1 ]] || sample_args+=(--keep-males)
 				if [[ -n $GU_LOCI_FILE && $METHOD != as3 ]]; then
 					extract_bed=$GU_LOCI_FILE
 					[[ $c != X || $GU_CHRX_PAR_DIPLOID != 1 ]] || extract_bed=$GU_CHRXY_EXTRACT_BED
@@ -1866,7 +2203,7 @@ exit "$rc"'
 				else
 					gu_check_log "convert whole chromosome pfile chr$c=$pbase -> $prepared (single-run temporary VCF)"
 				fi
-				plink2 "${pfile_args[@]}" "${extract_args[@]}" --threads "${GU_PREP_THREADS:-2}" --memory "${GU_PREP_MEMORY_MB:-2048}" --export vcf bgz id-paste=iid --out "$part_prefix" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "pfile-to-VCF conversion failed for $pbase"
+				plink2 "${pfile_args[@]}" "${sample_args[@]}" "${extract_args[@]}" --threads "${GU_PREP_THREADS:-2}" --memory "${GU_PREP_MEMORY_MB:-2048}" --export vcf bgz id-paste=iid --out "$part_prefix" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "pfile-to-VCF conversion failed for $pbase"
 				tabix -f -p vcf "$part_prefix.vcf.gz" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "VCF indexing failed for $part_prefix.vcf.gz"
 				mv -f "$part_prefix.vcf.gz" "$prepared"
 				mv -f "$part_prefix.vcf.gz.tbi" "$prepared.tbi"
@@ -1877,7 +2214,7 @@ exit "$rc"'
 			fi
 			bcftools view -h "$prepared" >/dev/null 2>&1 || gu_check_fail "unreadable prepared target VCF: $prepared"
 			if [[ $c == X && $GU_CHRX_MALE_ONLY == 1 && ${GU_TARGET_FORMAT[$c]} == pfile ]]; then
-				gu_validate_chrx_male_vcf "$prepared" "$GU_BUILD" "${GU_TARGET_PSAM[$c]}" | tee -a "$GU_CHECK_LOG" ||
+				gu_validate_chrx_male_vcf "$prepared" "$GU_BUILD" "${GU_UKB_SCORED_SAMPLE_PANEL:-$GU_SAMPLE_PANEL}" | tee -a "$GU_CHECK_LOG" ||
 					gu_check_fail "PLINK2 export did not preserve pure male haploid X: ${GU_TARGET_SOURCE[$c]}"
 				gu_check_log "prepared chrX VCF contract=PASS: $prepared"
 			fi
@@ -1949,12 +2286,16 @@ exit "$rc"'
 		local normalize_dir=${GU_NORMALIZE_DIR:-${GU_SHINY_DATA_DIR:-${GU_RSHINY_DIR:-$GU_FINAL_DIR/normalize}}}
 		mkdir -p "$normalize_dir"
 		local -a norm_args=(--analysis-root "$GU_ANALYSIS_ROOT" --output-dir "$normalize_dir" --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --build "GRCh$GU_BUILD" --reciprocal-overlap "${GU_CATALOG_RECIP_OVERLAP:-0.5}")
-		if [[ -d ${AS3_PUBLISHED_CALLS_DIR:-} ]]; then
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} != 1 && ${GU_UKB_DIRECT:-0} != 1 && ${GU_FILTERED_TARGET:-0} != 1 && -d ${AS3_PUBLISHED_CALLS_DIR:-} ]]; then
 			ensure_reference_callset_cache
 			norm_args+=(--reference-cache "$AS3_REFERENCE_CALLSET_CACHE")
 		fi
-		local pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}
+		local pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}}
+		[[ ${GU_UKB_PGEN_PREPARED:-0} != 1 ]] || pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-}}
 		[[ ! -s $pop_panel ]] || norm_args+=(--sample-panel "$pop_panel")
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 || ${GU_UKB_DIRECT:-0} == 1 || ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+			norm_args+=(--sample-panel-dataset "$GU_TARGET")
+		fi
 		python3 "$F/normalize.py" "${norm_args[@]}"
 		local report_dir=${GU_PHYML_REPORT_DIR:-$(dirname "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}")/review}
 		local -a report_args=(--normalize "$normalize_dir" --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --output "$report_dir")
@@ -1978,6 +2319,10 @@ exit "$rc"'
 
 	stage_loci_metadata() {
 		local out=$1 tmp
+		if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+			mkdir -p "$out/inputs"
+			cp "$GU_SAMPLE_PANEL" "$out/inputs/sample.panel.tsv"
+		fi
 		[[ -n $GU_LOCI_FILE ]] || return 0
 		mkdir -p "$out"
 		tmp=$out/.request.loci.analysis.$$.bed
@@ -2090,7 +2435,12 @@ exit "$rc"'
 
 	gu_output_for_unit() {
 		local method=$1 override=${2:-}
-		gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$method" "$GU_UNIT_LABEL" "$GU_TARGET_NAMESPACE" "$override" "$GU_REQUEST_UNIT_COUNT"
+		local result
+		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$method" "$GU_UNIT_LABEL" "$GU_TARGET_NAMESPACE" "$override" "$GU_REQUEST_UNIT_COUNT")
+		if [[ -z $override && $method == ibdmix && $GU_UNIT_LABEL == chrX* && ${IBDMIX_X_PROFILE:-nonpar-v2} != legacy && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
+			[[ $result == *.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1} ]] || result="$result.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
+		fi
+		printf '%s\n' "$result"
 	}
 
 	run_per_analysis_unit() {
@@ -2167,18 +2517,76 @@ exit "$rc"'
 		echo "[GU RUN] output=$PHYML_OUT"
 		stage_loci_metadata "$PHYML_OUT"
 		use_staged_loci_metadata "$PHYML_OUT"
+		gu_stage_ukb_qc "$PHYML_OUT" true || return $?
 		bash "$F/phyml.sh" "${ACTION:-run}"
+	}
+
+	gu_stage_ukb_qc() {
+		[[ ${GU_UKB_PGEN_PREPARED:-0} == 1 ]] || return 0
+		python3 "$F/0.ukb.py" stage-qc --chr "$GU_CHRS" --grch "$GU_BUILD" \
+			--ukb-work "$GU_TARGET_ROOT" --ukb-vcf-out "$(dirname -- "$GU_TARGET_NATIVE_VCF_PREFIX")" \
+			--ukb-results-root "$GU_UKB_RESULTS_ROOT" --ukb-run-dir "$1" --ukb-require-phase "${2:-false}"
 	}
 
 	run_ibdmix_one() {
 		local a=${ACTION:-run} ga
 		case "$a" in run) ga=ibdmix_run ;; check) ga=ibdmix_check ;; esac
-		local IBDMIX_OUT
+		local IBDMIX_OUT call_archaic=$GU_ARCHAIC_ROOT call_loci scoring_receipt scoring_values
+		local -a scoring_fields=() ukb_env=()
 		IBDMIX_OUT=$(gu_output_for_unit ibdmix "$IBDMIX_OUT_OVERRIDE")
 		echo "[GU RUN] output=$IBDMIX_OUT"
+		gu_stage_ukb_qc "$IBDMIX_OUT" || return $?
 		stage_loci_metadata "$IBDMIX_OUT"
 		use_staged_loci_metadata "$IBDMIX_OUT"
-		env GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$GU_ARCHAIC_ROOT" dirarch="$GU_ARCHAIC_ROOT" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$GU_LOCI_FILE" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
+		call_loci=$GU_LOCI_FILE
+		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
+			[[ $GU_CHRS =~ ^([1-9]|1[0-9]|2[0-2]|X)$ ]] || {
+				echo "ERROR: prepared UKB IBDmix requires one chromosome per worker" >&2
+				return 2
+			}
+			python3 "$F/0.ukb.py" prepare-archaic --chr "$GU_CHRS" --grch "$GU_BUILD" \
+				--ukb-work "$GU_TARGET_ROOT" --ukb-vcf-out "$(dirname -- "$GU_TARGET_NATIVE_VCF_PREFIX")" \
+				--ukb-archaic-root "$GU_ARCHAIC_ROOT" --ukb-archaic-refs "$IBDMIX_REFS" \
+				--ukb-mask-root "${IBDMIX_MASK_ROOT:-$(dirname -- "$GU_ARCHAIC_ROOT")/mask}" || return $?
+			scoring_receipt=$GU_TARGET_ROOT/scoring/chr$GU_CHRS/target.json
+			# Preserve the small scientific receipt and nonPAR geometry with the
+			# native run. Large exchange VCFs remain in the temporary work area.
+			scoring_values=$(python3 - "$scoring_receipt" "$IBDMIX_OUT" "$GU_CHRS" <<'PYUKBSCORING'
+import json
+from pathlib import Path
+import shutil
+import sys
+
+receipt, run, chrom = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+data = json.loads(receipt.read_text())
+archaic, mask = Path(data["archaic_root"]), Path(data["mask_root"])
+if not archaic.is_dir() or not mask.is_dir():
+	raise SystemExit("ERROR: UKB scoring reference or original mask directory is missing")
+bed = Path(data["nonpar_bed"]) if data.get("nonpar_bed") else None
+if chrom == "X" and (bed is None or not bed.is_file() or not bed.stat().st_size):
+	raise SystemExit("ERROR: UKB chrX has no informative independent nonPAR blocks")
+destination = run / "inputs" / "ukb-scoring" / ("chr" + chrom)
+destination.mkdir(parents=True, exist_ok=True)
+shutil.copy2(receipt, destination / "target.json")
+if bed is not None:
+	shutil.copy2(bed, destination / "nonpar.bed")
+sites = archaic.parent / "modern.sites.tsv"
+if sites.is_file():
+	shutil.copy2(sites, destination / sites.name)
+print(archaic)
+print(mask)
+print(destination / "nonpar.bed" if bed is not None else "-")
+PYUKBSCORING
+) || return $?
+			mapfile -t scoring_fields <<<"$scoring_values"
+			call_archaic=${scoring_fields[0]}
+			ukb_env+=("IBDMIX_MASK_ROOT=${scoring_fields[1]}")
+			if [[ $GU_CHRS == X ]]; then
+				call_loci=${scoring_fields[2]}
+				ukb_env+=("GU_LOCI_FILE=$call_loci")
+			fi
+		fi
+		env "${ukb_env[@]}" GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$call_archaic" dirarch="$call_archaic" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$call_loci" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
 	}
 
 	run_trace_request() {
@@ -2196,6 +2604,7 @@ exit "$rc"'
 		export TRACE_CHRS=$GU_CHRS TRACE_OUT
 		TRACE_OUT=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" trace "$GU_UNIT_LABEL" "$GU_TARGET_NAMESPACE" "$TRACE_OUT_OVERRIDE" 1)
 		echo "[GU RUN] method=trace analysis_request=$GU_UNIT_LABEL chromosomes=$GU_CHRS layout=request output=$TRACE_OUT"
+		gu_stage_ukb_qc "$TRACE_OUT" true || return $?
 		stage_loci_metadata "$TRACE_OUT"
 		use_staged_loci_metadata "$TRACE_OUT"
 		export TRACE_LOCI_FILE=$GU_LOCI_FILE
@@ -2206,6 +2615,7 @@ exit "$rc"'
 		export TRACE_CHRS=$GU_CHRS TRACE_OUT
 		TRACE_OUT=$(gu_output_for_unit trace "$TRACE_OUT_OVERRIDE")
 		echo "[GU RUN] method=trace analysis_unit=$GU_UNIT_LABEL chromosomes=$GU_CHRS layout=$GU_OUTPUT_LAYOUT output=$TRACE_OUT"
+		gu_stage_ukb_qc "$TRACE_OUT" true || return $?
 		stage_loci_metadata "$TRACE_OUT"
 		use_staged_loci_metadata "$TRACE_OUT"
 		export TRACE_LOCI_FILE=$GU_LOCI_FILE
@@ -2235,6 +2645,7 @@ exit "$rc"'
 		AS3_RUNTIME_WORK_DIR=$GU_TARGET_TMP_DIR/as3-runtime/$as3_tmp_label
 		AS3_OUT=$(gu_output_for_unit as3 "$AS3_OUT_OVERRIDE")
 		echo "[GU RUN] output=$AS3_OUT temporary_input=$AS3_DATA_OUT"
+		gu_stage_ukb_qc "$AS3_OUT" true || return $?
 		mkdir -p "$AS3_OUT"
 		printf 'key\tvalue\ntarget\t%s\ngenome_build\tGRCh%s\nscope_id\t%s\nchromosome\t%s\nlocus_id\t%s\noutput_layout\t%s\nexperimental_chrX\t%s\nexperimental_build\t%s\nmodel_context\twhole_chromosome\ntarget_chunk_size\t%s\ncgroup_memory_high\t%s\ncgroup_memory_max\t%s\ncgroup_swap_max\t%s\n' \
 			"$GU_TARGET_NAMESPACE" "$GU_BUILD" "$GU_SCOPE_ID" "$GU_CHRS" "$GU_LOCUS_ID" "$GU_OUTPUT_LAYOUT" "$experimental_x" "$AS3_EXPERIMENTAL_BUILD" "$AS3_TARGET_CHUNK_SIZE" "${AS3_MEMORY_HIGH:-20G}" "${AS3_MEMORY_MAX:-24G}" "${AS3_MEMORY_SWAP_MAX:-8G}" >"$AS3_OUT/run.meta.tsv"
@@ -2307,12 +2718,13 @@ exit "$rc"'
 		shiny)
 			export GU_REF_ROOT
 			export GU_SQLITE=${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}
-			[[ -s $GU_SQLITE ]] || {
-				echo "ERROR: Shiny database missing: $GU_SQLITE; run ./gu.sh final after analysis completes" >&2
+			if [[ ${GU_SUMMARY_ONLY:-0} != 1 && -s $GU_SQLITE ]]; then
+				export GU_DENSITY_DIR=${GU_DENSITY_DIR:-$(dirname "$GU_SQLITE")/normalize/density}
+				python3 "$F/normalize.py" density --database "$GU_SQLITE" --output "$GU_DENSITY_DIR" --sample-panel "${GU_NORMALIZE_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}"
+			elif [[ ! -s $GU_FINAL_DIR/gu.ibdmix.summary.xlsx ]]; then
+				echo "ERROR: neither database nor saved gu.ibdmix.summary.xlsx is available" >&2
 				exit 1
-			}
-			export GU_DENSITY_DIR=${GU_DENSITY_DIR:-$(dirname "$GU_SQLITE")/normalize/density}
-			python3 "$F/normalize.py" density --database "$GU_SQLITE" --output "$GU_DENSITY_DIR" --sample-panel "${GU_NORMALIZE_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}"
+			fi
 			exec Rscript --vanilla "$SHINY/app.R"
 			;;
 		ukb) exec bash "$F/0.prep.sh" ukb "$ACTION" ;;

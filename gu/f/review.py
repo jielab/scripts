@@ -16,7 +16,7 @@ if "gu_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from gu_0_common import load_module
+from gu_0_common import load_module, scientific_segment
 
 
 # 🚩 dual_lead
@@ -1310,7 +1310,7 @@ def selected_segments(root, database, candidates, offset):
 	def accept(r):
 		nonlocal nread
 		nread += 1
-		if r.get("method") != "ibdmix":
+		if r.get("method") != "ibdmix" or not scientific_segment(r):
 			return
 		unit = (r.get("dataset_id"), r.get("genome_build"), prepare_review_chrom(r.get("chr")))
 		if (*unit, r.get("sample_id")) not in targets or unit not in windows:
@@ -1370,6 +1370,8 @@ def selected_segments(root, database, candidates, offset):
 def exact_support(candidates, segments, runs, populations, threshold):
 	bysample = defaultdict(list)
 	for s in segments:
+		if not scientific_segment(s):
+			continue
 		bysample[(s["dataset_id"], s["genome_build"], s["chr"], s["sample_id"])].append(s)
 	run = {}
 	for r in runs:
@@ -1436,7 +1438,7 @@ def exact_support(candidates, segments, runs, populations, threshold):
 				else None
 			),
 			callability="unknown_individual_callable_bases_not_in_normalized_summary",
-			phase_corroboration="individual_only_IBDmix_phase_unknown",
+			phase_corroboration="same_male_nonpar_X_copy;LOD_uncalibrated" if c["chr"] == "X" and info and "male-X" in info.get("availability_note", "") else "individual_only_IBDmix_phase_unknown",
 			status=status,
 		)
 		out.append(r)

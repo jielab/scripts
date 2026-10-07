@@ -43,6 +43,7 @@ gu_phyml_report_ui <- function() {
 			tags$span(class = "gu-metric-help", tabindex = "0", title = "IBDmix：同一个体、同一古人类谱系，单条片段覆盖候选区间 ≥80%。TRACE 同时报告同个体与同拷贝的支持；Ghost/Unknown 不用于确认 Neanderthal/Denisovan 来源。分母为候选携带者。not_run 表示未运行，partial_overlap 表示重叠不足80%，not_detected 表示未检出，exploratory 表示探索性结果。", "验证口径 ⓘ"),
 			DTOutput("report_validation", fill = FALSE)),
 		bslib::nav_panel("携带者", DTOutput("haplotype_samples", fill = FALSE)),
+		bslib::nav_panel("位点 QC", DTOutput("report_site_qc", fill = FALSE)),
 		bslib::nav_panel("详细指标", DTOutput("report_details", fill = FALSE))
 	)
 }
@@ -64,14 +65,13 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 		d[d$dataset_id == dataset() & d$genome_build == build(), , drop = FALSE]
 	}
 	overview <- reactive(gu_phyml_overview(scope(all_summary()), scope(all_haps()), scope(all_validation())))
-	# Review completed tree tests, including those without tree support.
+	# Retain every input lead; completion, topology and sequence QC are separate.
 	summary <- reactive({
 		d <- overview()
 		if(!nrow(d)) return(d)
 		lineage <- input$report_lineage
 		if(is.null(lineage)) lineage <- "all"
-		d[d$call %in% c("tree_supported", "tree_not_supported") &
-			(lineage == "all" | d$lineage %in% if(lineage == "Denisovan")c("Denisovan", "Denisova")else lineage), , drop = FALSE]
+		d[(lineage == "all" | d$lineage %in% if(lineage == "Denisovan")c("Denisovan", "Denisova")else lineage), , drop = FALSE]
 	})
 	selected_index <- reactiveVal(1L)
 	observeEvent(input$report_lineage, {
@@ -145,28 +145,28 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 	}, ignoreInit = TRUE)
 	labels <- c(chr = "Chr", core_interval = "核心区间 (GRCh37)", lineage = "检验谱系", index_snp = "Index SNP",
 		risk_allele = "Risk Allele", p_j = "COJO P", core_kb = "核心 (kb)", n_ld_sites = "LD SNP数", n_sites = "建树位点",
-		risk_haplotypes = "单倍型", tree_bootstrap = "Bootstrap", call = "树检验", risk_frequency_EUR = "EUR 风险频率",
-		archaic_LD_match = "古参考匹配", n_nonrisk_haplotypes = "对照类型", n_singleton_copies = "单次拷贝", search_edge_warning = "边界提示", ils_probability = "ILS P（模型）",
+		risk_haplotypes = "单倍型", tree_bootstrap = "Bootstrap", call = "树检验", risk_frequency_EUR = "EUR 风险频率", risk_frequency_LD = "LD 队列风险频率", ld_population = "LD 队列", n_LD_individuals = "LD 人数",
+		archaic_LD_match = "古参考匹配", n_nonrisk_haplotypes = "对照类型", n_panel = "输入人数", n_lead_called = "Lead 可调用人数", n_lead_called_copies = "Lead 可调用拷贝", n_recurrent_copies = "重复序列拷贝", tree_run_status = "建树状态", topology_status = "拓扑结果", sequence_qc = "序列 QC", lead_retained_for_tree = "Lead 保留", high_ld_sites_retained_for_tree = "保留 LD 位点", unique_archaic_sequences = "古参考序列种类", n_singleton_copies = "单次拷贝", search_edge_warning = "边界提示", ils_probability = "ILS P（模型）",
 		ibdmix_risk_support = "IBDmix 支持人数", hap_id = "Haplotype", role = "类别", n_copies = "拷贝数", n_individuals = "人数",
 		archaic = "最相似参考", prop_match = "序列相同 (%)", n_compared = "可比较位点", n_match = "相同位点", reason = "原因",
 		ibdmix_status = "IBDmix 状态", ibdmix_supported_individuals = "IBDmix 支持人数", ibdmix_individuals = "可评估人数",
 		trace_status = "TRACE 状态", trace_supported_individuals = "TRACE 支持人数", trace_individuals = "可评估人数")
 	help <- c(
 		chr = "分析坐标使用 GRCh37。",
-		core_interval = "与原始 lead 在 1KG EUR 中 phased r² > 0.98 的 SNP 所覆盖的区间，含两端。不是固定 1 Mb；搜索范围默认 lead 两侧各 500 kb。",
+		core_interval = "与原始 lead 在指定 LD 队列（1KG EUR 或所选 UKB 样本）中 phased r² > 0.98 的 SNP 所覆盖的区间，含两端。不是固定 1 Mb；搜索范围默认 lead 两侧各 500 kb。",
 		lineage = "检验风险单倍型与所选谱系的参考是否共同成支（Neanderthal 三个、Denisovan 两个），并排除另一谱系参考；不表示这一行已经证实古人类来源。",
 		index_snp = "原始 COJO 文件的 lead，不重新挑选标记。名称内坐标保留输入基因组版本；核心区间和实际分析坐标为 GRCh37。",
 		risk_allele = "GRCh37 方向的风险等位基因：bJ > 0 时为 refA，bJ < 0 时为另一等位基因。",
 		p_j = "输入 COJO 的联合分析 P 值 pJ；0 表示原文件数值下溢，不代表概率精确为零。",
-		n_ld_sites = "核心边界由这些与 lead 的 EUR phased r² > 0.98 的 SNP 定义。不是树中只使用这些 SNP。",
+		n_ld_sites = "核心边界由这些与 lead 在指定 LD 队列中的 phased r² > 0.98 的 SNP 定义。不是树中只使用这些 SNP。",
 		n_sites = "核心区间内可在五个古人类参考中共同比较、且现代样本次要等位基因至少出现两次的 SNP 数。包括不满足高 LD 阈值的区间内位点。",
 		risk_haplotypes = "重复出现的风险单倍型：序列种类数 / 染色体拷贝数。只按原始 lead 的风险等位基因定义，不按古人类相似度挑选；每种序列至少出现两次。不是人数，也不表示全部获得树支持。",
 		tree_bootstrap = "预先定义的风险单倍型与所选谱系参考共同成支、且不含另一谱系参考、非风险对照或祖先序列的分支支持率；100 次重采样。空白表示没有该分支或未完成树，不是零，也不是渗入概率。",
-		call = "树支持表示预定义风险分支 Bootstrap ≥70（程序报告阈值）。不等于 high confidence introgression；仍需结合序列、重组及 IBDmix 等证据。此概览仅显示已完成树检验的 lead，包括树支持和未获树支持；无法评估、未建树及建树失败的记录不显示。",
+		call = "树支持表示预定义风险分支 Bootstrap ≥70（程序报告阈值）。不等于 high confidence introgression；仍需结合序列、重组及 IBDmix 等证据。此概览保留所有输入 lead；未建树、无法评估、建树失败与已完成但不支持分别显示。",
 		risk_frequency_EUR = "1KG EUR 中风险等位基因的染色体频率；不是风险单倍型在人群中的疾病效应。",
 		core_kb = "高 LD 核心区间长度，单位 kb。",
 		ils_probability = "仅为长度模型敏感性指标：假设重组率 0.53 cM/Mb、世代 29 年、分化 55 万年、古人类年龄 5 万年。未使用该 locus 的局部重组图谱，也未作多重检验校正，不能直接据此宣布高置信渗入。",
-		ibdmix_risk_support = "本行重复风险单倍型携带者中，同个体、同谱系 IBDmix 单条片段覆盖核心区间 ≥80% 的人数 / 可评估人数，每人只计一次。无论树是否支持均检验；IBDmix 不保证同一染色体拷贝。来自 final/review；IBDmix 更新后运行 gu.sh final。未运行或未评估不等于零。",
+		ibdmix_risk_support = "本行重复风险单倍型携带者中，同个体、同谱系 IBDmix 单条片段覆盖核心区间 ≥80% 的人数 / 可评估人数，每人只计一次。无论树是否支持均检验；常染色体 IBDmix 不保证同一拷贝；男性非 PAR X 是同一条 X，LOD 模型仍未校准。来自 final/review；IBDmix 更新后运行 gu.sh final。未运行或未评估不等于零。",
 		role = "risk：风险单倍型；nonrisk：非风险对照；mixed：相同核心序列无法区分 lead 的两种等位基因。",
 		n_copies = "该序列的染色体拷贝数；一个常染色体个体可贡献两份。",
 		n_individuals = "携带该序列的人数，每人只计一次。",
@@ -213,12 +213,19 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 	validation_columns <- c("ibdmix_status", "ibdmix_any_overlap_individuals", "ibdmix_supported_individuals", "ibdmix_individuals", "trace_status",
 				"trace_any_overlap_individuals", "trace_supported_individuals", "trace_individuals", "trace_supported_copies", "trace_candidate_copies")
 	output$report_loci <- renderDT(show_table(summary(), c("chr", "core_interval", "lineage", "index_snp", "risk_allele", "p_j", "core_kb", "n_ld_sites", "n_sites", "archaic_LD_match", "risk_haplotypes",
-		"tree_bootstrap", "call", "reason", "search_edge_warning", "ils_probability", "ibdmix_risk_support"), TRUE, pages = 10, selected_row = isolate(selected_index()), length_change = FALSE), server = FALSE)
+		"tree_bootstrap", "call", "tree_run_status", "sequence_qc", "n_panel", "n_lead_called", "n_lead_called_copies", "n_recurrent_copies", "n_singleton_copies", "lead_retained_for_tree", "high_ld_sites_retained_for_tree", "unique_archaic_sequences", "reason", "search_edge_warning", "ils_probability", "ibdmix_risk_support"), TRUE, pages = 10, selected_row = isolate(selected_index()), length_change = FALSE), server = FALSE)
 	output$report_haplotypes <- renderDT(show_table(haps(), c("hap_id", "role", "call", "n_copies", "n_individuals", "archaic", "prop_match", "n_compared", "n_match"), TRUE, 12))
 	output$report_details <- renderDT({
-		d <- selected_hap();if(!nrow(d))return(show_table(d, character()))
+		d <- selected();if(!nrow(d))return(show_table(d, character()))
 		d <- data.frame(指标 = names(d), 值 = vapply(d, function(x)if(is.na(x[[1]]))"—" else as.character(x[[1]]), character(1)))
 		datatable(d, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+	})
+	output$report_site_qc <- renderDT({
+		d <- selected()
+		path <- if(nrow(d) && "site_qc_file" %in% names(d))as.character(d$site_qc_file[[1]])else ""
+		x <- if(!is.na(path) && nzchar(path) && file.exists(path))gu_b_read(path)else
+			data.frame(状态 = "历史结果未保存逐参考缺失原因；重新准备序列后可查看，未知信息不补填。")
+		DT::datatable(x, rownames = FALSE, options = list(scrollX = TRUE, pageLength = 15))
 	})
 	output$report_validation <- renderDT(show_table(haps(), c("hap_id", "call", validation_columns), FALSE, 12))
 	download <- function(name, data) downloadHandler(filename = function()paste0(name, ".tsv"), content = function(file)write.table(scope(data()), file, sep = "\t", quote = FALSE, row.names = FALSE, na = ""))

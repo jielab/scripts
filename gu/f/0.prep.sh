@@ -11,6 +11,12 @@ prep_ukb() (
 	F=$ROOT/f
 	ACTION=${1:-help}
 	shift || true
+	case "$ACTION" in
+		inspect-pgen | make-panel-pgen | pilot | pgen-vcf)
+			python3 "$F/0.ukb.py" "$ACTION" "$@"
+			return
+			;;
+	esac
 
 	HAP=${UKB_HAP_ROOT:-/mnt/f/gen/ukb/37/hap}
 	TYPED=${UKB_TYPED_ROOT:-/mnt/f/gen/ukb/37/typ}
@@ -90,6 +96,10 @@ PY
 Usage: ./gu.sh ukb ACTION
 
 Actions:
+  inspect-pgen     Inspect chr*.pgen/.pvar/.psam genotype, dosage and phase metadata
+  make-panel-pgen  Create sample metadata from PSAM without assuming EUR ancestry
+  pilot           Select a fixed, bounded cohort (default 1000) from PGEN inputs
+  pgen-vcf        Export quality-controlled PGEN data to reference-oriented VCF
   inspect-hap    Inspect Field 22438 phased BGENs, index them if necessary, and verify sample order
   make-panel     Create GU sample panel from an Oxford .sample file (pop=UKB, super_pop=ALL)
   batches        Make deterministic ancestry-stratified target batches and optional fixed UKB anchors
@@ -98,6 +108,8 @@ Actions:
   inspect-typed  Summarize the /typ BED/BIM/FAM array dataset
 
 Options are parsed by gu.sh. Run ./gu.sh --help for the complete list.
+PGEN actions accept their own --help and use /mnt/f/gen/ukb/37/imp by default.
+Preparation files stay under /tmp/gu-ukb; results use a separate persistent root.
 
 Minimal chr22 preparation:
   ./gu.sh ukb inspect-hap --chr 22 --grch 37 --ukb-hap-root /mnt/f/gen/ukb/37/hap

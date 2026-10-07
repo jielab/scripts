@@ -8,9 +8,9 @@ PCA projection — project UKB into the reference space used by DiscoDivas
 
 Usage examples (WSL):
   cd /mnt/d/scripts/grid
-  ./0pca.sh --check
-  ./0pca.sh --dir-imp /mnt/f/gen/ukb/37/imp --jobs 4
-  ./0pca.sh --replace TRUE --jobs 4
+  ./0.pca.sh --check
+  ./0.pca.sh --dir-imp /mnt/f/gen/ukb/37/imp --jobs 4
+  ./0.pca.sh --replace TRUE --jobs 4
 
 Modules (run in order; existing completed outputs are reused):
   projection  Score chromosomes 1-22 with reference PCA loadings; sum PC scores.
@@ -63,7 +63,7 @@ pca_run() {
 	echo "output PCA files: $pca"
 	echo "output distance/ancestry/QC: $qc"
 	# Fingerprint projection inputs; do not reuse a cache solely because a file exists.
-	projection_inputs=("$GRID_PCA_WEIGHT" "$ROOT/f/0.pca.R" "$ROOT/0pca.sh")
+	projection_inputs=("$GRID_PCA_WEIGHT" "$ROOT/f/0.pca.R" "$ROOT/0.pca.sh")
 	for c in {1..22}; do
 		projection_inputs+=("$GRID_IMP_DIR/chr$c.pgen" "$GRID_IMP_DIR/chr$c.psam")
 		if [[ -s $GRID_IMP_DIR/chr$c.pvar ]]; then projection_inputs+=("$GRID_IMP_DIR/chr$c.pvar"); else projection_inputs+=("$GRID_IMP_DIR/chr$c.pvar.zst"); fi

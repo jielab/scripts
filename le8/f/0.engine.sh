@@ -180,7 +180,11 @@ while [[ $# -gt 0 ]]; do
 			shift 2
 			;;
 		--white-only)
-			export LE8_WHITE_ONLY=$(bool_word "${2:?--white-only requires TRUE/FALSE}") || exit 2
+			LE8_WHITE_ONLY=$(bool_word "${2:?--white-only requires TRUE/FALSE}") || {
+				echo "ERROR: --white-only requires TRUE/FALSE" >&2
+				exit 2
+			}
+			export LE8_WHITE_ONLY
 			shift 2
 			;;
 		--img-max-features)
@@ -701,8 +705,9 @@ plink_prefix_probe() {
 # Code refactoring alone must not trigger refitting or relabel saved estimates.
 declare -A completed_results=()
 if [[ "$replace" != TRUE && "${LE8_RESUME_COMPLETED:-TRUE}" == TRUE ]]; then
-	mkdir -p "$analysis_root/logs"
-	resume_audit="$analysis_root/logs/completed_results.${module_csv//,/-}.$(date +%Y%m%d-%H%M%S).csv"
+	le8_log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
+	mkdir -p "$le8_log_root"
+	resume_audit="$le8_log_root/completed_results.${module_csv//,/-}.$(date +%Y%m%d-%H%M%S).csv"
 	check_jobs=("${requested[@]}")
 	for job in "${requested[@]}"; do
 		case "$job" in
@@ -1160,7 +1165,7 @@ traits=("${resume_traits[@]}")
 # 🚩 Execution
 run_one() {
 	local trait="$1" job="$2" action="$3" file="" i log_root log_file grch ygwas mrlink2_ref_pfile_dir mrlink2_ref_id_dir mrlink2_ref_samples
-	local layer run_biom run_prot=FALSE run_met=FALSE reuse_results=FALSE
+	local layer run_biom run_prot=FALSE run_met=FALSE reuse_results=FALSE run_replace=FALSE
 	local -a run_layers=()
 	for layer in "${biom_layers[@]}"; do
 		[[ "${job_actions["$trait|$job|$layer"]:-}" == "$action" ]] || continue
@@ -1200,10 +1205,10 @@ run_one() {
 		echo "ERROR: missing worker for $job" >&2
 		exit 3
 	}
-	log_root="$analysis_root/logs/$trait"
+	log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/$trait
 	local log_job="$job"
 	if [[ "$job" == final || "$job" == final_prediction ]]; then
-		log_root="$analysis_root/final/$trait/logs"
+		log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/final/$trait
 		[[ "$job" != final ]] || log_job=report
 		[[ "$job" != final_prediction ]] || log_job=prediction
 	fi
@@ -1214,6 +1219,9 @@ run_one() {
 		log_file="$log_root/${log_job}.${action}.${run_biom//,/-}.$(date +%Y%m%d-%H%M%S).log"
 	fi
 	[[ "$action" != reuse-results ]] || reuse_results=TRUE
+	# --replace applies to explicitly selected stages. Dependencies still run
+	# their input/signature checks, reusing a freshly completed upstream fit.
+	[[ " ${requested[*]} " != *" $job "* ]] || run_replace=$replace
 	echo "[LE8] START $job Y=$trait biom=$run_biom mode=$action"
 	echo "LOG=$log_file"
 	local started=$SECONDS
@@ -1221,7 +1229,7 @@ run_one() {
 	Y="$trait" Y_GWAS="$ygwas" BIOM="$run_biom" PROT_DO="$run_prot" MET_DO="$run_met" LE8_GRCH="$grch" MRLINK2_REF_PFILE_DIR="$mrlink2_ref_pfile_dir" \
 		MRLINK2_REF_ID_DIR="$mrlink2_ref_id_dir" \
 		MRLINK2_REF_POP="$MRLINK2_REF_POP" MRLINK2_REF_SAMPLES="$mrlink2_ref_samples" \
-		LE8_JOB="$job" LE8_SCRIPT="$fdir/$file" LE8_REUSE_RESULTS="$reuse_results" \
+		LE8_JOB="$job" LE8_SCRIPT="$fdir/$file" LE8_REUSE_RESULTS="$reuse_results" LE8_REPLACE="$run_replace" \
 		"$R_BIN" -e 'Y <- Sys.getenv("Y"); BIOM <- Sys.getenv("BIOM"); LE8_JOB <- Sys.getenv("LE8_JOB"); source(Sys.getenv("LE8_SCRIPT"), chdir=TRUE)' \
 		2>&1 | tee "$log_file" || {
 		local rc=$?

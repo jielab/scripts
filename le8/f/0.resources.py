@@ -46,12 +46,12 @@ def memory_available_gib():
 
 
 class SharedBudget:
-    def __init__(self,path,cores,memory_gib,reserve_gib=4):
+    def __init__(self,path,cores,memory_gib,reserve_gib=4,cpus=None):
         if cores<1 or memory_gib<=0 or reserve_gib<0:raise ValueError('Invalid resource capacity')
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
         self.lock=self.path.with_suffix(self.path.suffix+'.lock')
         self.cores=int(cores);self.memory=float(memory_gib);self.reserve=float(reserve_gib)
-        inherited=os.getenv('LE8_POOL_CPUS','')
+        inherited=','.join(map(str,cpus)) if cpus is not None else os.getenv('LE8_POOL_CPUS','')
         self.cpus=([int(v) for v in inherited.split(',')] if inherited else sorted(os.sched_getaffinity(0)))[:self.cores] if hasattr(os,'sched_getaffinity') else list(range(self.cores))
         self.cores=len(self.cpus)
         self.gpu_jobs=int(os.getenv('LE8_GPU_JOBS','1'))
@@ -266,20 +266,78 @@ class BlockedKNN:
         return np.concatenate(all_index),np.concatenate(all_distance)
 
 
+def phase_parent_rss_gib(supervisor_pid):
+    """Charge the waiting R parent and launchers, stopping at the phase owner."""
+    pid=os.getpid();seen=set();rss_kib=0
+    while pid>0 and pid not in seen:
+        seen.add(pid)
+        fields=dict(line.split(':',1) for line in Path(f'/proc/{pid}/status').read_text().splitlines())
+        rss_kib+=int(fields.get('VmRSS','0 kB').split()[0])
+        if pid==supervisor_pid:return rss_kib/1024**2
+        pid=int(fields['PPid'].strip())
+    raise ValueError('Phase supervisor is not an ancestor; cannot account for waiting parent RAM')
+
+
+@contextlib.contextmanager
+def phase_worker_budget(cores,memory_gib,pool_path,reserve_gib):
+    """Subdivide an admitted phase for synchronous MR jobs without double admission.
+
+    The outer lease remains in the global pool, protecting all of these workers
+    from other runs. The waiting parent RSS and headroom are charged locally.
+    """
+    if os.getenv('LE8_PHASE_ADMITTED')!='1':
+        yield cores,memory_gib,pool_path
+        return
+    parent=phase_parent_rss_gib(int(os.environ['LE8_PHASE_SUPERVISOR_PID']))
+    budget=min(memory_gib,float(os.environ['LE8_PHASE_MEMORY_GIB']))
+    remaining=budget-parent-reserve_gib
+    if remaining<=0:
+        raise ValueError(f'No RAM for MR workers: phase={budget:.3f} GiB, parent RSS={parent:.3f} GiB, reserve={reserve_gib:.3f} GiB')
+    cpus=sorted(os.sched_getaffinity(0))[:min(cores,int(os.environ['LE8_PHASE_CORES']))]
+    if not cpus:raise ValueError('No CPUs within the admitted phase')
+    # The parent is blocked until execute() finishes, including child cleanup.
+    names=('LE8_POOL_CPUS','LE8_GPU_LEASE_HELD','LE8_GPU_LOCAL_LEASE')
+    previous={name:os.environ.get(name) for name in names}
+    with tempfile.TemporaryDirectory(prefix='le8-phase-workers-',dir='/tmp') as directory:
+        os.environ['LE8_POOL_CPUS']=','.join(map(str,cpus))
+        if os.getenv('LE8_GPU_LEASE_HELD')=='1':
+            # A GPU phase owns the device globally, but parallel MR children
+            # still serialize their GPU operations in the local worker pool.
+            os.environ['LE8_GPU_LOCAL_LEASE']='1'
+            os.environ['LE8_GPU_LEASE_HELD']='0'
+        try:
+            print(f'[LE8] RESOURCE MR: cores={len(cpus)} parent_RSS_GiB={parent:.3f} worker_budget_GiB={remaining:.3f} phase_GiB={budget:.3f}',flush=True)
+            yield len(cpus),remaining,str(Path(directory)/'pool.json')
+        finally:
+            for name,value in previous.items():
+                if value is None:os.environ.pop(name,None)
+                else:os.environ[name]=value
+
+
 @contextlib.contextmanager
 def gpu_lease():
     """GPU-only admission inside an already admitted MR CPU job."""
     if os.getenv('LE8_GPU_LEASE_HELD')=='1':
         yield
         return
-    pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),
-        int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')),0)
+    # MR workers may use a local CPU/RAM pool; GPU exclusion stays global.
+    prefix='LE8_' if os.getenv('LE8_GPU_LOCAL_LEASE')=='1' else 'LE8_GLOBAL_'
+    gpu_cpus=os.getenv(prefix+'POOL_CPUS')
+    pool=SharedBudget(os.getenv(prefix+'RESOURCE_POOL',os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json')),
+        int(os.getenv(prefix+'TOTAL_CORES',os.getenv('LE8_TOTAL_CORES','16'))),
+        float(os.getenv(prefix+'RESOURCE_MEMORY_GIB',os.getenv('LE8_RESOURCE_MEMORY_GIB','32'))),0,
+        cpus=None if gpu_cpus is None else list(map(int,gpu_cpus.split(','))))
     slot=None
     while slot is None:
         slot=pool.acquire(0,0,gpu=True)
         if slot is None:time.sleep(.2)
+    previous=os.environ.get('LE8_GPU_LEASE_HELD')
+    os.environ['LE8_GPU_LEASE_HELD']='1'
     try:yield
-    finally:pool.release(slot[0])
+    finally:
+        pool.release(slot[0])
+        if previous is None:os.environ.pop('LE8_GPU_LEASE_HELD',None)
+        else:os.environ['LE8_GPU_LEASE_HELD']=previous
 
 
 def phase_main(argv):
@@ -302,7 +360,10 @@ def phase_main(argv):
     token,cpus=slot
     env=dict(os.environ,LE8_POOL_CPUS=','.join(map(str,pool.cpus)),LE8_PHASE_MEMORY_GIB=str(a.memory_gib),
         LE8_PHASE_CORES=str(a.cores),LE8_PHASE_ADMITTED='1',LE8_TOTAL_CORES=str(pool.cores),
-        LE8_RESOURCE_MEMORY_GIB=str(pool.memory),LE8_RESOURCE_POOL=str(pool.path))
+        LE8_RESOURCE_MEMORY_GIB=str(pool.memory),LE8_RESOURCE_POOL=str(pool.path),
+        LE8_PHASE_SUPERVISOR_PID=str(os.getpid()),LE8_GLOBAL_RESOURCE_POOL=str(pool.path),
+        LE8_GLOBAL_TOTAL_CORES=str(pool.cores),LE8_GLOBAL_RESOURCE_MEMORY_GIB=str(pool.memory),
+        LE8_GLOBAL_POOL_CPUS=','.join(map(str,pool.cpus)))
     if a.gpu:env['LE8_GPU_LEASE_HELD']='1'
     for key in ('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','BLIS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
         env[key]='1'

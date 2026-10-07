@@ -16,7 +16,7 @@ if "gu_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from gu_0_common import load_module
+from gu_0_common import load_module, x_nonpar_intervals
 
 
 # 🚩 ibdmix_final_filter
@@ -318,7 +318,7 @@ import difflib
 from pathlib import Path
 import sys
 
-WORKFLOW_SCRIPTS = {"/mnt/d/scripts/gu/f/ibdmix.sh", "/mnt/d/scripts/gu/f/ibdmix.py"}
+WORKFLOW_SCRIPTS = {str(Path(__file__).with_name(name).resolve()) for name in ("ibdmix.sh", "ibdmix.py", "0.common.py")}
 
 
 def contract(text):
@@ -1151,7 +1151,7 @@ def finalize(
 	Path(str(output) + ".afr_denisovan.bed").write_text("".join(f"{chrom}\t{lo}\t{hi}\n" for lo, hi in mask))
 
 
-def validate_genotypes(path, output):
+def validate_genotypes(path, output, x_nonpar_build=None):
 	rows = ref_rows = 0
 	last = None
 	stream = gzip.open if str(path).endswith((".gz", ".bgz")) else open
@@ -1166,6 +1166,8 @@ def validate_genotypes(path, output):
 				raise ValueError("Malformed genotype row")
 			body = fields[4].strip()
 			key = (fields[0], int(fields[1]))
+			if x_nonpar_build and (fields[0].lower().removeprefix(b"chr") not in (b"x", b"23") or not any(lo <= key[1] - 1 < hi for lo, hi in x_nonpar_intervals(x_nonpar_build))):
+				raise ValueError(f"Scoring position outside X non-PAR: {key}")
 			if body.count(b"\t") != expected - 1 or body.translate(None, b"0129\t"):
 				raise ValueError(f"Unsupported genotype encoding at {key}; expected diploid 0/1/2/9 values")
 			if last is not None and (key[0] != last[0] or key[1] <= last[1]):
@@ -1176,8 +1178,26 @@ def validate_genotypes(path, output):
 	if not rows:
 		raise ValueError("No informative genotype records")
 	Path(output).write_text(
-		json.dumps(dict(rows=rows, archaic_hom_ref_rows=ref_rows, modern_samples=expected - 1), indent=2)
+		json.dumps(dict(rows=rows, archaic_hom_ref_rows=ref_rows, modern_samples=expected - 1, scoring_build=x_nonpar_build, allowed_intervals_bed0=x_nonpar_intervals(x_nonpar_build) if x_nonpar_build else None), indent=2)
 	)
+
+
+
+def split_x_genotypes(path, output, build):
+	"""Each connected non-PAR component gets an independent caller state."""
+	from contextlib import ExitStack
+	spans = x_nonpar_intervals(build)
+	with gzip.open(path, "rt") as source, ExitStack() as stack:
+		header = source.readline()
+		outputs = [stack.enter_context(gzip.open(str(output) + f".{i+1}.gz", "wt")) for i in range(len(spans))]
+		for handle in outputs: handle.write(header)
+		for line in source:
+			fields = line.split("\t", 2)
+			pos = int(fields[1]) - 1
+			part = next((i for i, (lo, hi) in enumerate(spans) if lo <= pos < hi), None)
+			if fields[0].lower().removeprefix("chr") not in ("x", "23") or part is None:
+				raise ValueError("PAR or non-X position in X genotype table")
+			outputs[part].write(line)
 
 
 def ibdmix_workflow_main():
@@ -1212,9 +1232,14 @@ def ibdmix_workflow_main():
 	p = subs.add_parser("validate-mask")
 	for flag in ["path", "chrom", "build"]:
 		p.add_argument("--" + flag, required=True)
+	p = subs.add_parser("split-x-genotypes")
+	p.add_argument("--path", required=True)
+	p.add_argument("--output", required=True)
+	p.add_argument("--build", required=True)
 	p = subs.add_parser("validate-genotypes")
 	p.add_argument("--path", required=True)
 	p.add_argument("--output", required=True)
+	p.add_argument("--x-nonpar-build", choices=["37", "38"])
 	args = vars(parser.parse_args())
 	action = args.pop("action")
 	if action == "samples":
@@ -1241,6 +1266,8 @@ def ibdmix_workflow_main():
 			for line in handle:
 				if line.strip() and not line.startswith(("#", "track", "browser")) and line.split()[0] != args["chrom"]:
 					raise ValueError("Use a chromosome-specific BED with numeric contig names (X for custom X)")
+	elif action == "split-x-genotypes":
+		split_x_genotypes(**args)
 	elif action == "validate-genotypes":
 		validate_genotypes(**args)
 	else:

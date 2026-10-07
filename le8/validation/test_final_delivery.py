@@ -346,6 +346,26 @@ def test_mr_real_N_and_outcome_only_initialization(tmp_path):
     assert (pd.read_csv(tmp_path/'ok.tsv.gz',sep='\t').N==12345).all()
 
 
+def test_mr_boundary_diagnostics_do_not_disable_primary_validation(tmp_path):
+    n=mr.numeric_module()
+    result={'alpha':np.float64(.1),'se(alpha)':.01,'p(alpha)':.2,
+            'se(sigma_y)':np.float64('nan'),'optim_ha_success':np.bool_(True)}
+    audit=n.le8_optimization_audit(result)
+    atomic_json(tmp_path/'audit.json',audit)
+    saved=json.loads((tmp_path/'audit.json').read_text())
+    assert saved['result']['se(sigma_y)'] is None
+    assert saved['nonfinite_result_fields']==['se(sigma_y)']
+    assert saved['result']['alpha']==.1 and saved['result']['optim_ha_success'] is True
+    assert np.isnan(result['se(sigma_y)'])  # Fitted values were not changed.
+    fit=tmp_path/'fit.tsv';status=tmp_path/'status.tsv'
+    fit.write_text('alpha\tse(alpha)\tp(alpha)\tse(sigma_y)\n0.1\t0.01\t0.2\tnan\n')
+    status.write_text(f'omics\ttrait\tstatus\tout_prefix\nprotein\tP\tok\t{fit}\n')
+    assert validate_status(status,'protein','P')['status']=='ok'
+    fit.write_text('alpha\tse(alpha)\tp(alpha)\n0.1\tnan\t0.2\n')
+    with pytest.raises(ValueError,match='alpha inference'):
+        validate_status(status,'protein','P')
+
+
 def test_gpu_lease_exclusive_and_nested_no_deadlock(tmp_path,monkeypatch):
     pool=SharedBudget(tmp_path/'pool',4,2,0)
     first=pool.acquire(1,.2,gpu=True);assert first
@@ -359,6 +379,8 @@ def test_gpu_lease_exclusive_and_nested_no_deadlock(tmp_path,monkeypatch):
 
 def test_public_prior_module_published_when_later_fails(tmp_path):
     fixture=tmp_path/'code';shutil.copytree(ROOT,fixture,ignore=shutil.ignore_patterns('__pycache__','.backups','.pytest_cache'))
+    # The public entry point shares the installed console runtime with 0.engine.sh.
+    shutil.copytree(ROOT.parent/'0f',tmp_path/'0f',ignore=shutil.ignore_patterns('__pycache__'))
     (fixture/'f/0.engine.sh').write_text('''#!/bin/bash
 set -eu
 while [[ $# -gt 0 ]]; do
@@ -373,6 +395,37 @@ printf 'term,beta,p.value\nTEST,.1,.2\n' > "$root/cvd_cad/prot/c1_correlate/c1.f
         env={**os.environ,'PYTHON_BIN':sys.executable,'ABM_PYTHON':sys.executable,'LE8_RESOURCE_POOL':str(tmp_path/'pool.json')},capture_output=True,text=True)
     assert z.returncode!=0
     assert list((out/'cvd_cad/prot/c1_correlate').glob('*.xlsx')),z.stdout+z.stderr
+
+
+def test_public_empty_native_pipeline_budget_and_publication(tmp_path):
+    fixture=tmp_path/'code';shutil.copytree(ROOT,fixture,ignore=shutil.ignore_patterns('__pycache__','.backups','.pytest_cache'))
+    shutil.copytree(ROOT.parent/'0f',tmp_path/'0f',ignore=shutil.ignore_patterns('__pycache__'))
+    (fixture/'f/0.engine.sh').write_text('''#!/bin/bash
+set -eu
+module=$1; shift
+while [[ $# -gt 0 ]]; do
+ if [[ "$1" == --analysis-root ]]; then root="$2"; shift 2; else shift; fi
+done
+[[ "$LE8_PHASE_MEMORY_GIB" == 4.0 && "$LE8_PHASE_CORES" == 2 ]]
+if [[ "$module" == c2_cause ]]; then
+ test -s "$root/cvd_cad/prot/c1_correlate/c1.fixture.csv"
+fi
+mkdir -p "$root/cvd_cad/prot/$module"
+printf 'term,beta,p.value\\nTEST,.1,.2\\n' > "$root/cvd_cad/prot/$module/${module%%_*}.fixture.csv"
+echo "[LE8] DONE $module"
+''')
+    out=tmp_path/'new-results';assert not out.exists()
+    env={k:v for k,v in os.environ.items() if not k.startswith(('LE8_','SCRIPT_'))}
+    env.update(PYTHON_BIN=sys.executable,LE8_RESOURCE_POOL=str(tmp_path/'pool.json'),
+               LE8_RESOURCE_MEMORY_GIB='4',SCRIPT_LOG_DIR=str(tmp_path/'logs'))
+    z=subprocess.run([str(fixture/'le8.sh'),'c1_correlate,c2_cause','--Y','cvd_cad','--biom','prot',
+        '--analysis-root',str(out),'--replace','TRUE','--cores','2'],env=env,capture_output=True,text=True,timeout=30)
+    assert z.returncode==0,z.stdout+z.stderr
+    for module in ('c1_correlate','c2_cause'):
+        assert list((out/'cvd_cad/prot'/module).glob('*.xlsx'))
+    assert json.loads((tmp_path/'pool.json').read_text())['leases']=={}
+    assert len(z.stdout.splitlines())<12
+    assert 'Resource admission' not in z.stdout and '0.common.py' not in z.stdout
 
 
 def test_frozen_cpu_cuda_probabilities_gate_release(fitted):
@@ -470,3 +523,29 @@ stopifnot(!e$has_private_columns(c('feature', 'beta', 'p.value')))
 '''
     z=subprocess.run(['Rscript','-e',script,str(ROOT/'shiny/app.R')],capture_output=True,text=True)
     assert z.returncode==0,z.stdout+z.stderr
+
+
+@pytest.mark.parametrize('layout', ['metrics', 'columns'])
+@pytest.mark.parametrize('eligible', ['FALSE', 'TRUE'])
+def test_final_dandelion_eligibility_audit(layout, eligible):
+    spec=importlib.util.spec_from_file_location('final_dandelion_audit',ROOT/'f/final.py')
+    module=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=module
+    spec.loader.exec_module(module)
+    report=module.Report.__new__(module.Report)
+    values=dict(primary_eligible=eligible,analysis_class='exploratory fixture')
+    table=(pd.DataFrame(dict(metric=list(values),value=list(values.values())))
+           if layout=='metrics' else pd.DataFrame([values]))
+    report.tables={'cad.prot.dandelion':table}
+    report.findings=[]
+    report.audit('cad','prot')
+    if eligible=='TRUE':
+        assert report.findings==[]
+    else:
+        assert len(report.findings)==1
+        finding=report.findings[0]
+        assert finding['code']=='DANDELION_EXPLORATORY_ONLY'
+        assert finding['severity']=='warning'
+        assert 'exclude from independent causal confirmation' in finding['detail']
+        assert set(finding['source_roles'].split(';'))=={
+            'dandelion','dandelion_lolo','dandelion_native','state_projection','age_models'}

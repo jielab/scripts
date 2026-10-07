@@ -5,6 +5,12 @@ gu_density_region <- function(d, r, Q, dataset, build, lineage = "Neanderthal") 
 	ch <- as.character(r$chr[[1]])
 	edges <- unique(round(seq(r$start[[1]], r$end[[1]], length.out = 81)))
 	bins <- data.frame(chr = ch, start = head(edges, - 1), end = tail(edges, - 1))
+	spans <- data.frame(start = 0, end = Inf)
+	if (ch == "X" && isTRUE(d$manifest$x_male_only)) {
+		spans <- if (build == "GRCh37") data.frame(start = c(0, 2699520, 155260560), end = c(60000, 154931043, 155270560)) else
+			data.frame(start = c(0, 2781479, 156030895), end = c(10000, 155701382, 156040895))
+	}
+	widths <- Reduce(`+`, lapply(seq_len(nrow(spans)), function(k) pmax(0, pmin(bins$end, spans$end[k]) - pmax(bins$start, spans$start[k]))))
 	z <- matrix(0, nrow(d$samples), nrow(bins))
 	tested <- which(as.character(d$bins$chr) == ch)
 	eligible <- if(length(tested)) rowSums(is.finite(d$z[, tested, drop = FALSE])) > 0 else rep(FALSE, nrow(z))
@@ -12,10 +18,11 @@ gu_density_region <- function(d, r, Q, dataset, build, lineage = "Neanderthal") 
 	if(nrow(calls)) for(s in split(calls, calls$sample_id)) {
 		i <- match(s$sample_id[[1]], d$samples$sample_id); if(is.na(i)) next
 		intervals <- reduce_intervals(s)
-		for(j in seq_len(nrow(intervals))) z[i, ] <- z[i, ] + pmax(0, pmin(bins$end, intervals$end[j]) - pmax(bins$start, intervals$start[j]))
+		for(j in seq_len(nrow(intervals))) for(k in seq_len(nrow(spans))) z[i, ] <- z[i, ] + pmax(0, pmin(bins$end, intervals$end[j], spans$end[k]) - pmax(bins$start, intervals$start[j], spans$start[k]))
 	}
 	ploidy <- if(ch == "X" && isTRUE(d$manifest$x_male_only))1 else 2
-	z <- sweep(z, 2, ploidy * (bins$end - bins$start), "/") * 100
+	z <- sweep(z, 2, ploidy * widths, "/") * 100
+	z[, widths == 0] <- NA_real_
 	z[!eligible, ] <- NA_real_
 	list(samples = d$samples, bins = bins, z = z)
 }

@@ -304,12 +304,9 @@ def main():
     a.pool=a.pool or os.getenv('LE8_RESOURCE_POOL')
     tasks=build_tasks(a,forward)
     if not tasks:raise ValueError('No MR jobs')
-    if os.getenv('LE8_PHASE_ADMITTED')=='1':
-        parent_memory=float(os.getenv('LE8_PHASE_MEMORY_GIB','0'));parent_cores=int(os.getenv('LE8_PHASE_CORES','0'))
-        if any(t['memory_gib']>a.memory_gib-parent_memory or t['cores']>a.cores-parent_cores for t in tasks):
-            raise ValueError('MR task cannot fit alongside its waiting parent reservation; increase the shared budget or reduce the task/parent resource claim')
     executor=a.cache_root/('_executor_'+key_of(str(a.outdir.resolve()))[:20]);atomic_json(executor/'tasks.json',tasks)
-    status=execute(tasks,executor,a.cores,a.memory_gib,a.workers,a.pool,a.reserve_gib)
+    with resources.phase_worker_budget(a.cores,a.memory_gib,a.pool,a.reserve_gib) as (cores,memory,pool):
+        status=execute(tasks,executor,cores,memory,a.workers,pool,a.reserve_gib)
     return 0 if collect(tasks,status,a.outdir) else 2
 
 import subprocess,math

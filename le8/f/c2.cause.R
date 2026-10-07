@@ -34,7 +34,7 @@ suppressPackageStartupMessages({
 		one <- function(f) {
 			z <- c(
 				paste0(f, ".pgs"), paste0(f, "_pgs"), paste0(f, ".PGS"),
-				paste0(f, "_PGS"), paste0(f, "_GRS"), paste0("GRS_", f)
+				paste0(f, "_PGS"), paste0(f, "_GRS"), paste0("GRS_", f), f
 			)
 			hit <- z[z %in% nms] ; if (length(hit)) hit[[1]] else NA_character_
 		}
@@ -736,7 +736,8 @@ le8_execute_mrlink2 <- function(layer, rawdir, jobs, ygfile, mode = RUN_MRlink2)
 	sh <- file.path(Sys.getenv("LE8_FDIR"), "c2.cause.sh")
 	python <- Sys.getenv('ABM_PYTHON',Sys.getenv('PYTHON_BIN','/home/huangj/anaconda3/envs/le8/bin/python3'))
     adapter <- file.path(Sys.getenv('LE8_FDIR'),'c2.parallel.py')
-    status <- system2(shQuote(python),shQuote(c(adapter,'--worker-script',sh,'--jobs',jobs_file,'--cad-gwas',ygfile,'--outdir',linkdir)))
+    # system2 quotes the executable itself; only quote individual arguments.
+    status <- system2(python,shQuote(c(adapter,'--worker-script',sh,'--jobs',jobs_file,'--cad-gwas',ygfile,'--outdir',linkdir)))
 	if (status != 0 || !file.exists(complete_file)) stop("MR-link-2 incomplete; validated task checkpoints retained; exit=", status) ; invisible(status)
 }
 
@@ -1546,7 +1547,7 @@ risk_set_component_scan <- function(dd, feature, covars, tvar, evar, cuts = c(0,
 
 # A frozen Yang/control state projection, evaluated only in independent incident Yin.
 # Baseline state is the training target; future disease labels never enter the transform.
-le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir) {
+le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir,source_map=score_map) {
   selected<-intersect(le8_csv_env('C2_STATE_FEATURES',paste(C2_FIXED_TOP,collapse=',')),features)
   unavailable<-function(reason) { z<-tibble(status='unavailable',reason);write_raw_csv(z,'c2.state_projection.csv',rawdir);list(status=z) }
   if(!truthy(Sys.getenv('C2_RUN_STATE_PROJECTION','TRUE'))) return(unavailable('explicitly disabled'))
@@ -1577,7 +1578,7 @@ le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir) {
     cf<-lm(reformulate(c('.p',cv),'.x'),z);slope<-unname(coef(cf)['.p'])
     if(!is.finite(slope)) next
     genetic<-genetic+beta[f]*slope*(test[[sc]]-gm)/gs;ng<-ng+1L
-    calibration[[f]]<-tibble(feature=f,pgs=sc,N=nrow(z),slope,pgs_mean=gm,pgs_sd=gs)
+    calibration[[f]]<-tibble(feature=f,pgs=source_map[[f]],N=nrow(z),slope,pgs_mean=gm,pgs_sd=gs)
   }
   test$inherited_state<-if(ng==sum(pen==1)) genetic/sd0 else NA_real_
   scan<-map_dfr(c('state_score','inherited_state'),function(x) map_dfr(list(c(0,2),c(2,5),c(5,10)),function(w) {
@@ -1621,19 +1622,21 @@ run_individual_genetic_decomposition <- function(layer, outdir, top_candidates) 
 		z <- le8_validate_ids(z, nm)
 		assign(nm, z)
 	}
-	d <- inner_join(ph, biom[, c("eid", names(mp)), drop = FALSE], by = "eid") |>
-		inner_join(scores[, unique(c("eid", unname(mp))), drop = FALSE], by = "eid")
-	rm(ph, scores, biom)
+	d <- inner_join(ph, biom[, c("eid", names(mp)), drop = FALSE], by = "eid")
+	joined <- le8_join_pgs(d, scores, mp)
+	d <- joined$data
+	fit_map <- joined$score_map
+	rm(ph, scores, biom, joined)
 	invisible(gc())
 	if (length(setdiff(covars,names(d)))) stop("C2 required covariates missing: ", paste(setdiff(covars,names(d)),collapse=","))
 	d$.group <- le8_participant_groups(d)
 	tvar <- paste0(Y, ".t2e")
 	evar <- paste0(Y, ".Yt2e")
-	state_projection <- le8_state_projection(d,names(mp),mp,covars,tvar,evar,le8_job_dir(outdir,"c2_cause"))
+	state_projection <- le8_state_projection(d,names(mp),fit_map,covars,tvar,evar,le8_job_dir(outdir,"c2_cause"),source_map=mp)
 	results <- lapply(names(mp), function(feature) {
-		z <- le8_oof_decompose(d[, unique(c("eid", ".group", feature, mp[[feature]], covars, tvar, evar, ".prevalent")),
+		z <- le8_oof_decompose(d[, unique(c("eid", ".group", feature, fit_map[[feature]], covars, tvar, evar, ".prevalent")),
 			drop = FALSE
-		], feature, mp[[feature]], covars, k = as.integer(le8_num_env("C2_DECOMP_FOLDS", 5)), seed = SEED)
+		], feature, fit_map[[feature]], covars, k = as.integer(le8_num_env("C2_DECOMP_FOLDS", 5)), seed = SEED)
 		dd <- z$data
 		dd <- dd[complete.cases(dd[,c(".omic_z",".genetic_z",".residual_z",covars),drop=FALSE]),,drop=FALSE]
 		cv <- c(covars, ".calibration_fold")
@@ -2373,7 +2376,7 @@ build_genetic_score_manifest <- function(iv_list, layer) {
 
 run_mrlink2_step <- function(...) le8_execute_mrlink2(...)
 
-integrate_c2_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble()) {
+integrate_c2_directionality <- function(mr, c1, dan = list(), reverse_mr = tibble(), layer) {
 	# Do not pick whichever of cis or trans has the smaller P as causal evidence.
 	z <- le8_combine_directionality(mr, c1, dan, reverse_mr, layer)
 	if (nrow(z)) {
@@ -2627,7 +2630,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		)
 	}
 
-	directionality_integration <- integrate_c2_directionality(mr, c1, dandelion, reverse_mr)
+	directionality_integration <- integrate_c2_directionality(mr, c1, dandelion, reverse_mr, layer = layer)
 	write_raw_csv(directionality_integration, "c2.directionality_causal.csv", rawdir)
 	save_plot(plot_c2_directionality(directionality_integration), "c2.Fig10.directionality_causal.png", 16, 12, outdir = outdir)
 

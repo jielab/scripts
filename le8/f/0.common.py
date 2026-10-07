@@ -1697,9 +1697,9 @@ def dispatch_main(argv=None):
 			if not a.dry_run:
 				share_viewer(a.analysis_root, output, a.r_bin)
 		elif module in NATIVE:
+			# Native entry points may execute prerequisites and in-process R scans.
+			# Reserve the full phase budget; MR subprocesses subdivide this lease.
 			phase(["bash", engine, module, *base, *native, *extra],module,
-                cores=1 if module=='c2_cause' else a.cores,
-                memory=min(3.,float(env['LE8_RESOURCE_MEMORY_GIB'])) if module=='c2_cause' else None,
                 gpu=module=='c3_coloc' and env.get('RUN_GPU_COLOC','TRUE')=='TRUE')
 		elif module == "c1_abm":
 			if not a.preflight:

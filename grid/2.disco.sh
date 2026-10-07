@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Official DiscoDivas: align PCA/PRS -> genetic-distance interpolation -> publish.
-# Workflow orchestration is here; pinned upstream program: f/2disco.R.
+# Workflow orchestration is here; pinned upstream program: f/2.disco.R.
 # Reference: https://github.com/YunfengRuan/DiscoDivas
 set -euo pipefail
 usage() {
@@ -9,11 +9,11 @@ DiscoDivas — combine the four ancestry-specific CSx scores for each UKB indivi
 
 Usage examples (WSL):
   cd /mnt/d/scripts/grid
-  ./0pca.sh --check
-  ./1csx.sh --traits height,ldl,t2dm --jobs 4 --threads 1
-  ./2disco.sh --traits height,ldl,t2dm --check
-  ./2disco.sh --traits height,ldl,t2dm
-  ./2disco.sh --trait height --a-list 1,1,1,1 --regress-pca TRUE
+  ./0.pca.sh --check
+  ./1.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 1
+  ./2.disco.sh --traits height,ldl,t2dm --check
+  ./2.disco.sh --traits height,ldl,t2dm
+  ./2.disco.sh --trait height --a-list 1,1,1,1 --regress-pca TRUE
 
 Prerequisites:
   Completed reference PCA projection and the permanent merged 1csx.scores.rds file.
@@ -90,7 +90,7 @@ PY
 		echo 'CHECK/PLAN complete; no Disco calculation executed'
 		return 0
 	}
-	sig=$(python3 "$io" signature "$GRID_DISCO_A" "$GRID_REGRESS_PCA" "$GRID_DISTANCE_PCS" --files "${inputs[@]}" "$GRID_PCA_FILE" "$GRID_MED_FILE" "$io" "$ROOT/2disco.sh" "$ROOT/f/2disco.R" "$ROOT/f/0.common.py")
+	sig=$(python3 "$io" signature "$GRID_DISCO_A" "$GRID_REGRESS_PCA" "$GRID_DISTANCE_PCS" --files "${inputs[@]}" "$GRID_PCA_FILE" "$GRID_MED_FILE" "$io" "$ROOT/2.disco.sh" "$ROOT/f/2.disco.R" "$ROOT/f/0.common.py")
 	run="$work/$trait/$sig"
 	mkdir -p "$run" "$logdir/$trait"
 	cache_sig="$work/$trait/disco.signature"
@@ -104,7 +104,7 @@ PY
 	grep '^Disco ' "$logdir/$trait/prepare.log"
 	prs=()
 	for p in "${POPS[@]}"; do prs+=("$run/$p.tsv"); done
-	grid_run_logged "$logdir/$trait/disco.log" "${disco_r[@]}" "$ROOT/f/2disco.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
+	grid_run_logged "$logdir/$trait/disco.log" "${disco_r[@]}" "$ROOT/f/2.disco.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
 	grid_run_logged "$logdir/$trait/validate.log" python3 "$io" disco-output "$run/disco.tsv.gz" "$run"
 	grid_run python3 "$ROOT/f/0.common.py" publish disco "$run/disco.tsv.gz" "$score_home/2disco.scores.rds" --remove "$GRID_REMOVE"
 	grid_run "${disco_r[@]}" "$ROOT/../0f/results.R" import-table "$run/disco.coef.tsv.gz" "$score_home/2disco.coefficients.xlsx"
