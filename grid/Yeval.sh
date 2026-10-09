@@ -31,15 +31,17 @@ Inputs:
   --group-col NAME           genetic_ancestry
   --pca-file FILE            Same folder/ukb.discodivas.pca.tsv.gz
   --med-file FILE            /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
-  --grid-file FILE           Optional GRID table; adds GRID-tuned and saved GRID scores.
+  GRID / PRSformer comparisons use grid.sh --stage report with the common split.
+  Legacy --grid-file is rejected because learned scores cannot be safely refolded.
   --covar-name LIST          age,sex,PC1,PC2; comma-separated, or none
   --phenotype-col NAME       Default trait; default t2dm dt derives baseline Yr2e/Yt2e.
   --event-col / --time-col   Default trait.Yt2e / trait.t2e
   --remove FILE             /mnt/d/files/ukb.exclude.id; negative IDs also excluded
 
 Evaluation:
-  --type ct|dt|t2e           ct: prediction R2; dt: AUC; t2e: Harrell C.
+  --type ct|dt|t2e           ct: residual correlation R2; dt: AUC; t2e: Harrell C.
                             ct uses covariate-adjusted squared prediction correlation.
+                            OOF_predictive_R2 (1-SSE/SST) is also saved in the workbook.
                             t2e also reports covariates-only C and paired delta C.
   --disco-tune TRUE|FALSE    TRUE; FALSE evaluates only the saved untuned Disco score.
   --disco-a LIST             1,1,1,1 in AFR,EAS,EUR,SAS order (same as 2.disco.sh).
@@ -105,6 +107,10 @@ while (($#)); do
 				exit 2
 			}
 			case "$1" in
+				--grid-file)
+					echo 'Yeval --grid-file is disabled: saved GRID predictions may already depend on target phenotypes and cannot be assigned new CV folds. Compare GRID and PRSformer with grid.sh --stage report using the common frozen cohort split.' >&2
+					exit 2
+					;;
 				--trait) trait=$2 ;; --type) type=$2 ;; --out-root) outroot=$2 ;;
 				--score-dir) score_dir=$2 ;; --pt-file) pt_file=$2 ;; --dir-gwas) gwas_dir=$2 ;;
 				--dir-gen) gen_dir=$2 ;; --pt-effect) pt_effect=$2 ;; --threads) threads=$2 ;;

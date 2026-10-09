@@ -132,7 +132,8 @@ nearest_counts <- out_distance[, .(N = .N, percent = 100 * .N / nrow(out_distanc
 center_dist <- as.data.table(as.matrix(dist(centers, upper = TRUE, diag = TRUE)), keep.rownames = "from")
 setnames(center_dist, c("from", center_names))
 
-match_files <- if (!is.null(dir)) file.path(dir, paste0("chr", 1:22, ".sscore.vars")) else character()
+score_dir <- get_arg("--score-dir", dir)
+match_files <- if (!is.null(score_dir)) file.path(score_dir, paste0("chr", 1:22, ".sscore.vars")) else character()
 match_qc <- if (length(match_files) && all(file.exists(match_files))) {
 	rbindlist(lapply(1:22, function(chr) {
 		data.table(chr = chr, matched_pca_variants = nrow(fread(match_files[chr], header = FALSE, showProgress = FALSE)))

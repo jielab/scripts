@@ -10,6 +10,7 @@ PRSformer 的输入是个体水平的 genotype 和 phenotype。这里不读取 C
 
 | 文件 | 职责 |
 |---|---|
+| `install.prsformer.sh` / `requirements.prsformer.txt` | 建立独立环境，获取官方源码并验证 GPU |
 | `3.prsformer.sh` | 路径、阶段、模型参数、依赖预检及任务编排 |
 | `f/3.prsformer_data.py` | 对齐样本/SNP、划分数据、训练集 QC、生成矩阵及发布报告/RDS |
 | `f/3.prsformer.py` | 调用官方架构，训练、验证选择、checkpoint、test 预测和评估 |
@@ -17,23 +18,33 @@ PRSformer 的输入是个体水平的 genotype 和 phenotype。这里不读取 C
 
 脚本用 `--python` 指定解释器，不读取会切换现有 grid Python 环境的 `f/0.common.sh`，也不自动安装软件。
 
-### 单独建立 Python 3.11 环境
+### 单独建立 Python 环境
 
-以下命令适用于有兼容 NVIDIA 驱动的 Linux/WSL。PyTorch/NATTEN 的版本组合必须匹配；这里锁定官方 PRSformer 使用的旧 NATTEN API，对应安装组合见 [NATTEN 官方安装页的 0.17.5 部分](https://natten.org/install/#0175)。
+Linux/WSL 推荐直接运行安装器；它创建 `~/.venvs/grid-prsformer`，获取指定版本的官方源码，安装匹配的依赖，最后用默认模型参数运行真实 GPU forward/backward 检查。
 
 ```bash
-python3.11 -m venv "$HOME/.venvs/grid-prsformer"
-"$HOME/.venvs/grid-prsformer/bin/python" -m pip install --upgrade pip
+bash install.prsformer.sh
+```
+
+安装器支持 Python 3.11/3.12；可用 `GRID_PRSFORMER_BOOTSTRAP_PYTHON` 指定创建环境的解释器，`GRID_PRSFORMER_VENV` 指定环境目录，`PRSFORMER_UPSTREAM_DIR` 指定源码目录。例如：
+
+```bash
+GRID_PRSFORMER_BOOTSTRAP_PYTHON="$HOME/anaconda3/envs/ai/bin/python" \
+  bash install.prsformer.sh
+```
+
+新的依赖组合固定为 **PyTorch 2.12.0 / CUDA 13.0 / NATTEN 0.21.7**，适用于本机 RTX 5090。`requirements.prsformer.txt` 记录安装要求，NATTEN 使用[官方发布的匹配 wheel](https://natten.org/install/)。无需另外安装系统 CUDA toolkit 或 `pytorch_lightning`。手动安装时：
+
+```bash
+python3.12 -m venv "$HOME/.venvs/grid-prsformer"
 "$HOME/.venvs/grid-prsformer/bin/python" -m pip install \
-  numpy pandas scipy pgenlib pyreadr matplotlib openpyxl scikit-learn
-"$HOME/.venvs/grid-prsformer/bin/python" -m pip install \
-  torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-"$HOME/.venvs/grid-prsformer/bin/python" -m pip install \
-  natten==0.17.5+torch260cu124 -f https://whl.natten.org
+  --only-binary=:all: -r requirements.prsformer.txt -f https://whl.natten.org
 "$HOME/.venvs/grid-prsformer/bin/python" -m pip check
 ```
 
-也可以用自己的环境，并在每次调用时传 `--python /你的环境/bin/python`，或设置 `GRID_PRSFORMER_PYTHON`。正式的 neighborhood attention 路径要求 CUDA；找不到 GPU、torch/CUDA/NATTEN 不匹配或缺少 native attention API 时会退出。准备数据和发布报告两种阶段不要求 GPU。
+官方 PRSformer 使用旧 NATTEN 接口。加载器为 0.21.7 显式适配构造参数，并固定 `cutlass-fna` 后端；保留 QKV、输出投影、局部窗口和 dilation 的计算及参数键，不修改磁盘上的官方源码。已安装的旧 `torch 2.6.0 / CUDA 12.4 / natten 0.17.5` 组合仍支持旧 GPU；**它不适用于 RTX 5090 等 Blackwell GPU**。不支持的版本组合会在准备真实基因型之前退出。
+
+也可以在每次调用时传 `--python /你的环境/bin/python`，或设置 `GRID_PRSFORMER_PYTHON`。正式 neighborhood attention 需要 CUDA；准备数据和发布报告两种阶段不要求 GPU。
 
 ### 获取官方源码
 
@@ -98,16 +109,19 @@ SNP 的 MAF 和 call rate **仅用 train 个体计算**，默认阈值分别为 
 
 先按本文配置独立的 PRSformer 环境及官方源码，再从 `grid.sh all --run-prsformer` 启动共同划分比较，完整选项见 [README.md](README.md)。这条路径使用 GRID 冻结的外层 50/50 名单，在 training half 内划分 PRSformer 的 train/validation，整体约为 40%/10%/50%。下方直接调用 `3.prsformer.sh` 的默认 60%/20%/20% 仍适用于独立实验。
 
-导出的 scores RDS 额外保存 `covariate_names`、`endpoint_definition` 和 `preparation_signature`，供共同测试集比较时核对来源。
+导出的 scores RDS 额外保存 `covariate_names`、每位受试者的原始 `covariate.<name>` 数值、`endpoint_definition` 和 `preparation_signature`，供共同测试集比较时核对来源。协变量名称相同仍可能对应不同取值或不同时间点，因此比较时也要核对个体数值。
 
 ### 先做输入和运行环境检查
 
 ```bash
 cd /mnt/d/scripts/grid
+bash 3.prsformer.sh --traits height,ldl,t2dm --check-runtime
 bash 3.prsformer.sh --traits height,ldl,t2dm --check
 ```
 
-`--check` 的 all/prepare 模式先检查标签、样本 ID、split 和候选 SNP 元数据，并报告预计矩阵大小；尚未解码基因型时不能声称已完成 train-only MAF/call-rate QC。all 模式还检查生产训练依赖；若 cache 已准备好，会进行使用真实官方模型的小型 forward/backward 检查。这个模型检查验证接口与 kernel 可调用性，不保证全规模模型能装入 GPU。
+`--check-runtime` 不读取真实输入、不建立 cache/run，直接验证默认模型参数的 forward/backward、缺失基因型编码、FP16 和 gradient checkpointing。
+
+`--check` 的 all/prepare 模式先检查依赖，再检查标签、样本 ID、split 和候选 SNP 元数据，并报告预计矩阵大小；尚未解码基因型时不能声称已完成 train-only MAF/call-rate QC。all 模式还检查生产训练依赖；若 cache 已准备好，会进行使用真实官方模型的小型 forward/backward 检查。这个模型检查验证接口与 kernel 可调用性，不保证全规模模型能装入 GPU。
 
 在没有 GPU 的节点上只检查输入时使用 `--mode prepare --check`。仅查看将执行哪些命令，用 `--dry-run`，它不读取数据，也不验证依赖兼容性。
 
@@ -171,7 +185,7 @@ bash 3.prsformer.sh --mode report --replace \
   --cache-dir /mnt/f/prsformer-cache/three_traits
 ```
 
-`--checkpoint` 可指定 predict 使用的模型；预测使用 checkpoint 的架构和训练时预处理，并核对 SNP 顺序/REF/ALT 及官方源码。`--replace` 允许重建 preparation cache 或覆盖发布结果，**不删除已有模型**。重训另一配置时选择新的 `--run-dir`；`--resume` 与 `--replace` 不能同时使用。
+`--checkpoint` 可指定 predict 使用的模型；预测使用 checkpoint 的架构和训练时预处理，并核对 SNP 顺序/REF/ALT、官方源码，以及训练/验证样本的身份与家系记录。改变 split 标签不能把开发样本变成测试样本。旧 checkpoint 缺少身份记录时，仅允许使用原样保存的完整 cohort/split；更换预测队列前需要重新训练新版模型。`--replace` 允许重建 preparation cache 或覆盖发布结果，**不删除已有模型**。重训另一配置时选择新的 `--run-dir`；`--resume` 与 `--replace` 不能同时使用。
 
 ## 5. 资源规模
 
@@ -207,13 +221,16 @@ GPU 需求也随 SNP 数线性增长，attention 的计算量与窗口相关；�
 
 | 指标 | 数学含义 |
 |---|---|
-| `prediction_R2` | `cor(Y - b, g)^2`，残差与遗传分量的相关平方，忽略预测尺度校准误差 |
+| `predictive_R2` | `1 - sum((Y - b - g)^2) / sum((Y - mean(Y))^2)`，冻结模型在测试集上的预测 R²，作为连续表型主图指标 |
+| `residual_correlation_R2` | `cor(Y - b, g)^2`，残差与遗传分量的相关平方，忽略预测尺度校准误差；原名 `prediction_R2`，现按公式明确更名 |
 | `SSE_partial_R2` | `1 - sum((Y - b - g)^2) / sum((Y - b)^2)`，固定模型相对协变量基线减少的残差平方和比例 |
-| `full_R2` | `1 - sum((Y - b - g)^2) / sum((Y - mean(Y))^2)` |
+| `full_R2` | 与 `predictive_R2` 相同，保留此名以兼容既有结果 |
 | `baseline_R2` | 用上式的 `b` 替代 `b + g` |
 | `full_RMSE`、`prediction_bias` | 绝对预测误差及平均偏差，保留原表型单位 |
 
-固定模型的 SSE 指标可为负值，这反映其在 test 上比基线差；不截断到零。这里的 `SSE_partial_R2` 不在 test 上重新拟合 PRS 系数，因此不能未经说明等同于论文在 test 上再拟合 `Y ~ covariates + PRS` 得到的 partial R²。比较时应同时匹配具体指标公式、协变量、表型变换和测试人群。
+固定模型的 SSE 指标可为负值，不截断到零：`predictive_R2 < 0` 表示误差大于使用测试集均值的常数预测，`SSE_partial_R2 < 0` 表示误差大于协变量基线。这里的 `SSE_partial_R2` 不在 test 上重新拟合 PRS 系数，因此不能未经说明等同于论文在 test 上再拟合 `Y ~ covariates + PRS` 得到的 partial R²。比较时应同时匹配具体指标公式、协变量、表型变换和测试人群。
+
+重新发布旧 run 时，会将原 `prediction_R2` 明确标为 `residual_correlation_R2`，并从已保存的 `full_R2` 添加 `predictive_R2`；不会把相关平方改称 SSE 预测 R²，也不会在测试集重新训练模型。
 
 T2DM 报告 AUC、baseline AUC、ΔAUC、AUPRC、Brier、log loss、病例数及患病比例，不用连续表型的相关平方代替疾病预测评价。小祖源样本出现单一类别时，相应 AUC/AUPRC 是缺失值。图表给出点估计；它们本身不提供增益显著性的检验。
 
@@ -230,3 +247,16 @@ T2DM 报告 AUC、baseline AUC、ΔAUC、AUPRC、Brier、log loss、病例数及
 - [NATTEN 官方安装与旧版本 wheel 说明](https://natten.org/install/)。
 
 适配器可以在具备上述数据和依赖的环境中启动训练；交付代码的流程检查不等于已经在你的 UKB genotype 上训练完成。真实 GPU 的 full-scale neighborhood attention 吞吐、显存与预测结果，须以你的运行日志和独立 test 输出为准。
+
+## 运行环境回归测试
+
+先用 `--check-runtime` 检查 GPU。完整原生 GPU 回归测试使用合成数据，包含局部窗口/dilation/边界的独立参考计算、FP32/FP16/BF16 梯度、两条染色体的样本重排、训练/预测/RDS/XLSX/PNG，以及实际中断后的恢复：
+
+```bash
+GRID_TEST_PRSFORMER_GPU=1 "$HOME/.venvs/grid-prsformer/bin/python" \
+  -m unittest discover -s f -p 'test_prsformer_runtime.py' -v
+```
+
+测试还需要 PLINK 2（默认读取 GRID 环境的 plink2，可通过 `GRID_TEST_PLINK2` 指定）。这些测试使用临时目录；设置 `GRID_PRSFORMER_TEST_WORK` 可把合成测试文件保留到指定的**新目录**。测试不会读取 UKB 数据。CUDA fused backward 的并行归约可能造成独立 FP16 训练之间的少量舍入差异；恢复测试同时检查历史记录被正确加载。
+
+本机安装和真实数据验证记录见 [VALIDATION.prsformer-20261008.md](VALIDATION.prsformer-20261008.md)。全队列训练是长任务，准备、矩阵转置和训练阶段会持续输出进度；输入导入可能需要数分钟。

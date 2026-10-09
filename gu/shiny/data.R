@@ -67,6 +67,7 @@ if (file.exists(file.path(.gu_review_root, "review.html"))) {
 source(file.path(app_dir, "dual_lead.R"), local = TRUE)
 
 source(file.path(app_dir, "methods.R"), local = TRUE)
+source(file.path(app_dir, "evidence.R"), local = TRUE)
 source(file.path(app_dir, "density.R"), local = TRUE)
 source(file.path(app_dir, "summary.R"), local = TRUE)
 .gu_summary_land <- as.data.frame(data.table::fread(file.path(app_dir, "www", "maps", "ne_110m_land.tsv")))

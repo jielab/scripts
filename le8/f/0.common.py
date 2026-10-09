@@ -2223,9 +2223,16 @@ def main(argv=None):
 					if not isinstance(count,int):raise ValueError('Unsupported variable-length public option: '+key)
 					abm_options.extend(options[i:i+count]);i+=count
 			if 'c1_abm' in mods:dispatch_main(['c1_abm',*abm_options,'--preflight'])
-			for module in mods:
-				print('[LE8] Module transaction: '+module+'; successful results publish before the next module',flush=True)
-				main(['dispatch',module,*(abm_options if module=='c1_abm' else options)])
+			previous_state = os.environ.get('LE8_RUN_STATE_DIR')
+			with tempfile.TemporaryDirectory(prefix='le8-run-state-', dir='/tmp') as state:
+				os.environ['LE8_RUN_STATE_DIR'] = state
+				try:
+					for module in mods:
+						print('[LE8] Module transaction: '+module+'; successful results publish before the next module',flush=True)
+						main(['dispatch',module,*(abm_options if module=='c1_abm' else options)])
+				finally:
+					if previous_state is None: os.environ.pop('LE8_RUN_STATE_DIR', None)
+					else: os.environ['LE8_RUN_STATE_DIR'] = previous_state
 			return
 	if _table_runtime(argv):
 		return

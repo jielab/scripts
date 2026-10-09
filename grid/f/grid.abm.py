@@ -9,7 +9,8 @@ materialize_matches(result, arm=None, query_indices=None) -> pandas.DataFrame
 The caller owns phenotype construction, the common 50:50 outer roster, SNP
 annotation, formal file publication and final test evaluation.  This module never
 reads a test outcome.  It adapts LE8's reference-borrowing and selective-prediction
-principles; it does not reproduce the LE8 Transformer.
+principles. The default selective-attention backend adapts LE8's module-token
+Transformer/QK donor attention to genetic features and OOF residual values.
 
 All learning uses the development half.  Its default roles are build/tune_model/
 tune_gate/calibration = .60/.15/.15/.10.  Calibration is split once into threshold
@@ -22,6 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import importlib.util
+from pathlib import Path
+import sys
 from collections import Counter
 from dataclasses import dataclass
 
@@ -37,6 +41,18 @@ from sklearn.neighbors import KDTree
 
 
 DEFAULTS = {
+	"abm_backend": "selective_attention",
+	"device": "cuda",
+	"attention_epochs": 20,
+	"attention_patience": 4,
+	"attention_batch": 256,
+	"attention_width": 64,
+	"attention_heads": 4,
+	"attention_layers": 2,
+	"attention_dropout": .1,
+	"attention_lr": .0005,
+	"attention_reconstruction": .1,
+	"donor_block": 8192,
 	"trait_type": "continuous",
 	"seed": 20261007,
 	"train_role_fractions": (0.60, 0.15, 0.15, 0.10),
@@ -44,7 +60,7 @@ DEFAULTS = {
 	"min_role_n": 20,
 	"coverage": 0.50,
 	"coverages": (0.20, 0.40, 0.50, 0.60, 0.80, 1.0),
-	"primary_arm": "GRID_evolution",
+	"primary_arm": "auto",
 	"max_dims": 12,
 	"ancestry_dims": 2,
 	"csx_dims": 4,
@@ -73,7 +89,7 @@ DEFAULTS = {
 	"hgb_min_leaf": 30,
 	"gate_iterations": 100,
 	"gate_min_leaf": 20,
-	"retrieval": "kd_tree",
+	"retrieval": "cuda",
 	"query_batch": 1024,
 	"ann_candidate_multiplier": 4,
 	"ann_ef": 256,
@@ -93,6 +109,27 @@ DEFAULTS = {
 }
 
 
+def _attention():
+	key = "grid_grid_attention"
+	if key not in sys.modules:
+		spec = importlib.util.spec_from_file_location(key, Path(__file__).with_name("grid.attention.py"))
+		module = importlib.util.module_from_spec(spec)
+		sys.modules[key] = module
+		try:
+			spec.loader.exec_module(module)
+		except Exception:
+			sys.modules.pop(key, None)
+			raise
+	return sys.modules[key]
+
+
+def preflight(config):
+	c = _configuration(config)
+	if c["abm_backend"] == "selective_attention" or c["retrieval"] == "cuda":
+		return _attention().preflight(c["device"])
+	return {"abm_backend": "reference", "device": "cpu", "neural_training": False}
+
+
 def _log(config, status, stage, detail=""):
 	if config.get("verbose", True):
 		print(f"[GRID] {status} {stage}" + (f" | {detail}" if detail else ""), flush=True)
@@ -110,6 +147,19 @@ def _unique(values):
 
 def _configuration(config):
 	c = {**DEFAULTS, **(config or {})}
+	if c["abm_backend"] not in {"reference", "selective_attention"}:
+		raise ValueError("abm_backend must be reference or selective_attention")
+	if c["device"] != "cpu" and not (c["device"] == "cuda" or c["device"].startswith("cuda:")):
+		raise ValueError("device must be cpu or cuda[:index]")
+	for key in ("attention_epochs", "attention_patience", "attention_batch", "attention_width", "attention_heads", "attention_layers", "donor_block"):
+		if int(c[key]) != c[key] or c[key] < 1:
+			raise ValueError(f"{key} must be a positive integer")
+	if c["attention_width"] % c["attention_heads"] or not 0 <= c["attention_dropout"] < 1:
+		raise ValueError("Attention width must be divisible by heads; dropout must be in [0,1)")
+	if not np.isfinite(c["attention_lr"]) or c["attention_lr"] <= 0 or not np.isfinite(c["attention_reconstruction"]) or c["attention_reconstruction"] < 0:
+		raise ValueError("Invalid attention learning rate or reconstruction weight")
+	if c["retrieval"] == "cuda" and c["device"] == "cpu":
+		raise ValueError("Explicit CPU execution requires --retrieval kd_tree or hnsw")
 	if c["trait_type"] not in {"continuous", "binary"}:
 		raise ValueError("trait_type must be continuous or binary")
 	c["train_role_fractions"] = tuple(map(float, c["train_role_fractions"]))
@@ -137,8 +187,8 @@ def _configuration(config):
 		raise ValueError("Fixed ancestry/csx/frequency/evolution dimension budgets must be nonnegative integers summing to <=max_dims; default 2+4+2+4=12")
 	if c["folds"] < 2 or c["min_role_n"] < 2:
 		raise ValueError("At least two cross-fitting folds and two participants per role are required")
-	if c["retrieval"] not in {"kd_tree", "hnsw"}:
-		raise ValueError("retrieval must be kd_tree or hnsw")
+	if c["retrieval"] not in {"kd_tree", "hnsw", "cuda"}:
+		raise ValueError("retrieval must be kd_tree, hnsw or cuda")
 	if c["prior_strength"] < 0 or c["query_batch"] < 1 or c["min_ess"] < 1:
 		raise ValueError("Invalid borrowing or batching configuration")
 	if not 0 <= c["max_missing_fraction"] < 1:
@@ -287,6 +337,25 @@ class FrozenPredictor:
 		return (self.model.predict_proba(x)[:, 1] if self.kind == "binary"
 			else self.model.predict(x))
 
+	def decompose(self, frame):
+		"""Exact additive baseline terms, on the logit scale for binary outcomes."""
+		if self.model_kind != "ridge":
+			raise ValueError("An additive decomposition is defined only for the linear/logistic baseline")
+		x = self.design.transform(frame)
+		coef = np.asarray(self.model.coef_, float).reshape(-1)
+		intercept = float(np.asarray(self.model.intercept_).reshape(-1)[0])
+		terms = x * coef
+		linear = intercept + terms.sum(axis=1)
+		prediction = 1. / (1. + np.exp(-np.clip(linear, -700., 700.))) if self.kind == "binary" else linear
+		if not np.allclose(prediction, self.predict(frame), rtol=1e-8, atol=1e-10):
+			raise AssertionError("Baseline contribution reconstruction failed")
+		out = pd.DataFrame({"baseline_intercept": np.full(len(frame), intercept),
+			"baseline_linear_predictor": linear,
+			"baseline_link": "logit" if self.kind == "binary" else "identity"})
+		for j, column in enumerate(self.columns):
+			out["baseline_contribution." + column] = terms[:, j]
+		return out
+
 
 class AncestryPredictor:
 	"""A strong CSx comparator: one score-combination model per target ancestry.
@@ -347,6 +416,15 @@ class AncestryPredictor:
 				tune_cases=int(np.sum(y[ix] == 1)) if self.kind == "binary" else np.nan,
 				tune_controls=int(np.sum(y[ix] == 0)) if self.kind == "binary" else np.nan)
 		return pd.DataFrame(records.values())
+
+	def decompose(self, frame):
+		out = self.pooled.decompose(frame)
+		ancestry = _ids(frame, "ancestry")
+		for name, model in self.models.items():
+			ix = np.flatnonzero(ancestry == name)
+			if len(ix):
+				out.iloc[ix] = model.decompose(frame.iloc[ix]).to_numpy()
+		return out
 
 
 def _make_predictor(columns, kind, model_kind, parameter, config):
@@ -511,6 +589,7 @@ class MatchGeometry:
 class ReferenceBank:
 	def fit(self, build, residual, baseline_oof, folds, blocks, config):
 		self.config = dict(config)
+		self.attention = None
 		self.ids = _ids(build, "eid")
 		self.groups = _ids(build, "family_id")
 		self.ancestry = build["ancestry"].astype(str).to_numpy()
@@ -524,6 +603,8 @@ class ReferenceBank:
 		self.group_counts = Counter(self.groups)
 		self._tree = None
 		self._ann = None
+		self._count_tree = None
+		self._count_group_order = None
 		self._make_index()
 		selected = np.argsort(self.tie, kind="stable")[:min(config["radius_ref_n"], len(build))]
 		neighbors = min(config["radius_neighbors"], max(1, len(build) - max(self.group_counts.values())))
@@ -539,20 +620,27 @@ class ReferenceBank:
 			"effective_dimensions": self.geometry.effective_dimensions,
 			"radius_reference_n": len(selected), "radius": self.radius,
 			"radius_status": self.radius_status, "self_family_excluded": True,
+			"eligible_count_method": "exact_cuda_blocked_radius_count" if config["retrieval"] == "cuda" else "exact_KDTree_radius_count_minus_same_ID_or_family",
+			"matched_count_scope": "retrieved_donors_used_up_to_k",
 		}
 		if config["retrieval"] == "hnsw":
 			self._audit_ann(selected[:config["ann_audit_n"]])
 		return self
 
 	def __getstate__(self):
-		return {k: v for k, v in vars(self).items() if k not in {"_tree", "_ann"}}
+		return {k: v for k, v in vars(self).items()
+			if k not in {"_tree", "_ann"} and not k.startswith("_count_")}
 
 	def __setstate__(self, state):
 		self.__dict__.update(state)
 		self._tree = None
 		self._ann = None
+		self._count_tree = None
+		self._count_group_order = None
 
 	def _make_index(self):
+		if self.config["retrieval"] == "cuda":
+			return
 		if self.config["retrieval"] == "kd_tree":
 			if self._tree is None:
 				self._tree = KDTree(self.z, leaf_size=40, metric="euclidean")
@@ -568,6 +656,79 @@ class ReferenceBank:
 			self._ann.set_ef(max(self.config["ann_ef"], max(self.config["k_grid"]) * self.config["ann_candidate_multiplier"]))
 			self._ann.set_num_threads(1)
 
+	def _make_count_index(self):
+		# Exact support counts remain exact even when nearest-neighbor retrieval
+		# uses HNSW. Reuse the existing KDTree when that is the search backend.
+		if self._count_tree is None:
+			if self.config["retrieval"] == "kd_tree":
+				self._make_index()
+				self._count_tree = self._tree
+			else:
+				self._count_tree = KDTree(self.z, leaf_size=40, metric="euclidean")
+		if self._count_group_order is None:
+			self._count_group_order = np.argsort(self.groups, kind="stable")
+			ordered = self.groups[self._count_group_order]
+			self._count_groups, self._count_starts, self._count_sizes = np.unique(
+				ordered, return_index=True, return_counts=True)
+			self._count_id_order = np.argsort(self.ids, kind="stable")
+			self._count_ids = self.ids[self._count_id_order]
+
+	def count_eligible(self, z, ids, groups, caliper, query_qc=None):
+		"""Count every admissible donor, not just the first k retrieved.
+
+		Only scalar radius counts are retained. Known same-ID/family members
+		are subtracted using their indexed positions; no query-by-bank distance
+		matrix or radius-neighbor list is materialized.
+		"""
+		ids, groups = np.asarray(ids, str), np.asarray(groups, str)
+		qc = np.ones(len(z), dtype=bool) if query_qc is None else np.asarray(query_qc, bool)
+		if ids.shape != (len(z),) or groups.shape != (len(z),) or qc.shape != (len(z),):
+			raise ValueError("Eligible-count IDs, families and QC must match query rows")
+		counts = np.zeros(len(z), dtype=np.int64)
+		if caliper <= 0 or not qc.any():
+			return counts
+		if np.isnan(caliper):
+			raise ValueError("Eligible-count caliper cannot be NaN")
+		if self.config["retrieval"] == "cuda":
+			rows = np.flatnonzero(qc)
+			counts[rows] = _attention().neighbors(self.z, z[rows], self.ids, ids[rows],
+				self.groups, groups[rows], self.tie, 0, self.config["device"],
+				min(self.config["query_batch"], self.config["attention_batch"]), self.config["donor_block"], radius=caliper)[2]
+			return counts
+		self._make_count_index()
+		for begin in range(0, len(z), self.config["query_batch"]):
+			stop = min(len(z), begin + self.config["query_batch"])
+			rows = np.flatnonzero(qc[begin:stop]) + begin
+			if not len(rows):
+				continue
+			counts[rows] = self._count_tree.query_radius(z[rows], r=caliper, count_only=True)
+			family_positions = np.searchsorted(self._count_groups, groups[rows])
+			id_positions = np.searchsorted(self._count_ids, ids[rows])
+			family_known = family_positions < len(self._count_groups)
+			family_known[family_known] &= (
+				self._count_groups[family_positions[family_known]] == groups[rows[family_known]])
+			id_known = id_positions < len(self._count_ids)
+			id_known[id_known] &= self._count_ids[id_positions[id_known]] == ids[rows[id_known]]
+			# Ordinary new families/IDs never enter this loop. For overlapping
+			# queries, compute distances only to their small excluded subset.
+			for local in np.flatnonzero(family_known | id_known):
+				row = rows[local]
+				excluded = np.empty(0, dtype=np.int64)
+				if family_known[local]:
+					position = family_positions[local]
+					start, size = self._count_starts[position], self._count_sizes[position]
+					excluded = self._count_group_order[start:start + size]
+				if id_known[local]:
+					individual = self._count_id_order[id_positions[local]]
+					# Self may already be among family exclusions; subtract once.
+					if not family_known[local] or self.groups[individual] != groups[row]:
+						excluded = np.append(excluded, individual)
+				distance = np.sqrt(np.sum((self.z[excluded] - z[row]) ** 2, axis=1))
+				counts[row] -= int(np.count_nonzero(distance <= caliper))
+		if (counts < 0).any():
+			raise AssertionError("Exclusion count exceeded exact radius support")
+		return counts
+
 	def _retrieve(self, z, count):
 		self._make_index()
 		if self.config["retrieval"] == "kd_tree":
@@ -582,6 +743,10 @@ class ReferenceBank:
 		k = min(int(k), len(self.ids))
 		if k < 1:
 			raise ValueError("Empty reference bank")
+		if self.config["retrieval"] == "cuda":
+			j, d, _ = _attention().neighbors(self.z, z, self.ids, ids, self.groups, groups,
+				self.tie, k, self.config["device"], min(self.config["query_batch"], self.config["attention_batch"]), self.config["donor_block"])
+			return j, d
 		indices = np.full((len(z), k), -1, dtype=np.int32)
 		distances = np.full((len(z), k), np.inf, dtype=np.float64)
 		for begin in range(0, len(z), self.config["query_batch"]):
@@ -623,7 +788,8 @@ class ReferenceBank:
 		if value < self.config["ann_recall_min"]:
 			raise ValueError(f"ANN mean recall {value:.4f} is below the required {self.config['ann_recall_min']}; increase ann_ef or use kd_tree")
 
-	def borrow(self, frame, baseline, *, k, alpha, radius_multiplier, retain=False, retrieved=None):
+	def borrow(self, frame, baseline, *, k, alpha, radius_multiplier, retain=False, retrieved=None,
+			eligible_counts=None):
 		z = self.geometry.transform(frame)
 		matching_columns = _unique(col for block in self.geometry.blocks.values() for col in block["columns"])
 		missing_fraction = 1. - np.isfinite(frame[matching_columns].to_numpy(float)).mean(1)
@@ -636,6 +802,15 @@ class ReferenceBank:
 		valid &= query_qc[:, None]
 		caliper = self.radius * radius_multiplier
 		valid &= (d <= caliper) if caliper > 0 else False
+		if eligible_counts is None:
+			eligible_count = self.count_eligible(z, _ids(frame, "eid"), _ids(frame, "family_id"), caliper, query_qc)
+		else:
+			eligible_count = np.asarray(eligible_counts)
+			if (eligible_count.shape != (len(frame),) or not np.isfinite(eligible_count).all()
+					or (eligible_count < 0).any() or (eligible_count > len(self.ids)).any()
+					or (eligible_count != np.floor(eligible_count)).any()):
+				raise ValueError("Cached eligible counts must be integer counts aligned to the query rows")
+			eligible_count = np.where(query_qc, eligible_count, 0).astype(np.int64)
 		safe = np.maximum(j, 0)
 		logits = np.where(valid, -0.5 * (d / max(self.radius, 1e-12)) ** 2, -np.inf)
 		maximum = np.max(logits, axis=1, keepdims=True)
@@ -643,6 +818,8 @@ class ReferenceBank:
 		weights = np.exp(logits - maximum)
 		denom = weights.sum(1, keepdims=True)
 		weights = np.divide(weights, denom, out=np.zeros_like(weights), where=denom > 0)
+		if getattr(self, "attention", None) is not None:
+			weights = self.attention.weights(frame, j, d, valid, self.radius)
 		ss = (weights * weights).sum(1)
 		ess = np.divide(1., ss, out=np.zeros(len(frame)), where=ss > 0)
 		family_ess = ess.copy()
@@ -664,6 +841,8 @@ class ReferenceBank:
 		nearest = np.min(np.where(valid, d, np.inf), axis=1)
 		farthest = np.max(np.where(valid, d, 0.), axis=1)
 		count = valid.sum(1)
+		if (eligible_count < count).any():
+			raise AssertionError("Used donor count exceeded exact eligible support")
 		support = np.exp(-0.5 * (nearest / max(self.radius, 1e-12)) ** 2)
 		enough = (count >= self.config["min_matches"]) & (family_ess >= self.config["min_ess"])
 		fraction = alpha * support * family_ess / (family_ess + self.config["prior_strength"])
@@ -685,6 +864,8 @@ class ReferenceBank:
 		)
 		diagnostics = pd.DataFrame({
 			"matched_count": count, "matched_family_count": family_count,
+			"eligible_match_count": eligible_count, "matches_truncated": eligible_count > count,
+			"retrieval_k": np.full(len(frame), j.shape[1], dtype=np.int64),
 			"donor_ess": ess, "family_ess": family_ess,
 			"max_donor_weight": weights.max(1), "nearest_distance": nearest,
 			"farthest_distance": farthest, "nearest_radius_ratio": nearest / max(self.radius, 1e-12),
@@ -709,6 +890,8 @@ class ReferenceBank:
 				"weighted_residual_contribution": contributions,
 				"baseline": np.asarray(baseline).copy(), "prediction": prediction.copy(),
 				"clipping_correction": clipping, "borrow_fraction": fraction,
+				"eligible_match_count": eligible_count, "matches_truncated": eligible_count > count,
+				"retrieval_k": int(j.shape[1]),
 				"distance_components": self.geometry.component_distances(z, self.z, actual),
 			}
 		return prediction, diagnostics, packed
@@ -717,7 +900,17 @@ class ReferenceBank:
 def _tune_bank(name, bank, tune, baseline, y, config):
 	z = bank.geometry.transform(tune)
 	maximum = min(max(config["k_grid"]), len(bank.ids))
-	j, d = bank.query(z, _ids(tune, "eid"), _ids(tune, "family_id"), maximum)
+	ids, families = _ids(tune, "eid"), _ids(tune, "family_id")
+	j, d = bank.query(z, ids, families, maximum)
+	matching_columns = _unique(col for block in bank.geometry.blocks.values() for col in block["columns"])
+	query_qc = (1. - np.isfinite(tune[matching_columns].to_numpy(float)).mean(1)
+		<= config["max_missing_fraction"])
+	# Support depends on radius, never k or alpha. Reuse one exact count per
+	# radius across the entire hyperparameter grid, retaining only N scalars.
+	eligible_by_radius = {
+		radius: bank.count_eligible(z, ids, families, bank.radius * radius, query_qc)
+		for radius in config["radius_grid"]
+	}
 	rows = []
 	best = None
 	for k in config["k_grid"]:
@@ -727,7 +920,7 @@ def _tune_bank(name, bank, tune, baseline, y, config):
 			# Distances and donor weights do not depend on alpha. Reuse one local
 			# decomposition for this k/radius instead of repeating every retrieval.
 			_, unit, _ = bank.borrow(tune, baseline, k=int(k), alpha=1.,
-				radius_multiplier=radius, retrieved=(j, d))
+				radius_multiplier=radius, retrieved=(j, d), eligible_counts=eligible_by_radius[radius])
 			correction = unit.local_correction.to_numpy()
 			for alpha in config["alpha_grid"]:
 				pred = baseline + alpha * correction
@@ -804,15 +997,17 @@ class CoverageRule:
 
 
 def _gate_table(table, primary):
-	columns = ["CSx", "Ridge_evolution", "HGB_evolution", primary]
+	suffix = "evolution" if "Ridge_evolution" in table else "no_evolution"
+	ridge, hgb = "Ridge_" + suffix, "HGB_" + suffix
+	columns = ["CSx", ridge, hgb, primary]
 	z = table[columns].copy()
 	z["primary_minus_csx"] = table[primary] - table["CSx"]
-	z["ridge_minus_hgb"] = table["Ridge_evolution"] - table["HGB_evolution"]
-	for name in ["matched_count", "matched_family_count", "donor_ess", "family_ess",
+	z["ridge_minus_hgb"] = table[ridge] - table[hgb]
+	for name in ["matched_count", "matched_family_count", "eligible_match_count", "matches_truncated", "retrieval_k", "donor_ess", "family_ess",
 			"max_donor_weight", "nearest_radius_ratio", "support", "borrow_fraction",
 			"local_correction", "missing_fraction", "matching_supported"]:
 		z[name] = table[name].astype(float)
-	for name in ["matched_count", "matched_family_count", "donor_ess", "family_ess"]:
+	for name in ["matched_count", "matched_family_count", "eligible_match_count", "donor_ess", "family_ess"]:
 		z[name] = np.log1p(z[name])
 	return z
 
@@ -826,6 +1021,8 @@ def _raw_predictions(bundle, frame, retain_matches=False):
 	}
 	for name, model in bundle["models"].items():
 		result[name] = model.predict(frame)
+	for name, values in bundle["models"]["CSx"].decompose(frame).items():
+		result[name] = values.to_numpy()
 	result["csx_baseline_source"] = np.where(
 		frame["ancestry"].astype(str).isin(bundle["models"]["CSx"].models),
 		"ancestry_specific", "pooled_fallback",
@@ -863,6 +1060,11 @@ def _apply_policy(bundle, raw):
 	table["expected_gain_over_csx"] = gate["gain"]
 	table["expected_squared_error"] = gate["absolute_error"]
 	table["expected_rmse"] = np.sqrt(gate["absolute_error"])
+	table["low_error_screen_audit_status"] = bundle.get("low_error_audit", {}).get("status", "not_evaluated")
+	table["gain_audit_scope"] = "pooled_internal_calibration; not a per-person guarantee"
+	ancestry_audits = bundle.get("ancestry_gain_audit", {})
+	table["gain_audit_ancestry_status"] = table.ancestry.astype(str).map(
+		{name: value["status"] for name, value in ancestry_audits.items()}).fillna("not_evaluated")
 	table["research_selected"] = bundle["coverage_rules"][c["coverage"]].apply(gate["gain"], ids)
 	table["selected"] = table["research_selected"] & table["technical_qc_pass"]
 	table["selected_absolute_error"] = bundle["absolute_error_rule"].apply(-gate["absolute_error"], ids) & table["technical_qc_pass"]
@@ -927,12 +1129,67 @@ def _internal_audit(bundle, frame, y):
 	return result
 
 
+def _internal_low_error_audit(bundle, frame, y):
+	"""Evaluate the already frozen low-error selector against all audit people.
+
+	This is a second, descriptive calibration audit. It never changes the gate,
+	coverage thresholds, model or gain policy. It supports a group-average
+	error statement, not a guarantee for any individual.
+	"""
+	raw, _ = _raw_predictions(bundle, frame)
+	table = _apply_policy(bundle, raw)
+	mask = table.selected_absolute_error.to_numpy(bool)
+	loss = (np.asarray(y) - table[bundle["primary_arm"]].to_numpy(float)) ** 2
+	levels, inverse = np.unique(table.family_id.astype(str), return_inverse=True)
+	n, ns = len(mask), int(mask.sum())
+	c = bundle["config"]
+	result = {"status": "insufficient_audit_information", "source": "independent_calibration_audit",
+		"selector": "frozen_expected_squared_error", "reference": "all_audit_individuals_same_model",
+		"n": n, "selected_n": ns, "coverage": ns / n if n else np.nan,
+		"selected_loss": float(loss[mask].mean()) if ns else np.nan,
+		"all_loss": float(loss.mean()) if n else np.nan,
+		"rejected_loss": float(loss[~mask].mean()) if n > ns else np.nan,
+		"delta_selected_minus_all": float(loss[mask].mean() - loss.mean()) if ns else np.nan,
+		"lower": np.nan, "upper": np.nan, "bootstrap": c["audit_bootstrap"],
+		"metric": "Brier" if c["trait_type"] == "binary" else "MSE",
+		"test_outcomes_used": False, "changes_prediction_policy": False,
+		"interpretation": "selected-group average error; not individual accuracy or pure genetic accuracy"}
+	ngs = len(np.unique(inverse[mask]))
+	ngr = len(np.unique(inverse[~mask]))
+	result.update(selected_families=ngs, rejected_families=ngr)
+	enough = min(ns, n - ns) >= c["audit_min_n"] and min(ngs, ngr) >= c["audit_min_groups"]
+	if c["trait_type"] == "binary":
+		cases = int(np.asarray(y)[mask].sum())
+		result.update(selected_cases=cases, selected_controls=ns-cases,
+			case_coverage=cases / float(np.asarray(y).sum()) if np.asarray(y).sum() else np.nan)
+		enough &= min(cases, ns-cases) >= c["audit_min_cases"]
+	if enough:
+		counts = np.bincount(inverse, minlength=len(levels))
+		sums = np.bincount(inverse, weights=loss, minlength=len(levels))
+		selected_counts = np.bincount(inverse, weights=mask.astype(float), minlength=len(levels))
+		selected_sums = np.bincount(inverse, weights=loss * mask, minlength=len(levels))
+		rng = np.random.default_rng(c["seed"] + 347)
+		draws = []
+		for _ in range(c["audit_bootstrap"]):
+			ix = rng.integers(0, len(levels), size=len(levels))
+			denom = selected_counts[ix].sum()
+			if denom:
+				draws.append(selected_sums[ix].sum()/denom - sums[ix].sum()/counts[ix].sum())
+		if len(draws) >= 20:
+			result["lower"], result["upper"] = map(float, np.quantile(draws, [.025, .975]))
+			result["status"] = "supported_lower_group_error" if result["upper"] < 0 else "lower_error_not_established"
+	return result
+
+
 # 🚩 Public fit/predict interface: the outer test label is never inspected
 
 
 def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = None) -> dict:
 	c = _configuration(config)
+	preflight(c)
 	groups = _feature_contract(feature_groups)
+	if c["primary_arm"] == "auto":
+		c["primary_arm"] = "GRID_evolution" if groups["evolution"] else "GRID_frequency_only" if groups["frequency"] else "GRID_no_evolution"
 	if not isinstance(data, pd.DataFrame) or "split" not in data or "y" not in data:
 		raise ValueError("data must include split and y, plus eid/family_id/ancestry")
 	ids = _ids(data, "eid")
@@ -968,6 +1225,7 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 	baseline_columns = _unique(groups["covariates"] + groups["csx"])
 	full_columns = _unique(groups["covariates"] + groups["csx"] + groups["ancestry"]
 		+ groups["frequency"] + groups["evolution"])
+	no_evolution_columns = _unique(groups["covariates"] + groups["csx"] + groups["ancestry"] + groups["frequency"])
 	models = {}
 	tuning = []
 	models["covariate_baseline"] = FrozenPredictor(groups["covariates"], c["trait_type"],
@@ -975,11 +1233,14 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 	model_specs = [
 		("CSx_pooled", baseline_columns, "ridge", c["csx_alpha_grid"]),
 		("CSx", baseline_columns, "ancestry", c["csx_alpha_grid"]),
-		("Ridge_evolution", full_columns, "ridge", c["ridge_alpha_grid"]),
-		("HGB_evolution", full_columns, "hgb", c["hgb_leaves_grid"]),
+		("Ridge_no_evolution", no_evolution_columns, "ridge", c["ridge_alpha_grid"]),
+		("HGB_no_evolution", no_evolution_columns, "hgb", c["hgb_leaves_grid"]),
 	]
+	if groups["evolution"]:
+		model_specs += [("Ridge_evolution", full_columns, "ridge", c["ridge_alpha_grid"]),
+			("HGB_evolution", full_columns, "hgb", c["hgb_leaves_grid"])]
 	if groups["disco"]:
-		model_specs.append(("DiscoDivas", _unique(groups["covariates"] + groups["disco"]),
+		model_specs.append(("DiscoDivas_calibrated_reference", _unique(groups["covariates"] + groups["disco"]),
 			"ridge", c["csx_alpha_grid"]))
 	for name, columns, model_kind, grid in model_specs:
 		model, rows = _tune_predictor(name, columns, model_kind, grid,
@@ -1005,6 +1266,12 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 	for name, blocks in arms.items():
 		_log(c, "START", "matching", name)
 		bank = ReferenceBank().fit(build, residual, oof, folds, blocks, c)
+		if c["abm_backend"] == "selective_attention":
+			_log(c, "START", "selective_attention", f"{name} device={c['device']}")
+			bank.attention = _attention().SelectiveAttention().fit(bank, build, tune, tune_baseline, y["tune_model"], blocks, c)
+			bank.retrieval_audit.update(bank.attention.fit_status)
+			tuning.extend(dict(stage="attention", model=name, **row,
+				selected=row["epoch"] == bank.attention.fit_status["selected_epoch"]) for row in bank.attention.history)
 		selected, rows = _tune_bank(name, bank, tune, tune_baseline, y["tune_model"], c)
 		banks[name], parameters[name] = bank, selected
 		tuning.extend(rows)
@@ -1018,6 +1285,8 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 		"donor_eids": _ids(build, "eid"), "audit": {"status": "not_evaluated"},
 		"trait_type": c["trait_type"],
 		"baseline_scope": "target_ancestry_specific_with_pooled_fallback",
+		"disco_scope": "calibration of supplied reference-interpolation scalar; ancestry anchors are not phenotype-refitted here",
+		"csx_scope": "target-cohort calibration of supplied posterior scores; upstream phi is not retuned here",
 		"interpretation": "individual-reference OOF residual correction; explanations are associative, not causal",
 	}
 	_log(c, "START", "reliability_gate", f"tune_gate={len(frame['tune_gate'])}")
@@ -1053,14 +1322,21 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 	}
 	audit_y = _labels(audit_frame, c["trait_type"], "calibration_audit", require_two_classes=False)
 	bundle["audit"] = _internal_audit(bundle, audit_frame, audit_y)
+	bundle["low_error_audit"] = _internal_low_error_audit(bundle, audit_frame, audit_y)
+	bundle["ancestry_gain_audit"], bundle["ancestry_low_error_audit"] = {}, {}
+	for ancestry in sorted(audit_frame.ancestry.astype(str).unique()):
+		mask = audit_frame.ancestry.astype(str).eq(ancestry).to_numpy()
+		subset = audit_frame.loc[mask].reset_index(drop=True)
+		bundle["ancestry_gain_audit"][ancestry] = _internal_audit(bundle, subset, audit_y[mask])
+		bundle["ancestry_low_error_audit"][ancestry] = _internal_low_error_audit(bundle, subset, audit_y[mask])
 	_log(c, "DONE", "reliability_gate", f"independent_audit={bundle['audit']['status']}")
 	# These stronger competitors use every label in the outer training half.
 	# They are fitted AFTER the matching policy audit and never replace its
 	# baseline, gate inputs, thresholds, or audit target. Their hyperparameters
 	# are already selected from build/tune_model, so no test information is used.
-	full_sources = ["CSx"] + (["DiscoDivas"] if "DiscoDivas" in models else [])
+	full_sources = ["CSx"] + (["DiscoDivas_calibrated_reference"] if "DiscoDivas_calibrated_reference" in models else [])
 	if c["full_training_global_controls"]:
-		full_sources += ["Ridge_evolution", "HGB_evolution"]
+		full_sources += [name for name in ("Ridge_no_evolution", "HGB_no_evolution", "Ridge_evolution", "HGB_evolution") if name in models]
 	_log(c, "START", "full_training_comparators", f"development={len(development)}")
 	for source in full_sources:
 		original = models[source]
@@ -1083,6 +1359,8 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 	role_counts["fraction_of_development"] = role_counts["n"] / len(development)
 	role_counts["fraction_of_outer_cohort"] = role_counts["n"] / len(data)
 	bundle["training_diagnostics"] = {
+		"abm_backend": c["abm_backend"], "attention_device": c["device"] if c["abm_backend"] == "selective_attention" else None,
+		"retrieval_backend": c["retrieval"],
 		"outer_train_n": len(development), "outer_test_n": len(test), "outer_train_fraction": train_fraction,
 		"donor_n": len(build), "donor_fraction_of_outer_cohort": len(build) / len(data),
 		"test_y_accessed": False, "primary_coverage": c["coverage"],
@@ -1124,7 +1402,10 @@ def fit_predict(data: pd.DataFrame, feature_groups: dict, config: dict | None = 
 		"retrieval_audit": pd.DataFrame(retrieval_rows),
 		"baseline_groups": baseline_groups, "method_label_budget": budget_table,
 		"metric_features": pd.concat(metric_rows, ignore_index=True),
-		"calibration_audit": pd.DataFrame([bundle["audit"]]),
+		"calibration_audit": pd.DataFrame([{**bundle["audit"], "ancestry":"ALL", "used_for_policy":True},
+			*[{**row, "ancestry":name, "used_for_policy":False} for name,row in bundle["ancestry_gain_audit"].items()]]),
+		"low_error_audit": pd.DataFrame([{**bundle["low_error_audit"], "ancestry":"ALL"},
+			*[{**row, "ancestry":name} for name,row in bundle["ancestry_low_error_audit"].items()]]),
 		"training_diagnostics": bundle["training_diagnostics"],
 	}
 

@@ -5,6 +5,7 @@ Set GRID_TEST_PLINK2 if PLINK 2 is not on PATH or in the default grid environmen
 """
 from pathlib import Path
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -107,18 +108,32 @@ class Integration(unittest.TestCase):
             folder.mkdir(parents=True)
             scores = pd.DataFrame(raw_score, columns=data.CSX).assign(eid=all_ids)
             rdata.write_rds(folder / "1csx.scores.rds", scores)
-        cls.args = args = grid.parser().parse_args([
+            # Exercise the supplied-reference-score calibration branch. This
+            # scalar is synthetic; the official R interpolation is not run.
+            rdata.write_rds(folder / "2disco.scores.rds", pd.DataFrame({
+                "eid":all_ids, "disco":raw_score.mean(axis=1)}))
+        cls.command_arguments = [
+            "--abm-backend", os.environ.get("GRID_TEST_ABM_BACKEND", "reference"),
+            "--device", "cuda" if os.environ.get("GRID_TEST_ABM_BACKEND") == "selective_attention" else "cpu",
+            "--retrieval", "cuda" if os.environ.get("GRID_TEST_ABM_BACKEND") == "selective_attention" else "kd_tree",
+            "--attention-epochs", "2", "--attention-width", "16", "--attention-heads", "2",
+            "--attention-layers", "1", "--attention-dropout", "0", "--attention-batch", "64",
             "--cache-dir", str(w/"cache"), "--out-root", str(w/"output"),
             "--dir-gen", str(w/"gen"), "--pheno-file", str(w/"pheno.rds"),
             "--score-dir", str(w/"scores"), "--pca-file", str(w/"pca.tsv"),
             "--ancestry-file", str(w/"ancestry.tsv"), "--split-group-file", str(w/"families.tsv"),
             "--split-file", str(w/"split.tsv"), "--remove", str(w/"remove.txt"), "--keep", str(w/"keep.txt"),
             "--weights-file", str(w/"weights.tsv"), "--snpinfo", str(w/"snps.tsv"),
-            "--annotation-file", str(w/"annotations.tsv"), "--geva-dir", str(w/"absent-geva"),
+            "--annotation-file", str(w/"annotations.tsv"),
             "--chrs", "1-2", "--distance-pcs", "2", "--plink2", cls.plink,
             "--hgb-iterations", "4", "--gate-iterations", "4", "--folds", "3",
             "--k-grid", "8", "--alpha-grid", "0,1", "--radius-grid", "2",
-            "--audit-bootstrap", "20", "--bootstrap", "20", "--threads", "1", "--quiet"])
+            "--audit-bootstrap", "20", "--bootstrap", "20", "--threads", "1", "--quiet"]
+        cls.without_annotations = os.environ.get("GRID_TEST_WITHOUT_ANNOTATIONS") == "1"
+        if cls.without_annotations:
+            j = cls.command_arguments.index("--annotation-file")
+            del cls.command_arguments[j:j+2]
+        cls.args = args = grid.parser().parse_args(cls.command_arguments)
         args.traits = list(data.TRAITS)
         args.prsformer_root = str(w / "absent-benchmark")
         cls.prepared = prepared = grid.evolution(args, grid.prepare(args))
@@ -129,6 +144,14 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.prepared["cohort"].split.value_counts().to_dict(), {"train":300,"test":300})
         self.assertEqual(self.prepared["cohort"].groupby("family_id").split.nunique().max(), 1)
         self.assertEqual(len(self.prepared["tables"]["ldl"].dropna(subset=["y"])), 520)
+        if self.without_annotations:
+            raw_g = np.where(self.g < 0, .7, self.g)
+            expected = (np.where(self.a1_alt, raw_g, 2-raw_g) @ self.beta)[:600]
+            table = self.prepared["tables"]["height"].set_index("eid").loc[self.ids]
+            np.testing.assert_allclose(table[data.CSX], expected, atol=1e-12)
+            self.assertFalse(any(c.startswith("evo.") for c in table))
+            self.assertEqual(self.prepared["scoring_files"], {})
+            return
         freq = np.where(self.g[:600][self.train] < 0, np.nan, self.g[:600][self.train]).astype(float)
         centered = self.g[:600] - np.nanmean(freq, axis=0)
         centered[self.g[:600] < 0] = 0
@@ -139,7 +162,33 @@ class Integration(unittest.TestCase):
         scores = table.filter(regex=r"^evo\.").rename(columns=lambda c:c[4:])
         data.check_partition(scores, modules)
 
+    def test_fresh_process_can_reuse_fit_and_report_cache(self):
+        for stage in ("fit", "report"):
+            result = subprocess.run([sys.executable, str(ROOT/"f/grid.py"), *self.command_arguments,
+                "--stage", stage, "--bootstrap", "0", *(["--replace"] if stage == "report" else [])], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fresh_process_can_load_published_neural_model(self):
+        folder = self.work/"output/height"
+        result = subprocess.run([sys.executable, str(ROOT/"f/grid.py"), "--stage", "predict",
+            "--trait", "height", "--model-file", str(folder/"grid.model.rds"),
+            "--data-file", str(folder/"grid.individual_explanations.rds"),
+            "--feature-manifest", str(folder/"grid.individual_explanations.manifest.json"),
+            "--out-root", str(self.work/"fresh-projection")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_age_permutation_preserves_uncertain_and_unknown(self):
+        if self.without_annotations:
+            self.assertFalse(self.prepared["metadata"]["evolution_verified"])
+            self.assertEqual(self.prepared["metadata"]["evolution_mode"], "reference_matching")
+            self.assertFalse((self.work/"cache/evolution").exists())
+            for trait in data.TRAITS:
+                result = grid.joblib.load(self.work/f"cache/{trait}/fit.joblib")
+                self.assertEqual(result["bundle"]["primary_arm"], "GRID_no_evolution")
+                self.assertNotIn("GRID_evolution", result["predictions"])
+                self.assertNotIn("Ridge_evolution", result["predictions"])
+                self.assertNotIn("HGB_evolution_full_training", result["predictions"])
+            return
         frame = pd.read_csv(self.work/"cache/evolution/height/variants.tsv.gz",sep="\t")
         self.assertEqual(frame.loc[0,"age_bin"],"uncertain")
         self.assertEqual(frame.loc[1,"age_bin"],"unknown")
@@ -219,7 +268,44 @@ class Integration(unittest.TestCase):
             expected = np.mean((table.y-table.GRID_policy)**2-(table.y-table.CSx_full_training)**2)
             self.assertAlmostEqual(delta["delta_loss"],expected)
 
+    def test_prediction_entry_uses_published_contract_without_outcomes(self):
+        for trait in data.TRAITS:
+            folder = self.work / "output" / trait
+            query = grid.read_rds(folder / "grid.individual_explanations.rds").drop(columns="y")
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "new.rds"
+                grid.write_rds(query, source)
+                manifest = json.loads((folder / "grid.individual_explanations.manifest.json").read_text())
+                manifest["data_sha256"] = grid.sha256(source)
+                declaration = root / "features.json"
+                declaration.write_text(json.dumps(manifest))
+                args = grid.parser().parse_args([
+                    "--stage", "predict", "--trait", trait,
+                    "--model-file", str(folder / "grid.model.rds"),
+                    "--data-file", str(source), "--feature-manifest", str(declaration),
+                    "--out-root", str(root / "projected")])
+                args.traits = [trait]
+                grid.project(args)
+                predicted = grid.read_rds(root / "projected" / trait / "projection/grid.predictions.rds")
+                expected = grid.read_rds(folder / "grid.test_individuals.rds")
+                self.assertEqual(predicted.eid.tolist(), expected.eid.tolist())
+                np.testing.assert_allclose(predicted.GRID_policy, expected.GRID_policy)
+                self.assertTrue(predicted.feature_provenance_status.eq(
+                    "provider_declared_contract_and_file_hash_matched").all())
+
     def test_scoring_tampering_rejected(self):
+        if self.without_annotations:
+            path = self.work/"weights.tsv"
+            original, stat = path.read_bytes(), path.stat()
+            try:
+                path.write_bytes(original + b"\n")
+                with self.assertRaisesRegex(ValueError, "Prepared input changed"):
+                    grid.validate_input_sources(self.prepared)
+            finally:
+                path.write_bytes(original)
+                os.utime(path, ns=(stat.st_atime_ns,stat.st_mtime_ns))
+            return
         item = self.prepared["scoring_files"]["height"][0]
         path = Path(item["source"])
         original = path.read_bytes()

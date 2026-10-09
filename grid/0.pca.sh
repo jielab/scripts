@@ -154,7 +154,7 @@ pca_run() {
 		need "$GRID_MED_FILE"
 		grid_run_logged "$raw/log/distance.log" "${GRID_R[@]}" "$ROOT/f/0.pca.R" projection \
 			--pca "$pca" --med "$GRID_MED_FILE" --outdir "$qc" \
-			--n-pc "$GRID_COV_PCS" --distance-pcs "$GRID_DISTANCE_PCS"
+			--n-pc "$GRID_COV_PCS" --distance-pcs "$GRID_DISTANCE_PCS" --score-dir "$raw"
 		printf '%s\n' "$distance_sig" >"$qc/distance.signature"
 		distance_updated=TRUE
 	else

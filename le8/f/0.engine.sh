@@ -704,6 +704,15 @@ plink_prefix_probe() {
 # Validate saved estimates and their exports once, before loading analysis packages.
 # Code refactoring alone must not trigger refitting or relabel saved estimates.
 declare -A completed_results=()
+# A successful upstream stage in this invocation has already checked its inputs.
+# A fresh invocation has no receipts and follows the full signature checks below.
+declare -A run_completed=()
+if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
+	checked_run=$("${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" read "$analysis_root" "$trait_csv" "$BIOM" "$(IFS=,; echo "${jobs[*]}")")
+	while IFS= read -r key; do
+		[[ -z "$key" ]] || run_completed[$key]=TRUE
+	done <<<"$checked_run"
+fi
 if [[ "$replace" != TRUE && "${LE8_RESUME_COMPLETED:-TRUE}" == TRUE ]]; then
 	le8_log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
 	mkdir -p "$le8_log_root"
@@ -731,6 +740,7 @@ fi
 
 layer_complete() {
 	local trait="$1" job="$2" layer="$3"
+	[[ "${run_completed["$trait|$job|$layer"]:-}" != TRUE ]] || return 0
 	[[ "$replace" != TRUE ]] || return 1
 	[[ "${completed_results["$trait|$job|$layer"]:-}" == TRUE ]]
 }
@@ -1236,6 +1246,10 @@ run_one() {
 		echo "[LE8] FAIL $job Y=$trait biom=$run_biom exit=$rc log=$log_file" >&2
 		return "$rc"
 	}
+	if [[ "$job" == c[1234]_* && "$job" != c4_explain ]]; then
+		"$R_BIN" "$fdir/0.common.R" --audit-results "$analysis_root" "$trait" "$run_biom" "$job" "$log_file.audit.csv"
+		"${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" record "$analysis_root" "$trait" "$run_biom" "$job"
+	fi
 	echo "[LE8] DONE $job Y=$trait biom=$run_biom elapsed=$((SECONDS - started))s"
 }
 

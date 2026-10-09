@@ -1011,6 +1011,8 @@ function(input, output, session) {
 		bslib::nav_select("nav", method, session = session)
 	}
 	for(method in c("trace", "as3"))gu_matching_server(paste0("overview_", method), method, Q, current_dataset, current_build, matching_region, select_matching_record, open_matching_record)
+	gu_ibdmix_evidence_server(input, output, session, Q, current_dataset, current_build,
+		db_stamp, db_path, select_matching_record, open_matching_record)
 	output$genome_browser <- renderUI({
 		r <- browser_target()
 		if (is.null(r)) return(tags$div(class = "alert alert-info", "No locus or segment is available for this build."))

@@ -1,14 +1,16 @@
 # GRID — Genetic Risk based on Individual Distance
 
-GRID 是一个新的研究实现：先把 PRS-CSx 的 SNP 后验权重按有来源的人类变异注释拆成遗传特征，再在训练数据里为每个待预测者寻找相近的参考个体，借用他们的交叉拟合残差，并输出匹配证据与预先冻结的筛选结果。
+GRID 使用现有 PRS-CSx 四组分数和祖源投影 PCs，通过 GPU selective-attention 为每个待预测者匹配参考个体、借用家系交叉拟合残差，并输出匹配证据与预先冻结的筛选结果。默认运行不需要外部变异年龄数据库。
 
-公共入口是 **`grid.sh`**。它替代旧 `3grid.sh` 的方法设计，不沿用旧 transportability 再收缩、频率推年龄或“古老变异较安全”的规则。研究目标是检验年龄信息和逐人匹配能否改善 prediction 与 explainability；能否超过 PRS-CSx、DiscoDivas 或 PRSformer，必须由同一批独立测试对象的结果决定。
+公共入口是 **`grid.sh`**。它替代旧 `3grid.sh` 的方法设计，不沿用旧 transportability 再收缩、频率推年龄或“古老变异较安全”的规则。研究目标是检验逐人匹配能否改善 prediction 与 explainability；能否超过 PRS-CSx、DiscoDivas 或 PRSformer，必须由同一批独立测试对象的结果决定。
+
+**2026-10-07 审阅版：** 交付包的问题清单见 [REVIEW.20261007.md](REVIEW.20261007.md)，本机核查、补充修复和验证结果见 [VALIDATION.review-20261007.md](VALIDATION.review-20261007.md)，科学前提与研究设计见 [METHODS.review.md](METHODS.review.md)。真实 UKB 的性能结果需要在固定测试名单上运行后取得。
 
 ## 1. 先运行起来
 
 以下命令使用本项目已有的 `/mnt/d`、`/mnt/f` 默认目录。先准备好 PRS-CSx 四组分数、对应 SNP 权重及 1KG 空间中的目标样本投影；`grid.sh all` 不会自动重跑这些上游分析。
 
-### 安装共享 CPU 环境
+### 安装 GRID GPU ABM 环境
 
 ```bash
 cd /mnt/d/scripts/grid
@@ -17,18 +19,44 @@ conda activate grid
 bash grid.sh --python-help
 ```
 
-安装器建立或更新 `grid` 环境，包含 Python 3.11、R、PLINK 2 和 GRID 的 CPU 依赖，不再安装或编译 ARG-Needle。`rdata==1.1.0` 的 RDS 读写要求 Python 3.11 或更新版本；旧 Python 3.10 环境需要更新，不能仅补装该包。`grid.sh` 启动 CPU 流程时会自动执行 `conda activate grid`，同时让 PLINK 2 进入 PATH；可用 `--python` 或 `GRID_PYTHON` 指定另一套已经具备依赖的 Python。若要保留原有环境，可用 `ENV_NAME=grid-evolution bash install_grid.sh` 安装到独立环境，再用 `conda activate grid-evolution` 激活，并传 `--python "$CONDA_PREFIX/bin/python"`。
+安装器建立或更新 `grid` 环境，包含 Python 3.11、R、PLINK 2、`rdata==1.1.0` 和 CUDA PyTorch 2.12.0，不安装或编译 ARG-Needle。`grid.sh` 默认执行 `conda activate grid`，同时让 PLINK 2 进入 PATH。显式提供 `--python` 或 `GRID_PYTHON` 时，直接使用该解释器，不再强制激活默认 conda 环境；调用者负责让 PLINK 2、Rscript 等外部程序进入 PATH。默认 GRID 自身运行 GPU selective-attention ABM，不依赖 PRSformer 环境或 `--run-prsformer`。
+
+```bash
+bash grid.sh --check-device
+bash grid.sh --traits height,ldl,t2dm
+```
+
+`--check-device` 在真实 Transformer、donor Q/K 和反向传播上检查 CUDA，不读取个体数据。正常 `all` 在读取大表前检查必要输入及 GPU，CUDA 不可用时停止，不静默退回 CPU。`prepare/evolution` 的表格处理、PLINK 评分和部分基线/gate 仍使用 CPU；`fit` 中的 Transformer 训练、donor attention 和默认近邻检索使用 GPU。大型表型 RDS 优先用 R 读取并只向 Python 传输需要的列。
+
+默认 `--abm-backend selective_attention --device cuda --retrieval cuda`。主要训练参数为 `--attention-epochs 20 --attention-patience 4 --attention-batch 256 --attention-width 64 --attention-heads 4 --attention-layers 2`，仅用 `tune_model` 选择 checkpoint。旧 CPU 算法作为明确的对照保留：`--abm-backend reference --device cpu --retrieval kd_tree`。测试小型 attention 流程时可显式使用 `--device cpu --retrieval kd_tree`。新模型记录 PyTorch 版本与 attention 源码身份，旧模型应在原代码环境中读取或重新拟合。
+
+当前无外部注释默认流程的检查见 [移除外部数据库依赖的验证记录](VALIDATION.grid-no-geva-20261009.md)。较早的 [GPU ABM 验证记录](VALIDATION.grid-gpu-20261009.md)保留历史检查结果，其中年龄数据库缺失的阻挡已不适用于当前默认流程。
 
 PRSformer 的 GPU 环境独立安装，步骤见 [README.prsformer.md](README.prsformer.md)。当前适配器对应 PyTorch 2.6.0、CUDA 12.4 与 NATTEN 0.17.5；运行时不自动安装依赖。
 
-### 下载真正的变异年龄注释
+### 默认无需外部年龄数据库
+
+`./grid.sh --traits height,ldl,t2dm` 直接使用已有 CSx 分数、协变量和匹配 PCs，主模型为 `GRID_no_evolution`，其 ABM 仍在 CUDA 上训练。`evolution` 阶段在未提供 `--annotation-file` 时只验证评分与权重来源，不生成年龄分组、年龄置换负对照或重复的“有演化信息”基线，也不重新运行 PLINK 模块评分。
+
+原年龄数据库的读取器、下载器、默认路径和命令行参数已移除。显式 `--annotation-file FILE` 仍可接入第 4 节定义的其他规范注释表；其来源、等位基因方向、区间及质量检查继续生效。已有年龄注释实验的缓存和模型不能直接当作当前默认实验结果，须使用各自对应的配置和版本。
+
+### 从旧版本迁移
+
+原生 GRID 现在要求 CSx 分数与后验权重之间有可检查的来源记录。旧分数可用以下命令重新评分并生成 `1csx.scores.provenance.json`，**无需仅为补来源记录重跑 MCMC**：
 
 ```bash
-python f/grid.evolution.py download \
-  --geva-dir /mnt/f/ref/GEVA --chromosomes 1-22
+bash 1.csx.sh --traits height,ldl,t2dm --stage score
 ```
 
-下载的是 [GEVA Atlas 的染色体级 summary](https://human.genome.dating/download/index)，GRCh37、年龄单位为 generations，全部压缩表约 5.5 GB。下载器核对官方 MD5、计算 SHA256、完整读取 gzip 后才发布文件；已验证的文件直接复用。数据留在参考目录，不放入 Git。已有 GEVA 目录可直接使用；提供符合第 4 节规范的 canonical 年龄表也可以替代 GEVA。
+旧权重的预处理签名包含当时整份 Python 文件的哈希，代码更新后可能与当前签名不同。此时 GRID 核对权重保存的原始联合推断配置中 GWAS、SNP 参考的路径、大小、修改时间，以及性状、祖源和重新评分的权重哈希；无法核实则拒绝。通过的旧权重在模型来源记录中标记为 `historical_preparation_inference_inputs_verified`，保留原预处理元数据，不改写成新版推断结果。该兼容检查不表示旧预处理算法已重新验证；posterior 中心化所用频率仍由新版预处理重新生成。
+
+若发现旧 GWAS 的效应、等位基因或坐标本身有误，应先修正并重新准备/推断；补写来源记录不能修复错误的后验。CSx 分数变化后，若使用 Disco，应同步重新生成其分数。审阅版增加了特征契约、审计字段和运行环境检查，旧 GRID 模型须在原版本使用，或在新版重新拟合。推荐为新实验使用独立结果和缓存目录：
+
+```bash
+bash grid.sh all --traits height,ldl,t2dm \
+  --cache-dir /tmp/grid-cache/review-20261007 \
+  --out-root /mnt/d/analysis/grid/GRID-review-20261007
+```
 
 ### 检查并运行三个性状
 
@@ -38,6 +66,8 @@ bash grid.sh all --traits height,ldl,t2dm
 ```
 
 `--check` 检查可用输入、样本对齐、划分与配置，不训练模型，不产生正式预测报告。逐 SNP 的坐标、等位基因和注释匹配在 `evolution` 阶段检查。只打印将执行的命令可用 `--dry-run`。
+
+实际运行自动将标准输出和错误保存到 `CACHE_DIR/logs/grid.*.log`，启动时打印具体路径；子进程失败仍返回非零状态。延迟启动的命令会读取启动时磁盘上的最新脚本。缺少 CSx 评分来源记录时，`all` 在载入大型表型表之前报错。
 
 ### 在相同测试半区运行 PRSformer
 
@@ -64,7 +94,7 @@ bash grid.sh all --traits height,ldl,t2dm --run-prsformer \
 | `--dir-gen` | `/mnt/f/gen/ukb/37/hap` | 染色体基因型 |
 | `--gwas-dir` | `/mnt/f/gwas/4grid/common` | 已完成 CSx 推断的来源目录 |
 | `--snpinfo` | `/mnt/f/refLD/csx/snpinfo_mult_1kg_hm3` | CSx SNP 信息 |
-| `--geva-dir` | `/mnt/f/ref/GEVA` | 真实年龄 summary |
+| `--annotation-file` | 不提供 | 可选的规范注释表；默认仅用 CSx + PCs |
 | `--covariates` | `age,sex,PC1,PC2` | 所有主比较一致的协变量 |
 | `--distance-pcs` | `10` | 参考投影的匹配 PCs，表内命名为 `match_PC1…` |
 | `--out-root` | `/mnt/d/analysis/grid/GRID` | 正式结果 |
@@ -100,17 +130,18 @@ bash grid.sh all --traits height,ldl,t2dm \
 | `f/grid.data.py` | 统一 ID、性状、家系、共同划分；核对 CSx 权重；调用 PLINK 生成遗传模块 | 读取表型并确定是否有观测；不按 Y 值学习划分或注释 |
 | `f/grid.evolution.py` | 合并外部年龄/选择/频率注释，输出逐染色体评分权重和 QC | 不读取任何个体 Y 或 train/test 标签 |
 | `f/grid.abm.py` | 开发集内训练基线、监督距离、donor bank、gate 和审计；冻结预测 | 只学习开发半区结局；test Y 立即从输入视图移除 |
+| `f/grid.attention.py` | GPU 模块 Transformer、多头 Q/K donor attention、分块精确检索 | build 拟合，tune_model 选 checkpoint，训练供体排除同家系及同 OOF 折 |
 | `f/grid.py` | 调度阶段、核验缓存身份、保存模型、连接测试结局并评价 | 冻结预测后，在 report 阶段连接 test Y |
 
 `grid.sh` 负责命令入口、共享参数、阶段顺序、并发锁及 PRSformer 对接。代码的分工对应不同数据和内存需求，不是四套重复方法。
 
-## 4. 演化信息：输入什么，解释到哪里
+## 4. 可选注释：仅在显式提供 annotation-file 时运行
 
 ### 人类群体历史的准确含义
 
 这里研究的是人类群体内变异的年龄、分布和选择证据。现代 AFR、EUR、EAS、SAS 是同时代、内部仍有异质性的祖源概括，**现代 AFR 样本不是其他三组的直接祖先**；群体历史包含迁移、分化和混合。[人类起源原始研究](https://doi.org/10.1038/s41586-023-06055-y)支持这种网络式历史，而非四级演化阶梯。
 
-GEVA 从单倍型共享、突变与重组信息推断年龄，不能只从某个 SNP 的变异频率推导年龄。频率和 LD 可以携带历史的结果，不能据此把频率差直接称为自然选择或某个起源时间。[GEVA 原文](https://doi.org/10.1371/journal.pbio.3000586)与 [Atlas FAQ](https://human.genome.dating/info/faq)说明其估计和假设。
+频率、LD、变异年龄和选择证据是不同类型的信息，不能仅从某个 SNP 的频率推导年龄，也不能把频率差直接解释为自然选择。默认流程只使用已经提供的 CSx 分数和祖源 PCs。
 
 年龄也不等于 pathogenicity。古老变异仍可影响现代常见病；例如祖先型 APOE ε4 与 LDL 升高的关系可见[原始人群研究](https://doi.org/10.1371/journal.pgen.1012285)。本实现不令 old SNP 自动变安全、不按年龄翻转 beta，也不额外强制衰减 beta。
 
@@ -118,11 +149,9 @@ GPN-Star、PrimateAI-3D、Evo 2 是启发来源，当前代码不调用这些跨
 
 ### 年龄来自哪个等位基因
 
-原生 GEVA 读取 `atlas.chr*.csv.gz`，优先 `Combined > TGP > SGDP`，使用 `AgeMode_Jnt`、相应区间与质量字段。坐标固定 GRCh37，按位置和完整等位基因对匹配，拒绝仅凭 rsID、互补链猜测或隐式 liftover。
+可选规范注释表采用 GRCh37 坐标，按位置和完整等位基因对匹配，拒绝仅凭 rsID、互补链猜测或隐式 liftover。年龄信息须明确对应 ALT，并以外部祖先碱基 `ANC == REF` 确认方向；未知或冲突的年龄进入 unknown。**derived allele 的起源年龄不一定是评分 A1 或 disease-risk allele 的年龄**，输出 `effect_allele_is_dated` 标明区别。
 
-GEVA Atlas 将 ALT 视作待定年的 derived allele。本实现只有在外部祖先碱基 `AlleleAnc == AlleleRef` 时才接受这一方向；未知或冲突的年龄留作原始审计值，评分分组进入 unknown。**derived allele 的起源年龄不一定是评分 A1 或 disease-risk allele 的年龄**，输出 `effect_allele_is_dated` 标明区别。
-
-所有年代是依据遗传数据**推断**的 generations，不是直接观察到的历史年代、进入某个现代群体的年代或四组人群的分化日期。GEVA 的复合后验区间也不能当作完全校准的历史置信区间。
+年代字段使用推断的 generations，不表示现代群体分化日期；来源及区间含义由规范表显式声明。这些字段不参与默认的 CSx/PC 模式。
 
 ### 固定年龄模块与负对照
 
@@ -134,11 +163,13 @@ GEVA Atlas 将 ALT 视作待定年的 derived allele。本实现只有在外部�
 | `uncertain` | 有相应年龄信息但低质量、缺少界限、界限跨箱或点估计不在界限内 |
 | `unknown` | 没有可用年龄或 derived/ancestral 方向不能确认 |
 
-前三组要求质量达到 0.8，并且记录的界限落在同一个年龄箱且包含点估计。这些边界是预先固定的特征，不是人群分化时间。每个祖源的五组 beta 相加必须精确恢复该祖源原始 beta；同一批基因型得到的模块分数也必须重构对应总分。
+前三组要求质量达到 0.8，并且记录的界限落在同一个年龄箱且包含点估计。这些边界是预先固定的特征，不是人群分化时间。`age_quality_pass` 仅表示质量字段通过；`age_usable` 还要求实际落入前三组并满足方向和区间条件，两者不能混用。`--min-age-variants` 要求至少指定数量的非零权重 SNP 有可用年龄，默认 1 只是输入有效性门槛，不证明年龄覆盖充分。
 
-`perm_age_*` 只置换 qualified 的 young/middle/old 标签，**每个 unknown/uncertain SNP 的位置、标签和权重保持不变**。置换在 CHR × reference MAF bin 内进行：`.01,.05,.10,.25` 为分箱边界；没有参考 AF 的位点单列一层。参考 MAF 由可用源群体 ALT AF 的等权均值折叠得到，与目标测试样本无关。
+每个祖源的五组 beta 相加必须精确恢复该祖源原始 beta；模块分数重构的是**使用同样中心化及缺失值规则重新计算的** `evo.total_<POP>`，不要求等于原先未中心化的 `csx.<POP>`。缺失基因型存在时，两者甚至不一定只差一个全体恒定截距。
 
-固定 seed 的负对照保留 SNP 身份、beta、模块数和每层年龄标签计数；输出可置换、固定及实际改变的 SNP 数。它是一次 prespecified negative control，不产生 permutation P value，也没有排除所有 LD、重组率和注释质量相关信息。
+`perm_age_*` 只置换可用的 young/middle/old 标签，**每个 unknown/uncertain SNP 的位置、标签和权重保持不变**。`--age-permutation-mode auto` 根据参考 AF 覆盖记录实际方案：完整 CHR×MAF、部分 CHR×MAF 或 `chr_only_exploratory`；不会把没有 AF 的位点称为 MAF 匹配。`--age-permutation-mode chr-maf` 要求所有可置换位点都有参考 AF，缺失即停止。`.01,.05,.10,.25` 为 MAF 分箱边界；参考 MAF 由可用源群体 ALT AF 的等权均值折叠得到，与目标测试样本无关。只有年龄而没有参考 AF 的规范表，不能提供严格的 MAF 匹配对照。
+
+固定 seed 的负对照保留 SNP 身份、beta、模块数和每层年龄标签计数；输出可置换、固定、实际改变及具有非零权重对比的 SNP 数。当前 `permutation_ld_controlled=False`，没有进行 LD 匹配；它是一次预先指定的负对照，不产生 permutation P value，也没有排除 LD、重组率和注释质量相关信息。年龄覆盖、实际年龄箱数量、参考 AF 覆盖及置换是否产生有效对比，写入注释 QC 和训练工作簿。
 
 真正年龄与随机年龄预测臂具有相同的 frequency、selection、proxy 输入，只替换年龄标签。仅比较两条各有不同附加注释的模型，不能把增益归因于年龄。
 
@@ -181,9 +212,13 @@ $$
 
 该 donor 自己所在家系的 Y 不参与它的基线拟合或超参数选择。匹配距离的 ridge 监督权重使用 build 的这些 OOF 残差学习，再对 ancestry、CSx、frequency、evolution 各 block 标准化和压缩，最终最多 12 维；因此整个距离学习不是 outcome-blind，但只使用开发集。
 
-KD-tree 默认精确检索；可选 HNSW 会在训练数据抽样核对 recall，低于阈值时停止。对 query 排除相同 ID 和家系，在最近 k 个候选中保留距离小于固定 caliper 的 donor。基础半径 `rho` 是训练参考对象到第 5 个可用邻居距离的中位数，使用最多 2048 个确定性抽样的 build 对象估计。
+默认以 CUDA 分块精确检索，用 FP64 距离与稳定的 ID 哈希处理并列距离，不构造全 cohort 的距离矩阵。可选 KD-tree 或 HNSW；HNSW 会在训练数据抽样核对 recall，低于阈值时停止。对 query 排除相同 ID 和家系，在最近 k 个候选中保留距离小于固定 caliper 的 donor。基础半径 `rho` 是训练参考对象到第 5 个可用邻居距离的中位数，使用最多 2048 个确定性抽样的 build 对象估计。
 
-令有效近邻集合为 `N_i`，权重为：
+GPU ABM 对齐 LE8 c1 的模块 token、ContextStack Transformer、可学习 Q/K、多头 donor 权重和独立选择/审计结构，并作遗传任务适配：token 对应 ancestry/CSx/frequency/evolution 特征块，候选范围仍由上述遗传距离确定，attention 的 value 是 CSx OOF 残差。它不直接搬用 LE8 的生存结局、IPCW 或组学尾部通道。训练中的 query 不借用同一 OOF 折的 donor；模型从 build 学习，tune_model 选择 epoch，之后才训练独立 gate。损失为标准化残差 MSE、辅助直接残差预测和随机遮盖特征重构；T2DM 的最终预测仍限制在 `[0,1]`，其外部模型选择指标为 Brier。
+
+每个 head 的 Q/K logit 加上 `-d²/(2 rho²)` 几何先验，在有效 donor 内 softmax，再以 query 的 softmax head gate 混合。保存最终逐 donor 权重，因此原有预测贡献分解、家系 ESS、caliper 和回退检查继续成立。训练工作簿记录 epoch、选定 checkpoint、真实设备、梯度参数和显存峰值；全流程成功不代表已证明预测增益。
+
+旧 `reference` 对照令有效近邻集合为 `N_i`，固定权重为（GPU 模型以学习的多头权重替换此式）：
 
 $$
 w_{ij}=\frac{\exp[-d_{ij}^2/(2\rho^2)]}{\sum_{l\in N_i}\exp[-d_{il}^2/(2\rho^2)]}.
@@ -199,7 +234,17 @@ $$
 
 少于 3 个匹配 donor、家系 ESS 小于 2 或没有可靠半径时，修正为 0；T2DM 最后截到 `[0,1]`，并单独记录 clipping 修正。默认在 tune_model 中比较 `k=16,32,64`、`alpha=0,.25,.5,.75,1`、半径倍数 `1,2,4`，始终允许 alpha=0 回退。
 
-解释输出包含实际匹配 ID、最多 k 位候选中过 caliper 的人数、独立家系数、ESS、分块距离、每位 donor 的 OOF 基线/残差及加权贡献。这回答“哪些参考个体、以多大权重、使这次预测改变了多少”；不是统计学或生物学意义上的双胞胎，也不是因果机制。候选预测和最终 policy 都可以逐项重构。
+解释输出区分以下三种支持量：
+
+| 字段 | 解释 |
+|---|---|
+| `eligible_match_count` | 整个 build 参考库内，排除同 ID/家系后满足 caliper 的人数；精确计数，不受 k 截断 |
+| `matched_count`、`matches_truncated` | 实际用于预测的最多 k 位 donor，以及是否还有合格者未被使用 |
+| `family_ess`、`donor_ess` | 权重集中程度所对应的有效支持量，不等同于原始人数 |
+
+另保留实际匹配 ID、独立家系数、分块距离、每位 donor 的 OOF 基线/残差及加权贡献。基线输出 `baseline_intercept` 和逐特征 `baseline_contribution.*`：连续结局在原预测尺度相加，二分类在 logit 尺度相加后经 sigmoid，再加概率尺度 donor 修正和 clipping。候选预测和最终 policy 均可重构。
+
+这些输出回答“哪些参考个体、以多大权重、使这次预测改变了多少”。参考库从目标 build 中有对应性状结局者建立，并非通过 discovery GWAS 获得的个体库；其中人员是否与 discovery GWAS 重叠，仍需根据实际来源核对。匹配人不是统计学或生物学意义上的双胞胎，贡献也不是因果机制。
 
 ## 6. 50/50 设计、预先筛选和公平对照
 
@@ -218,7 +263,7 @@ $$
 
 只有 build 是 donor bank，所以匹配库约为总队列的 30%，不是整个训练半区。家系作为整体划分；实际人数及每种方法用过的独立结局数记录在 `grid.training.xlsx`。
 
-PRSformer 在同一 outer development 半区内划为 **40% fit / 10% validation / 50% test**。`CSx_full_training`、`DiscoDivas_full_training` 使用开发期选定的超参数，在整个 **50% training** 重拟合；还提供全训练 Ridge/HGB 控制，避免把数据预算不足的基线当作主要对手。它们不回流修改已经完成独立审计的 matching policy。
+PRSformer 在同一 outer development 半区内划为 **40% fit / 10% validation / 50% test**。`CSx_full_training`、`DiscoDivas_calibrated_reference_full_training` 使用开发期选定的超参数，在整个 **50% training** 重拟合；还提供全训练 Ridge/HGB 控制，使主比较反映各方法实际使用的开发期数据。它们不回流修改已经完成独立审计的 matching policy。
 
 ### 两种筛选问题分别回答
 
@@ -228,33 +273,48 @@ Gate 的 gain 目标是 `(Y-CSx)^2-(Y-GRID)^2`；低误差目标是 `(Y-GRID)^2`
 
 `candidate` 还要求预期 gain>0 且匹配支持足够。独立 calibration_audit 对候选人计算配对 MSE/Brier 差值，按家系 bootstrap；只有信息量足够且 95% 区间上界<0 才标记 supported_gain。随后 test 的 `released` 才可采用匹配候选，其余 `GRID_policy` 保留内部 CSx 基线。内部审计没有通过是一个真实结果，不能转而在 test 挑阈值。
 
-这种筛选不保证某个人预测准确，也不保证 selected 子集 R² 高于全样本：较低 MSE 与较高 R² 是不同条件，子集 Y 方差缩小就可能降低 R²。
+低误差筛选也有独立 `low_error_audit`：对冻结选中者与同模型的全部审计对象比较 MSE/Brier，报告家系 bootstrap 区间和病例覆盖；它不改变 gain policy。两种审计都增加祖源分层结果。当前 release 仍由 pooled gain audit 决定，祖源行属于诊断；整体通过不表示每个祖源均已通过，更不是某个人的保证。
+
+这种筛选不保证某个人预测准确，也不保证 selected 子集 R² 高于全样本：较低 MSE 与较高 R² 是不同条件，子集 Y 方差缩小就可能降低 R²。`expected_rmse` 是误差模型的估计，未被验证为个体预测区间。
 
 ### 主比较与消融
 
 | 模型/实验臂 | 检查的问题 |
 |---|---|
-| `CSx`、可选 `DiscoDivas` | build 校准的内部模型 |
-| `CSx_full_training`、`DiscoDivas_full_training` | 充分使用同一开发半区的强基线 |
+| `CSx`、可选 `DiscoDivas_calibrated_reference` | build 校准的内部模型；后者仅校准给定的 reference disco 分数 |
+| `CSx_full_training`、`DiscoDivas_calibrated_reference_full_training` | 充分使用同一开发半区校准的基线 |
 | `GRID_no_evolution` | 仅 ancestry + CSx 的逐人匹配 |
 | `GRID_frequency_only` | 在共同匹配特征上加入频率分化 |
 | `GRID_evolution` | 加入真实年龄及可用 selection/proxy，默认主 candidate |
 | `GRID_permuted_evolution` | 相同附加信息，仅替换 qualified 年龄标签 |
-| `Ridge_evolution`、`HGB_evolution` 及 `_full_training` | 同类特征是否仅靠全局回归/非线性拟合就足够 |
+| `Ridge_no_evolution`、`HGB_no_evolution` 及 `_full_training` | 使用 CSx、匹配 PCs、频率信息的全局控制 |
+| `Ridge_evolution`、`HGB_evolution` 及 `_full_training` | 同算法、同调参网格下增加年龄及可用演化注释的全局控制 |
 | `GRID_policy` | 预先冻结的实际输出策略，主报告对象 |
 | `PRSformer` | 在同一测试集合上的独立官方架构训练适配器 |
 
 主配对损失参考是 **CSx_full_training**。另输出 primary 对 no-evolution、frequency-only、permuted-age、全训练 Ridge/HGB 的直接差值，以及 primary/policy 对 PRSformer 的直接差值；不能用两条各自相对 CSx 的区间替代两模型直接比较。
 
-所有方法在相同 all、gain-selected、rejected、low-error-selected/rejected 对象上比较，并分祖源报告。连续性状报告 MSE/RMSE/MAE、`total_R2`、`SSE_partial_R2` 以及 `Prediction_R2=cor(Y-covariate_baseline,prediction-covariate_baseline)^2`；T2DM 报告 Brier、log loss、AUC、average precision 和 case coverage。
+所有方法在相同 all、gain-selected、rejected、low-error-selected/rejected 对象上比较，并分祖源报告。连续性状报告 MSE/RMSE/MAE 及下列不同指标：
 
-这里的 `Prediction_R2` 是相对共同冻结的 build 协变量基线的描述性相关。完整 training 重拟合模型及 PRSformer 的增量中也包含协变量系数重拟合差异，不能把它解释为纯遗传增量，或直接等同于旧 Yeval、论文中的同名 R²。主要性能判断采用同一批人的配对 MSE/Brier。
+| 字段 | 定义与含义 |
+|---|---|
+| `predictive_R2`，兼容字段 `total_R2` | `1-SSE/SST`，衡量冻结预测的误差；允许为负 |
+| `SSE_partial_R2` | `1-SSE_model/SSE_covariate_baseline`，相对共同冻结协变量基线的误差下降 |
+| `residual_correlation_R2` | `cor(Y-covariate_baseline,prediction-covariate_baseline)^2`，描述性平方相关；原歧义字段 `Prediction_R2` 已移除 |
+
+相关平方不能检测预测方向或尺度错误。例如中心化的 `prediction=-Y`，相关平方为 1，但预测 R² 为 -3。完整 training 重拟合模型及 PRSformer 的增量也包含协变量系数重拟合差异，不能把它全解释为纯遗传贡献。
+
+T2DM 报告 Brier、log loss、AUC、average precision 和 case coverage。两类结局均输出校准截距/斜率及可识别状态；测试集回归仅用于**诊断**，不拿其系数重新改写预测。主要判断采用同一批人的配对 MSE/Brier。
+
+同一全局估计器的有/无演化版本另有直接配对差值；若 selection/proxy 同时变化，该差值表示注释组合增量，不能全归因于年龄。年龄的专门对照使用保留其余注释的 `GRID_permuted_evolution`，且仍需考虑尚未控制的 LD。
 
 `CSx_full_training` 的 full training 指目标人群组合/校准模型使用完整 development 半区；这里没有重新运行 CSx MCMC 或选择上游 phi。如果输入后验来自固定 phi，比较仍以那套后验为条件。要主张超过充分调优的 PRS-CSx，还应在 development 内完成上游参数选择，并核实 discovery GWAS 与目标 test 的样本重叠。
 
+当前 `2.disco.sh` 默认四组原始 CSx 分数、1KG 中心、quality=1，再按官方建议对目标 PCs 做不使用 Y 的残差化。GRID 只校准这个 scalar，故标为 `DiscoDivas_calibrated_reference`；这没有完成在四个实际验证人群中调优 anchor PRS 的官方完整工作流。原始 PC 残差化使用全部目标 X，是 transductive 处理；新人部署需由特征提供者保留可复用的训练变换或重新设计冻结评分。
+
 主结论首先看完整 test 的配对差值。区间是条件于已冻结模型的家系 bootstrap，不覆盖重新训练全部流程的不确定性。三个性状、多个祖源和 coverage 的探索结果不能自动当作多重检验后的显著发现。
 
-PRSformer 比较还核对完整 outer roster、相同 test ID、家系隔离、结局数值/单位和协变量定义。缺少相同划分的结果时明确记录未运行；旧实验分数不自动混入。相同测试集也不代表外部 GWAS、个体训练量或预训练信息量完全相同，结果表保留实际方法预算。
+PRSformer 比较还核对完整 outer roster、相同 test ID、家系隔离、结局数值/单位、协变量定义及按 eid 对齐的原始协变量数值。分数列中增加 `covariate.<name>` 来源，只有名字相同仍不足以通过。checkpoint 保存开发期 ID/家系注册表，不能通过重贴 test 标签使训练对象进入评估。缺少相同划分的结果时明确记录未运行；旧实验分数不自动混入。相同测试集也不代表外部 GWAS、个体训练量或预训练信息量完全相同，结果表保留实际方法预算。
 
 ## 7. 分阶段运行与模型复用
 
@@ -275,14 +335,26 @@ bash grid.sh --stage report --traits height,ldl,t2dm
 
 必须沿用训练保存的 SNP 权重、A1、GRCh37 坐标、相同 PCA 投影空间、模块定义及**训练中心化频率**，不能用新人或测试样本重新估计中心。原生评分用 PLINK `center no-mean-imputation` 并只读取 SUM：缺失基因型贡献 0；各年龄分区继续重构同批评分总分。
 
-原生流程发布的 `<trait>/scoring/` 保留可复用权重、模块和频率。外部 prepared-feature 路径没有这些原生评分材料，必须由特征提供者保留。模型中保存训练期数值转换、metric、donor bank 和 gate；不能只拿一个总 PRS 代替全部输入特征。
+原生流程发布的 `<trait>/scoring/` 保留可复用权重、模块和频率。外部 prepared-feature 路径没有这些原生评分材料，必须由特征提供者保留。模型中保存训练期数值转换、metric、donor bank 和 gate；不能只拿一个总 PRS 代替全部输入特征。加载前核对算法源码哈希及 Python 主次版本、NumPy/SciPy/scikit-learn/joblib 版本；不匹配时使用原环境或重新拟合，不尝试静默兼容 pickle。
 
-例如，将遵守这些条件的新 height 特征表保存为 `/mnt/d/data/ukb/pgs/height/grid.new_features.rds` 后：
+`predict` 还要求 `--feature-manifest`。先由特征生成者确认使用了保存的 `grid.feature_contract.json` 中的规则，再提供如下 JSON：
+
+```json
+{
+  "format": "GRID-features-1",
+  "trait": "height",
+  "feature_contract_sha256": "复制该模型契约中的 contract_sha256",
+  "data_sha256": "实际新特征文件的 SHA256"
+}
+```
+
+可用 `sha256sum grid.new_features.rds` 取得文件摘要。契约包含权重、中心化、PCA、模块和训练来源身份。哈希核验用于防止错配，**不证明外部生成者真的遵守了声明**；结果明确标记 `provider_declared_contract_and_file_hash_matched`。将新 height 特征及声明分别保存为下列路径后：
 
 ```bash
 bash grid.sh --stage predict --trait height \
   --model-file /mnt/d/analysis/grid/GRID/height/grid.model.rds \
-  --data-file /mnt/d/data/ukb/pgs/height/grid.new_features.rds
+  --data-file /mnt/d/data/ukb/pgs/height/grid.new_features.rds \
+  --feature-manifest /mnt/d/data/ukb/pgs/height/grid.new_features.manifest.json
 ```
 
 结果写入该 trait 的 `projection/`，包括 `grid.predictions.rds` 和 `grid.matches.rds`。没有提供 family_id 时以新 ID 自身分组；提供了与开发集相同的真实家系时会排除该家系 donor，并标记 overlap，不能把亲属预测当作无亲缘外部验证。
@@ -297,8 +369,10 @@ bash grid.sh --stage predict --trait height \
 | `grid.contrasts.png/.xlsx` | 对 PRSformer 和各消融/全局控制的直接配对比较 |
 | `grid.coverage.png/.xlsx` | 冻结阈值下的实际 coverage 与预测误差；不同 selector 控制 |
 | `grid.support.png/.xlsx` | 实际匹配人数与有效家系支持 |
-| `grid.training.xlsx` | 内部角色、调参、donor OOF、检索质量、metric、标签预算和独立审计 |
-| `grid.model.rds` | 可复用冻结模型和最少必要 provenance；Python 对象以无损 payload 保留 |
+| `grid.training.xlsx` | 内部角色、调参、donor OOF、检索质量、metric、标签预算、gain/low-error 审计及 `annotation_qc` |
+| `grid.model.rds` | 可复用冻结模型、源码/运行环境及来源身份；Python 对象以无损 payload 保留 |
+| `grid.feature_contract.json` | 新人特征必须沿用的评分材料、坐标、中心化及投影契约 |
+| `grid.individual_explanations.manifest.json` | 对正式测试特征 RDS 的同格式声明，可用于核验/复现 |
 | `grid.test_individuals.rds` | 测试对象、结局、所有模型预测及筛选诊断 |
 | `grid.scores.rds` | 主要分数和 selected/released 标记 |
 | `grid.individual_explanations.rds` | 逐人匹配支持、预测修正、策略来源及实际匹配输入特征 |
@@ -328,21 +402,17 @@ bash 2.disco.sh --traits height,ldl,t2dm --check
 bash Yeval.sh --trait height --type ct --covar-name age,sex,PC1,PC2
 ```
 
+**旧 Yeval 现在拒绝 `--grid-file`**：已经通过监督训练得到的 GRID 分数不能重新随机分折后充作 OOF 输入；使用 `grid.sh --stage report` 评价冻结预测。Yeval 中的 `OOF_residual_correlation_R2` 与 `OOF_predictive_R2` 也已分开。
+
+Yeval 的 `DiscoDivas-tuned` 在每个 outer 训练折内拟合四个表型 anchor，属于有表型调优的自定义 CV 实现；每折四祖源均须达到最小 anchor 人数，人数充足仍不保证病例/事件充足。其 folds 按个人分层，未按家系分组，也不复用 GRID roster。使用前应确认亲属已经排除；不能直接把该 CV 结果与 GRID test 作配对比较。
+
 **旧 Yeval 的 OOF 预测、旧 10/90 或其他分组结果不能混入新 GRID 的 50/50 测试评价。** 旧 T2DM 生存结局也不能与这里的 baseline 0/1 Brier/AUC 比较。只有同一测试 ID、结局、协变量、评分信息和预算清楚的结果，才构成这里的方法比较。
 
 ## 10. 验证状态、原始文献与作者资源
 
-本地整合的修复、运行环境和 10 项可复跑测试见 [VALIDATION.grid.md](VALIDATION.grid.md)；下方为下载包原有验证记录，不能视为本机重新执行过 PRSformer 训练。本机整合保留 `0.pca.sh`、`1.csx.sh`、`2.disco.sh` 的点号命名及已有 CSx 缓存锁修复。旧 `f/3grid.f.sh`、`f/3grid.py` 已移出运行目录，`f/0.arg.py` 继续保留供 GU 使用。
+交付包审阅以仓库 `b84996411653bc4e3b190d9cb997578396da4f29` 为基线，其验证记录见 [REVIEW.20261007.md](REVIEW.20261007.md)。本机更新后的验证、旧权重迁移与 R 入口测试见 [VALIDATION.review-20261007.md](VALIDATION.review-20261007.md)。[VALIDATION.grid.md](VALIDATION.grid.md) 是更早的继承记录，其中 GPU/PRSformer 训练等历史结果不能视为本次重新执行。
 
-本实现提供研究流程和可审计输出；本代码编写会话没有进行真实 UKB 的完整训练，也没有产生“已经超过论文”的实证结论。已有 height 报告约 0.3 的 R² 或 Disco 无提升，不能直接当成新 GRID 的基线值；首先要核对 R² 定义、测试祖源组成、GWAS 重叠、样本量、校准与划分。
-
-演化 builder 已用合成 SNP/注释完成 23 项检查，包含真实 GEVA 格式解析、等位基因方向、分数重构、固定未知位置的负对照、来源和 gzip/MD5 异常。独立 ABM 小例验证了 test Y 改动不影响拟合预测、无 Y 新预测、非零 donor 贡献与 policy/距离分解重构。这些验证不代替真实队列外部验证。
-
-最终端到端联调使用 600 人、300 个家系、2 条染色体、24 个 SNP 的模拟数据和真实 PLINK 2/PGEN，同时运行三个性状。共同名单为 300/300；官方 PRSformer 小模型实际训练 2 epochs，在 240/60/300 名单上完成前向、反向及预测，经过 QC 保留 23 SNP，三个性状均通过共同 test、结局和协变量核对。这是 CPU global-attention 的接口验证，不是论文规模或 CUDA/NATTEN 性能复现。
-
-从正式个体 RDS 独立重算 1,200 行指标和 1,575 行配对比较，最大绝对差为 `8.88e-16`。12 张 PNG 均有可读同名 XLSX，15 本汇总工作簿未混入个体 ID；三个 model RDS 重载后均可对无 Y 新人重现预测。27 份永久评分材料与模型内 SHA256 一致，用保存的权重和 training AF 给 300 个新 ID 重打 80 个模块，数值与原分数一致。输入来源变化、同大小权重篡改、错用 trait 模型、PRSformer 测试家系重划均被拒绝。
-
-该小型联调中三个性状的 audit 均未放行个体修正，`released=0`，策略正确回退 CSx；独立匹配核测试另外覆盖了非零借用与精确贡献分解。未实际运行 HNSW 可选路径、完整 UKB 训练或全基因组 GPU PRSformer；默认 KD-tree 路径已验证。
+预测验证使用合成个体、真实 PLINK 2/PGEN、RDS 读写和三个性状的 GRID prepare/evolution/fit/report/predict。本机另执行了原生 R PCA 的投影后 QC 和 Yeval 拒绝旧 GRID 输入的检查；未执行完整 R PCA/Yeval/Disco 分析、PRS-CSx MCMC 或 GPU PRSformer 训练，没有实际 UKB 性能结论。已有报告的 R² 或 Disco 无提升，需要先核对指标定义、配置、测试祖源、GWAS 重叠、数据预算和划分。
 
 | 原始工作 | DOI / 作者资源 | 与本实现的关系 |
 |---|---|---|
@@ -350,7 +420,6 @@ bash Yeval.sh --trait height --type ct --covar-name age,sex,PC1,PC2
 | PRS-CSx，2022 | [10.1038/s41588-022-01054-7](https://doi.org/10.1038/s41588-022-01054-7)；[作者代码](https://github.com/getian107/PRScsx) | 多祖源后验权重及主要比较基线 |
 | DiscoDivas，AJHG 2026 | [10.1016/j.ajhg.2026.05.006](https://doi.org/10.1016/j.ajhg.2026.05.006)；[作者代码](https://github.com/YunfengRuan/DiscoDivas) | 祖源连续空间中的 PRS 插值启发；不是局部祖源推断 |
 | PRSformer，NeurIPS 2025 | [会议原文](https://proceedings.nips.cc/paper_files/paper/2025/hash/b9f2c7f6cc690434047ec546c83270dc-Abstract-Conference.html)；[预印本 DOI 10.1101/2025.10.26.684578](https://doi.org/10.1101/2025.10.26.684578)；[作者代码](https://github.com/23andMe/PRSformer) | 原始个体基因型的多任务监督模型；本地三个性状是训练适配，不复现原论文私有大队列 |
-| GEVA，2020 | [10.1371/journal.pbio.3000586](https://doi.org/10.1371/journal.pbio.3000586)；[Atlas](https://human.genome.dating/)；[代码](https://github.com/pkalbers/geva) | 当前可直接接入的 GRCh37 变异年龄 |
 | Relate，2019 | [10.1038/s41588-019-0484-x](https://doi.org/10.1038/s41588-019-0484-x)；[公开人类年龄/选择数据](https://doi.org/10.5281/zenodo.3234689) | 可转换为 canonical 注释；分支上下界不等于 95% CI |
 | CLUES，2019 | [10.1371/journal.pgen.1008384](https://doi.org/10.1371/journal.pgen.1008384)；[代码](https://github.com/standard-aaron/clues) | 基于 genealogy 的选择/轨迹推断；不是代码内置现成的全基因组年龄表 |
 | 1000 Genomes Phase 3 | [官方数据资源](https://www.internationalgenome.org/data-portal/data-collection/phase3/) | 祖源 PCs 和可选参考 AF；AF/FST 不直接等于年龄或选择 |

@@ -10,6 +10,7 @@ GU_ORIGINAL_ARGS=("$@")
 # shellcheck source=f/0.common.sh
 source "$F/0.common.sh"
 source "$F/0.resources.sh"
+source "$F/0.build-check.sh"
 [[ -s "$ROOT/gu.env" ]] && source "$ROOT/gu.env"
 
 
@@ -133,63 +134,52 @@ gu_main() {
 		cat <<'HELP'
 cd /mnt/d/scripts/gu
 
-# Reference data are on I:; TRACE symlinks are on D: because I: is exFAT.
-# 1. PhyML
-PHYML_TREE_CPUS=4 PHYML_TREE_TIMEOUT=86400 ./gu.sh phyml \
-  --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo \
-  --loci-format cojo --grch 38 --target 1kg \
-  --target-dir /mnt/f/gen/1kg/37/pfile/chr \
-  --jobs 6 --memory-cap 24G --replace-phyml FALSE --foreground TRUE
+# 1KG
+PHYML_TREE_CPUS=2 PHYML_TREE_TIMEOUT=7200 ./gu.sh phyml \
+  --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo --loci-format cojo --grch 38 \
+  --target 1kg --target-dir /mnt/f/gen/1kg/37/pfile/chr \
+  --jobs 12 --memory-cap 32G --replace-phyml FALSE --foreground TRUE
 
-# 2. IBDmix: seven references (including the 2013 pair), chr1-22 and X, 8 parallel jobs
-# Local masks only; finish aria2 downloads before running. No automatic downloads.
-# Local AXT: /mnt/f/annot/axt/37/vsPanTro2, vsPonAbe2, vsRheMac2
-# Default masks: /mnt/f/gen/archaic/37/mask; profile: multi_reference
-# Both 2013 references reuse the corresponding Altai/Denisova minimal mask.
-# Edit --archaic-gen to select references; unchanged cached calls are reused.
 ./gu.sh ibdmix --grch 37 --target 1kg \
+  --target-dir /mnt/f/gen/1kg/37/pfile/chr \
   --archaic-path /mnt/f/gen/archaic/37/vcf \
   --archaic-gen Altai,Altai.2013,Chagyr,Denisova,Denisova.2013,Denisova25,Vindija \
-  --target-dir /mnt/f/gen/1kg/37/pfile/chr \
   --jobs 8 --memory-cap 16G --replace-ibdmix FALSE --foreground TRUE
 
-# 3. TRACE (requires completed ARGs)
 TRACE_JOB_EXTRACT=2 TRACE_JOB_INFER=4 TRACE_JOB_SUMMARIZE=4 ./gu.sh trace \
-  --chr 22,X --grch 37 --target 1kg \
-  --target-dir /mnt/f/gen/1kg/37/pfile/chr \
+  --chr 22,X --grch 37 --target 1kg --target-dir /mnt/f/gen/1kg/37/pfile/chr \
   --arg-dir /mnt/f/gen/1kg/37/arg.threads/trace/threads \
   --jobs 2 --memory-cap 16G --replace-trace FALSE --foreground TRUE
 
 ./gu.sh as3 --chr 3,22 --grch 38 --target 1kg \
-  --target-dir /mnt/f/gen/1kg/38/pfile/chr --jobs 4 --foreground TRUE
-# UKB: real phased haplotypes for PhyML; imputed genotypes for IBDmix.
-# --keep is a PLINK sample list; --keep-males uses SEX from PSAM.
-# --keep-psam FILE,SIZE,INDEX selects a 1-based chunk before sex filtering.
-# --keep and --keep-psam are mutually exclusive; either accepts --keep-males.
-# UKB concurrency is limited by --memory-cap (default 32G: at most 2 workers,
-# 8192 MiB PLINK workspace each, with memory reserved for other processes).
-./gu.sh ibdmix --grch 37 --target ukb --target-dir /mnt/f/gen/ukb/37/imp/chr \
-  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males
-./gu.sh phyml --loci /path/leads.jma.cojo --loci-format cojo --grch 38 \
-  --target ukb --target-dir /mnt/f/gen/ukb/37/hap/chr --keep /path/batch01.txt --keep-males
-./gu.sh ibdmix --grch 37 --target ukb --target-dir /mnt/f/gen/ukb/37/imp/chr \
-  --keep /path/batch01.txt --keep-males
+  --target-dir /mnt/f/gen/1kg/38/pfile/chr \
+  --jobs 4 --memory-cap 32G --replace-as3 FALSE --foreground TRUE
 
 ./gu.sh final
-# Shiny application: shiny/app.R, shiny/ui.R, shiny/server.R and shiny/www/
 ./gu.sh shiny
 
-# 4. UKB PGEN: inspect dense imputed data, then prepare one fixed pilot cohort.
-./gu.sh ukb inspect-pgen --ukb-source imp --chr 22 --grch 37
-./gu.sh ukb pilot --help
-./gu.sh ukb pgen-vcf --help
-# Source the generated gu-target.env before UKB inference/final commands.
-# UKB results use a separate persistent root; preprocessing files stay in /tmp.
-# UKB IBDmix accepts --chr requests, uses post-QC observed sites and independent
-# chrX nonPAR blocks, and defaults to Altai,Vindija exploratory reference matches.
-# TRACE needs phase-certified exports plus completed matching ARGs; AS3 also
-# requires GRCh38 autosomes. UKB PhyML still needs UKB LD and INFO/AA adapters;
-# UKB GWAS leads may be examined with the existing 1KG sequence workflow.
+# UKB：以下 PhyML/IBDmix 使用同一 PSAM 第 3 批（2000 人中筛选男性）。
+GU_ANALYSIS_ROOT=/mnt/d/analysis/gu-ukb-batch03 PHYML_TREE_CPUS=2 PHYML_TREE_TIMEOUT=7200 ./gu.sh phyml \
+  --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo --loci-format cojo --grch 38 \
+  --target ukb --target-dir /mnt/f/gen/ukb/37/hap/chr \
+  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males \
+  --jobs 2 --memory-cap 32G --replace-phyml FALSE --foreground TRUE
+
+GU_ANALYSIS_ROOT=/mnt/d/analysis/gu-ukb-batch03 ./gu.sh ibdmix --grch 37 --target ukb \
+  --target-dir /mnt/f/gen/ukb/37/imp/chr \
+  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males \
+  --jobs 2 --memory-cap 32G --replace-ibdmix FALSE --foreground TRUE
+
+# UKB TRACE/AS3：先设置已准备的 phased VCF 配置 UKB37_ENV/UKB38_ENV；TRACE 还需同队列 UKB_ARG_DIR。
+( source "${UKB37_ENV:?请设置 GRCh37 准备目录中的 gu-target.env 路径}" && \
+  ./gu.sh trace --chr 22 --grch 37 --arg-dir "${UKB_ARG_DIR:?请设置同队列的 ARG 目录}" \
+    --jobs 2 --memory-cap 32G --replace-trace FALSE --foreground TRUE )
+
+( source "${UKB38_ENV:?请设置 GRCh38 准备目录中的 gu-target.env 路径}" && \
+  ./gu.sh as3 --chr 22 --grch 38 --jobs 1 --memory-cap 32G --replace-as3 FALSE --foreground TRUE )
+
+( source /mnt/d/analysis/gu-ukb-batch03/gu-target.env && ./gu.sh final )
+( source /mnt/d/analysis/gu-ukb-batch03/gu-target.env && ./gu.sh shiny )
 
 HELP
 	}
@@ -1414,7 +1404,10 @@ PYKEY
 			if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
 				printf 'export GU_UKB_DIRECT=1\nexport GU_UKB_PGEN_PREFIX=%q\nexport GU_UKB_SOURCE=%q\nexport GU_UKB_RESULTS_ROOT=%q\n' "$GU_UKB_PGEN_PREFIX" "$GU_UKB_SOURCE" "$GU_UKB_RESULTS_ROOT"
 			fi
-			[[ $METHOD != phyml ]] || printf 'export GU_PHYML_LEAD_TABLE=%q\n' "${GU_PHYML_LEAD_TABLE:?}"
+			if [[ $METHOD == phyml ]]; then
+				printf 'export GU_PHYML_LEAD_TABLE=%q\n' "${GU_PHYML_LEAD_TABLE:?}"
+				printf 'export PHYML_TREE_TIMEOUT=%q\nexport PHYML_TREE_CPUS=%q\n' "${PHYML_TREE_TIMEOUT:-7200}" "${PHYML_TREE_CPUS:-4}"
+			fi
 			if [[ $METHOD == ibdmix ]]; then
 				printf 'export IBDMIX_X_PROFILE=%q\nexport IBDMIX_X_MINOR_ALLELE_COUNT=%q\n' "${IBDMIX_X_PROFILE:-nonpar-v2}" "${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
 				printf 'export IBDMIX_PROFILE=%q\nexport IBDMIX_REFS=%q\n' "$IBDMIX_PROFILE" "$IBDMIX_REFS"
@@ -1458,7 +1451,7 @@ PYKEY
 	}
 
 	gu_run_one_analysis_cmd() {
-		local cmd=$1 out base log err rc completed_output=""
+		local cmd=$1 out base log err rc completed_output="" defer=${GU_PUBLICATION_DEFERRED:-0}
 		out=$(dirname -- "$cmd")
 		base=$(basename -- "$cmd" .cmd)
 		log=$out/$base.log
@@ -1470,10 +1463,21 @@ PYKEY
 		rm -f "$err"
 		[[ $METHOD != phyml ]] || rm -f "$out/.phyml.locus.complete.json"
 		printf '[GU CMD] START unit=%s cmd=%s\n' "$base" "$cmd" >&2
-		if bash "$cmd" 2>&1 | tee "$log"; then
+		[[ $METHOD != phyml ]] || defer=1
+		if SCRIPT_CONSOLE_ACTIVE=1 GU_PUBLICATION_DEFERRED=$defer bash "$cmd" 2>&1 | tee "$log"; then
 			if [[ $METHOD == phyml ]]; then
-				python3 "$F/phyml.py" cache seal "$cmd" --archaic-root "$GU_ARCHAIC_ROOT" ||
-					printf '[GU CMD] WARNING unit=%s completion receipt unavailable; next run will recheck\n' "$base" >&2
+				# tee has closed the worker log. Seal intact outputs before publication
+				# removes materialized files, and archive the receipt with the results.
+				if python3 "$F/phyml.py" cache seal "$cmd" --archaic-root "$GU_ARCHAIC_ROOT" &&
+					python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method phyml --run "$out" &&
+					python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method phyml --run "$out"; then
+					:
+				else
+					rc=$?
+					printf 'ERROR: phyml completion/publication failed for %s\n' "$base" >"$err"
+					printf '[GU CMD] FAIL unit=%s exit=%s detail=%s\n' "$base" "$rc" "$err" >&2
+					return "$rc"
+				fi
 			fi
 			printf '[GU CMD] DONE unit=%s log=%s\n' "$base" "$log" >&2
 			return 0
@@ -2228,12 +2232,8 @@ PYCONTRACT
 		gu_check_log "verify modern genome build from $GU_BUILD_CHECK_INPUT"
 		build_check_ok=0
 		build_check_detail=$(mktemp "${TMPDIR:-/tmp}/gu-build-check.XXXXXX")
-		if check_GRCH "$GU_BUILD_CHECK_INPUT" "$GU_BUILD" >"$build_check_detail" 2>&1; then
+		if gu_check_build_cached "$GU_BUILD_CHECK_INPUT" "$GU_BUILD" "$GU_TARGET_BUILD_FORMAT" >"$build_check_detail" 2>&1; then
 			cat "$build_check_detail" | tee -a "$GU_CHECK_LOG"
-			build_check_ok=1
-		elif [[ $GU_TARGET_BUILD_FORMAT == pfile ]] && gu_check_grch_pvar_positions "$GU_BUILD_CHECK_INPUT" "$GU_BUILD" >>"$build_check_detail" 2>&1; then
-			gu_check_log "rsID build sentinels are absent; using strict coordinate-sentinel fallback"
-			tail -n 1 "$build_check_detail" | tee -a "$GU_CHECK_LOG"
 			build_check_ok=1
 		else
 			cat "$build_check_detail" | tee -a "$GU_CHECK_LOG" >&2

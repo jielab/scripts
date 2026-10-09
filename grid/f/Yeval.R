@@ -36,6 +36,7 @@ Y <- arg("trait")
 type <- arg("type")
 if (is.null(Y) || !type %in% c("ct", "dt", "t2e")) stop("--trait and --type ct|dt|t2e required")
 if (!arg("method", "all") %in% c("all", "csx", "disco")) stop("Invalid --method")
+if (!is.null(arg("grid-file"))) stop("Legacy --grid-file is disabled: saved phenotype-trained GRID scores cannot be reassigned to new CV folds. Use grid.sh --stage report with the common frozen cohort split for GRID/PRSformer comparisons.")
 out <- arg("run-dir", file.path(arg("out-root", "/mnt/d/analysis/grid/Yeval"), Y))
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 
@@ -208,7 +209,7 @@ training_geometry <- function(gd, pm, pc, reference_centers) {
 	if (!distance_source %in% c("discovery", "reference"))
 		stop("--distance-source must be discovery or reference")
 	if (distance_source == "discovery" && !file.exists(path))
-		stop("Discovery centres missing: ", path, ". Build them with f/training_geometry.py, or use the default --distance-source reference for an exploratory plot.")
+		stop("Discovery centres missing: ", path, ". Supply actual discovery-cohort centres in the same reference PCA space with --training-centers, or use the default --distance-source reference for an exploratory plot.")
 	if (distance_source == "discovery") {
 		ct <- read_table(path)
 		need <- c("POP", pc, "N_GWAS", "pca_space", "source", "kind")
@@ -584,7 +585,7 @@ summarize_predictions <- function(x, pred, base, linear, linear_base, Kpop = NA_
 			t(vapply(nm, function(m) ci(boots[, m] - boots[, ".baseline"]), numeric(2))) else matrix(NA_real_, length(nm), 2)
 		res[, `:=`(delta_AUC_lower95 = dc[, 1], delta_AUC_upper95 = dc[, 2])]
 	}
-	res[, metric := switch(type, ct = "OOF_prediction_R2", dt = "OOF_AUC", t2e = "OOF_Harrell_C")]
+	res[, metric := switch(type, ct = "OOF_residual_correlation_R2", dt = "OOF_AUC", t2e = "OOF_Harrell_C")]
 	list(performance = res, bootstrap = boots[, nm, drop = FALSE])
 }
 set.seed(seed)
@@ -775,7 +776,8 @@ for (g in groups) {
 			den <- sum((x$outcome - mean(x$outcome))^2)
 			sse0 <- sum((x$outcome - base)^2)
 			sse1 <- sum((x$outcome - pred[, m])^2)
-			pp[method == m, `:=`(baseline_R2 = 1 - sse0/den, full_R2 = 1 - sse1/den, delta_R2 = (sse0 - sse1)/den, baseline_SSE = sse0,
+			pp[method == m, `:=`(baseline_R2 = 1 - sse0/den, full_R2 = 1 - sse1/den, OOF_predictive_R2 = 1 - sse1/den,
+				delta_R2 = (sse0 - sse1)/den, baseline_SSE = sse0,
 				full_SSE = sse1, RMSE = sqrt(sse1/n), SSE_partial_R2 = 1 - sse1/sse0, prediction_r = cor(x$outcome - base,
 						pred[, m] - base))]
 		} else if (type == "dt") {
@@ -858,7 +860,7 @@ colours <- c(`GRID-tuned` = "#278C78", GRID_shared = "#76A88C", GRID_posterior =
 ancestry_colours <- c(EUR = "#437CB3", AFR = "#D59421", EAS = "#269B78", SAS = "#AE6BA5", OTH = "#8B9098", UNASSIGNED = "#BABEC5")
 extra <- setdiff(groups, names(ancestry_colours))
 if (length(extra)) ancestry_colours <- c(ancestry_colours, setNames((scales::hue_pal())(length(extra)), extra))
-metric_label <- switch(type, ct = "Prediction R²", dt = "AUC (covariates + PRS)", t2e = "Harrell C-index (covariates + PRS)")
+metric_label <- switch(type, ct = "Residual correlation R²", dt = "AUC (covariates + PRS)", t2e = "Harrell C-index (covariates + PRS)")
 fmt_n <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
 fmt <- function(x, digits = 4) ifelse(is.finite(x), formatC(x, digits = digits, format = "f"), "NA")
 ci_text <- paste0(nfold, "-fold out-of-fold predictions; ", if (nboot > 0) paste0(nboot, " paired subject bootstrap resamples") else "intervals disabled")
@@ -883,7 +885,7 @@ plot_theme <- theme_classic(base_size = 12) + theme(legend.position = "bottom", 
 		5, 8, 5)), plot.title = element_text(face = "bold", size = 17), plot.subtitle = element_text(colour = "#526071",
 		size = 11, lineheight = 1.15), plot.caption = element_text(hjust = 0, colour = "#626A76", size = 10), panel.spacing = grid::unit(1.2,
 		"lines"), plot.margin = margin(12, 14, 10, 12))
-primary_caption <- switch(type, ct = "Prediction R² = squared correlation of covariate-residualized phenotype and PRS prediction, evaluated on held-out people.",
+primary_caption <- switch(type, ct = "Residual correlation R² = squared correlation of covariate-residualized phenotype and PRS prediction, evaluated on held-out people.",
 	dt = "AUC evaluates held-out case-control discrimination; covariates are included. ΔAUC and Brier are saved separately.",
 	t2e = "C-index measures ranking of event times, including covariates. Dashed lines show covariates-only C; 0.5 is chance ranking.")
 make_comparison <- function(methods, title, subtitle, caption) {
@@ -936,7 +938,7 @@ category_labels <- setNames(vapply(shown_groups, function(g) {
 	paste0(g, "\nN=", fmt_n(z$N), if (type != "ct")
 		paste0("\nEvents=", fmt_n(z$events)))
 }, character(1)), shown_groups)
-gain_label <- switch(type, ct = "Prediction R²", dt = "ΔAUC from PRS", t2e = "ΔC from PRS")
+gain_label <- switch(type, ct = "Residual correlation R²", dt = "ΔAUC from PRS", t2e = "ΔC from PRS")
 pb <- ggplot(category, aes(target, value, colour = target)) + geom_hline(yintercept = 0, colour = "#CDD3DA", linewidth = 0.4) +
 	geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.12, linewidth = 0.6, na.rm = TRUE) + geom_point(size = 3.2, na.rm = TRUE) +
 	geom_text(aes(label = ifelse(is.finite(value), fmt(value, 3), "Unavailable")), vjust = -1.3, size = 3, na.rm = TRUE) +
@@ -987,7 +989,7 @@ if (nrow(individual)) {
 	missing_prior <- nrow(individual) - nrow(plotted)
 	posterior_caption <- paste0("d: ", fmt_n(nrow(plotted)), " individual estimates; up to ", fmt_n(plot_limit), " dots per group displayed. ",
 		if (individual_metric == "reliability")
-			paste0("Model-based reliability is distinct from empirical prediction R² in b; ", missing_prior, " people lack a variance scale.") else "Posterior SD is shown; lower values mean less uncertainty. This is not a prediction R².")
+			paste0("Model-based reliability is distinct from empirical residual correlation R² in b; ", missing_prior, " people lack a variance scale.") else "Posterior SD is shown; lower values mean less uncertainty. This is not a predictive accuracy metric.")
 } else {
 	pd <- ggplot() + theme_void() + labs(title = "Individual posterior analysis disabled", subtitle = "Run 1.csx.sh --posterior TRUE, then Yeval with --posterior-mode required") +
 		small_theme
@@ -1021,7 +1023,7 @@ if (nrow(comparison)) {
 		geom_errorbar(aes(ymin = lower95, ymax = upper95), width = 0.12, colour = colours[disco_method], linewidth = 0.7) +
 		geom_point(size = 3.5, colour = colours[disco_method]) + plot_theme + labs(title = paste(Y, "|", disco_method, "versus PRS-CSx"),
 		subtitle = "Positive differences favour DiscoDivas; negative differences favour PRS-CSx.", x = "Target ancestry",
-		y = paste0("Difference in ", switch(type, ct = "prediction R²", dt = "AUC", t2e = "C-index")))
+		y = paste0("Difference in ", switch(type, ct = "residual correlation R²", dt = "AUC", t2e = "C-index")))
 } else p_paired <- ggplot() + theme_void() + labs(title = "DiscoDivas versus PRS-CSx", subtitle = "Comparison unavailable or intervals disabled")
 
 
@@ -1046,13 +1048,13 @@ yeval_write_results(out, as.data.frame(performance), as.data.frame(comparison), 
 		fill = TRUE) else NULL, plot_data)
 
 methods_text <- c(paste0("# ", Y, " PRS evaluation"), "", paste("Outcome:", outcome_definition), paste("Covariates:", paste(covars,
-	collapse = ", ")), paste("Evaluation:", ci_text), "", "## Prediction metrics", "- Continuous: Prediction R² = cor(y - baseline_OOF, full_OOF - baseline_OOF)^2. This is covariate-adjusted squared prediction correlation. All residualization, score standardization and combination fitting use training folds.",
+	collapse = ", ")), paste("Evaluation:", ci_text), "", "## Prediction metrics", "- Continuous: OOF_residual_correlation_R2 = cor(y - baseline_OOF, full_OOF - baseline_OOF)^2. This is covariate-adjusted squared prediction correlation. All residualization, score standardization and combination fitting use training folds.",
 	"- OLS full_OOF - baseline_OOF equals the score-weighted, training-covariate-residualized score. No regression is fitted within a held-out distance bin.",
-	"- Squared correlation does not assess calibration or direction. prediction_r, RMSE, full_R2, baseline_R2, delta_R2 and the former SSE_partial_R2 remain in Yeval.comparison.xlsx.",
+	"- Squared correlation does not assess calibration or direction. OOF_predictive_R2 = full_R2 = 1 - SSE_full / sum((y - mean(y))^2) evaluates the same frozen OOF predictions and can be negative. prediction_r, RMSE, baseline_R2, delta_R2 and SSE_partial_R2 = 1 - SSE_full / SSE_baseline remain in Yeval.comparison.xlsx.",
 	"- Binary: main metric is logistic AUC; baseline_AUC, delta_AUC, paired delta intervals and Brier are also saved. No unvalidated liability conversion is applied.",
 	"- Survival: main benchmark is covariates + PRS Harrell C. Comparisons use within-fold comparable pairs. The ancestry and empirical distance panels show delta_C to isolate PRS increment.",
 	"- These metrics follow common PRS reporting conventions but are not a numerical reproduction of any publication, because training data, covariates, splits and outcomes differ.",
-	"", "## Four panels", "- a: original ancestry labels in PC space. b: empirical group prediction (R² or delta discrimination). c: separate geometric illustration with four source centres and representative real people. d: one individual per posterior point.",
+	"", "## Four panels", "- a: original ancestry labels in PC space. b: empirical group residual correlation R² or delta discrimination. c: separate geometric illustration with four source centres and representative real people. d: one individual per posterior point.",
 	"- The first bar chart is the overall method benchmark including COJO. The second isolates combined-score strategies, omits COJO and adds fixed-meta; repeated bars are identical.",
 	"- The DiscoDivas difference chart follows the four-panel figure. Empirical bins are a separate validation figure after that.",
 	"", "## Posterior model and interpretation", "- All four population beta draws share a retained iteration within a chromosome. Individual score covariance includes SNP LD and all cross-population covariance terms.",
@@ -1060,7 +1062,7 @@ methods_text <- c(paste0("# ", Y, " PRS evaluation"), "", paste("Outcome:", outc
 	"- Chromosome means and covariance matrices are summed under PRS-CSx chromosome independence. Independent chromosomes are not artificially coupled by matching iteration numbers.",
 	"- With training-fold weights w = regression_coefficient / training_score_SD, individual prediction variance is w^T Sigma_i w. Both diagonal-only and cross-population contributions are saved.",
 	"- If an external genetic variance Vg on the correct scale is supplied, model-based individual R² = 1 - w^T Sigma_i w / Vg. For a continuous phenotype, supplied residual SNP h² is multiplied by training-fold covariate-residual phenotype variance.",
-	"- This stacked-CSx reliability is an exploratory extension conditional on fitted combination/covariate weights and the supplied Vg, not an established equivalence to LDpred2 reliability. It requires model calibration and compatible priors/scales. It is not empirical phenotype prediction R².",
+	"- This stacked-CSx reliability is an exploratory extension conditional on fitted combination/covariate weights and the supplied Vg, not an established equivalence to LDpred2 reliability. It requires model calibration and compatible priors/scales. It is not empirical phenotype residual correlation R² or OOF_predictive_R2.",
 	"- Negative model-based reliability is retained as a diagnostic of variance scaling, uncertainty or model mismatch. No clipping, artificial dots or forced decay is applied.",
 	"- If genetic variance is absent, d reports posterior SD explicitly; it is uncertainty, not accuracy. For survival this is SD of the PRS log-hazard contribution; for binary outcomes SD of log-odds. Liability h² cannot be used in their place.",
 	"- Bootstrap intervals condition on fixed OOF fits. Posterior covariance conditions on GWAS summary statistics, LD reference and fitted combination weights; neither accounts for all sources of model misspecification.",
@@ -1081,9 +1083,9 @@ html_table <- function(z) paste0("<div class=\"table-wrap\"><table><tr>", paste0
 		"</tr>")), collapse = ""), "</table></div>")
 csx_summary <- performance[method == "PRS-CSx"]
 if (type == "ct") {
-	overview <- csx_summary[, .(Ancestry = target, N = fmt_n(N), `Prediction R²` = fmt(estimate), `Prediction r` = fmt(prediction_r),
-		`SSE-based partial R²` = fmt(SSE_partial_R2), RMSE = fmt(RMSE, 3))]
-	metric_explanation <- "<p><strong>Prediction R²</strong> is the squared correlation between covariate-residualized observed and predicted phenotypes in held-out participants. It differs from the previous SSE-based partial R², which remains available for comparison.</p>"
+	overview <- csx_summary[, .(Ancestry = target, N = fmt_n(N), `Residual correlation R²` = fmt(estimate), `Residual correlation r` = fmt(prediction_r),
+		`OOF predictive R²` = fmt(OOF_predictive_R2), `SSE-based partial R²` = fmt(SSE_partial_R2), RMSE = fmt(RMSE, 3))]
+	metric_explanation <- "<p><strong>Residual correlation R²</strong> is the squared correlation between covariate-residualized observed and predicted phenotypes in held-out participants; it does not assess calibration or direction. <strong>OOF predictive R²</strong> (also saved as full_R2) is 1 - SSE_full / SST for the same frozen predictions and can be negative. <strong>SSE-based partial R²</strong> is 1 - SSE_full / SSE_baseline.</p>"
 } else if (type == "t2e") {
 	overview <- csx_summary[, .(Ancestry = target, N = fmt_n(N), Events = fmt_n(events), `Full C` = fmt(estimate), `Covariates C` = fmt(baseline_C),
 		`ΔC from PRS` = fmt(delta_C), `ΔC 95% CI` = paste0(fmt(delta_C_lower95), "–", fmt(delta_C_upper95)))]

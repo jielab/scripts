@@ -9,18 +9,13 @@ individual phenotypes or predictions.
 from __future__ import annotations
 
 import argparse
-import csv
-import gzip
-import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 import tempfile
-import urllib.request
 
 import numpy as np
 import pandas as pd
@@ -29,26 +24,6 @@ import pandas as pd
 # 🚩 Public data and fixed, explicitly non-demographic feature boundaries
 POPULATIONS = ("EUR", "AFR", "EAS", "SAS")
 AGE_BINS = ("young", "middle", "old", "uncertain", "unknown")
-GEVA_URL = "https://human.genome.dating/bulk/atlas.chr{chromosome}.csv.gz"
-GEVA_DOWNLOAD_PAGE = "https://human.genome.dating/download/index"
-GEVA_FAQ = "https://human.genome.dating/info/faq"
-GEVA_MD5 = {
-	1: "573d944fd9c0820cda5e4f3e69f0436f", 2: "64928ae5acdab7f2112d77d72e4e05e7",
-	3: "3b24b89f15f276761963dc0931a5ddc3", 4: "154db58a8ae87ca32ecbadd606323c8a",
-	5: "4655f24184ca50cf9f41e9e0f41758ee", 6: "940f27c8ffc85bc19ea55c10ec435fdc",
-	7: "012eb4f227853774ec462c1519f85342", 8: "e30a37a056cc175b944473114e1d2819",
-	9: "afa2425bfc8f8d059e2a6d51f4f695f1", 10: "1e9020a64625962d63761a9ef0fbd32a",
-	11: "5631f7fc07c8aecb264299fc66d29658", 12: "38ba8cae9809575fad66534ade7f60d5",
-	13: "d0bdcf97613a784b6b7084be7ea1ab08", 14: "73477526e6661505c5e4cea99640620e",
-	15: "69323fde9d17a3ba86fa1fd9c51cd504", 16: "f6ae0a54cc476ce5a9342f5eed45168d",
-	17: "684dbce64241b16fffe97b5c44e1204a", 18: "9336c9832585688a9702fe2934ebc0e3",
-	19: "8a7290197378a66c4befe0b38bb7b088", 20: "586c2bdc03742a4b1af602b412d0310c",
-	21: "ec493b5518a6b68f29c8d658e2280703", 22: "0b97e098875a54adffcfabe2942358f2",
-}
-GEVA_AGE_COLUMNS = [
-	"VariantID", "Chromosome", "Position", "AlleleRef", "AlleleAlt", "AlleleAnc",
-	"DataSource", "AgeMode_Jnt", "AgeCI95Lower_Jnt", "AgeCI95Upper_Jnt", "QualScore_Jnt",
-]
 AGE_FIELDS = ["AGE_GEN", "AGE_LO", "AGE_HI", "AGE_QUAL", "AGE_SOURCE", "AGE_METHOD",
 	"AGE_UNCERTAINTY", "AGE_REF", "AGE_ALT", "ANC"]
 MISSING = {"", ".", "NA", "NAN", "NULL", "NONE"}
@@ -92,7 +67,7 @@ def clean_text(series):
 
 def numbers(series, label, allow_missing=True):
 	clean = clean_text(series)
-	result = pd.to_numeric(clean.replace("", np.nan), errors="coerce")
+	result = pd.to_numeric(clean.mask(clean == "", np.nan), errors="coerce")
 	bad = ((clean != "") & result.isna()) | np.isinf(result.to_numpy(dtype=float))
 	if bad.any():
 		raise ValueError(f"{label}: nonnumeric or infinite values, e.g. {clean.loc[bad].iloc[0]!r}")
@@ -168,61 +143,6 @@ def empty_annotation(index):
 	for column in AGE_FIELDS:
 		frame[column] = np.nan if column in ["AGE_GEN", "AGE_LO", "AGE_HI", "AGE_QUAL"] else ""
 	return frame
-
-
-# 🚩 Native GEVA reader: exact coordinate/allele matching and explicit provenance
-def load_geva(weights, directory, chunk_size, selected_chromosomes, qc):
-	annotation = empty_annotation(weights.index)
-	rank = np.full(len(weights), 99, dtype=np.int16)
-	lookup = dict(zip(weights["_key"], weights.index))
-	source_rank = {"Combined": 0, "TGP": 1, "SGDP": 2}
-	for chromosome in selected_chromosomes:
-		if not (weights["CHR"] == chromosome).any():
-			continue
-		path = Path(directory) / f"atlas.chr{chromosome}.csv.gz"
-		if not path.is_file():
-			raise ValueError(f"Missing GEVA chromosome file: {path}. Use the explicit download command first.")
-		seen = set()
-		matched = 0
-		for raw in read_chunks(path, chunk_size, ","):
-			require_columns(raw, GEVA_AGE_COLUMNS, str(path))
-			raw = raw.rename(columns={"Chromosome": "CHR", "Position": "BP",
-				"AlleleRef": "REF", "AlleleAlt": "ALT"})
-			frame = normalize_variants(raw, label=str(path))
-			if not (frame["CHR"] == chromosome).all():
-				raise ValueError(f"{path}: contains a different chromosome.")
-			frame = frame.loc[frame["_key"].isin(lookup)].copy()
-			if frame.empty:
-				continue
-			for column in ["AgeMode_Jnt", "AgeCI95Lower_Jnt", "AgeCI95Upper_Jnt", "QualScore_Jnt"]:
-				frame[column] = numbers(frame[column], f"GEVA.{column}")
-			frame["DataSource"] = frame["DataSource"].str.strip()
-			if not frame["DataSource"].isin(source_rank).all():
-				raise ValueError("Unrecognized GEVA DataSource; expected Combined,TGP,SGDP.")
-			identities = list(zip(frame["_key"], frame["DataSource"]))
-			if len(set(identities)) != len(identities) or seen.intersection(identities):
-				raise ValueError("GEVA contains a duplicated SNP/source row.")
-			seen.update(identities)
-			matched += len(frame)
-			frame["_rank"] = frame["DataSource"].map(source_rank)
-			frame = frame.sort_values("_rank").drop_duplicates("_key", keep="first")
-			frame.index = frame["_key"].map(lookup).to_numpy()
-			frame = frame.loc[frame["_rank"].to_numpy() < rank[frame.index]].copy()
-			if frame.empty:
-				continue
-			rank[frame.index] = frame["_rank"].to_numpy()
-			values = {
-				"AGE_GEN": frame["AgeMode_Jnt"], "AGE_LO": frame["AgeCI95Lower_Jnt"],
-				"AGE_HI": frame["AgeCI95Upper_Jnt"], "AGE_QUAL": frame["QualScore_Jnt"],
-				"AGE_SOURCE": "GEVA_Atlas:" + frame["DataSource"], "AGE_METHOD": "GEVA_joint_clock_mode",
-				"AGE_UNCERTAINTY": "composite_posterior_95pct_bounds_may_be_overconfident",
-				"AGE_REF": frame["REF"], "AGE_ALT": frame["ALT"], "ANC": frame["AlleleAnc"].str.strip().str.upper(),
-			}
-			for column, values_column in values.items():
-				annotation.loc[frame.index, column] = values_column
-		qc.append(("matching", f"geva_chr{chromosome}_matched_source_rows", "", matched,
-			"Combined>TGP>SGDP; exact position and alleles, no strand complement."))
-	return annotation
 
 
 # 🚩 Canonical annotations: age, selection, frequency and proxy stay separate
@@ -302,18 +222,6 @@ def load_canonical(weights, path, pops, chunk_size, include_proxy, qc):
 	return annotation
 
 
-def combine_annotations(geva, canonical, preference):
-	answer = geva.copy()
-	other_columns = [x for x in canonical if x not in AGE_FIELDS]
-	for column in other_columns:
-		answer[column] = canonical[column]
-	canonical_age = canonical["AGE_GEN"].notna()
-	if preference == "geva":
-		canonical_age &= geva["AGE_GEN"].isna()
-	answer.loc[canonical_age, AGE_FIELDS] = canonical.loc[canonical_age, AGE_FIELDS]
-	return answer
-
-
 # 🚩 Age labels: no benign/pathogenic inference and no beta sign changes
 def classify_age(annotation, cutoff1, cutoff2, min_quality):
 	answer = annotation.copy()
@@ -355,7 +263,12 @@ def classify_age(annotation, cutoff1, cutoff2, min_quality):
 	answer["age_bin"] = label
 	answer["age_point_bin"] = point_label
 	answer["age_status"] = status
-	answer["age_usable"] = qualified
+	# A high-quality point estimate is not sufficient for an age-stratified
+	# score: missing/incompatible bounds or bounds spanning a cut point still
+	# leave the SNP in the uncertain module. Keep that weaker quality check
+	# separately so it cannot make an uncertainty-only analysis look dated.
+	answer["age_quality_pass"] = qualified
+	answer["age_usable"] = np.isin(label, AGE_BINS[:3])
 	return answer
 
 
@@ -386,8 +299,10 @@ def add_frequency_features(weights, annotation, pops, cutoffs):
 	return answer, True
 
 
-def permute_age(weights, annotation, seed):
+def permute_age(weights, annotation, seed, mode="auto"):
 	answer = annotation.copy()
+	if mode not in {"auto", "chr-maf", "chr-only"}:
+		raise ValueError("Age permutation mode must be auto, chr-maf, or chr-only.")
 	rng = np.random.default_rng(seed)
 	labels = answer["age_bin"].to_numpy(dtype=object)
 	permuted = labels.copy()
@@ -395,7 +310,28 @@ def permute_age(weights, annotation, seed):
 	# arms. Only qualified age-bin membership is randomized; otherwise the
 	# control would also destroy annotation coverage and uncertainty patterns.
 	eligible = np.isin(labels, AGE_BINS[:3])
-	strata = pd.DataFrame({"CHR": weights["CHR"], "freq_bin": answer["freq_bin"]})
+	maf_known = answer["freq_bin"].fillna("missing").ne("missing").to_numpy()
+	n_eligible, n_maf = int(eligible.sum()), int((eligible & maf_known).sum())
+	if mode == "chr-maf" and n_maf < n_eligible:
+		raise ValueError(
+			"Strict CHR+MAF age permutation requires external reference AF for every "
+			f"usable age variant; {n_eligible - n_maf} are missing. Supply reference "
+			"frequencies, or choose auto/chr-only and report the exploratory limitation."
+		)
+	if not n_eligible:
+		scheme = "not_applicable"
+	elif mode == "chr-only" or n_maf == 0:
+		scheme = "chr_only_exploratory"
+	elif n_maf < n_eligible:
+		scheme = "chr_reference_maf_partial"
+	else:
+		scheme = "chr_reference_maf"
+	# Age-only annotations may supply no population AF. In auto mode
+	# it therefore gets an explicitly named chromosome-only exploratory
+	# control. Never silently claim MAF matching when it did not occur.
+	freq_stratum = (pd.Series("all", index=answer.index) if mode == "chr-only"
+		else answer["freq_bin"].fillna("missing"))
+	strata = pd.DataFrame({"CHR": weights["CHR"], "freq_bin": freq_stratum})
 	for indices in strata.groupby(["CHR", "freq_bin"], sort=True).groups.values():
 		idx = np.asarray(list(indices), dtype=np.int64)
 		qualified = idx[eligible[idx]]
@@ -407,13 +343,30 @@ def permute_age(weights, annotation, seed):
 		raise AssertionError("Permutation changed missing/uncertain age annotation positions.")
 	answer["perm_age_bin"] = permuted
 	answer["perm_age_eligible"] = eligible
-	answer["perm_stratum"] = weights["CHR"].astype(str) + ":" + answer["freq_bin"].astype(str)
+	answer["perm_stratum"] = weights["CHR"].astype(str) + ":" + freq_stratum.astype(str)
+	answer["permutation_scheme"] = scheme
+	answer.attrs["permutation"] = {
+		"permutation_requested_mode": mode,
+		"permutation_scheme": scheme,
+		"permutation_eligible_variants": n_eligible,
+		"permutation_maf_covered_variants": n_maf,
+		"permutation_maf_covered_fraction": n_maf / n_eligible if n_eligible else None,
+		"permutation_ld_controlled": False,
+	}
 	return answer
 
 
 # 🚩 Module definitions and phenotype-free PLINK weight matrices
 def module_specs(annotation, pops, selection_log10_threshold, use_frequency, include_proxy):
 	modules = []
+	scheme = annotation.attrs.get("permutation", {}).get("permutation_scheme", "unspecified")
+	permutation_descriptions = {
+		"chr_reference_maf": "qualified ages permuted within CHR/reference MAF",
+		"chr_reference_maf_partial": "qualified ages permuted within CHR/reference MAF where available; missing-AF SNPs use chromosome-only strata",
+		"chr_only_exploratory": "exploratory chromosome-only qualified-age permutation; not MAF-matched",
+		"not_applicable": "no usable dated SNPs to permute",
+	}
+	permutation_description = permutation_descriptions.get(scheme, "permutation strata not specified")
 	def append(name, group, pop, multiplier, description):
 		modules.append({"module": name, "group": group, "population": pop,
 			"description": description, "multiplier": np.asarray(multiplier, dtype=float)})
@@ -424,7 +377,7 @@ def module_specs(annotation, pops, selection_log10_threshold, use_frequency, inc
 			for label in AGE_BINS:
 				append(f"{prefix}_{label}_{pop}", group, pop, annotation[column] == label,
 					"Inferred derived-allele age partition; fixed feature boundaries, not population split dates." if group == "age"
-					else "Fixed-seed control: qualified ages permuted within CHR/reference MAF; uncertain/unknown SNPs stay fixed. Not a permutation P value.")
+					else f"Fixed-seed control: {permutation_description}; uncertain/unknown SNPs stay fixed. Not LD-matched or a permutation P value.")
 	for pop in pops:
 		column = f"SEL_LOG10P_{pop}"
 		if column not in annotation:
@@ -517,6 +470,9 @@ def build(args):
 		raise ValueError("--diff-cutoffs must be ascending values in (0,1].")
 	if not (0 < args.selection_p <= 1) or args.chunk_size < 1:
 		raise ValueError("--selection-p must be in (0,1], and --chunk-size positive.")
+	minimum_age_variants = getattr(args, "min_age_variants", 1)
+	if minimum_age_variants < 1 or int(minimum_age_variants) != minimum_age_variants:
+		raise ValueError("--min-age-variants must be a positive integer.")
 	pops = population_list(args.populations)
 	selected_chromosomes = chromosomes(args.chromosomes)
 	weights = load_weights(args.weights, pops, selected_chromosomes)
@@ -524,31 +480,54 @@ def build(args):
 		("input", "variants", "", len(weights), "No target phenotype or split label is read."),
 		("definition", "build", "", "GRCh37", "1-based exact coordinate plus alleles; no strand complement."),
 		("definition", "age_cutoffs_generations", "", ",".join(map(str, args.age_cutoffs)), "Feature boundaries, not population separation dates."),
-		("definition", "permutation_seed", "", args.seed, "One fixed negative control, not a permutation P value; qualified age labels only, within CHR/reference MAF."),
+		("definition", "permutation_seed", "", args.seed, "One fixed negative control, not a permutation P value; qualified age labels only. Actual matching scheme is reported below."),
 		("definition", "age_interpretation", "", "inferred_derived_allele_origin_generations", "Estimated from genetic data; not directly observed historical dates or AFR/EUR/EAS/SAS divergence dates."),
 	]
-	geva = empty_annotation(weights.index)
-	canonical = empty_annotation(weights.index)
-	if args.geva_dir:
-		geva = load_geva(weights, args.geva_dir, args.chunk_size, selected_chromosomes, qc)
-	if args.annotations:
-		canonical = load_canonical(weights, args.annotations, pops, args.chunk_size, args.include_proxy, qc)
-	annotation = combine_annotations(geva, canonical, args.age_priority)
+	annotation = load_canonical(weights, args.annotations, pops, args.chunk_size, args.include_proxy, qc)
 	annotation = classify_age(annotation, *args.age_cutoffs, args.min_age_quality)
 	annotation["effect_allele_is_dated"] = (weights["A1"] == annotation["AGE_ALT"]).where(
 		annotation["AGE_GEN"].notna(), None)
 	usable = int(annotation["age_usable"].sum())
-	if usable == 0 and not args.allow_proxy_only:
-		raise ValueError("No usable genuine age annotations matched. Provide GEVA/canonical ages with confirmed ancestral orientation and quality, or explicitly choose --allow-proxy-only.")
-	mode = "human_evolution" if usable else "proxy_only"
+	weighted = weights[[f"beta_{pop}" for pop in pops]].fillna(0).ne(0).any(axis=1)
+	usable_weighted = int((annotation["age_usable"] & weighted).sum())
+	if usable_weighted < minimum_age_variants and not args.allow_proxy_only:
+		raise ValueError(
+			f"Only {usable_weighted} usable, nonzero-weight age variants matched; "
+			f"--min-age-variants requires {minimum_age_variants}. Provide canonical "
+			"ages with confirmed derived orientation, adequate quality, and compatible "
+			"bounds wholly inside one age bin, or explicitly choose --allow-proxy-only."
+		)
+	mode = "human_evolution" if usable_weighted >= minimum_age_variants else "proxy_only"
 	annotation, use_frequency = add_frequency_features(weights, annotation, pops, args.diff_cutoffs)
-	annotation = permute_age(weights, annotation, args.seed)
+	annotation = permute_age(weights, annotation, args.seed, getattr(args, "age_permutation_mode", "auto"))
+	permutation_info = annotation.attrs["permutation"]
+	changed = annotation["age_bin"] != annotation["perm_age_bin"]
+	bins_present = [label for label in AGE_BINS[:3] if ((annotation["age_bin"] == label) & weighted).any()]
+	quality_pass = int(annotation["age_quality_pass"].sum())
+	age_info = {
+		"age_quality_pass_variants": quality_pass,
+		"age_usable_variants": usable,
+		"age_usable_fraction": usable / len(weights),
+		"age_usable_weighted_variants": usable_weighted,
+		"age_bins_present": bins_present,
+		"age_bin_count": len(bins_present),
+		"minimum_age_variants": int(minimum_age_variants),
+		"age_partition_status": "multiple_dated_bins" if len(bins_present) >= 2 else "single_dated_bin" if bins_present else "no_dated_bins",
+		"permutation_changed_variants": int(changed.sum()),
+		"permutation_changed_weighted_variants": int((changed & weighted).sum()),
+		"permutation_has_weighted_contrast": bool((changed & weighted).any()),
+		**permutation_info,
+	}
 	modules = module_specs(annotation, pops, math.log10(args.selection_p), use_frequency, args.include_proxy)
 	qc += [
-		("coverage", "usable_age_variants", "", usable, "Finite age, externally confirmed derived orientation, and quality threshold."),
+		("coverage", "age_quality_pass_variants", "", quality_pass, "Finite age, externally confirmed derived orientation, and quality threshold; alone not a usable age-bin assignment."),
+		("coverage", "usable_age_variants", "", usable, "Adequate quality plus finite compatible bounds entirely inside young/middle/old; uncertain/unknown do not count."),
 		("coverage", "usable_age_fraction", "", usable / len(weights), "Coverage is reported; it is not prediction accuracy."),
+		("coverage", "usable_weighted_age_variants", "", usable_weighted, "Usable age assignment and nonzero beta in at least one requested source population."),
+		("coverage", "weighted_age_bins_present", "", ",".join(bins_present), "One bin alone does not establish a young-versus-old contrast."),
+		("definition", "minimum_age_variants", "", minimum_age_variants, "A data-contract floor, not a scientifically sufficient sample-size or coverage requirement."),
 		("definition", "evolution_mode", "", mode, "proxy_only is not an evolutionary reconstruction."),
-		("definition", "min_age_quality", "", args.min_age_quality, "GEVA pair-retention quality, not pathogenicity probability."),
+		("definition", "min_age_quality", "", args.min_age_quality, "Declared source quality, not pathogenicity probability."),
 		("definition", "selection_threshold_p", "", args.selection_p, "Feature bin threshold, not corrected genome-wide discovery."),
 	]
 	for label in AGE_BINS:
@@ -559,65 +538,12 @@ def build(args):
 		qc.append(("weights", "available_beta_variants", pop, int(weights[f"beta_{pop}"].notna().sum()), "Missing source-population betas score as zero and remain NA in variants table."))
 	qc.append(("negative_control", "permutable_qualified_age_variants", "", int(annotation["perm_age_eligible"].sum()), "Only young/middle/old qualified age labels can change; their SNP support is fixed."))
 	qc.append(("negative_control", "fixed_uncertain_or_unknown_variants", "", int((~annotation["perm_age_eligible"]).sum()), "Each uncertain/unknown SNP retains its original label and module weights."))
-	qc.append(("negative_control", "permuted_labels_changed", "", int((annotation["age_bin"] != annotation["perm_age_bin"]).sum()), "Module counts preserved within strata; qualified singleton/homogeneous strata may not change. One control is not a significance test."))
-	return emit_outputs(weights, annotation, modules, args.out_dir, mode, qc, args.force)
-
-
-# 🚩 Explicit external-data download, integrity checks and atomic completion
-def check_geva_file(path, expected_md5=None):
-	md5 = hashlib.md5()
-	sha256 = hashlib.sha256()
-	size = 0
-	with open(path, "rb") as stream:
-		for block in iter(lambda: stream.read(1024 * 1024), b""):
-			md5.update(block)
-			sha256.update(block)
-			size += len(block)
-	if expected_md5 and md5.hexdigest() != expected_md5:
-		raise ValueError(f"Official GEVA MD5 mismatch for {path.name}: got {md5.hexdigest()}, expected {expected_md5}")
-	with gzip.open(path, "rt") as stream:
-		header = None
-		for line in stream:
-			if not line.startswith("#"):
-				header = [x.strip() for x in next(csv.reader([line]))]
-				break
-		if not header or not set(GEVA_AGE_COLUMNS).issubset(header):
-			raise ValueError(f"Not a GEVA Atlas summary gzip: {path}")
-		while stream.read(1024 * 1024):
-			pass
-	return {"bytes": size, "md5": md5.hexdigest(), "sha256": sha256.hexdigest(),
-		"official_md5_verified": bool(expected_md5), "gzip_integrity_verified": True}
-
-
-def download(args):
-	directory = Path(args.geva_dir)
-	directory.mkdir(parents=True, exist_ok=True)
-	records = []
-	for chromosome in chromosomes(args.chromosomes):
-		name = f"atlas.chr{chromosome}.csv.gz"
-		path = directory / name
-		expected = GEVA_MD5.get(chromosome)
-		url = GEVA_URL.format(chromosome=chromosome)
-		if path.is_file() and not args.force:
-			info = check_geva_file(path, expected)
-			records.append({"chromosome": chromosome, "path": str(path), "status": "verified_existing", **info})
-			print(json.dumps(records[-1]), flush=True)
-			continue
-		fd, temporary_name = tempfile.mkstemp(prefix=name + ".", suffix=".part", dir=directory)
-		os.close(fd)
-		temporary = Path(temporary_name)
-		try:
-			request = urllib.request.Request(url, headers={"User-Agent": "GRID-evolution/1.0"})
-			with urllib.request.urlopen(request, timeout=args.timeout) as source, temporary.open("wb") as target:
-				shutil.copyfileobj(source, target, length=1024 * 1024)
-			info = check_geva_file(temporary, expected)
-			os.replace(temporary, path)
-			records.append({"chromosome": chromosome, "path": str(path), "status": "downloaded", **info})
-			print(json.dumps(records[-1]), flush=True)
-		finally:
-			if temporary.exists():
-				temporary.unlink()
-	return {"n_chromosomes": len(records), "geva_dir": str(directory), "source": GEVA_DOWNLOAD_PAGE}
+	qc.append(("negative_control", "permuted_labels_changed", "", age_info["permutation_changed_variants"], "Module counts preserved within strata; qualified singleton/homogeneous strata may not change. One control is not a significance test."))
+	qc.append(("negative_control", "permuted_weighted_labels_changed", "", age_info["permutation_changed_weighted_variants"], "A value of zero means no weighted age negative-control contrast was created."))
+	qc.append(("negative_control", "permutation_scheme", "", permutation_info["permutation_scheme"], "chr_only_exploratory does not control for MAF; partial reference MAF leaves missing-AF SNPs chromosome-stratified only."))
+	qc.append(("negative_control", "permutation_maf_covered_fraction", "", permutation_info["permutation_maf_covered_fraction"], "Among usable age variants; external source frequencies only, never inferred from missing data."))
+	qc.append(("negative_control", "permutation_ld_controlled", "", False, "CHR+MAF stratification does not match LD, recombination rate, or other genomic annotations."))
+	return emit_outputs(weights, annotation, modules, args.out_dir, mode, qc, args.force) | age_info
 
 
 def parser():
@@ -626,33 +552,30 @@ def parser():
 	build_parser = sub.add_parser("build", help="Create phenotype-free PLINK score modules.")
 	build_parser.add_argument("--weights", required=True, help="TSV[.gz]: CHR BP SNP A1 A2 beta_<POP>.")
 	build_parser.add_argument("--out-dir", required=True, help="Temporary exchange/output directory.")
-	build_parser.add_argument("--geva-dir", help="Existing atlas.chr*.csv.gz directory; no automatic download.")
-	build_parser.add_argument("--annotations", help="Canonical annotation TSV[.gz], see module doc/README.")
+	build_parser.add_argument("--annotations", required=True, help="Canonical annotation TSV[.gz], see module doc/README.")
 	build_parser.add_argument("--build", choices=["GRCh37"], default="GRCh37")
 	build_parser.add_argument("--populations", default="EUR,AFR,EAS,SAS")
 	build_parser.add_argument("--chromosomes", default="1-22")
 	build_parser.add_argument("--chunk-size", type=int, default=100000)
 	build_parser.add_argument("--age-cutoffs", type=float, nargs=2, default=[1000, 4000], metavar=("YOUNG", "OLD"))
 	build_parser.add_argument("--min-age-quality", type=float, default=0.8)
-	build_parser.add_argument("--age-priority", choices=["canonical", "geva"], default="canonical")
+	build_parser.add_argument("--min-age-variants", type=int, default=1,
+		help="Minimum usable nonzero-weight age variants; a data-contract floor, not a scientific sufficiency threshold.")
+	build_parser.add_argument("--age-permutation-mode", choices=["auto", "chr-maf", "chr-only"], default="auto",
+		help="auto names any missing-MAF fallback explicitly; chr-maf requires reference AF for every usable age SNP; chr-only is exploratory.")
 	build_parser.add_argument("--selection-p", type=float, default=0.001)
 	build_parser.add_argument("--diff-cutoffs", type=float, nargs=2, default=[0.05, 0.20])
 	build_parser.add_argument("--seed", type=int, default=12345)
 	build_parser.add_argument("--include-proxy", action="store_true", help="Include nonnegative PROXY_* fields as explicitly separate modules.")
-	build_parser.add_argument("--allow-proxy-only", action="store_true", help="Explicitly permit zero usable age matches; every result is marked proxy_only.")
+	build_parser.add_argument("--allow-proxy-only", action="store_true", help="Explicitly permit fewer usable weighted ages than required; the result is marked proxy_only.")
 	build_parser.add_argument("--force", action="store_true", help="Replace only files owned by this module builder.")
-	download_parser = sub.add_parser("download", help="Explicitly download GEVA summary data to a reference directory.")
-	download_parser.add_argument("--geva-dir", required=True)
-	download_parser.add_argument("--chromosomes", default="1-22")
-	download_parser.add_argument("--timeout", type=float, default=60)
-	download_parser.add_argument("--force", action="store_true")
 	return main
 
 
 def main():
 	args = parser().parse_args()
 	try:
-		result = build(args) if args.command == "build" else download(args)
+		result = build(args)
 		print(json.dumps(result, sort_keys=True))
 	except (ValueError, OSError, EOFError, pd.errors.ParserError) as error:
 		print(f"GRID evolution: {error}", file=sys.stderr)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GRID: human population history, individual matching and fixed held-out evaluation.
+# GRID: GPU individual-reference matching and fixed held-out evaluation.
 set -euo pipefail
 umask 077
 export PYTHONDONTWRITEBYTECODE=1
@@ -14,6 +14,7 @@ Usage:
   cd /mnt/d/scripts/grid
   bash grid.sh --traits height,ldl,t2dm --check
   bash grid.sh --traits height,ldl,t2dm
+  bash grid.sh --check-device
   bash grid.sh --stage fit --trait height
   bash grid.sh --stage predict --trait height --model-file MODEL --data-file NEW_PEOPLE
   bash grid.sh all --traits height,ldl,t2dm --run-prsformer \
@@ -21,7 +22,7 @@ Usage:
 
 Stages (--stage):
   prepare    Align phenotype, CSx scores and PCs; freeze the common 50/50 split.
-  evolution  Build annotated genetic features using sourced human variation data.
+  evolution  Validate score lineage; build features only for explicit annotations.
   fit        Tune within training; freeze predictors, matching and screening rules.
   predict    Apply a frozen --model-file to new individuals in --data-file.
   report     Evaluate the frozen test half; publish figures, workbooks and explanations.
@@ -49,16 +50,24 @@ Common data options:
   --data-file FILE            Optional prepared eid,split,y,csx.* input table.
   --split-file FILE           Optional fixed eid,split=train|test roster.
   --split-group-file FILE     Optional eid,family_id (or group) to separate relatives.
-  --annotation-file FILE      Optional canonical human evolutionary annotations.
-  --geva-dir DIR              /mnt/f/ref/GEVA.
+  --annotation-file FILE      Optional canonical annotations; default uses CSx + PCs.
+  --age-permutation-mode MODE auto (labeled), chr-maf (strict), or chr-only.
+  --min-age-variants N         Minimum nonzero-weight, confidently assigned ages.
   --build NAME                GRCh37.
-  --allow-proxy-only          Explicitly permit features without trusted allele-age data.
+  --allow-proxy-only          For explicit annotations: permit inadequate age coverage.
   --out-root DIR              /mnt/d/analysis/grid/GRID.
   --cache-dir DIR             /tmp/grid-cache/grid; sensitive temporary data.
 
 Controls:
+  --abm-backend METHOD         selective_attention (default) or reference (legacy).
+  --device DEVICE              GRID attention: cuda (default); cuda:0 selects GPU 0.
+  --retrieval METHOD           cuda (default), kd_tree or hnsw.
+  --check-device               Test real GRID GPU forward/backward without cohort IO.
+  --attention-epochs N         Maximum neural training epochs (20); tune_model selects.
   --python PATH               GRID_PYTHON, then python3 from the automatically
-                              activated grid Conda environment.
+                              activated grid Conda environment. An explicit
+                              interpreter uses its own environment without activation.
+  --feature-manifest FILE     predict: saved feature-contract and input-file hashes.
   --check                     Same as --stage check.
   --dry-run [TRUE|FALSE]       Print commands only; do not read data or import models.
   --python-help               Show every method/data option implemented by f/grid.py.
@@ -111,6 +120,8 @@ esac
 
 # 🚩 Runtime, inputs and argument arrays
 PYTHON=${GRID_PYTHON:-python3}
+PYTHON_EXPLICIT=FALSE
+[[ -z ${GRID_PYTHON:-} ]] || PYTHON_EXPLICIT=TRUE
 CACHE_DIR=/tmp/grid-cache/grid
 OUT_ROOT=/mnt/d/analysis/grid/GRID
 PRSFORMER_ROOT=
@@ -120,6 +131,7 @@ TRAITS=height,ldl,t2dm
 RUN_PRSFORMER=FALSE
 DRY_RUN=FALSE
 PYTHON_HELP=FALSE
+RUN_LOG=
 GRID_ARGS=()
 PRS_SHARED=()
 PRS_ARGS=()
@@ -128,8 +140,9 @@ while (($#)); do
 	case $1 in
 		-h | --help | help) usage; exit 0 ;;
 		--python-help) PYTHON_HELP=TRUE; shift ;;
-		--python) need_value "$@"; PYTHON=$2; shift 2 ;;
+		--python) need_value "$@"; PYTHON=$2; PYTHON_EXPLICIT=TRUE; shift 2 ;;
 		--check) STAGE=check; shift ;;
+		--check-device) STAGE=check; GRID_ARGS+=(--check-device); shift ;;
 		--stage) need_value "$@"; STAGE=$2; shift 2 ;;
 		--cache-dir) need_value "$@"; CACHE_DIR=$2; shift 2 ;;
 		--out-root) need_value "$@"; OUT_ROOT=$2; shift 2 ;;
@@ -172,6 +185,7 @@ case $STAGE in prepare | evolution | fit | predict | report | all | check) ;; *)
 # Keep PLINK and other executables in the same environment as the selected Python.
 # Preserve the supplied environment's bin directory even when Python is a symlink.
 if [[ $DRY_RUN == FALSE && ( $MODULE != prsformer || $PYTHON_HELP == TRUE ) ]]; then
+	if [[ $PYTHON_EXPLICIT == FALSE ]]; then
 	CONDA_INIT="$HOME/miniforge3/etc/profile.d/conda.sh"
 	[[ -f $CONDA_INIT ]] || CONDA_INIT="$HOME/anaconda3/etc/profile.d/conda.sh"
 	[[ -f $CONDA_INIT ]] || die 'Conda initialization script unavailable; install Miniforge/Conda first'
@@ -185,6 +199,7 @@ if [[ $DRY_RUN == FALSE && ( $MODULE != prsformer || $PYTHON_HELP == TRUE ) ]]; 
 	fi
 	set -u
 	((CONDA_STATUS == 0)) || die 'Could not activate Conda environment grid; run install_grid.sh'
+	fi
 
 	PYTHON_COMMAND=$(command -v "$PYTHON") || die "Python unavailable: $PYTHON; set --python or run install_grid.sh"
 	PYTHON_DIRECTORY=$(cd -- "$(dirname -- "$PYTHON_COMMAND")" && pwd -P)
@@ -197,7 +212,13 @@ run_command() {
 	printf '%q ' "$@"
 	printf '\n'
 	[[ $DRY_RUN == FALSE ]] || return 0
-	"$@"
+	if [[ -n $RUN_LOG ]]; then
+		# pipefail preserves the worker's failure status while retaining the
+		# diagnostics of unattended/delayed runs after the terminal is closed.
+		"$@" 2>&1 | tee -a "$RUN_LOG"
+	else
+		"$@"
+	fi
 }
 if [[ $PYTHON_HELP == TRUE ]]; then
 	run_command "$PYTHON" "$ROOT/f/grid.py" --help
@@ -243,6 +264,9 @@ if [[ $DRY_RUN == FALSE ]]; then
 		mkdir -p -- "$CACHE_DIR"
 		exec {grid_lock}>"$CACHE_DIR/grid.lock"
 		flock -n "$grid_lock" || die "Another GRID run is using $CACHE_DIR"
+		mkdir -p -- "$CACHE_DIR/logs"
+		RUN_LOG=$(mktemp "$CACHE_DIR/logs/grid.$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.log")
+		printf 'LOG %s\n' "$RUN_LOG"
 	fi
 fi
 if [[ $MODULE == prsformer ]]; then

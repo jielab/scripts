@@ -65,8 +65,9 @@ Model and training:
   --checkpoint FILE            RUN/model.pt for --mode predict.
 
 Controls:
+  --check-runtime              Test official-model forward/backward on synthetic GPU inputs.
   --check                      Validate without training or publishing. all/prepare
-                               first checks raw data; an existing cache also enables
+                               checks runtime and raw data; an existing cache also enables
                                an actual small official-model forward/backward check.
   --dry-run [TRUE|FALSE]        Print commands only; do not read datasets or import GPU code.
   --resume [TRUE|FALSE]         Resume an interrupted all/train run with identical settings.
@@ -75,7 +76,7 @@ Controls:
   --help                       Show this message.
 
 No packages are installed automatically. Production neighborhood attention requires
-the documented PyTorch 2.6.0 + CUDA 12.4 + NATTEN 0.17.5 environment and NVIDIA GPU.
+a matched PyTorch/CUDA/NATTEN environment and NVIDIA GPU; see install.prsformer.sh.
 This trains on individual genotypes/phenotypes; no CSx GWAS weights or pretraining
 are implied. RDS scores contain held-out test individuals only, not all-subject OOF.
 HELP
@@ -149,6 +150,7 @@ THREADS=4
 SEED=20260904
 CHECKPOINT=
 CHECK=FALSE
+CHECK_RUNTIME=FALSE
 DRY_RUN=FALSE
 RESUME=FALSE
 REPLACE=FALSE
@@ -159,6 +161,7 @@ while (($#)); do
 	case $1 in
 		-h | --help | help) usage; exit 0 ;;
 		--check) CHECK=TRUE; shift ;;
+		--check-runtime) CHECK_RUNTIME=TRUE; shift ;;
 		--dry-run | --resume | --replace)
 			option=$1
 			boolean_value "$@"
@@ -263,6 +266,7 @@ MODEL_ARGS=(--genotypes "$CACHE_DIR/genotypes.npy" --data "$CACHE_DIR/data.tsv.g
 	--min-delta "$MIN_DELTA" --lr "$LR" --weight-decay "$WEIGHT_DECAY"
 	--clip-grad "$CLIP_GRAD" --amp "$AMP" --workers "$WORKERS" --threads "$THREADS" --seed "$SEED")
 if [[ $GRADIENT_CHECKPOINTING == TRUE ]]; then MODEL_ARGS+=(--gradient-checkpointing); else MODEL_ARGS+=(--no-gradient-checkpointing); fi
+RUNTIME=("$PYTHON" "$ROOT/f/3.prsformer.py" runtime "${MODEL_ARGS[@]}")
 TRAIN=("$PYTHON" "$ROOT/f/3.prsformer.py" train "${MODEL_ARGS[@]}")
 [[ $RESUME == FALSE ]] || TRAIN+=(--resume)
 PREDICT=("$PYTHON" "$ROOT/f/3.prsformer.py" predict "${MODEL_ARGS[@]}" --checkpoint "$CHECKPOINT")
@@ -284,12 +288,12 @@ need_cache() { cache_ready || die "Prepared cache incomplete: $CACHE_DIR; run --
 
 # 🚩 Dependencies: fail before decoding a production dataset when GPU setup is invalid
 dependencies() {
-	"$PYTHON" - "$MODE" "$ATTENTION" "$DEVICE" "$AMP" "$UPSTREAM_DIR" "$SPLIT_GROUP_FILE" <<'PY'
+	"$PYTHON" - "$MODE" "$ATTENTION" "$DEVICE" "$AMP" "$UPSTREAM_DIR" "$SPLIT_GROUP_FILE" "$ROOT" <<'PY'
 import importlib
 from pathlib import Path
 import sys
 
-mode, attention, device_name, amp, upstream, group_file = sys.argv[1:]
+mode, attention, device_name, amp, upstream, group_file, root = sys.argv[1:]
 modules = {"numpy", "pandas"}
 if mode in ("all", "prepare"):
 	modules.update(("pgenlib", "pyreadr"))
@@ -309,37 +313,27 @@ if mode in ("all", "train", "predict"):
 		if not (Path(upstream) / "src" / name).is_file():
 			raise SystemExit(f"ERROR: Missing official source {Path(upstream) / 'src' / name}; set --upstream-dir to the documented PRSformer checkout.")
 	try:
-		torch = importlib.import_module("torch")
-		device = torch.device(device_name)
-		if device.type not in ("cuda", "cpu"):
-			raise RuntimeError("Only cuda or cpu devices are supported.")
-		if device.type == "cuda":
-			if not torch.cuda.is_available():
-				raise RuntimeError("CUDA is unavailable to this Python environment.")
-			torch.cuda.get_device_properties(device)
-		if device.type == "cpu" and (attention != "global" or amp != "off"):
-			raise RuntimeError("CPU is only for an explicit small --attention global --amp off smoke test.")
-		if attention == "neighborhood":
-			if str(torch.__version__).split("+")[0] != "2.6.0" or torch.version.cuda != "12.4":
-				raise RuntimeError("Use the pinned torch 2.6.0 CUDA 12.4 build for production neighborhood attention.")
-			natten = importlib.import_module("natten")
-			if str(getattr(natten, "__version__", "")).split("+")[0] != "0.17.5":
-				raise RuntimeError("Use natten==0.17.5+torch260cu124; newer APIs are not interchangeable.")
-			if not all(hasattr(natten, name) for name in ("NeighborhoodAttention1D", "use_fused_na", "is_fna_enabled")):
-				raise RuntimeError("The NATTEN build lacks the official PRSformer attention API.")
-		if amp == "bf16" and device.type == "cuda" and not torch.cuda.is_bf16_supported():
-			raise RuntimeError("BF16 is not supported on this GPU; use fp16 or off.")
+		from types import SimpleNamespace
+		spec = importlib.util.spec_from_file_location("prsformer_runtime", Path(root) / "f/3.prsformer.py")
+		adapter = importlib.util.module_from_spec(spec)
+		spec.loader.exec_module(adapter)
+		torch, device, _ = adapter.runtime(SimpleNamespace(device=device_name, amp=amp, threads=1), attention)
+		adapter.load_official_model(upstream, attention)
 		print(f"DEPENDENCIES OK: python={sys.executable}; torch={torch.__version__}; device={device}; attention={attention}")
 	except (ImportError, OSError, RuntimeError, ValueError, AssertionError) as exc:
 		raise SystemExit(f"ERROR: PRSformer runtime preflight failed: {exc} See README.prsformer.md.")
 else:
 	print(f"DEPENDENCIES OK: python={sys.executable}; mode={mode}; GPU not required for this mode")
 PY
+	# Exercise compiled kernels before a full cohort is decoded or written.
+	if [[ $MODE == all ]]; then run_command "${RUNTIME[@]}"; fi
 }
 
 # 🚩 Print-only execution plan
 if [[ $DRY_RUN == TRUE ]]; then
-	if [[ $CHECK == TRUE ]]; then
+	if [[ $CHECK_RUNTIME == TRUE ]]; then
+		run_command "${RUNTIME[@]}"
+	elif [[ $CHECK == TRUE ]]; then
 		case $MODE in
 			all) run_command "${PREPARE[@]}" --check; run_command "${TRAIN[@]}" --check ;;
 			prepare) run_command "${PREPARE[@]}" --check ;;
@@ -359,7 +353,7 @@ if [[ $DRY_RUN == TRUE ]]; then
 	printf '\nPLAN ONLY: no dataset was read and no runtime compatibility was validated.\n'
 	exit 0
 fi
-command -v -- "$PYTHON" >/dev/null 2>&1 || die "Python not found: $PYTHON; use --python or create the environment described in README.prsformer.md"
+command -v -- "$PYTHON" >/dev/null 2>&1 || die "Python not found: $PYTHON; run bash install.prsformer.sh, or select an existing environment with --python"
 command -v flock >/dev/null 2>&1 || die 'flock is missing; install the Linux/WSL util-linux package before running PRSformer'
 [[ -f $ROOT/f/3.prsformer_data.py && -f $ROOT/f/3.prsformer.py ]] || die "Keep 3.prsformer.sh beside its f/ helper directory"
 export OMP_NUM_THREADS=$THREADS
@@ -367,9 +361,13 @@ export OPENBLAS_NUM_THREADS=$THREADS
 export MKL_NUM_THREADS=$THREADS
 
 # 🚩 Read-only checks; no inference, model fitting, or publication
+if [[ $CHECK_RUNTIME == TRUE ]]; then
+	run_command "${RUNTIME[@]}"
+	exit 0
+fi
 if [[ $CHECK == TRUE ]]; then
-	if [[ $MODE == all || $MODE == prepare ]]; then run_command "${PREPARE[@]}" --check; fi
 	dependencies
+	if [[ $MODE == all || $MODE == prepare ]]; then run_command "${PREPARE[@]}" --check; fi
 	case $MODE in
 		all)
 			if cache_ready; then run_command "${TRAIN[@]}" --check; else printf 'CHECK: raw inputs passed; prepare the cache to enable the official-model data/forward/backward check.\n'; fi

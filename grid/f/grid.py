@@ -12,6 +12,7 @@ import argparse
 import base64
 import hashlib
 import importlib.util
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -144,6 +145,17 @@ def scalar(value):
 	return value
 
 
+def runtime_signature():
+	import scipy
+	import sklearn
+	try:
+		torch_version = importlib.metadata.version("torch")
+	except importlib.metadata.PackageNotFoundError:
+		torch_version = None
+	return {"torch": torch_version, "python": ".".join(map(str, sys.version_info[:2])), "numpy": np.__version__,
+		"scipy": scipy.__version__, "sklearn": sklearn.__version__, "joblib": joblib.__version__}
+
+
 def write_model(bundle, metadata, path):
 	# R can inspect metadata directly. Python estimators are retained losslessly in
 	# one compressed payload; packed donor explanations are separate native R lists.
@@ -159,8 +171,15 @@ def read_model(path):
 		raise ValueError("Expected a model created by this GRID implementation")
 	if scalar(model.get("python_payload_codec")) != "base64-zlib-pickle5":
 		raise ValueError("Unrecognized model encoding")
+	metadata = json.loads(scalar(model["metadata_json"]))
+	if any(metadata.get("sources", {}).get(name) != source_signature().get(name) for name in ("grid.abm.py", "grid.attention.py")):
+		raise ValueError("Saved GRID model uses a different matching implementation; use its original code or refit with this release")
+	if metadata.get("runtime") != runtime_signature():
+		raise ValueError("Saved GRID model runtime differs or was not recorded; use the recorded Python/library versions or refit")
+	if metadata.get("training_diagnostics", {}).get("abm_backend") == "selective_attention":
+		load_module("grid.attention")
 	bundle = pickle.loads(zlib.decompress(base64.b64decode(scalar(model["python_payload"]))))
-	return bundle, json.loads(scalar(model["metadata_json"]))
+	return bundle, metadata
 
 
 def save_cache(value, path):
@@ -210,7 +229,7 @@ def source_signature():
 
 
 def settings(args):
-	exclude = {"stage", "replace", "model_file", "out_root", "prsformer_root", "bootstrap", "threads", "plot_dpi", "quiet"}
+	exclude = {"stage", "check_device", "replace", "model_file", "feature_manifest", "out_root", "prsformer_root", "bootstrap", "threads", "plot_dpi", "quiet"}
 	return {k: json_safe(v) for k, v in vars(args).items() if k not in exclude}
 
 
@@ -308,18 +327,17 @@ def evolution(args, prepared = None):
 	prepared["scoring_files"] = freeze_scoring_files(prepared)
 	prepared["state"] = "features_ready"
 	save_cache(prepared, Path(args.cache_dir) / "prepared.joblib")
-	log("DONE", "evolution", "annotation groups and negative-control scores prepared")
+	log("DONE", "evolution", f"mode={prepared['metadata'].get('evolution_mode', 'canonical_annotations')}; feature preparation complete")
 	return prepared
 
 
 def model_configuration(args, groups, trait, require_features = True):
-	primary = "GRID_evolution"
-	if not groups.get("evolution"):
-		if require_features and not args.allow_proxy_only:
-			raise ValueError("No evolutionary features; use actual age annotations or explicitly request --allow-proxy-only")
-		if args.allow_proxy_only:
-			primary = "GRID_frequency_only" if groups.get("frequency") else "GRID_no_evolution"
+	primary = ("GRID_evolution" if groups.get("evolution") else
+		"GRID_frequency_only" if groups.get("frequency") else "GRID_no_evolution")
 	return {
+		**{name: getattr(args, name) for name in ("abm_backend", "device", "attention_epochs", "attention_patience",
+			"attention_batch", "attention_width", "attention_heads", "attention_layers", "attention_dropout",
+			"attention_lr", "attention_reconstruction", "donor_block")},
 		"trait_type": "binary" if trait == "t2dm" else "continuous", "seed": args.seed,
 		"coverage": args.coverage, "coverages": tuple(args.coverages), "primary_arm": primary,
 		"train_role_fractions": tuple(args.train_role_fractions), "folds": args.folds,
@@ -335,11 +353,48 @@ def model_configuration(args, groups, trait, require_features = True):
 	}
 
 
+def feature_contract(prepared, trait):
+	"""Identify the construction rules that a precomputed feature provider must use.
+
+	A matching declaration prevents accidental mixing of runs. It cannot prove
+	that an external producer actually followed the declared computation.
+	"""
+	files = [{k: item[k] for k in ("role", "relative_path", "sha256")}
+		for item in prepared.get("scoring_files", {}).get(trait, [])]
+	construction = {"format": "GRID-feature-contract-1", "trait": trait,
+		"feature_groups": prepared["feature_groups"][trait], "build": prepared["settings"].get("build"),
+		"matching_pcs": "same_reference_projection_as_training; do not recompute target PCA",
+		"centering": "saved_training_frequencies; no new-cohort recentering",
+		"scoring_files": files, "input_mode": prepared["metadata"].get("input_mode"),
+		"training_source_identity": prepared["metadata"].get("sources", []),
+		"sources": prepared.get("source_signature", {})}
+	payload = json.dumps(json_safe(construction), sort_keys=True, separators=(",", ":"))
+	return {**construction, "contract_sha256": hashlib.sha256(payload.encode()).hexdigest()}
+
+
+def validate_feature_manifest(path, input_file, metadata):
+	if not path:
+		raise ValueError("predict requires --feature-manifest: declare the saved feature contract and the exact precomputed input file")
+	manifest = json.loads(Path(path).read_text())
+	expected = metadata.get("feature_contract", {}).get("contract_sha256")
+	if not expected or manifest.get("format") != "GRID-features-1" or manifest.get("trait") != metadata.get("trait"):
+		raise ValueError("Invalid feature manifest format/trait or model without a feature contract")
+	if manifest.get("feature_contract_sha256") != expected:
+		raise ValueError("Feature manifest belongs to different weights, centering, PCA or feature definitions")
+	if manifest.get("data_sha256") != sha256(input_file):
+		raise ValueError("Feature manifest does not identify this exact data file")
+	return {"status": "provider_declared_contract_and_file_hash_matched",
+		"feature_contract_sha256": expected, "data_sha256": manifest["data_sha256"],
+		"interpretation": "External feature calculation is declared, not independently reconstructed by predict"}
+
+
 def fit(args, prepared = None):
 	if prepared is None:
 		prepared = load_prepared(args, require_features = True)
 	validate_input_sources(prepared)
 	abm = load_module("grid.abm")
+	if args.abm_backend == "selective_attention":
+		load_module("grid.attention")
 	for trait in args.traits:
 		d = prepared["tables"][trait].copy()
 		# Eligibility depends on whether the endpoint is observed, never its value.
@@ -360,7 +415,7 @@ def fit(args, prepared = None):
 		result = abm.fit_predict(d, groups, config)
 		result["identity"] = identity
 		result["metadata"] = {
-			"method": "GRID", "version": "1.0", "trait": trait,
+			"method": "GRID", "version": "1.3-optional-annotations", "trait": trait,
 			"endpoint": ("baseline_t2dm_from_Yr2e_Yt2e" if args.t2dm_col == "auto" else args.t2dm_col)
 				if trait == "t2dm" else getattr(args, trait + "_col"),
 			"input_metadata": prepared.get("metadata", {}), "covariates": args.covariates,
@@ -368,6 +423,7 @@ def fit(args, prepared = None):
 			"cohort_roster_sha256": frame_digest(prepared["cohort"][["eid", "split", "family_id"]]),
 			"training_data_sha256": identity["training_data"], "test_predictor_sha256": identity["test_predictors"],
 			"feature_groups": groups, "sources": source_signature(), "python": platform.python_version(),
+			"runtime": runtime_signature(), "feature_contract": feature_contract(prepared, trait),
 			"numpy": np.__version__, "pandas": pd.__version__, "training_diagnostics": result["training_diagnostics"],
 			"primary_model": config["primary_arm"], "primary_policy": "GRID_policy",
 			"primary_endpoint": "Brier" if trait == "t2dm" else "MSE",
@@ -406,12 +462,50 @@ def prediction_metrics(y, prediction, covariate, binary):
 		bsse = float(np.sum(baseline_error ** 2))
 		result["total_R2"] = 1 - sse / sst if sst else np.nan
 		result["SSE_partial_R2"] = 1 - sse / bsse if bsse else np.nan
-		result["Prediction_R2"] = float(np.corrcoef(baseline_error, genetic_increment)[0, 1] ** 2) \
+		result["predictive_R2"] = result["total_R2"]
+		result["residual_correlation_R2"] = float(np.corrcoef(baseline_error, genetic_increment)[0, 1] ** 2) \
 			if len(y) > 2 and np.std(baseline_error) > 0 and np.std(genetic_increment) > 0 else np.nan
+	result.update(calibration_diagnostics(y, prediction, binary))
 	return result
 
 
-def add_prsformer(args, trait, result, cohort, table):
+def calibration_diagnostics(y, prediction, binary):
+	"""Held-out calibration diagnostics; these never recalibrate predictions."""
+	y, prediction = np.asarray(y, float), np.asarray(prediction, float)
+	answer = {"calibration_intercept": np.nan, "calibration_slope": np.nan,
+		"calibration_status": "not_identifiable", "calibration_refits_prediction": False}
+	if len(y) < 3 or np.std(prediction) <= 1e-12:
+		return answer
+	if not binary:
+		variance = float(np.mean((prediction-prediction.mean())**2))
+		slope = float(np.mean((prediction-prediction.mean())*(y-y.mean()))/variance)
+		return {**answer, "calibration_intercept": float(y.mean()-slope*prediction.mean()),
+			"calibration_slope": slope, "calibration_status": "estimated"}
+	if not np.isin(y, [0,1]).all() or len(np.unique(y)) != 2:
+		return answer
+	from scipy.optimize import minimize
+	from scipy.special import expit
+	p = np.clip(prediction, 1e-7, 1-1e-7)
+	x = np.log(p) - np.log1p(-p)
+	# In one predictor dimension, disjoint/touching class ranges imply complete
+	# or quasi separation. A small optimizer gradient can otherwise masquerade
+	# as a finite calibration MLE while the true slope is unbounded.
+	zero, one = x[y == 0], x[y == 1]
+	if zero.max() <= one.min() or one.max() <= zero.min():
+		return {**answer, "calibration_status": "separated"}
+	def objective(beta):
+		eta = beta[0] + beta[1]*x
+		error = expit(eta)-y
+		return float(np.mean(np.logaddexp(0,eta)-y*eta)), np.array([error.mean(), np.mean(error*x)])
+	fit = minimize(objective, np.array([0.,1.]), jac=True, method="BFGS", options={"maxiter":200,"gtol":1e-7})
+	if fit.success and np.isfinite(fit.x).all() and np.max(np.abs(fit.x)) < 1e3:
+		answer.update(calibration_intercept=float(fit.x[0]), calibration_slope=float(fit.x[1]), calibration_status="estimated")
+	else:
+		answer["calibration_status"] = "not_converged_or_separated"
+	return answer
+
+
+def add_prsformer(args, trait, result, cohort, table, features=None):
 	root = Path(args.prsformer_root)
 	roster_path = root / "prsformer/3.prsformer.split.rds"
 	score_path = root / "scores" / trait / "3.prsformer.scores.rds"
@@ -447,8 +541,23 @@ def add_prsformer(args, trait, result, cohort, table):
 			raise ValueError("PRSformer and GRID covariate definitions differ")
 	else:
 		raise ValueError("PRSformer scores lack covariate provenance; regenerate with the included adapter")
+	covariates = load_module("grid.data").names(args.covariates)
+	if covariates and (features is None or any("covariate."+name not in scores for name in covariates)):
+		raise ValueError("PRSformer scores lack original covariate values; republish with this adapter for a verified comparison")
+	if covariates:
+		observed = identified(features, "GRID comparison covariates")[["eid", *covariates]]
+		compare = table[["eid"]].merge(observed,on="eid",how="left",validate="one_to_one").merge(
+			scores[["eid", *["covariate."+name for name in covariates]]],on="eid",how="left",validate="one_to_one")
+		for name in covariates:
+			if not np.allclose(pd.to_numeric(compare[name], errors="coerce"),
+				pd.to_numeric(compare["covariate."+name], errors="coerce"), equal_nan=False, atol=1e-8, rtol=1e-7):
+				raise ValueError(f"PRSformer and GRID covariate values differ for {name}; same column names are insufficient")
+	if "endpoint_definition" in scores and set(scores.endpoint_definition.dropna().astype(str)) != {result["metadata"]["endpoint"]}:
+		raise ValueError("PRSformer and GRID endpoint definitions differ")
 	x = x.rename(columns = {"prediction": "PRSformer"}).drop(columns = "outcome")
 	return x, {"method": "PRSformer", "status": "common_cohort_test_verified", "n": len(x),
+		"score_file_sha256": sha256(score_path), "roster_file_sha256": sha256(roster_path),
+		"covariate_values": "matched_by_eid",
 		"comparison": "same outer development budget; separate supervised architecture and external GWAS information budget"}
 
 
@@ -512,6 +621,14 @@ def evaluate(table, methods, args, trait):
 				candidates = [primary, "GRID_policy"] if reference == "PRSformer" else [primary]
 				contrasts.extend({"trait": trait, "ancestry": population, "subset": subset,
 					"loss": "Brier" if binary else "MSE", **row} for row in paired_loss_comparison(x, candidates, args.bootstrap, args.seed + 811, reference))
+			for kind in ("Ridge", "HGB"):
+				for suffix in ("", "_full_training"):
+					candidate, reference = kind+"_evolution"+suffix, kind+"_no_evolution"+suffix
+					if {candidate, reference}.issubset(methods):
+						contrasts.extend({"trait": trait, "ancestry": population, "subset": subset,
+							"comparison_type": "global_annotation_increment_same_model_budget",
+							"loss": "Brier" if binary else "MSE", **row}
+							for row in paired_loss_comparison(x, [candidate], args.bootstrap, args.seed + 811, reference))
 		x = table.loc[population_mask]
 		coverage.append({"trait": trait, "ancestry": population, "n": len(x), "selected": int(x.selected.sum()),
 			"coverage": float(x.selected.mean()), "released": int(x.released.sum()), "release_coverage": float(x.released.mean()),
@@ -593,8 +710,8 @@ def make_figures(evaluation, table, result, path, args, trait):
 	metrics, paired, cov = evaluation["metrics"], evaluation["paired"], evaluation["coverage"]
 	primary = result["bundle"]["primary_arm"]
 	loss = "Brier" if trait == "t2dm" else "MSE"
-	fig, axes = plt.subplots(2, 2, figsize = (14, 10))
 	m = metrics[(metrics.ancestry == "ALL") & (metrics.subset == "all") & (metrics.method != "covariate_baseline")]
+	fig, axes = plt.subplots(2, 2, figsize = (16, max(10, 5 + .45*len(m))))
 	colors = ["#C16A42" if x in (primary, "GRID_policy") else "#548399" for x in m.method]
 	axes[0, 0].barh(m.method, m[loss], color = colors)
 	axes[0, 0].invert_yaxis()
@@ -616,7 +733,7 @@ def make_figures(evaluation, table, result, path, args, trait):
 	axes[1, 0].set_xticks(positions, q.ancestry)
 	axes[1, 0].set(ylim = (0, 1), ylabel = "Fraction of test individuals", title = "c  Frozen thresholds; actual test coverage")
 	axes[1, 0].legend(fontsize = 8)
-	selected_methods = [x for x in ("CSx_full_training", "CSx", "DiscoDivas_full_training", "PRSformer", primary, "GRID_policy") if x in metrics.method.values]
+	selected_methods = [x for x in ("CSx_full_training", "CSx", "DiscoDivas_calibrated_reference_full_training", "PRSformer", primary, "GRID_policy") if x in metrics.method.values]
 	for method in selected_methods:
 		x = metrics[(metrics.ancestry == "ALL") & (metrics.method == method)].set_index("subset")
 		x = x.reindex(["all", "selected", "rejected"])
@@ -631,7 +748,8 @@ def make_figures(evaluation, table, result, path, args, trait):
 	workbook({"metrics": metrics, "paired_loss": paired, "coverage": cov}, path / "grid.performance.xlsx")
 	contrasts = evaluation["contrasts"]
 	if not contrasts.empty:
-		fig, axes = plt.subplots(1, 2, figsize = (16, 5.5))
+		n_contrasts = len(contrasts[(contrasts.ancestry == "ALL") & (contrasts.subset == "all")])
+		fig, axes = plt.subplots(1, 2, figsize = (16, max(5.5, .60*n_contrasts)))
 		for ax, subset in zip(axes, ["all", "selected"]):
 			x = contrasts[(contrasts.ancestry == "ALL") & (contrasts.subset == subset)].reset_index(drop = True)
 			for i, row in x.iterrows():
@@ -680,6 +798,10 @@ def make_figures(evaluation, table, result, path, args, trait):
 
 
 def report(args, prepared = None):
+	# Fresh stage processes need the dynamically named pickle classes registered.
+	load_module("grid.abm")
+	if args.abm_backend == "selective_attention":
+		load_module("grid.attention")
 	if prepared is None:
 		prepared = load_prepared(args, require_features = True)
 	validate_input_sources(prepared)
@@ -707,7 +829,7 @@ def report(args, prepared = None):
 		if len(table) != len(result["predictions"]):
 			raise ValueError("Frozen prediction cohort and observed endpoint cohort differ")
 		methods = [*result["bundle"]["models"], *result["bundle"]["banks"], "GRID_policy"]
-		table, pf_status = add_prsformer(args, trait, result, prepared["cohort"], table)
+		table, pf_status = add_prsformer(args, trait, result, prepared["cohort"], table, d)
 		if "PRSformer" in table:
 			methods.append("PRSformer")
 		evaluation = evaluate(table, methods, args, trait)
@@ -731,12 +853,21 @@ def report(args, prepared = None):
 			explanations = table[[c for c in table if c not in methods or c in ["CSx", "GRID_policy", result["bundle"]["primary_arm"]]]]
 			explanations = explanations.merge(d[["eid", *feature_names]], on = "eid", how = "left", validate = "one_to_one")
 			write_rds(explanations, stage / "grid.individual_explanations.rds")
+			contract = result["metadata"]["feature_contract"]
+			(stage / "grid.feature_contract.json").write_text(json.dumps(json_safe(contract), ensure_ascii=False, indent=2) + "\n")
+			(stage / "grid.individual_explanations.manifest.json").write_text(json.dumps({
+				"format": "GRID-features-1", "trait": trait,
+				"feature_contract_sha256": contract["contract_sha256"],
+				"data_sha256": sha256(stage / "grid.individual_explanations.rds"),
+				"producer": "GRID_report_frozen_test_features"}, indent=2) + "\n")
 			write_rds(table[["eid", "split", "CSx", result["bundle"]["primary_arm"], "GRID_policy", "selected", "released"]], stage / "grid.scores.rds")
 			workbook({"role_counts": result["role_counts"], "model_tuning": result["tuning"],
 				"donor_crossfit": result["crossfit_audit"], "retrieval": result["retrieval_audit"],
 				"baseline_groups": result.get("baseline_groups", pd.DataFrame()),
 				"method_label_budget": result.get("method_label_budget", pd.DataFrame()),
 				"metric_features": result["metric_features"], "independent_audit": result["calibration_audit"],
+				"low_error_audit": result.get("low_error_audit", pd.DataFrame()),
+				"annotation_qc": prepared.get("metadata", {}).get("evolution", {}).get(trait, {}).get("annotation_qc", pd.DataFrame()),
 				"comparators": pd.DataFrame([pf_status])}, stage / "grid.training.xlsx")
 			for path in stage.rglob("*"):
 				# Stage files are complete before replacing a same-named formal result.
@@ -755,12 +886,14 @@ def project(args):
 	bundle, metadata = read_model(args.model_file)
 	if metadata.get("trait") != args.traits[0]:
 		raise ValueError(f"Requested trait {args.traits[0]} differs from saved model trait {metadata.get('trait')}")
+	provenance = validate_feature_manifest(args.feature_manifest, args.data_file, metadata)
 	d = identified(named_table(args.data_file), "Projection")
 	if "family_id" not in d:
 		d["family_id"] = d.eid
 	if "ancestry" not in d:
 		d["ancestry"] = "UNASSIGNED"
 	result = load_module("grid.abm").predict_new(bundle, d)
+	result["predictions"]["feature_provenance_status"] = provenance["status"]
 	output = Path(args.out_root) / args.traits[0] / "projection"
 	if output.exists() and any(output.iterdir()) and not args.replace:
 		raise ValueError("Projection output already exists; choose another --out-root or --replace")
@@ -779,6 +912,19 @@ def csv_values(text, cast = float):
 def parser():
 	p = argparse.ArgumentParser(description = __doc__)
 	p.add_argument("--stage", choices = ["prepare", "evolution", "fit", "report", "all", "check", "predict"], default = "all")
+	p.add_argument("--check-device", action="store_true", help="Exercise GRID Transformer and donor-attention forward/backward without reading cohort data")
+	p.add_argument("--abm-backend", choices=["selective_attention", "reference"], default="selective_attention")
+	p.add_argument("--device", default="cuda", help="GRID ABM device (cuda[:index] default); no silent CPU fallback")
+	p.add_argument("--attention-epochs", type=int, default=20)
+	p.add_argument("--attention-patience", type=int, default=4)
+	p.add_argument("--attention-batch", type=int, default=256)
+	p.add_argument("--attention-width", type=int, default=64)
+	p.add_argument("--attention-heads", type=int, default=4)
+	p.add_argument("--attention-layers", type=int, default=2)
+	p.add_argument("--attention-dropout", type=float, default=.1)
+	p.add_argument("--attention-lr", type=float, default=.0005)
+	p.add_argument("--attention-reconstruction", type=float, default=.1)
+	p.add_argument("--donor-block", type=int, default=8192)
 	p.add_argument("--traits", "--trait", default = "height,ldl,t2dm")
 	p.add_argument("--cache-dir", default = "/tmp/grid-cache/grid")
 	p.add_argument("--out-root", default = "/mnt/d/analysis/grid/GRID")
@@ -803,11 +949,14 @@ def parser():
 	p.add_argument("--ldl-col", default = "ldl")
 	p.add_argument("--t2dm-col", default = "auto", help = "Explicit baseline 0/1 column, or derive from t2dm.Yr2e/Yt2e")
 	p.add_argument("--chrs", default = "1-22")
-	p.add_argument("--annotation-file")
-	p.add_argument("--geva-dir", default = "/mnt/f/ref/GEVA")
+	p.add_argument("--annotation-file", help="Optional canonical annotations; omitted by default for CSx/PC reference matching")
 	p.add_argument("--build", choices = ["GRCh37"], default = "GRCh37")
-	p.add_argument("--allow-proxy-only", action = "store_true")
+	p.add_argument("--allow-proxy-only", action = "store_true", help="For an explicit annotation-file: permit inadequate age coverage")
 	p.add_argument("--include-proxy", action = "store_true")
+	p.add_argument("--min-age-variants", type=int, default=1,
+		help="Minimum nonzero-weight age assignments; a data-availability threshold, not sufficient evidence of predictive value")
+	p.add_argument("--age-permutation-mode", choices=["auto", "chr-maf", "chr-only"], default="auto",
+		help="auto labels missing-MAF controls exploratory; chr-maf requires complete reference MAF")
 	p.add_argument("--plink2", default = "plink2")
 	p.add_argument("--threads", type = int, default = 4)
 	p.add_argument("--score-memory", type = int, default = 2048)
@@ -820,7 +969,7 @@ def parser():
 	p.add_argument("--alpha-grid", type = csv_values, default = [0., .25, .5, .75, 1.])
 	p.add_argument("--radius-grid", type = csv_values, default = [1., 2., 4.])
 	p.add_argument("--max-dims", type = int, choices = [12], default = 12, help = "Fixed 2+4+2+4 block slots for controlled comparisons")
-	p.add_argument("--retrieval", choices = ["kd_tree", "hnsw"], default = "kd_tree")
+	p.add_argument("--retrieval", choices = ["cuda", "kd_tree", "hnsw"], default = "cuda")
 	p.add_argument("--query-batch", type = int, default = 1024)
 	p.add_argument("--ann-recall-min", type = float, default = .95)
 	p.add_argument("--ann-audit-n", type = int, default = 64)
@@ -831,6 +980,7 @@ def parser():
 	p.add_argument("--bootstrap", type = int, default = 200, help = "Paired test family bootstrap draws; 0 skips test intervals")
 	p.add_argument("--plot-dpi", type = int, default = 160)
 	p.add_argument("--model-file")
+	p.add_argument("--feature-manifest", help="Predict: JSON with trait, saved feature_contract_sha256 and data_sha256")
 	p.add_argument("--replace", action = "store_true")
 	p.add_argument("--quiet", action = "store_true")
 	return p
@@ -848,9 +998,28 @@ def main():
 		raise ValueError("Use --bootstrap 0 or at least 20 draws")
 	if args.threads < 1 or args.distance_pcs < 1:
 		raise ValueError("threads and distance-pcs must be positive")
+	if args.min_age_variants < 1:
+		raise ValueError("min-age-variants must be at least one")
 	os.umask(0o077)
+	# Check cheap native prerequisites before importing GPU libraries or reading
+	# the large phenotype RDS. --check-device is deliberately independent of data.
+	if not args.check_device and args.stage in {"all", "check"} and not args.data_file:
+		missing = []
+		if not args.weights_file:
+			for trait in args.traits:
+				path = Path(args.score_dir) / trait / "1csx.scores.provenance.json"
+				if not path.is_file():
+					missing.append(str(path))
+		if missing:
+			raise ValueError("Native input prerequisites missing before cohort loading: " + ", ".join(missing) +
+				". Create score provenance with 1.csx.sh --stage score using existing weights.")
 	from threadpoolctl import threadpool_limits
 	with threadpool_limits(limits = args.threads):
+		if args.check_device or args.stage in {"all", "fit", "check"}:
+			config = model_configuration(args, {}, args.traits[0], require_features=False)
+			log("DONE", "device_check", json.dumps(load_module("grid.abm").preflight(config)))
+			if args.check_device:
+				return
 		if args.stage == "predict":
 			project(args)
 		elif args.stage == "check":
@@ -862,9 +1031,7 @@ def main():
 				for trait in args.traits:
 					groups = prepared["feature_groups"][trait]
 					load_module("grid.abm")._configuration(model_configuration(args, groups, trait, require_features = bool(args.data_file)))
-				if not args.data_file and not Path(args.geva_dir).is_dir() and not args.annotation_file and not args.allow_proxy_only:
-					raise ValueError("GEVA/canonical age annotations are missing; see the download command in README")
-			log("DONE", "check", "cohort, split and dependencies checked; annotation/SNP alignment is checked during evolution")
+			log("DONE", "check", "cohort, split and dependencies checked; optional annotation/SNP alignment is checked during evolution")
 		elif args.stage == "all":
 			prepared = prepare(args)
 			prepared = evolution(args, prepared)

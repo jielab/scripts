@@ -162,7 +162,7 @@ import argparse, concurrent.futures, fcntl, json, os, shutil, subprocess, thread
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from grid_0_common import filter_samples, update_csx_table
+from grid_0_common import filter_samples, update_csx_table, score_source_records, sha256
 from grid_0_common import inspect, coverage, stamp
 
 
@@ -395,7 +395,7 @@ def csx_combined_main():
 	if a.stage == "weights":
 		return
 	scoring_sig = configuration(
-		[sig, a.mode],
+		[sig, a.mode, {"weights_sha256": sha256(weight)}],
 		targetfiles + [weight] + [Path(x) for x in (a.remove, a.keep) if x],
 	)
 	score = workspace(run / "combined_scores" / a.mode, "run", scoring_sig)
@@ -453,7 +453,7 @@ def csx_combined_main():
 	)
 	z = filter_samples(pd.read_csv(combined, sep="\t", dtype={"eid": str}), "eid", a.remove)
 	output = home / "1csx.scores.rds"
-	update_csx_table(z, output, a.remove)
+	update_csx_table(z, output, a.remove, provenance=score_source_records({f"csx.{a.mode}": weight}, sig, chrs))
 	print(f"DONE {a.trait}: csx.{a.mode}; N={len(z)}; {output}", flush=True)
 
 

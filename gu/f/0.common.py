@@ -888,9 +888,10 @@ def gu_native_files(run, method):
 		folders[:] = [n for n in folders if n not in ('tmp', 'mask', 'log', 'logs', '__pycache__')]
 		for name in names + [n for n in folders if (Path(directory) / n).is_symlink()]:
 			p = Path(directory) / name
-			if p.parent == run and (name.startswith(method + '.') or name.startswith(('.published-', '.result-', '.native-'))):
+			if p.parent == run and ((name.startswith(method + '.') and name != 'phyml.timeout.json') or name.startswith(('.published-', '.result-', '.native-'))):
 				continue
-			if p.suffix in ('.lock', '.cmd', '.err', '.pdf') or (p.suffix == '.log' and not name.endswith('.phyml.log')) or '.part.' in name:
+			worker_provenance = method == 'phyml' and p.parent == run and name in (run.name + '.cmd', run.name + '.log')
+			if not worker_provenance and (p.suffix in ('.lock', '.cmd', '.err', '.pdf') or (p.suffix == '.log' and not name.endswith('.phyml.log')) or '.part.' in name):
 				continue
 			yield p
 
@@ -1019,6 +1020,7 @@ def _gu_compact_results(work, methods, run_only=None):
 				# the small caller roster/provenance required by density summaries.
 				for p in list(run.iterdir()):
 					if p.name.startswith(method + '.') or p.name in ('run.meta.tsv','cache.meta.tsv','.published-content') or '.part.' in p.name:continue
+					if method == 'phyml' and p.name in ('.phyml.locus.complete.json', run.name + '.cmd', run.name + '.log'):continue
 					if p.name == 'samples' and method == 'ibdmix':
 						for q in list(p.rglob('*')):
 							if q.is_file() and q.name not in ('ALL.txt','male.txt'):q.unlink()

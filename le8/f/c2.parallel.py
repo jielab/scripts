@@ -307,7 +307,13 @@ def main():
     executor=a.cache_root/('_executor_'+key_of(str(a.outdir.resolve()))[:20]);atomic_json(executor/'tasks.json',tasks)
     with resources.phase_worker_budget(a.cores,a.memory_gib,a.pool,a.reserve_gib) as (cores,memory,pool):
         status=execute(tasks,executor,cores,memory,a.workers,pool,a.reserve_gib)
-    return 0 if collect(tasks,status,a.outdir) else 2
+    complete=collect(tasks,status,a.outdir)
+    failed=[(task,run) for task,run in zip(tasks,status) if run['status']!='completed']
+    print(f'[LE8 MR] Validated {len(tasks)-len(failed)}/{len(tasks)} tasks; status={a.outdir / "mrlink2.status.tsv"}',flush=True)
+    for task,run in failed[:5]:
+        log=executor/(hashlib.sha256(str(task['task_id']).encode()).hexdigest()+'.log')
+        print(f'[LE8 MR] FAIL {task["job"]["trait"]}: {run.get("reason","failed")}; log={log}',file=sys.stderr,flush=True)
+    return 0 if complete else 2
 
 import subprocess,math
 def validate_status(status_file,omics,trait):
@@ -333,10 +339,23 @@ def validate_status(status_file,omics,trait):
 
 def worker_main():
     p=argparse.ArgumentParser();p.add_argument('--task',type=Path,required=True);p.add_argument('--marker',type=Path,required=True)
-    a=p.parse_args(sys.argv[2:]);task=json.loads(a.task.read_text());a.marker.unlink(missing_ok=True)
-    # Each attempt MUST use a fresh private worker outdir. Do not reuse its old
-    # .complete/status files: cache reuse is decided by the parent fingerprints.
+    a=p.parse_args(sys.argv[2:]);task=json.loads(a.task.read_text())
+    # Task checkpoints are shared across module transactions; executor receipts
+    # are local to each transaction. A new executor may invoke a completed task.
+    # Revalidate its identity and artifacts without deleting its completion proof.
     worker_out=Path(task['worker_outdir'])
+    if a.marker.is_file():
+        record=json.loads(a.marker.read_text())
+        for key in ('task_id','scientific_signature'):
+            if record.get(key)!=task[key]:raise ValueError('MR checkpoint identity mismatch: '+key)
+        resources.validate_outputs({'outputs':[dict(path=str(a.marker),kind='mrlink_marker')]})
+        row=validate_status(worker_out/'mrlink2.status.tsv',task['omics'],task['trait'])
+        if record['status']!=row['status'] or record['row']!=row:raise ValueError('MR checkpoint status changed')
+        if row['status']=='ok' and not record.get('numerical_audits'):
+            raise ValueError('Estimate missing ordered SNP/allele numerical audit')
+        print(f'[LE8 MR] Reused validated checkpoint: {task["trait"]}',flush=True)
+        return 0
+    # An unvalidated attempt still requires a fresh private output directory.
     if worker_out.exists():raise ValueError('Worker outdir exists; create a new isolated attempt before retry')
     worker_out.mkdir(parents=True)
     proc=subprocess.run(task['argv'],cwd=task.get('cwd'),check=False)

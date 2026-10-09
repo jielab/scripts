@@ -22,6 +22,19 @@ cd /mnt/d/scripts/gu
 PhyML 在同一棵树上分别检验 Neanderthal（三参考）和 Denisovan（两参考），
 报告、携带者验证和图像均按谱系分开。加入参考后需要重新建树；旧的三参考树不能充当 Denisovan 结果。
 
+Overview 的 Locus evidence overview 仅显示报告中 `call=tree_supported` 的记录，
+不按序列 QC 筛选；QC 状态仍显示。每行对应一个 locus 的一个支持谱系，
+表上方同时列出独立 loci 数和谱系记录数。全部输入 loci 仍可在 PhyML → 全部位点和下载汇总中查看。
+
+IBDmix 密度图上方的 Supported loci 表覆盖全基因组，不限 GWAS loci。
+它沿用 final 中保留的原生片段过滤、科学参考范围及已完成运行的 `evidence_eligible` 资格，
+不追加 LOD、长度或携带率阈值。实验性 chrX 与 2013 对照参考不计入该证据表。
+同一谱系按现有 `segment_catalog` 区间编号汇总，跨参考的携带者按个体去重；
+显示代表区间、参考来源、最高 LOD 和片段数，可按谱系、染色体和最少携带人数筛选。
+单击同步区间，双击打开 IBDmix 片段页。这里的支持指原生调用证据，不表示已确认渗入来源。
+表格分页在服务器处理；首次聚合缓存到 `/tmp/gu-shiny-evidence/`，数据库变化后自动重算，
+不需要为此重跑 final 或 IBDmix。
+
 IBDmix 默认 `IBDMIX_PROFILE=multi_reference`，对五个参考分别在各人群运行。
 Neanderthal 保留非洲 Denisova 对照过滤；两个 Denisovan 参考输出独立的原生匹配片段，
 不减去由 Denisova 自身产生的对照区间。Overview 按个体合并同谱系参考的重叠片段后计算覆盖率，

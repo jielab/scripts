@@ -60,16 +60,66 @@ def validate_genotypes(values):
 		raise ValueError("Genotypes must contain dosage 0..2 or the missing value -1; do not standardize SNP dosages.")
 
 
+def identifier_hashes(values):
+	"""Canonical UKB IDs; hashes serve as membership keys, not anonymization."""
+	values = pd.Series(values, dtype="string").str.strip().str.replace(r"^([+-]?\d+)\.0+$", r"\1", regex=True)
+	if values.isna().any() or values.eq("").any():
+		raise ValueError("Missing individual/family identifier in split provenance.")
+	return {hashlib.sha256(value.encode()).hexdigest() for value in values}
+
+
+def validate_family_splits(data):
+	for name in ("group", "family_id"):
+		if name in data:
+			identifier_hashes(data[name])
+			canonical = data[name].astype("string").str.strip().str.replace(r"^([+-]?\d+)\.0+$", r"\1", regex=True)
+			if data.groupby(canonical)["split"].nunique().max() > 1:
+				raise ValueError(f"Related-family column {name} spans train/validation/test partitions.")
+
+
+def split_registry(data):
+	development = data[data["split"].isin(["train", "validation"])]
+	return {
+		"format_version": 1,
+		"development_ids": sorted(identifier_hashes(development["eid"])),
+		"development_families": {
+			name: sorted(identifier_hashes(development[name]))
+			for name in ("group", "family_id") if name in development
+		},
+	}
+
+
+def validate_prediction_holdout(data, identity, checkpoint):
+	"""A changed split label cannot turn a development participant into a test."""
+	registry = checkpoint.get("split_registry")
+	if registry is None:
+		if identity.get("data_sha256") != checkpoint.get("training_identity", {}).get("data_sha256"):
+			raise ValueError("Legacy checkpoint has no development-ID registry. Reuse its exact original cohort/split or retrain before predicting on a different cohort.")
+		return
+	if registry.get("format_version") != 1:
+		raise ValueError("Unrecognized checkpoint split-registry version.")
+	test = data[data["split"] == "test"]
+	if identifier_hashes(test["eid"]) & set(registry["development_ids"]):
+		raise ValueError("Requested test individuals were used for model training or validation; they are not held out.")
+	for name, recorded in registry.get("development_families", {}).items():
+		if name not in test:
+			raise ValueError(f"Prediction needs the original related-family column {name} to verify independence.")
+		if identifier_hashes(test[name]) & set(recorded):
+			raise ValueError("Requested test families overlap model training/validation families.")
+
+
 def read_inputs(args, traits, require_training=True):
 	input_paths = [Path(args.data), Path(args.variants), Path(args.genotypes)]
 	initial_stamps = [(path.stat().st_size, path.stat().st_mtime_ns, path.stat().st_ino) for path in input_paths]
-	data = pd.read_csv(args.data, sep="\t", dtype={"eid": str, "target": str, "split": str})
+	data = pd.read_csv(args.data, sep="\t", dtype={"eid": str, "target": str, "split": str, "group": str, "family_id": str})
 	required = ["eid", "target", "split"] + traits
 	missing = [column for column in required if column not in data]
 	if missing:
 		raise ValueError(f"Missing columns in --data: {missing}")
 	if data["eid"].isna().any() or data["eid"].duplicated().any():
 		raise ValueError("--data must have one unique nonmissing eid per genotype row.")
+	if len(identifier_hashes(data["eid"])) != len(data):
+		raise ValueError("--data contains duplicate individual IDs after normalizing integral UKB identifiers.")
 	if data["target"].isna().any() or data["split"].isna().any():
 		raise ValueError("Every sample needs a target label and an explicit split.")
 	allowed_splits = {"train", "validation", "test"}
@@ -79,6 +129,7 @@ def read_inputs(args, traits, require_training=True):
 		raise ValueError("Training requires nonempty train, validation, and test partitions.")
 	if not np.any(data["split"] == "test"):
 		raise ValueError("No held-out test samples were provided.")
+	validate_family_splits(data)
 	genotypes = np.load(args.genotypes, mmap_mode="r", allow_pickle=False)
 	if genotypes.ndim != 2 or genotypes.shape[0] != len(data):
 		raise ValueError("The sample-major genotype matrix must have exactly one row per row of --data, in the same order.")
@@ -234,6 +285,59 @@ def apply_baselines(data, traits, preprocessing):
 
 
 # 🚩 Official source loading; limited import compatibility without editing upstream
+def neighborhood_runtime():
+	"""Validate the two supported binary stacks; never select a dense fallback."""
+	torch = import_torch()
+	try:
+		natten = importlib.import_module("natten")
+	except ImportError as exc:
+		raise RuntimeError("NATTEN is missing; run bash install.prsformer.sh (see README.prsformer.md).") from exc
+	version = str(getattr(natten, "__version__", "")).split("+")[0]
+	stack = (str(torch.__version__).split("+")[0], torch.version.cuda, version)
+	if stack == ("2.6.0", "12.4", "0.17.5"):
+		if not all(hasattr(natten, key) for key in ("NeighborhoodAttention1D", "use_fused_na", "is_fna_enabled")):
+			raise RuntimeError("Legacy NATTEN lacks the upstream fused-attention API.")
+		if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 10:
+			raise RuntimeError("Blackwell GPUs require the modern CUDA 13.0 stack; run bash install.prsformer.sh.")
+	elif stack == ("2.12.0", "13.0", "0.21.7"):
+		if not getattr(natten, "HAS_LIBNATTEN", False) or not hasattr(natten, "na1d"):
+			raise RuntimeError("NATTEN's compiled extension is missing; install the matching torch2120cu130 wheel.")
+	else:
+		raise RuntimeError(f"Unsupported torch/CUDA/NATTEN stack {stack}; see README.prsformer.md for tested combinations.")
+	return natten, version
+
+
+def modern_natten_compatibility(natten):
+	"""Map PRSformer's old constructor to 0.21.7 with explicit CUTLASS FNA.
+
+	The qkv/proj modules and state-dict keys are inherited unchanged. Only the
+	removed zero-dropout/bias options and fused-backend controls are translated.
+	"""
+	class NeighborhoodAttention1D(natten.NeighborhoodAttention1D):
+		def __init__(self, dim, num_heads, kernel_size, dilation=1, is_causal=False,
+				rel_pos_bias=False, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
+			if rel_pos_bias or attn_drop != 0.:
+				raise ValueError("The modern adapter requires rel_pos_bias=False and attn_drop=0, as in official PRSformer.")
+			super().__init__(embed_dim=dim, num_heads=num_heads, kernel_size=kernel_size,
+				dilation=dilation, is_causal=is_causal, qkv_bias=qkv_bias,
+				qk_scale=qk_scale, proj_drop=proj_drop)
+
+		def forward(self, x):
+			batch, length, channels = x.shape
+			q, k, v = self.qkv(x).reshape(batch, length, 3, self.num_heads, self.head_dim).unbind(2)
+			attended = natten.na1d(q, k, v, kernel_size=self.kernel_size,
+				dilation=self.dilation, is_causal=self.is_causal, scale=self.scale,
+				backend="cutlass-fna")
+			return self.proj_drop(self.proj(attended.reshape(batch, length, channels)))
+
+	def require_fused(enabled):
+		if enabled is not True:
+			raise ValueError("The PRSformer compatibility adapter always requires CUTLASS fused neighborhood attention.")
+
+	return types.SimpleNamespace(NeighborhoodAttention1D=NeighborhoodAttention1D,
+		use_fused_na=require_fused, is_fna_enabled=lambda: bool(natten.HAS_LIBNATTEN))
+
+
 def load_official_model(upstream_dir, attention):
 	upstream_dir = Path(upstream_dir).resolve()
 	source_directory = upstream_dir / "src"
@@ -241,15 +345,12 @@ def load_official_model(upstream_dir, attention):
 	if not all(path.is_file() for path in paths.values()):
 		raise ValueError("--upstream-dir must contain the official src/model.py, src/modules.py, and src/utils.py.")
 	compatibility = []
+	natten_adapter = None
 	if attention == "neighborhood":
-		try:
-			natten = importlib.import_module("natten")
-		except ImportError as exc:
-			raise RuntimeError("Official neighborhood attention needs NATTEN. Use the documented torch 2.6.0 + natten 0.17.5 environment; no global-attention fallback is used.") from exc
-		if str(getattr(natten, "__version__", "")).split("+")[0] != "0.17.5":
-			raise RuntimeError("This adapter pins NATTEN 0.17.5 for the upstream use_fused_na/is_fna_enabled API; install the matching PyTorch/CUDA wheel.")
-		if not all(hasattr(natten, name) for name in ("NeighborhoodAttention1D", "use_fused_na", "is_fna_enabled")):
-			raise RuntimeError("The installed NATTEN build does not expose the API used by official PRSformer.")
+		natten, version = neighborhood_runtime()
+		if version == "0.21.7":
+			natten_adapter = modern_natten_compatibility(natten)
+			compatibility.append("NATTEN 0.21.7: translate dim/zero dropout/relative-bias options; explicitly use cutlass-fna with unchanged qkv/proj parameters.")
 	previous_modules = {name: sys.modules.get(name) for name in paths}
 	loaded = {}
 	try:
@@ -265,14 +366,19 @@ def load_official_model(upstream_dir, attention):
 						node.names = [alias for alias in node.names if alias.name != "pytorch_lightning"]
 					tree.body = [node for node in tree.body if not isinstance(node, ast.Import) or node.names]
 					compatibility.append("Skipped the unused pytorch_lightning import in utils.py; all functions are unchanged.")
-			if name == "modules" and attention == "global":
+			if name == "modules" and (attention == "global" or natten_adapter is not None):
 				# These names occur only inside the unused neighborhood-attention class.
 				tree.body = [node for node in tree.body if not (
 					(isinstance(node, ast.ImportFrom) and node.module == "natten") or
 					(isinstance(node, ast.Import) and any(alias.name == "natten" for alias in node.names))
 				)]
-				compatibility.append("Explicit small global-attention mode skips NATTEN imports and uses the upstream PyTorch attention branch.")
+				if attention == "global":
+					compatibility.append("Explicit small global-attention mode skips NATTEN imports and uses the upstream PyTorch attention branch.")
 			module = types.ModuleType(f"grid_prsformer_official_{name}")
+			if name == "modules" and natten_adapter is not None:
+				module.__dict__.update(natten=natten_adapter,
+					NeighborhoodAttention1D=natten_adapter.NeighborhoodAttention1D,
+					is_fna_enabled=natten_adapter.is_fna_enabled)
 			module.__file__ = str(path)
 			module.__package__ = ""
 			sys.modules[name] = module
@@ -343,6 +449,8 @@ def runtime(args, attention):
 	if device.type == "cuda" and not torch.cuda.is_available():
 		raise RuntimeError("CUDA is unavailable; genome-scale PRSformer training needs a compatible NVIDIA GPU.")
 	if device.type == "cuda":
+		if device.index is None:
+			device = torch.device("cuda", torch.cuda.current_device())
 		torch.cuda.set_device(device)
 	if attention == "neighborhood" and device.type != "cuda":
 		raise RuntimeError("The upstream fused neighborhood attention path requires CUDA. CPU is supported only for an explicit small global-attention check.")
@@ -507,10 +615,12 @@ def metrics_for(phenotype, prediction, baseline, genetic_score, trait):
 		baseline_error = np.sum((phenotype - baseline) ** 2)
 		full_error = np.sum((phenotype - prediction) ** 2)
 		total_variance = np.sum((phenotype - phenotype.mean()) ** 2)
+		full_r2 = float(1 - full_error / total_variance) if total_variance > 0 else np.nan
 		return {
-			"prediction_R2": correlation_squared(phenotype - baseline, genetic_score),
+			"residual_correlation_R2": correlation_squared(phenotype - baseline, genetic_score),
+			"predictive_R2": full_r2,
 			"SSE_partial_R2": float(1 - full_error / baseline_error) if baseline_error > 0 else np.nan,
-			"full_R2": float(1 - full_error / total_variance) if total_variance > 0 else np.nan,
+			"full_R2": full_r2,
 			"baseline_R2": float(1 - baseline_error / total_variance) if total_variance > 0 else np.nan,
 			"full_RMSE": float(np.sqrt(full_error / len(phenotype))),
 			"baseline_RMSE": float(np.sqrt(baseline_error / len(phenotype))),
@@ -711,6 +821,7 @@ def run_training(args):
 	metadata = {
 		"format_version": 1, "traits": traits, "architecture": architecture, "attention": args.attention,
 		"upstream": upstream, "preprocessing": preprocessing, "training_identity": identity,
+		"split_registry": split_registry(data),
 		"variants": variants.to_dict(orient="list"), "preparation": preparation,
 		"adapter_logic_sha256": adapter_digest,
 		"training_options": training_options, "signature": signature, "torch_version": str(torch.__version__),
@@ -738,6 +849,7 @@ def run_training(args):
 		model.train()
 		optimizer.zero_grad(set_to_none=True)
 		started = time.monotonic()
+		last_progress = started
 		loss_totals, observed_counts = np.zeros(len(traits)), np.zeros(len(traits), dtype=np.int64)
 		loader = make_loader(args, train_rows, torch, shuffle=True, seed=args.seed + epoch)
 		learning_rate = float(optimizer.param_groups[0]["lr"])
@@ -762,7 +874,13 @@ def run_training(args):
 				scaler.step(optimizer)
 				scaler.update()
 				optimizer.zero_grad(set_to_none=True)
+			if batch == 0 or time.monotonic() - last_progress >= 60:
+				seen = min((batch + 1) * args.batch_size, len(train_rows))
+				elapsed = time.monotonic() - started
+				print(f"TRAIN epoch {epoch}/{args.epochs}: {seen:,}/{len(train_rows):,} samples; {seen / max(elapsed, 1e-9):.2f} samples/s", flush=True)
+				last_progress = time.monotonic()
 		train_losses = loss_totals / observed_counts
+		print(f"VALIDATION epoch {epoch}: {len(validation_rows):,} samples", flush=True)
 		validation_losses, validation_counts = evaluate_loss(model, validation_rows, args, prepared_labels, baseline_logits, traits, torch, device, dtype)
 		validation_loss = float(np.mean(validation_losses))
 		seconds = float(time.monotonic() - started)
@@ -811,6 +929,7 @@ def run_prediction(args):
 	if args.traits and csv_list(args.traits) != traits:
 		raise ValueError("Prediction traits and their order must match the checkpoint.")
 	data, labels, identity, _ = read_inputs(args, traits, require_training=False)
+	validate_prediction_holdout(data, identity, checkpoint)
 	preparation_path = Path(args.genotypes).resolve().parent / "prepare.json"
 	preparation = json.loads(preparation_path.read_text()) if preparation_path.is_file() else None
 	if identity["variants_sha256"] != checkpoint["training_identity"]["variants_sha256"]:
@@ -855,7 +974,7 @@ def run_prediction(args):
 # 🚩 Command-line entry point
 def main():
 	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-	parser.add_argument("command", choices=["train", "predict"])
+	parser.add_argument("command", choices=["train", "predict", "runtime"])
 	parser.add_argument("--genotypes", required=True, help="Aligned sample-major .npy dosage memmap")
 	parser.add_argument("--data", required=True, help="TSV(.gz): eid,target,split,phenotypes,numeric covariates")
 	parser.add_argument("--variants", required=True, help="Ordered TSV(.gz): CHR,BP,SNP,REF,ALT")
@@ -892,6 +1011,18 @@ def main():
 		parser.error("Batch/accumulation/epoch/patience/thread counts must be positive; workers must be nonnegative.")
 	if not all(math.isfinite(value) for value in (args.lr, args.weight_decay, args.clip_grad, args.min_delta)) or args.lr <= 0 or args.weight_decay < 0 or args.clip_grad <= 0 or args.min_delta < 0:
 		parser.error("Learning rate and gradient clip must be positive; weight decay and minimum improvement must be nonnegative.")
+	if args.command == "runtime":
+		torch, device, dtype = runtime(args, args.attention)
+		model_class, upstream = load_official_model(args.upstream_dir, args.attention)
+		length = max(8, args.kernel_size * max(int(x) for x in csv_list(args.dilation)))
+		architecture = architecture_from_args(args, length, len(csv_list(args.traits or "height,ldl,t2dm")))
+		model_smoke(model_class, architecture, torch, device, dtype, args)
+		print(json.dumps({"status": "RUNTIME OK: official model forward/backward passed",
+			"python": sys.executable, "torch": str(torch.__version__), "cuda": torch.version.cuda,
+			"gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+			"attention": args.attention, "amp": args.amp, "architecture": architecture,
+			"upstream": upstream}, indent=2), flush=True)
+		return
 	with output_lock(args.out_dir):
 		if args.command == "train":
 			run_training(args)

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 
 import numpy as np
@@ -42,6 +43,17 @@ CELLAGE_COMMIT = "a0de4a124e0a41986185a090fb142c6c8195399e"
 # Gene-level alias only. Assay identity is never collapsed for assay budgets.
 ALIASES = {"NTPROBNP": "NPPB"}
 NOTE = "External expression context; not secretion tracing, cell abundance, cell aging or causal direction"
+
+
+def report_status(trait, layer, status, started, reused=False):
+    for row in status:
+        state = row["status"]
+        event = "DONE" if state == "completed" else "FAIL" if state == "failed" else "SKIP"
+        print(f"[LE8] {event} C5/{row['analysis']} Y={trait} biom={layer} status={state}"
+              f"{' cache=reused' if reused else ''} detail={row['detail']}", flush=True)
+    states = {row["status"] for row in status}
+    event = "FAIL" if "failed" in states else "PARTIAL" if "unavailable" in states else "DONE"
+    print(f"[LE8] {event} c5_cellulation Y={trait} biom={layer} elapsed={time.monotonic()-started:.1f}s", flush=True)
 
 
 def sha(path):
@@ -956,6 +968,8 @@ def main_driver(argv):
     for trait in a.Y.split(","):
         for layer in a.biom.split(","):
             if layer not in {"prot","met"} or not re.fullmatch(r"[A-Za-z0-9_-]+",trait): raise ValueError("Unsafe/invalid trait or layer")
+            started=time.monotonic()
+            print(f"[LE8] START c5_cellulation Y={trait} biom={layer}", flush=True)
             root=a.analysis_root.resolve()/trait; out=root/layer/"c5_cellulation"; out.mkdir(parents=True,exist_ok=True)
             resources=[a.atlas,a.universe,a.panels]; notes=[]
             if layer=="prot" and a.universe is None: resources,notes=default_resources(root,a.atlas)
@@ -978,7 +992,7 @@ def main_driver(argv):
                 except (ValueError,OSError): pass
             if not a.replace and not a.cigma_manifest and old.get("signature")==signature and old.get("outputs"):
                 if all((out/n).is_file() and sha(out/n)==h for n,h in old["outputs"].items()):
-                    print(f"C5 {trait}/{layer}: unchanged completed outputs reused"); continue
+                    report_status(trait,layer,old["status"],started,reused=True); continue
             # Stage the full new output set; old results are not published beside failed reruns.
             with tempfile.TemporaryDirectory(prefix=".c5-stage-",dir=out) as staging:
                 stage=Path(staging); status=[]
@@ -988,6 +1002,7 @@ def main_driver(argv):
                     status.append(dict(analysis="cell_expression",status="not_applicable",detail="No unique metabolite encoding gene; no direct gene/cell conversion"))
                 elif all(p is not None and p.is_file() for p in resources):
                     try:
+                        print(f"[LE8] START C5/cell_expression Y={trait} biom={layer}", flush=True)
                         annotate(resources[1],resources[0],resources[2],stage,"c5.cell",a.contrasts,a.matched_draws,a.seed,not a.no_plots)
                         evidence_long(root,resources[1],stage)
                         status.append(dict(analysis="cell_expression",status="completed",detail="All measured genes; explicit sensitivity background; no averaging of fold P values"))
@@ -1014,6 +1029,7 @@ def main_driver(argv):
                         status.append(dict(analysis="CIGMA",status="failed",detail="See cigma_native status and log; partial fits are not promoted to completed"))
                 if results and layer=="prot":
                     try:
+                        print(f"[LE8] START C5/CIGMA Y={trait} biom={layer}", flush=True)
                         d=integrate_cigma(results,resources,stage,a.cigma_cells)
                         status.append(dict(analysis="CIGMA",status="completed" if len(d) else "unavailable",
                             detail=f"{len(d)} gene/context rows; read c5.CIGMA_source.json for external vs native provenance"))
@@ -1044,6 +1060,7 @@ def main_driver(argv):
                     write_json(record,completed)
                     if (out/"c5.failed.json").exists(): (out/"c5.failed.json").unlink()
                 print(json.dumps(dict(trait=trait,layer=layer,status=status),ensure_ascii=False))
+                report_status(trait,layer,status,started)
     return rc
 
 

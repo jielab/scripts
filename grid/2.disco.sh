@@ -5,7 +5,7 @@
 set -euo pipefail
 usage() {
 	cat <<'HELP'
-DiscoDivas — combine the four ancestry-specific CSx scores for each UKB individual
+DiscoDivas reference interpolation — combine four CSx scores for each individual
 
 Usage examples (WSL):
   cd /mnt/d/scripts/grid
@@ -44,7 +44,9 @@ Coefficients:  <score-dir>/<trait>/disco.coef.tsv.gz
 Commands/logs/intermediates: /tmp/grid-cache/
 
 Uses official DiscoDivas distance-matrix interpolation, not inverse-square mixing.
-Defaults use reference centers and equal quality factors, without phenotype tuning.
+Defaults use raw ancestry CSx scores, 1KG PC medians and quality=1. They do not
+fit phenotype-tuned ancestry anchors. GRID reports downstream calibration as
+DiscoDivas_calibrated_reference; it is not the fully tuned official workflow.
 HELP
 }
 case "${1:-}" in -h | --help | help)

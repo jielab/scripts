@@ -2476,8 +2476,10 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	refdir <- Sys.getenv("MRLINK2_REF_PFILE_DIR","")
 	refs <- if(nzchar(refdir)) list.files(refdir,pattern="[.](pgen|pvar|zst|psam)$",full.names=TRUE) else character()
 	.le8_stage_source_files <<- unique(c(qtl_paths,qtl_qc,ygfile,
-		list.files(dirname(dirname(ygfile)),pattern="[.](cojo|clumped|grch|out|csv|tsv)$",recursive=TRUE,full.names=TRUE),refs,
-		file.path(le8_job_dir(outdir,"c1_correlate"),"c1.res.rds")))
+		list.files(dirname(dirname(ygfile)),pattern="[.](cojo|clumped|grch|out|csv|tsv)$",recursive=TRUE,full.names=TRUE),refs))
+	# C2 consumes C1's association table, not its timestamp, plots or review
+	# metadata. Re-exporting an unchanged C1 result must not rebuild instruments.
+	.le8_stage_source_values <<- list(c1_association = as.data.frame(assoc))
 	if (cache_valid(cache)) {
 		old <- tryCatch(readRDS(cache), error = function(e) NULL)
 		if (is.list(old) && identical(old$meta$source_signature,le8_stage_fingerprint()) && identical(old$meta$mode_signature,mode_signature) && identical(old$meta$pgs_signature,pgs_signature) && all(c("meta", "MR", "MR_reverse", "MR_best") %in% names(old)) &&

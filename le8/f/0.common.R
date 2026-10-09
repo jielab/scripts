@@ -817,7 +817,7 @@ le8_module_policy <- function(module) {
 		evidence=if(module %in% c("c2_cause","c3_coloc","c4_connect","c4_panel_validation","final_prediction")) le8_evidence_policy() else NULL)
 }
 
-le8_completed_results <- function(root, traits, layers, modules) {
+le8_completed_results <- function(root, traits, layers, modules, validate_settings = TRUE) {
 	stores <- new.env(parent = emptyenv())
 	table_entry <- function(path) {
 		store <- dirname(path)
@@ -894,7 +894,7 @@ le8_completed_results <- function(root, traits, layers, modules) {
 			}
 			if (m == "c2_cause") for (n in c("RUN_MRlink2", "RUN_Dandelion"))
 				if (!identical(meta[[n]], Sys.getenv(n, "Top"))) settings_match <- FALSE
-			if (!settings_match || !identical(meta$code_signature,le8_code_fingerprint())) { reusable <- FALSE; complete <- FALSE }
+			if (validate_settings && (!settings_match || !identical(meta$code_signature,le8_code_fingerprint()))) { reusable <- FALSE; complete <- FALSE }
 			status <- if (complete) "completed" else if (reusable) "cached" else "incomplete"
 			detail <- if (complete) "Saved estimates and original scope retained; no refitting or relabelling" else if (reusable)
 				"Numerical results complete; regenerate presentation without refitting" else "Missing result fields or numerical exports; stage resume required"
@@ -904,16 +904,21 @@ le8_completed_results <- function(root, traits, layers, modules) {
 	if (length(rows)) do.call(rbind, rows) else data.frame()
 }
 
-if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] == "--check-completed") {
+if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] %in% c("--check-completed", "--audit-results")) {
 	args <- commandArgs(TRUE)
 	if (length(args) != 6L) stop("--check-completed requires root, traits, layers, modules and audit path")
 	split <- function(z) strsplit(z, ",", fixed = TRUE)[[1]]
-	z <- le8_completed_results(args[2], split(args[3]), split(args[4]), split(args[5]))
+	audit <- args[1] == "--audit-results"
+	z <- le8_completed_results(args[2], split(args[3]), split(args[4]), split(args[5]), validate_settings = !audit)
 	if (nrow(z)) {
 		write.csv(z, args[6], row.names = FALSE)
 		# Output completeness alone cannot prove unchanged inputs, groups or LD.
 		# Each module revalidates its full stage signature before reusing its fits.
 		# Explicit presentation-only entry points retain their frozen-results path.
+	}
+	if (audit && (!nrow(z) || any(z$status != "completed"))) {
+		print(z)
+		stop("Result validation failed; incomplete outputs must not be marked DONE. See ", args[6])
 	}
 	quit(save = "no", status = 0)
 }
@@ -1649,19 +1654,29 @@ le8_stage_fingerprint <- function() {
 		}
 	}
 	info <- file.info(files)
+	# Parent directories change when tools write indexes or caches. Concrete
+	# scientific files are listed above (and by each genetic stage); directory
+	# size/mtime is not an input identity and must not invalidate all MR fits.
+	is_directory <- !is.na(info$isdir) & info$isdir
+	info$size[is_directory] <- NA_real_
+	info$mtime[is_directory] <- as.POSIXct(NA)
 	# Transaction workspaces move between runs; identify upstream results by
 	# their stable path within the analysis root, while inspecting actual files.
 	root <- paste0(sub("/+$", "", get0("analysis_root", ifnotfound="")), "/")
 	logical_files <- files
 	inside <- !is.na(files) & nzchar(root) & root != "/" & startsWith(files, root)
 	logical_files[inside] <- paste0("<analysis-root>/", substring(files[inside], nchar(root) + 1L))
-	le8_hash_object(list(code=.le8_loaded_code,env=env,files=logical_files,size=info$size,mtime=as.numeric(info$mtime)))
+	le8_hash_object(list(code=.le8_loaded_code,env=env,files=logical_files,size=info$size,mtime=as.numeric(info$mtime),
+		upstream=get0(".le8_stage_source_values",ifnotfound=NULL)))
 }
 read_stage_cache <- function(path, version = NULL) {
 	if (!cache_valid(path)) return(NULL)
 	z <- tryCatch(readRDS(path), error = function(e) NULL)
 	if (is.null(z) || !is.list(z) || is.null(z$data)) return(NULL)
-	if (!identical(z$source_signature,le8_stage_fingerprint())) return(NULL)
+	if (!identical(z$source_signature,le8_stage_fingerprint())) {
+		message("Cache inputs/settings changed: ", basename(path), "; validating and recomputing this stage")
+		return(NULL)
+	}
 	if (!is.null(version) && !identical(z$version, version)) return(NULL)
 	if (!is.null(z$analysis_options) && !identical(z$analysis_options, le8_analysis_options())) return(NULL)
 	z$data

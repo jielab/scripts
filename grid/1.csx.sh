@@ -65,6 +65,8 @@ Permanent outputs:
   <GWAS folder>/<original-name>.csx.gz  (SNP,A1,BETA,CHR,BP,A2; NOT individual PRS)
   Example: /mnt/f/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz
   /mnt/d/data/ukb/pgs/<trait>/1csx.scores.rds (eid, csx.AFR/EAS/EUR/SAS, csx.auto, csx.meta)
+  1csx.scores.provenance.json connects every published column to its source weights.
+  Rerun --stage score to attach this provenance to older scores without rerunning MCMC.
   1csx.posterior.rds: four centred posterior means + ten covariance terms per person.
   RDS attributes retain discovery EAF centering and the fitted-input identity.
   Keep joint_posterior.h5 files under temporary inference directories to rescore without MCMC.
@@ -110,7 +112,10 @@ csx_score_run() {
 	done
 	[[ -z $GRID_KEEP ]] || score_inputs+=("$GRID_KEEP")
 	[[ -z $GRID_REMOVE ]] || score_inputs+=("$GRID_REMOVE")
-	score_sig=$(python3 "$ROOT/f/1.csx.py" score-config "$sig" "$GRID_KEEP" "$GRID_REMOVE" --files "${score_inputs[@]}")
+	# Bind newly attested scores to weight CONTENT, including an initial rescore
+	# of older caches whose keys contained only path/size/mtime information.
+	weight_hashes=$(sha256sum -- "${finals[@]}")
+	score_sig=$(python3 "$ROOT/f/1.csx.py" score-config "$sig" "$GRID_KEEP" "$GRID_REMOVE" "$weight_hashes" --files "${score_inputs[@]}")
 	score_run=$(python3 "$ROOT/f/1.csx.py" workspace "$run/scores" run "$score_sig")
 	mkdir -p "$score_home"
 	score_cache="$(python3 "$ROOT/f/0.common.py" cache-path "$work/scores")/$trait${suffix:+/${suffix#.}}"
@@ -163,7 +168,10 @@ csx_score_run() {
 	merge=()
 	for p in "${POPS[@]}"; do merge+=("$score_cache/csx.$p.tsv.gz"); done
 	grid_run python3 "$ROOT/f/0.common.py" merge-scores --inputs "${merge[@]}" --output "$score_run/csx.tsv.gz"
-	grid_run python3 "$ROOT/f/0.common.py" publish csx "$score_run/csx.tsv.gz" "$score_home/1csx.scores.rds" --remove "$GRID_REMOVE"
+	provenance_weights=()
+	for i in "${!POPS[@]}"; do provenance_weights+=("csx.${POPS[$i]}=${finals[$i]}"); done
+	grid_run python3 "$ROOT/f/0.common.py" score-provenance --weights "${provenance_weights[@]}" --signature "$sig" --chrs "${CHRS[*]}" --output "$score_run/provenance.json"
+	grid_run python3 "$ROOT/f/0.common.py" publish csx "$score_run/csx.tsv.gz" "$score_home/1csx.scores.rds" --remove "$GRID_REMOVE" --provenance "$score_run/provenance.json"
 	{
 		printf 'trait\tpopulation\tinput_gwas\tweights\tukb_score\n'
 		for i in "${!POPS[@]}"; do printf '%s\t%s\t%s\t%s\t%s\n' "$trait" "${POPS[$i]}" "${gwas[$i]}" "${finals[$i]}" "$score_home/1csx.scores.rds"; done
@@ -372,9 +380,9 @@ PYMETA
 		mkdir -p "$sumstats"
 		for i in "${!POPS[@]}"; do
 			p=${POPS[$i]}
-			if [[ ! -s $sumstats/$p.tsv.gz ]]; then
-				grid_run_logged "$logdir/$trait/prepare.$p.log" python3 "$io" sumstats-cache --input "${gwas[$i]}" --output "$sumstats/$p.tsv.gz" --metadata "$sumstats/$p.json" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace FALSE
-			fi
+			# Validate the preparation signature even when a working table exists;
+			# corrected EAF orientation must reach posterior centering on --stage score.
+			grid_run_logged "$logdir/$trait/prepare.$p.log" python3 "$io" sumstats-cache --input "${gwas[$i]}" --output "$sumstats/$p.tsv.gz" --metadata "$sumstats/$p.json" --snpinfo "$GRID_CSX_SNPINFO" --trait "$trait" --pop "$p" --chunk "$GRID_SUMSTATS_CHUNK" --work "$work" --replace FALSE
 			grid_run_logged "$logdir/$trait/split.$p.log" python3 "$io" split-sumstats --input "$sumstats/$p.tsv.gz" --out-dir "$sumstats" --prefix "$p" --chrs "${CHRS[*]}"
 		done
 		for c in "${CHRS[@]}"; do need "$run/raw/chr$c/joint_posterior.h5"; done

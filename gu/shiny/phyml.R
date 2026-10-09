@@ -1,5 +1,18 @@
 # 🚩 phyml
 # Original COJO lead is the only index SNP. Counts refer to its risk haplotypes.
+gu_phyml_supported <- function(d) {
+	if (!"call" %in% names(d)) return(d[0, , drop = FALSE])
+	# Use the reported tree decision. Sequence QC stays visible, not a filter.
+	d[d$call %in% "tree_supported", , drop = FALSE]
+}
+
+gu_phyml_visible <- function(d, scope = "either") {
+	if (scope == "all") return(d)
+	risk <- if("call" %in% names(d))d$call %in% "tree_supported" else rep(FALSE, nrow(d))
+	nonrisk <- if("nonrisk_tree_pass" %in% names(d))d$nonrisk_tree_pass %in% c(1, "TRUE") else rep(FALSE, nrow(d))
+	d[if(scope == "risk")risk else if(scope == "nonrisk")nonrisk else risk | nonrisk, , drop = FALSE]
+}
+
 gu_phyml_overview <- function(summary, haps, validation = data.frame()) {
 	if (!nrow(summary)) return(summary)
 	summary$record_id <- paste(summary$locus_key, summary$lineage, sep = "|")
@@ -14,15 +27,19 @@ gu_phyml_overview <- function(summary, haps, validation = data.frame()) {
 	}
 	summary$risk_haplotypes <- ifelse(is.na(summary$n_candidate_haplotypes) | is.na(summary$n_candidate_copies), "未评估", paste0(summary$n_candidate_haplotypes, " / ", summary$n_candidate_copies))
 	summary$ibdmix_risk_support <- "未评估"
-	for(i in seq_len(nrow(summary))) {
-		if("ibdmix_status" %in% names(summary) && summary$ibdmix_status[i] %in% "not_run")summary$ibdmix_risk_support[i] <- "未运行"
-		if(!nrow(validation))next
-		v <- validation[validation$locus_key == summary$locus_key[i] & validation$lineage == summary$lineage[i] & validation$method == "ibdmix", , drop = FALSE]
-		if(!nrow(v))next
-		summary$ibdmix_risk_support[i] <- if(any(v$method_complete %in% c(1, "TRUE")))"未评估"else "未运行"
-		good <- v$method_complete %in% c(1, "TRUE") & v$comparison_available %in% c(1, "TRUE") & v$evidence_eligible %in% c(1, "TRUE")
-		ids <- unique(v$sample_id[good]);yes <- unique(v$sample_id[good & v$overlap_pass %in% c(1, "TRUE")])
-		if(length(ids))summary$ibdmix_risk_support[i] <- paste0(length(yes), " / ", length(ids), if(length(setdiff(unique(v$sample_id), ids)))"（部分可评估）"else "")
+	if("ibdmix_status" %in% names(summary))summary$ibdmix_risk_support[summary$ibdmix_status %in% "not_run"] <- "未运行"
+	if(nrow(validation)) {
+		# Aggregate once, instead of rescanning the large copy report for every lead.
+		v <- data.table::as.data.table(validation)
+		counts <- v[method == "ibdmix", {
+			good <- method_complete %in% c(1, "TRUE") & comparison_available %in% c(1, "TRUE") & evidence_eligible %in% c(1, "TRUE")
+			ids <- unique(sample_id[good]);yes <- unique(sample_id[good & overlap_pass %in% c(1, "TRUE")])
+			value <- if(any(method_complete %in% c(1, "TRUE")))"未评估"else "未运行"
+			if(length(ids))value <- paste0(length(yes), " / ", length(ids), if(length(setdiff(unique(sample_id), ids)))"（部分可评估）"else "")
+			list(support = value)
+		}, by = c("locus_key", "lineage")]
+		i <- match(summary$record_id, paste(counts$locus_key, counts$lineage, sep = "|"))
+		summary$ibdmix_risk_support[!is.na(i)] <- counts$support[i[!is.na(i)]]
 	}
 	summary
 }
@@ -53,8 +70,8 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 		path <- file.path(root, paste0(name, ".tsv"))
 		reactiveFileReader(3000, session, path, function(p) {
 			if (!file.exists(p) || file.info(p)$size < 2) return(data.frame())
-			tryCatch(read.delim(p, sep = "\t", quote = "", comment.char = "", check.names = FALSE,
-							 stringsAsFactors = FALSE, na.strings = c("", "NA"), fileEncoding = "UTF-8"), error = function(e)data.frame())
+			tryCatch(as.data.frame(data.table::fread(p, sep = "\t", quote = "", check.names = FALSE,
+				na.strings = c("", "NA"), encoding = "UTF-8", showProgress = FALSE)), error = function(e)data.frame())
 		})
 	}
 	all_summary <- read_report("phyml_locus_report")
@@ -73,14 +90,17 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 		if(is.null(lineage)) lineage <- "all"
 		d[(lineage == "all" | d$lineage %in% if(lineage == "Denisovan")c("Denisovan", "Denisova")else lineage), , drop = FALSE]
 	})
+	visible_summary <- reactive(gu_phyml_visible(summary(), if(is.null(input$report_scope))"either" else input$report_scope))
 	selected_index <- reactiveVal(1L)
-	observeEvent(input$report_lineage, {
+	observeEvent(list(input$report_lineage, input$report_scope), {
 		d <- summary(); i <- if(!is.null(external_record))match(external_record(), d$record_id)else NA_integer_
-		selected_index(if(length(i) == 1L && !is.na(i))i else if(nrow(d))1L else NA_integer_)
+		first_supported <- if(nrow(visible_summary()))match(visible_summary()$record_id[1], d$record_id)else NA_integer_
+		selected_index(if(length(i) == 1L && !is.na(i))i else first_supported)
 	}, priority = 110)
 	select_record <- function(value) {
 		i <- suppressWarnings(as.integer(value))
-		if(length(i) == 1L && !is.na(i) && i >= 1L && i <= nrow(summary())) selected_index(i)
+		if(length(i) == 1L && !is.na(i) && i >= 1L && i <= nrow(visible_summary()))
+			selected_index(match(visible_summary()$record_id[i], summary()$record_id))
 	}
 	observeEvent(input$report_locus_select, select_record(input$report_locus_select), priority = 100)
 	observeEvent(input$report_locus_open, select_record(input$report_locus_open), priority = 100)
@@ -110,8 +130,12 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 		}
 		if(!selected_index() %in% ix)selected_index(if(length(ix))ix[[1]] else NA_integer_)
 	}, ignoreInit = TRUE, priority = 100)
-	observeEvent(selected_index(), {
-		i <- selected_index()
+	visible_index <- reactive({
+		i <- match(summary()$record_id[selected_index()], visible_summary()$record_id)
+		if(length(i) == 1L)i else NA_integer_
+	})
+	observeEvent(visible_index(), {
+		i <- visible_index()
 		DT::selectRows(DT::dataTableProxy("report_loci", session = session), if(is.na(i))NULL else i)
 	}, ignoreInit = TRUE)
 	selected <- reactive({
@@ -145,9 +169,9 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 	}, ignoreInit = TRUE)
 	labels <- c(chr = "Chr", core_interval = "核心区间 (GRCh37)", lineage = "检验谱系", index_snp = "Index SNP",
 		risk_allele = "Risk Allele", p_j = "COJO P", core_kb = "核心 (kb)", n_ld_sites = "LD SNP数", n_sites = "建树位点",
-		risk_haplotypes = "单倍型", tree_bootstrap = "Bootstrap", call = "树检验", risk_frequency_EUR = "EUR 风险频率", risk_frequency_LD = "LD 队列风险频率", ld_population = "LD 队列", n_LD_individuals = "LD 人数",
+		risk_haplotypes = "风险单倍型", tree_bootstrap = "风险 Bootstrap", call = "风险树检验", nonrisk_tree_bootstrap = "非风险 Bootstrap", nonrisk_tree_status = "非风险树检验", supported_allele_role = "获支持方向", risk_frequency_EUR = "EUR 风险频率", risk_frequency_LD = "LD 队列风险频率", ld_population = "LD 队列", n_LD_individuals = "LD 人数",
 		archaic_LD_match = "古参考匹配", n_nonrisk_haplotypes = "对照类型", n_panel = "输入人数", n_lead_called = "Lead 可调用人数", n_lead_called_copies = "Lead 可调用拷贝", n_recurrent_copies = "重复序列拷贝", tree_run_status = "建树状态", topology_status = "拓扑结果", sequence_qc = "序列 QC", lead_retained_for_tree = "Lead 保留", high_ld_sites_retained_for_tree = "保留 LD 位点", unique_archaic_sequences = "古参考序列种类", n_singleton_copies = "单次拷贝", search_edge_warning = "边界提示", ils_probability = "ILS P（模型）",
-		ibdmix_risk_support = "IBDmix 支持人数", hap_id = "Haplotype", role = "类别", n_copies = "拷贝数", n_individuals = "人数",
+		ibdmix_risk_support = "IBDmix 风险携带者", hap_id = "Haplotype", role = "类别", n_copies = "拷贝数", n_individuals = "人数",
 		archaic = "最相似参考", prop_match = "序列相同 (%)", n_compared = "可比较位点", n_match = "相同位点", reason = "原因",
 		ibdmix_status = "IBDmix 状态", ibdmix_supported_individuals = "IBDmix 支持人数", ibdmix_individuals = "可评估人数",
 		trace_status = "TRACE 状态", trace_supported_individuals = "TRACE 支持人数", trace_individuals = "可评估人数")
@@ -162,7 +186,10 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 		n_sites = "核心区间内可在五个古人类参考中共同比较、且现代样本次要等位基因至少出现两次的 SNP 数。包括不满足高 LD 阈值的区间内位点。",
 		risk_haplotypes = "重复出现的风险单倍型：序列种类数 / 染色体拷贝数。只按原始 lead 的风险等位基因定义，不按古人类相似度挑选；每种序列至少出现两次。不是人数，也不表示全部获得树支持。",
 		tree_bootstrap = "预先定义的风险单倍型与所选谱系参考共同成支、且不含另一谱系参考、非风险对照或祖先序列的分支支持率；100 次重采样。空白表示没有该分支或未完成树，不是零，也不是渗入概率。",
-		call = "树支持表示预定义风险分支 Bootstrap ≥70（程序报告阈值）。不等于 high confidence introgression；仍需结合序列、重组及 IBDmix 等证据。此概览保留所有输入 lead；未建树、无法评估、建树失败与已完成但不支持分别显示。",
+		call = "原有风险方向检验：全部重复风险单倍型与该谱系全部参考形成排他分支，Bootstrap ≥70。未获支持不等于无渗入。可切换全部输入 lead 查看未完成和不可评估的位点。",
+		nonrisk_tree_bootstrap = "在同一棵完整树上，对 lead 的另一等位基因应用相同整体分支规则。不是重新挑选最相似单倍型，也不是渗入概率。",
+		nonrisk_tree_status = "supported：非风险方向的整体分支 Bootstrap ≥70；not_supported：未获该分支支持；not_evaluated：未完成树或没有可复核数据。风险方向的 IBDmix 人数不用于验证非风险方向。",
+		supported_allele_role = "risk 为增加表型的方向，nonrisk 为另一方向；是否具有临床保护效应取决于表型编码。树支持仍须结合共享衍生变异、局部重组/ILS 和独立片段证据。",
 		risk_frequency_EUR = "1KG EUR 中风险等位基因的染色体频率；不是风险单倍型在人群中的疾病效应。",
 		core_kb = "高 LD 核心区间长度，单位 kb。",
 		ils_probability = "仅为长度模型敏感性指标：假设重组率 0.53 cM/Mb、世代 29 年、分化 55 万年、古人类年龄 5 万年。未使用该 locus 的局部重组图谱，也未作多重检验校正，不能直接据此宣布高置信渗入。",
@@ -212,8 +239,15 @@ gu_phyml_report_server <- function(input, output, session, dataset, build, root,
 	}
 	validation_columns <- c("ibdmix_status", "ibdmix_any_overlap_individuals", "ibdmix_supported_individuals", "ibdmix_individuals", "trace_status",
 				"trace_any_overlap_individuals", "trace_supported_individuals", "trace_individuals", "trace_supported_copies", "trace_candidate_copies")
-	output$report_loci <- renderDT(show_table(summary(), c("chr", "core_interval", "lineage", "index_snp", "risk_allele", "p_j", "core_kb", "n_ld_sites", "n_sites", "archaic_LD_match", "risk_haplotypes",
-		"tree_bootstrap", "call", "tree_run_status", "sequence_qc", "n_panel", "n_lead_called", "n_lead_called_copies", "n_recurrent_copies", "n_singleton_copies", "lead_retained_for_tree", "high_ld_sites_retained_for_tree", "unique_archaic_sequences", "reason", "search_edge_warning", "ils_probability", "ibdmix_risk_support"), TRUE, pages = 10, selected_row = isolate(selected_index()), length_change = FALSE), server = FALSE)
+	output$report_loci_note <- renderText({
+		d <- visible_summary(); all <- summary()
+		complete <- if("tree_run_status" %in% names(all))all$tree_run_status %in% "complete" else all$call %in% c("tree_supported", "tree_not_supported")
+		paste0("输入 ", length(unique(all$locus_key)), " 个 loci；完成建树 ", length(unique(all$locus_key[complete])),
+			"；风险方向树支持 ", nrow(gu_phyml_visible(all, "risk")), " 条，非风险方向树支持 ", nrow(gu_phyml_visible(all, "nonrisk")),
+			" 条。当前显示 ", length(unique(d$locus_key)), " 个 loci / ", nrow(d), " 条谱系记录。树支持不是渗入概率；未完成不计为阴性。")
+	})
+	output$report_loci <- renderDT(show_table(visible_summary(), c("chr", "core_interval", "lineage", "index_snp", "risk_allele", "p_j", "core_kb", "n_ld_sites", "n_sites", "archaic_LD_match", "risk_haplotypes",
+		"tree_bootstrap", "call", "nonrisk_tree_bootstrap", "nonrisk_tree_status", "supported_allele_role", "tree_run_status", "sequence_qc", "n_panel", "n_lead_called", "n_lead_called_copies", "n_recurrent_copies", "n_singleton_copies", "lead_retained_for_tree", "high_ld_sites_retained_for_tree", "unique_archaic_sequences", "reason", "search_edge_warning", "ils_probability", "ibdmix_risk_support"), TRUE, pages = 10, selected_row = isolate(visible_index()), length_change = FALSE), server = FALSE)
 	output$report_haplotypes <- renderDT(show_table(haps(), c("hap_id", "role", "call", "n_copies", "n_individuals", "archaic", "prop_match", "n_compared", "n_match"), TRUE, 12))
 	output$report_details <- renderDT({
 		d <- selected();if(!nrow(d))return(show_table(d, character()))

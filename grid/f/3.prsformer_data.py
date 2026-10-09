@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import time
 
 import numpy as np
 import pandas as pd
@@ -179,15 +180,26 @@ def variant_filter(path):
 
 # 🚩 Cohort, labels and fixed splits
 def make_cohort(args, files):
-	d = identified(read_table(args.pheno_file), "Phenotype")
+	traits = args.traits.split(",")
+	covars = [] if args.covariates.lower() == "none" else args.covariates.split(",")
+	log(f"COHORT: reading phenotype {args.pheno_file}")
+	phenotype = read_table(args.pheno_file)
+	# The UKB table contains many unrelated endpoints. Discard them before
+	# identified()/merges copy the table, to bound cohort preparation memory.
+	needed = {"eid", "IID", "#IID", "id", args.group_col, *covars}
+	needed.update(getattr(args, trait + "_col") for trait in traits)
+	if "t2dm" in traits and args.t2dm_col == "auto":
+		needed.update(("t2dm.Yr2e", "t2dm.Yt2e"))
+	phenotype = phenotype[[name for name in phenotype.columns if name in needed]]
+	d = identified(phenotype, "Phenotype")
+	del phenotype
 	if args.group_col not in d:
+		log(f"COHORT: reading ancestry {args.ancestry_file}")
 		a = identified(read_table(args.ancestry_file), "Ancestry")
 		if args.group_col not in a:
 			raise ValueError(f"Missing ancestry column: {args.group_col}")
 		d = d.merge(a[["eid", args.group_col]], on = "eid", how = "left", validate = "one_to_one")
 	d["target"] = d[args.group_col].fillna("UNASSIGNED").replace("", "UNASSIGNED").astype(str)
-	traits = args.traits.split(",")
-	covars = [] if args.covariates.lower() == "none" else args.covariates.split(",")
 	source_traits = {getattr(args, t + "_col") for t in traits}
 	if "t2dm" in traits and args.t2dm_col == "auto":
 		source_traits.update({"t2dm.Yr2e", "t2dm.Yt2e"})
@@ -410,6 +422,7 @@ def prepare(args):
 		raw_path = work / "variant_major.bin"
 		raw = np.memmap(raw_path, mode = "w+", dtype = np.float16, shape = (m, n))
 		write_row = 0
+		last_progress = time.monotonic()
 		for c, gp, vp, sp, mode in files:
 			vc = v[v.CHR == c]
 			if vc.empty:
@@ -446,6 +459,9 @@ def prepare(args):
 							selected["call_rate_train"] = call_rate[use]
 							kept.append(selected)
 							write_row += count
+						if time.monotonic() - last_progress >= 60:
+							log(f"GENOTYPES chr{c}: checked {min(start + args.chunk_variants, len(vc)):,}/{len(vc):,}; cumulative {write_row:,} SNPs retained")
+							last_progress = time.monotonic()
 			log(f"GENOTYPES chr{c}: cumulative {write_row:,} SNPs retained")
 		if write_row == 0:
 			raise ValueError("No SNP passed train-only MAF/call-rate QC")
@@ -453,8 +469,12 @@ def prepare(args):
 		output = np.lib.format.open_memmap(work / "genotypes.npy", mode = "w+", dtype = np.float16, shape = (n, write_row))
 		# Bound the transpose work buffer at approximately 64 MiB.
 		batch = max(1, min(1024, (64 * 1024 ** 2) // max(2 * write_row, 1)))
+		log(f"TRANSPOSE: writing {n:,} sample-major genotype rows")
 		for start in range(0, n, batch):
 			output[start:start + batch] = raw[:write_row, start:start + batch].T
+			if time.monotonic() - last_progress >= 60:
+				log(f"TRANSPOSE: {min(start + batch, n):,}/{n:,} rows")
+				last_progress = time.monotonic()
 		output.flush()
 		del output, raw
 		raw_path.unlink()
@@ -508,6 +528,39 @@ def workbook(frame, path, title):
 	wb.save(path)
 
 
+def attach_covariate_values(scores, cohort, covariates):
+	"""Retain original outcome-model covariates for direct benchmark verification."""
+	names = [] if covariates.strip().lower() in ("", "none") else [c.strip() for c in covariates.split(",")]
+	if len(names) != len(set(names)) or any(name not in cohort for name in names):
+		raise ValueError("Published covariates must be unique and present in the prepared cohort")
+	if not names:
+		return scores.copy()
+	source = cohort[["eid"] + names].copy()
+	for name in names:
+		source[name] = numeric(source[name], name)
+		if source[name].isna().any():
+			raise ValueError(f"Prepared model covariate {name} is missing or nonfinite")
+	source = source.rename(columns={name: f"covariate.{name}" for name in names})
+	out = scores.merge(source, on="eid", how="left", validate="one_to_one", indicator=True, sort=False)
+	if not out["_merge"].eq("both").all():
+		raise ValueError("A published prediction has no matching original covariates")
+	return out.drop(columns="_merge")
+
+
+def canonical_metrics(metrics):
+	"""Upgrade old metric names by their original formulas; never refit a model."""
+	metrics = metrics.copy()
+	metrics.loc[metrics.metric == "prediction_R2", "metric"] = "residual_correlation_R2"
+	keys = ["trait", "target", "split", "metric"]
+	if metrics.duplicated(keys).any():
+		raise ValueError("Duplicate metric names after explicit legacy-label migration")
+	derived = metrics[metrics.metric == "full_R2"].copy()
+	derived["metric"] = "predictive_R2"
+	present = set(map(tuple, metrics[keys].to_numpy()))
+	derived = derived[[tuple(row) not in present for row in derived[keys].to_numpy()]]
+	return pd.concat([metrics, derived], ignore_index=True)
+
+
 def publish(args):
 	run = Path(args.run_dir).expanduser().resolve()
 	cache = Path(args.cache_dir).expanduser().resolve()
@@ -549,7 +602,7 @@ def publish(args):
 	for trait in traits:
 		if set(pred.loc[pred.trait == trait, "eid"]) != test_ids:
 			raise ValueError(f"Incomplete test predictions: {trait}")
-	metrics = pd.read_csv(run / "metrics.tsv", sep = "\t")
+	metrics = canonical_metrics(pd.read_csv(run / "metrics.tsv", sep = "\t"))
 	history = pd.read_csv(run / "history.tsv", sep = "\t")
 	if not (metrics["split"] == "test").all():
 		raise ValueError("Performance table contains non-test rows")
@@ -569,7 +622,7 @@ def publish(args):
 		# Primary metric above, all remaining exact metrics in the table below.
 		fig, axs = plt.subplots(2, len(traits), figsize = (6.4 * len(traits), 11), gridspec_kw = {"height_ratios": [1, 2.2]}, squeeze = False)
 		for j, trait in enumerate(traits):
-			metric = "AUC" if trait == "t2dm" else "prediction_R2"
+			metric = "AUC" if trait == "t2dm" else "predictive_R2"
 			sub = metrics[(metrics.trait == trait) & (metrics.metric == metric)]
 			ax = axs[0, j]
 			ax.bar(sub.target.astype(str), sub.value, color = "#347F9C")
@@ -608,6 +661,7 @@ def publish(args):
 			for col in ("y", "baseline", "prediction", "genetic_score"):
 				x[col] = pd.to_numeric(x[col], errors = "raise")
 			x = x.rename(columns = {"y": "outcome", "genetic_score": "prsformer"})
+			x = attach_covariate_values(x, cohort, meta["options"]["covariates"])
 			x["prsformer_scale"] = "log_odds_increment" if trait == "t2dm" else "outcome_units"
 			x["covariate_names"] = meta["options"]["covariates"]
 			x["endpoint_definition"] = (

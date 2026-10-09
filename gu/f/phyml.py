@@ -22,6 +22,7 @@ from gu_0_common import load_module, reference_role, scientific_segment
 # 🚩 phyml_contract
 """Scientific workflow identity shared by generation and resume checks."""
 WORKFLOW = "gwas_lead_ld_core_archaic5_v2"
+LEAD_MATCHING_RULE = "unordered_exact_allele_pair_v1"
 LINEAGE_REFS = {"Neanderthal": ("Altai", "Chagyr", "Vindija"), "Denisovan": ("Denisova", "Denisova25")}
 REFS = tuple(ref for refs in LINEAGE_REFS.values() for ref in refs)
 
@@ -651,6 +652,7 @@ SUFFIXES = [
 	"_phyml_tree.png",
 	".phyml.log",
 	".phyml.complete.json",
+	".phyml.timeout.json",
 ]
 
 
@@ -670,10 +672,15 @@ def phyml_run_outputs(phy, boot):
 
 
 def completion_error(phy, boot):
+	logpath = Path(str(phy) + ".phyml.log")
+	log = logpath.read_text(errors="replace") if logpath.is_file() else ""
+	# PhyML also omits its runtime footer on a numerical exit. Report the
+	# recorded cause before interpreting absent products as an interruption.
+	if "Cannot work out eigen vectors" in log:
+		return "numerical_model_fit_failed (Cannot work out eigen vectors)"
 	files = phyml_run_outputs(phy, boot)
 	if any(not p.is_file() or not p.stat().st_size for p in files):
 		return "missing/empty tree, stats, log or bootstrap outputs"
-	log = Path(str(phy) + ".phyml.log").read_text(errors="replace")
 	finish = list(re.finditer(r"\. Time used\s+\d+h\d+m\d+s", log))
 	if not finish:
 		return "no final runtime footer (interrupted run)"
@@ -855,8 +862,21 @@ def interrupted(signum, frame):
 
 def discard_partial(phy):
 	for suffix in SUFFIXES:
-		if suffix != ".phyml.log":
+		if suffix not in (".phyml.log", ".phyml.timeout.json"):
 			Path(str(phy) + suffix).unlink(missing_ok=True)
+
+
+def record_tree_timeout(phy, req, timeout, elapsed, reason='time_limit'):
+	boot_trees = Path(str(phy) + '_phyml_boot_trees.txt')
+	with phy.open() as handle:
+		nseq, nsites = map(int, handle.readline().split())
+	record = dict(timeout_seconds=timeout, elapsed_seconds=int(elapsed),
+		bootstrap_completed=boot_trees.read_text().count(';') if boot_trees.exists() else 0,
+		n_sequences=nseq, n_sites=nsites, input_sha256=req['input_sha256'], reason=reason,
+		rc=124, recorded_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'))
+	Path(str(phy) + '.phyml.timeout.json').write_text(json.dumps(record, indent=2) + '\n')
+	discard_partial(phy)
+	return record
 
 
 def run_attempt(phy, cmd, deadline):
@@ -869,7 +889,10 @@ def run_attempt(phy, cmd, deadline):
 				return 124
 			# MPI otherwise consumes the caller's remaining task-list lines.
 			proc = subprocess.Popen(
-				cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT, start_new_session=True
+				cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT, start_new_session=True,
+				# Debian's `phyml` launcher otherwise starts its own mpirun
+				# even when --cpus=1 (or on the serial fallback).
+				env=dict(os.environ, PHYMLMPI="no", PHYMLCPUS="1"),
 			)
 			while True:
 				remaining = None if deadline is None else deadline - time.monotonic()
@@ -903,7 +926,7 @@ def phyml_run_main():
 	p.add_argument("--phy", type=Path, required=True)
 	p.add_argument("--scope", required=True)
 	p.add_argument("--bootstrap", type=int, default=100)
-	p.add_argument("--timeout", type=float, default=0)
+	p.add_argument("--timeout", type=float, default=7200)
 	p.add_argument("--cpus", type=int, default=1)
 	p.add_argument("--seed", type=int)
 	p.add_argument("--mpi-fallback", choices=["serial", "error"], default="serial")
@@ -955,6 +978,24 @@ def run_locked(a, phy, serial, mpi, mpirun):
 		state(phy, a.scope, "COMPLETE_REUSED", 0)
 		print(f"[GU PHYML] tree=REUSE identical_input={reused} input={phy}", flush=True)
 		return 0
+	previous = Path(str(phy) + '.phyml.run.status.tsv')
+	if not force and os.environ.get('PHYML_RETRY_TIMEOUTS') != 'TRUE' and a.timeout and previous.exists():
+		old = rows(previous)
+		timeout_record = Path(str(phy) + '.phyml.timeout.json')
+		if len(old) == 1 and old[0]['status'] == 'TIMEOUT' and timeout_record.exists():
+			saved = json.loads(timeout_record.read_text())
+			if saved.get('rc') == 124 and saved.get('input_sha256') == req['input_sha256']:
+				print(f'[GU PHYML] DEFER recorded timeout; set PHYML_RETRY_TIMEOUTS=TRUE to retry input={phy}', flush=True)
+				return 124
+		# A killed process can leave RUNNING behind. Use only time evidenced by
+		# its output writes, never the idle time since the user stopped the run.
+		if len(old) == 1 and old[0]['status'] == 'RUNNING' and phy.stat().st_mtime_ns <= previous.stat().st_mtime_ns:
+			elapsed = max([previous.stat().st_mtime] + [p.stat().st_mtime for p in phyml_run_outputs(phy, a.bootstrap) if p.exists()]) - previous.stat().st_mtime
+			if elapsed >= a.timeout:
+				record_tree_timeout(phy, req, a.timeout, elapsed, reason='interrupted_run_already_exceeded_budget')
+				state(phy, a.scope, 'TIMEOUT', 124, int(elapsed))
+				print(f'[GU PHYML] DEFER previous interrupted tree already used at least {int(elapsed)}s; budget={a.timeout}s input={phy}', flush=True)
+				return 124
 	if force:
 		why = "explicit --replace-phyml TRUE"
 	print(f"[GU PHYML] tree=REPLACE reason={why} input={phy}", flush=True)
@@ -1016,10 +1057,14 @@ def run_locked(a, phy, serial, mpi, mpirun):
 			seal(phy, req, dict(attempts=attempts))
 			state(phy, a.scope, "COMPLETE", 0, int(time.monotonic() - start))
 			return 0
-		print(f"ERROR: incomplete PhyML rc={rc}: {why}; input={phy}", file=sys.stderr)
+		if rc == 124:
+			print(f'[GU PHYML] DEFER tree_timeout limit={a.timeout}s input={phy}', flush=True)
+			record_tree_timeout(phy, req, a.timeout, time.monotonic() - start)
+		else:
+			print(f"ERROR: incomplete PhyML rc={rc}: {why}; input={phy}", file=sys.stderr)
 		# Prevent this invocation's summary stages from reading a partial tree.
 		discard_partial(phy)
-		state(phy, a.scope, "FAILED", rc or 1, int(time.monotonic() - start))
+		state(phy, a.scope, "TIMEOUT" if rc == 124 else "FAILED", rc or 1, int(time.monotonic() - start))
 		return rc or 1
 	except Exception:
 		discard_partial(phy)
@@ -1159,7 +1204,7 @@ def phyml_locus_cache_request(cmd, archaic_root):
 def phyml_scientific_output(name):
 	# Display files and path-bearing runtime receipts do not determine the fit.
 	path = Path(name)
-	return (path.suffix in ('.tsv', '.phy', '.txt') or name.endswith('.phyml.log')) and not name.endswith(('phylogeny_panel_b.tsv', '.phyml.run.status.tsv'))
+	return (path.suffix in ('.tsv', '.phy', '.txt') or name.endswith(('.phyml.log', '.phyml.timeout.json'))) and not name.endswith(('phylogeny_panel_b.tsv', '.phyml.run.status.tsv'))
 
 
 def phyml_locus_cache_outputs(out):
@@ -1186,9 +1231,9 @@ def phyml_locus_cache_outputs(out):
 	}
 
 
-def successful(cmd, req):
+def successful(cmd, req, evidence_log=None):
 	out = cmd.parent
-	log = cmd.with_suffix(".log").read_text()
+	log = cmd.with_suffix(".log").read_text() if evidence_log is None else evidence_log
 	if cmd.with_suffix(".err").exists() or f"analysis_unit={cmd.stem} status=complete" not in log:
 		raise ValueError("no successful worker completion")
 	if "status=failed" in log or "plot export failed" in log:
@@ -1203,10 +1248,18 @@ def successful(cmd, req):
 	if params["workflow"] != WORKFLOW:
 		raise ValueError("historical workflow changed")
 	summaries = rows(out / "final/gwas_loci.tsv")
-	if len(summaries) != 2 or any(r["status"] in ("tree_failed", "not_evaluable") for r in summaries):
+	timed_out = len(summaries) == 2 and all(r['status'] == 'tree_failed' and r['reason'] == 'tree_timeout' for r in summaries)
+	if timed_out:
+		phy = out / 'loci/haplotypes.phy'
+		timeout = json.loads(Path(str(phy) + '.phyml.timeout.json').read_text())
+		state_rows = rows(Path(str(phy) + '.phyml.run.status.tsv'))
+		if (timeout['rc'] != 124 or timeout['input_sha256'] != phyml_run_digest(phy)
+			or len(state_rows) != 1 or state_rows[0]['status'] != 'TIMEOUT'):
+			raise ValueError('invalid timeout record')
+	if len(summaries) != 2 or any(r['status'] == 'not_evaluable' or (r['status'] == 'tree_failed' and not timed_out) for r in summaries):
 		raise ValueError("incomplete locus")
 	trees = rows(out / "final/trees.tsv")
-	if len(trees) != 1 or trees[0]["tree_status"] not in ("complete", "not_run"):
+	if len(trees) != 1 or trees[0]["tree_status"] not in (("failed",) if timed_out else ("complete", "not_run")):
 		raise ValueError("incomplete tree summary")
 	if (
 		any(r["status"] in ("tree_supported", "tree_not_supported") for r in summaries)
@@ -1222,12 +1275,20 @@ def successful(cmd, req):
 					plot = out / "loci" / f"haplotypes.phy_phyml_tree.{lineage}.panelB{suffix}"
 					if not plot.is_file() or not plot.stat().st_size:
 						raise ValueError("missing plot")
+	return 'timeout' if timed_out else 'complete'
 
 
 def process(mode, cmd, archaic_root):
 	receipt = cmd.parent / ".phyml.locus.complete.json"
 	if mode == "adopt" and receipt.exists():
 		return False
+	if mode == 'check':
+		if command(cmd)[1].get('--replace-phyml', 'FALSE') == 'TRUE':
+			return False
+		if not receipt.is_file():
+			# Pending/interrupted loci have no success evidence. Reject them
+			# before enumerating reference files for every unscheduled worker.
+			return process('adopt', cmd, archaic_root)
 	if mode == "adopt":
 		# Reject interrupted historical workers before scanning references.
 		log = cmd.with_suffix(".log").read_text()
@@ -1235,18 +1296,23 @@ def process(mode, cmd, archaic_root):
 			raise ValueError("no successful worker completion")
 	req = phyml_locus_cache_request(cmd, archaic_root)
 	if mode == "check":
-		if command(cmd)[1].get("--replace-phyml", "FALSE") == "TRUE":
-			return False
-		if not receipt.is_file():
-			return process("adopt", cmd, archaic_root)
 		data = json.loads(receipt.read_text())
+		params = json.loads((cmd.parent / "final/gwas_parameters.json").read_text())
+		if params.get("lead_matching_rule") != LEAD_MATCHING_RULE and any(
+			r.get("status") == "lead_absent_or_ambiguous" for r in rows(cmd.parent / "final/gwas_loci.tsv")
+		):
+			# These skipped loci have no fitted tree to preserve. Recheck the
+			# old ordered-allele rejection once under the corrected matcher.
+			return False
+		if data.get('outcome') == 'timeout' and os.environ.get('PHYML_RETRY_TIMEOUTS') == 'TRUE':
+			return False
 		# Code hashes record provenance, not permission to replace completed
 		# analyses. Actual inputs/options and output integrity still must match.
 		saved = {k: v for k, v in data["request"].items() if k != "code"}
 		current = {k: v for k, v in req.items() if k != "code"}
 		outputs = {name: value for name, value in data["outputs"].items() if phyml_scientific_output(name)}
 		return saved == current and outputs == phyml_locus_cache_outputs(cmd.parent)
-	successful(cmd, req)
+	outcome = successful(cmd, req)
 	if mode == "adopt":
 		# Old runs have no source fingerprints. Only adopt sources older than
 		# their successful log, with the original command and exact saved lead.
@@ -1255,7 +1321,7 @@ def process(mode, cmd, archaic_root):
 			return False
 		if cmd.stat().st_mtime_ns > finished:
 			return False
-	data = dict(request=req, outputs=phyml_locus_cache_outputs(cmd.parent))
+	data = dict(request=req, outputs=phyml_locus_cache_outputs(cmd.parent), outcome=outcome)
 	tmp = receipt.with_name(receipt.name + f".{os.getpid()}.tmp")
 	tmp.write_text(json.dumps(data, indent=2) + "\n")
 	tmp.replace(receipt)
@@ -1276,6 +1342,7 @@ def phyml_locus_cache_main():
 		pending = []
 		skipped = 0
 		skipped_results = 0
+		deferred = 0
 		for index, cmd in enumerate(commands, 1):
 			try:
 				ok = process("check", cmd, a.archaic_root)
@@ -1284,17 +1351,20 @@ def phyml_locus_cache_main():
 			if ok:
 				skipped += 1
 				skipped_results += bool(rows(cmd.parent / "final/skipped_loci.tsv"))
+				deferred += json.loads((cmd.parent / '.phyml.locus.complete.json').read_text()).get('outcome') == 'timeout'
 			else:
 				pending.append(str(cmd))
 		a.pending.write_text("".join(cmd + "\n" for cmd in pending))
 		print(
-			f"[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)} skipped={skipped_results}",
+			f"[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)} skipped={skipped_results} deferred={deferred}",
 			flush=True,
 		)
 		return
 	try:
 		ok = process(a.mode, a.cmd, a.archaic_root)
-	except (OSError, ValueError, KeyError, TypeError):
+	except (OSError, ValueError, KeyError, TypeError) as e:
+		if a.mode == 'seal':
+			print(f'ERROR: cannot seal PhyML locus {a.cmd.stem}: {e}', file=sys.stderr)
 		ok = False
 	raise SystemExit(0 if ok else 1)
 
@@ -1331,7 +1401,10 @@ def exact_lead(row, records, n_samples, haploid=False):
 			continue
 		ref, alt = f[3].upper(), f[4].upper()
 		if row["ref"]:
-			if (ref, alt) != (row["ref"], row["alt"]):
+			# The reference allele can switch between genome builds. Match
+			# the exact allele pair, then decode GT in the target VCF order.
+			# No strand inference or third-allele substitution is permitted.
+			if {ref, alt} != {row["ref"].upper(), row["alt"].upper()}:
 				continue
 		elif row["index_snp"] not in f[2].split(";"):
 			continue
@@ -1346,7 +1419,8 @@ def exact_lead(row, records, n_samples, haploid=False):
 	for gt in f[5:]:
 		alleles = (called_haploid_base(f[3], f[4], gt), "N") if haploid else called_base(f[3], f[4], gt, True)
 		copies.extend(1 if x == risk else 0 if x in (f[3], f[4]) else -1 for x in alleles)
-	return dict(pos=int(f[1]), ref=f[3], alt=f[4], vcf_id=f[2], risk_allele=risk, copies=copies)
+	return dict(pos=int(f[1]), ref=f[3], alt=f[4], vcf_id=f[2], risk_allele=risk, copies=copies,
+		allele_order="swapped" if row["ref"] and f[3].upper() != row["ref"].upper() else "matched")
 
 
 def phased_ld(risk, site, indexes):
@@ -1423,6 +1497,33 @@ def risk_clade(newick, risk_tips, modern_tips, refs=LINEAGE_REFS["Neanderthal"])
 	return max(matches, key=lambda x: -1 if x["bootstrap"] is None else x["bootstrap"], default=None)
 
 
+def allele_topology_audit(newick, haps, lineage, complete=True):
+	"""Apply the same predefined split to BOTH lead alleles on a saved tree.
+
+	These are tree-support diagnostics, not introgression calls or calibrated
+	P values. Keep the original risk-only tree_pass contract for downstream
+	carrier validation; nonrisk carriers require their own validation.
+	"""
+	result = dict(nonrisk_tree_pass=None, nonrisk_tree_bootstrap=None,
+		nonrisk_tree_tips="", nonrisk_tree_status="not_evaluated",
+		either_allele_tree_pass=None, supported_allele_role="not_evaluated")
+	if not complete or not newick or not haps:
+		return result
+	modern = {h["hap_id"] for h in haps}
+	passed = []
+	for role in ("risk", "nonrisk"):
+		match = risk_clade(newick, {h["hap_id"] for h in haps if h["role"] == role}, modern, LINEAGE_REFS[lineage])
+		bs = match["bootstrap"] if match else None
+		ok = bs is not None and bs >= 70
+		if ok: passed.append(role)
+		if role == "nonrisk":
+			result.update(nonrisk_tree_pass=int(ok), nonrisk_tree_bootstrap=bs,
+				nonrisk_tree_tips=match["tips"] if match else "",
+				nonrisk_tree_status="supported" if ok else "not_supported")
+	result.update(either_allele_tree_pass=int(bool(passed)), supported_allele_role=";".join(passed) or "neither")
+	return result
+
+
 def prepare_sequences(sites, calls, samples, lead, haploid):
 	# Use the same sites and modern tips for both lineage tests. All five
 	# archaic references must be callable. Missing ancestry
@@ -1469,6 +1570,43 @@ def annotate_ukb_ancestor(sites, chrom, locus):
 		site["ancestral"] = bases.get((site["pos"], site["ref"], site["alt"]), "N")
 	return dict(ancestral_source=str(source) + "; GRCh37 exact POS/REF/ALT INFO/AA; unmatched remains N",
 		ancestral_annotated_sites=sum(s["ancestral"] in BASES for s in sites))
+
+
+TIMEOUT_COLUMNS = ['unit', 'locus_id', 'dataset', 'reason', 'timeout_seconds', 'elapsed_seconds',
+	'bootstrap_completed', 'n_sequences', 'n_sites', 'recorded_at', 'phy', 'command_file']
+
+
+def update_timeout_list(out, dataset, locus_id, timed_out=False):
+	"""One durable, atomically updated queue shared by all locus workers."""
+	marker = out / 'phyml.timeout.json'
+	if not timed_out and not marker.exists():
+		return
+	phy = out / 'loci/haplotypes.phy'
+	entry = None
+	if timed_out:
+		entry = json.loads(Path(str(phy) + '.phyml.timeout.json').read_text())
+		entry.update(unit=out.name, locus_id=locus_id, dataset=dataset,
+			phy=str(phy), command_file=str(out / (out.name + '.cmd')))
+		marker.write_text(json.dumps(entry, indent=2) + '\n')
+	queue = out.parent / 'phyml.timeouts.tsv'
+	lock = _common.gu_result_lock(queue)
+	with lock.open('a') as handle:
+		fcntl.flock(handle, fcntl.LOCK_EX)
+		entries = {r['unit']: r for r in rows(queue)} if queue.exists() else {}
+		if entry is None:
+			entries.pop(out.name, None)
+		else:
+			entries[out.name] = entry
+		tmp = queue.with_name(queue.name + f'.{os.getpid()}.tmp')
+		with tmp.open('w') as stream:
+			writer = csv.DictWriter(stream, fieldnames=TIMEOUT_COLUMNS, delimiter='\t', extrasaction='ignore')
+			writer.writeheader()
+			writer.writerows(entries[k] for k in sorted(entries))
+		tmp.replace(queue)
+		if entry is None:
+			marker.unlink(missing_ok=True)
+	if timed_out:
+		print(f'[GU PHYML] DEFER {locus_id}: tree_timeout; retry list={queue}', flush=True)
 
 
 def run_locus(a, row):
@@ -1579,6 +1717,7 @@ def run_locus(a, row):
 		ident.update(n_lead_called=sum(any(x >= 0 for x in lead["copies"][2*i:2*i+2]) for i in range(len(samples))), n_lead_called_copies=sum(x >= 0 for x in lead["copies"]))
 		ident.update(
 			risk_allele=lead["risk_allele"],
+			lead_allele_order=lead["allele_order"],
 			target_variant=f"{ch}:{pos}:{lead['ref']}:{lead['alt']}",
 			n_EUR_individuals=len(eur),
 			n_risk_copies=sum(x == 1 for x in lead["copies"]),
@@ -1780,7 +1919,8 @@ def run_locus(a, row):
 			if proc.returncode:
 				if preserve:
 					require_replace(phy, "existing tree could not be verified; see runner diagnostic")
-				failed = True
+				# Timeouts are a recorded deferral, so the batch continues normally.
+				failed = proc.returncode != 124
 				logpath = Path(str(phy) + ".phyml.log")
 				failure_log = logpath.read_text(errors="replace") if logpath.exists() else ""
 				reason = (
@@ -1818,7 +1958,7 @@ def run_locus(a, row):
 					candidate_clade_rule="all_recurrent_risk_plus_three_Neanderthals_no_nonrisk_or_ancestor",
 					tree_call_reason=reason,
 					n_bootstrap_nodes=len(bootstrap_values(newick)),
-					expected_archaic_tips_in_clade=",".join(REFS) if match else "",
+					expected_archaic_tips_in_clade=",".join(LINEAGE_REFS["Neanderthal"]) if match else "",
 					n_candidate_tips_in_clade=len(risk) if match else 0,
 					n_expected_archaic_tips_in_clade=3 if match else 0,
 					candidate_clade_n_tips=len(risk) + 3 if match else 0,
@@ -1881,6 +2021,7 @@ def run_locus(a, row):
 	write(final / "gwas_lead.tsv", [row])
 	parameters = dict(
 		workflow=WORKFLOW,
+		lead_matching_rule=LEAD_MATCHING_RULE,
 		ld_population=ident["ld_population"],
 		ld_rule="phased_r2 > 0.98",
 		lead=row,
@@ -1897,6 +2038,10 @@ def run_locus(a, row):
 		method_source="https://www.nature.com/articles/s41586-020-2818-3",
 	)
 	(final / "gwas_parameters.json").write_text(json.dumps(parameters, indent=2) + "\n")
+	if ident['reason'] == 'tree_timeout':
+		update_timeout_list(out, a.dataset, lid, timed_out=True)
+	elif not failed:
+		update_timeout_list(out, a.dataset, lid)
 	if tree["tree_status"] == "complete":
 		plot = subprocess.run(["Rscript", "--vanilla", str(Path(__file__).with_name("phyml.R")), "--out", str(out)])
 		if plot.returncode:
@@ -1945,6 +2090,10 @@ def lineage_results(ident, tree, details, haps, arch):
 				candidate_clade_specificity=1 if match else None,
 			)
 		s["call"] = s["status"]
+		# Stage fields must follow this lineage's decision, not the initial
+		# Neanderthal result copied into ident.
+		s.update(locus_stage_fields(s))
+		s.update(allele_topology_audit(tree.get("tree_newick", ""), haps, lineage, tree["tree_status"] == "complete"))
 		if lineage == "Denisovan":
 			s.update(ils_probability=None, ils_model="not_parameterized_for_Denisovan")
 		summaries.append(s)
@@ -1976,7 +2125,7 @@ def phyml_gwas_main():
 	p.add_argument("--dataset", default="1kg")
 	p.add_argument("--action", choices=["run", "match", "check"], default="run")
 	p.add_argument("--plot-phy", choices=["TRUE", "FALSE"], default="TRUE")
-	p.add_argument("--timeout", type=int, default=86400)
+	p.add_argument("--timeout", type=int, default=7200)
 	p.add_argument("--cpus", type=int, default=4)
 	p.add_argument("--x-male-only", action="store_true")
 	p.add_argument("--x-par-diploid", action="store_true")
@@ -2244,6 +2393,11 @@ def saved_locus_audit(path, row):
 	high = [r for r in ld if str(r.get("core_marker")) == "1"]
 	markers = sorted(int(r["pos"]) for r in high)
 	result = {}
+	lineage = row.get("lineage", "Neanderthal")
+	lineage = "Denisovan" if lineage == "Denisova" else lineage
+	saved_trees = read_saved(path.parent / "evidence_trees.tsv")
+	tree = next((t for t in saved_trees if t.get("expected_lineage", t.get("candidate_lineage")) == lineage), {})
+	result.update(allele_topology_audit(tree.get("tree_newick", ""), haps, lineage, tree.get("tree_status") == "complete"))
 	receipt = path.parent.parent / '.phyml.locus.complete.json'
 	if receipt.is_file() and not row.get('n_panel') and str(row.get('chr')) != 'X':
 		request = json.loads(receipt.read_text()).get('request', {})
@@ -2430,12 +2584,17 @@ def phyml_report_cli():
 	phyml_report_main()
 
 
+def phyml_audit_cli():
+	load_module("phyml.audit.py").main(sys.modules[__name__])
+
+
 SUBCOMMANDS = {
 	"input": phyml_gwas_input_cli,
 	"run": phyml_run_cli,
 	"cache": phyml_locus_cache_cli,
 	"gwas": phyml_gwas_cli,
 	"report": phyml_report_cli,
+	"audit": phyml_audit_cli,
 }
 
 

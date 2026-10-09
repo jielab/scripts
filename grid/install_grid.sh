@@ -9,7 +9,7 @@ cd /mnt/d/scripts/grid
 
 ./install_grid.sh
 
-Installs the shared CSx / Disco / GRID CPU environment and the pinned RDS reader.
+Installs the shared CSx / Disco / GRID environment, CUDA PyTorch and RDS reader.
 PRSformer uses a separate GPU environment; see README.prsformer.md.
 Optional ARG tools are managed by the gu workflow and are not required by GRID.
 HELP
@@ -31,9 +31,10 @@ if "$solver" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
 else "$solver" env create -n "$ENV_NAME" -f "$ROOT/environment.yml"; fi
 
 # GRID uses PLINK for genotypes and a pure Python RDS reader; no ARG build is needed.
-"$solver" run -n "$ENV_NAME" python -m pip install 'rdata==1.1.0'
+"$solver" run -n "$ENV_NAME" python -m pip install 'rdata==1.1.0' 'torch==2.12.0' --index-url https://pypi.org/simple
 "$solver" run -n "$ENV_NAME" python -c 'import numpy,pandas,scipy,sklearn,matplotlib,openpyxl,rdata,joblib'
 "$solver" run -n "$ENV_NAME" plink2 --version
+"$solver" run -n "$ENV_NAME" python "$ROOT/f/grid.py" --check-device
 cat <<MSG
 Environment imports and PLINK validated.
 grid.sh finds the default grid environment and places its bin directory on PATH.

@@ -138,10 +138,13 @@ class Le8Console:
 		self.failure = ""
 		self.pending_r_error = ""
 		self.warnings = False
+		self.partial = False
 		self.workspace = ""
 		self.last_stage = ""
 
 	def feed(self, line):
+		if re.match(r"^\[LE8\] PARTIAL\b", line):
+			self.partial = True
 		if "Diagnostic workspace: " in line:
 			self.workspace = line.split("Diagnostic workspace: ", 1)[1]
 		if re.search(r"(?i)\bwarning\b|^警告", line):
@@ -160,7 +163,7 @@ class Le8Console:
 				self.failure = line[:320]
 		# Package warnings, traceback continuations, commands and resource JSON
 		# are never forwarded. The enclosing logger retains their exact bytes.
-		major = re.match(r"^\[LE8\] (START|DONE|SKIP|PROGRESS)\b", line)
+		major = re.match(r"^\[LE8\] (START|DONE|SKIP|PROGRESS|PARTIAL)\b", line)
 		reuse = re.match(r"^\[(ABM|C1 selective)\] SKIP\b", line)
 		abm = re.match(r"^\[(ABM|C1 selective)\] (START|DONE) (S7_crossfit|S7_final_model|selective_crossfit|final_fit|input|project)\b", line)
 		info = re.match(r"^\[LE8\] (Module transaction:|Waiting |.*; waiting for |Shiny is already|Share package:)", line)
@@ -366,6 +369,8 @@ def run(script, args):
 			send_remaining(cancelled[0][2], signal.SIGKILL)
 			rc = 128 + cancelled[0][0]
 		state = "已停止" if cancelled else "完成" if rc == 0 else f"失败（退出码 {rc}）"
+		if rc == 0 and le8_console is not None and le8_console.partial:
+			state = "完成（部分分析未完成，见 SKIP/PARTIAL）"
 		counts = f"；完成 {done}，失败 {failed}" if (done or failed) and not quiet_gu else ""
 		detail = ""
 		if le8_console is not None:

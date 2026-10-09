@@ -36,13 +36,62 @@
 
 计算中的原生结果先写入永久目录。完成后，将可复用序列、树、片段和检查点整合进每次分析的 `*.raw.tar.gz`，逐文件校验后移除分散副本。继续分析时按需恢复到永久目录；Shiny 使用 `/tmp/gu-native-view/` 中可随时重新解压的读取副本。删除 `/tmp` 不会删除唯一的分析结果，重新运行 `./gu.sh shiny` 会恢复所需读取副本。
 
-日志、锁、生成的 mask、预处理 VCF、命令列表和计算工作区放在 `/tmp`。每个位点的参数和来源记录保存在原生归档内。XLSX 使用多个工作表整合结果，并保留精确表格导出供代码读取；超出 Excel 行数上限时拆分工作表，过长文本按顺序拆到附加工作表，不截断内容。发布使用暂存文件校验后替换。
+临时日志、锁、生成的 mask、预处理 VCF、命令列表和计算工作区放在 `/tmp`。PhyML 位点的完成日志和命令保留在永久目录；每个位点的参数和来源记录保存在原生归档内。XLSX 使用多个工作表整合结果，并保留精确表格导出供代码读取；超出 Excel 行数上限时拆分工作表，过长文本按顺序拆到附加工作表，不截断内容。发布使用暂存文件校验后替换。
 
 `GU_ANALYSIS_ROOT` 与 `GU_PUBLISHED_ROOT` 使用同一永久目录；结果路径不能指向 `/tmp`、`/var/tmp`、`/dev/shm` 或 `/run`。跨项目的 XLSX/RDS 读写共用 `../0f/results.R` 和 `results.py`。格式整理不重新拟合模型，也不改变科学结果或伪造分析完成状态。
 
 代码格式遵循公用 R 代码：运算符两侧空格、tab 缩进、使用 `# 🚩` 划分模块。第三方源码保留上游格式。
 
 本次整理核对了全部已保存的科学结果和 258 棵完整树，未重新推断树或调用 IBDmix／TRACE。TRACE 目录当前保留的是可继续分析的提取数据；整理不会把未完成的阶段标成已完成。
+
+## PhyML 运行与续跑
+
+```bash
+PHYML_TREE_CPUS=4 PHYML_TREE_TIMEOUT=7200 ./gu.sh phyml \
+  --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo \
+  --loci-format cojo --grch 38 --target 1kg \
+  --target-dir /mnt/f/gen/1kg/37/pfile/chr \
+  --jobs 6 --memory-cap 32G --replace-phyml FALSE --foreground TRUE
+```
+
+默认整批共用 32 GiB 内存上限，每棵树最多计算 7200 秒（2 小时）。参考版本检查使用 `f/0.build-check.sh` 的带锁缓存：同一源文件、哨兵表、目标 build 和校验代码只扫描一次；文件路径、大小、纳秒修改时间或校验代码变化时重新检查，失败不缓存。
+
+每个位点先完成输出校验、写入 `.phyml.locus.complete.json`，再发布和压缩。完成记录、位点 `.cmd` 和 `.log` 保留在永久目录及原生归档中；下次运行会核对输入和输出后跳过已完成位点。
+
+超时继续处理其余位点，记录到 `phyml/<数据集>/phyml.timeouts.tsv`，包含位点、序列数、位点数、转入清单前已保存的 bootstrap 树数、耗时、输入和命令路径。输入 alignment、日志和超时记录保留；不完整的树不进入有效树结果。普通续跑跳过已记录的超时位点。已中断的旧树若输出时间证明它已超过本次预算，也直接列入待处理清单，`reason` 标明旧运行中断。
+
+以后补跑时在同一入口命令前设置 `PHYML_RETRY_TIMEOUTS=TRUE`，并按需要覆盖 `PHYML_TREE_TIMEOUT`、`PHYML_TREE_CPUS`；成功后会从清单移除。仅增加超时或 CPU 数不会自动重跑清单，也不会替换已完成的树。不完整 bootstrap 暂不支持接着续算。
+
+运行控制回归测试：`python3 tests/test_phyml_runtime.py -v`。
+
+## 2026-10-09 PhyML 全量科学复核
+
+对照 [Zeberg & Pääbo, Nature 2020](https://www.nature.com/articles/s41586-020-2818-3)，逐一读取并校验本批 709 个位点的原生归档。原始 COJO 有 711 条记录，2 条因 SNP ID 与 Chr/bp 冲突被排除；成功转换为 GRCh37 的 709 条均有状态记录。保存结果中 352 条高 LD 标记不足、77 条风险/非风险序列无法区分、9 条 lead 缺失或不唯一、9 条建树位点不足、1 条重复单倍型不足、18 条建树失败（17 超时、1 数值失败），只有 243 条完成树。未完成和不可评估不能算作阴性。
+
+原有 `tree_pass` 检验的是全部重复风险单倍型与该谱系全部参考共同形成排他分支，BS ≥70；这是一个严格的特定假设，并不是完整的渗入发现算法。论文在 COVID 位点观察到了这样的风险分支，不意味着所有性状中的渗入都必须增加表型，或所有带同一 lead 等位基因的序列都必须共同成支。新增 `nonrisk_tree_pass`、`nonrisk_tree_bootstrap`、`supported_allele_role`，在同一完整树上按同样规则复核另一等位基因；原有风险方向调用和携带者验证口径保留。非风险方向不自动解释为临床保护效应。Overview 可查看任一方向支持、两个方向各自支持或全部输入 lead，并显示输入/完成分母。
+
+本批已存树中，Neanderthal 原有风险方向支持 1 个 locus，非风险方向另有 4 个；Denisovan 风险方向 1 个。4 个新增非风险信号的输入 ID（GRCh38）和 BS 是：`20:47731721:C:T` (72)、`5:40059671:G:A` (81)、`7:47009169:A:G` (100)、`7:522772:G:A` (93)。这些是树支持，不能直接改名为已确认渗入。审计中的单参考/部分现代单倍型分支另列为探索性亲缘证据，不进入严格调用，也不把扫描分支的 BS 当作已校准的全基因组 P 值。
+
+已修复 GRCh38→37 后 REF/ALT 互换造成的精确 lead 匹配失败：比较同一坐标上的无序双等位集合，随后按目标 VCF 顺序解码 GT，保持效应等位基因方向；第三等位基因和多个匹配记录仍不接受。`8:116228954:A:G` 在 GRCh37 的真实记录是 `8:117241193:G:A`，独立复核恢复了 lead、6 个高 LD 标记和 28 个建树位点，但其序列仍无法区分两种 lead 等位基因，因此没有被提升为阳性。另修复 Denisovan 报告沿用 Neanderthal 阶段状态的问题，以及系统 PhyML shell 启动器在串行模式下自行启动 MPI 的问题。
+
+过滤影响也已量化：有逐位点 QC 的核心共 139,784 个 SNP（不同 lead 的重叠区间重复计数），三 Neanderthal 共调用为 80,369，五参考共调用为 79,910。额外两个 Denisovan 参考减少 459 个位点；77 个序列无法区分的 loci 中，仅 2 个的 lead 能在三个 Neanderthal 中共调用。352 个高 LD 不足的 loci 中，218 个在 r² >0.8 时有至少两个标记；这里只报告敏感性数量，没有降低主分析的 r² >0.98 阈值或重新拟合这些位点。243 棵完整树中，20 棵不足 10 个 SNP，76 棵五个古参考序列完全相同，不能把难以区分谱系当作无渗入证据。
+
+论文使用的 0.53 cM/Mb 是其 chr3 区域的局部重组率，不能用于所有 COJO loci 的正式 ILS 显著性判断。当前固定重组率的结果仍仅作 LD 跨度敏感性指标；严格渗入判断还需要共享衍生变异、实际共享片段边界、局部重组/ILS 和独立片段证据。1–4% 是个体基因组碱基的祖源比例，不是经 GWAS/COJO 筛选后 loci 为渗入来源的概率，也不提供最少阳性数量；即使假定 709 次独立、同概率抽样，7–28 也只是期望值。
+
+复核输出在 `/mnt/d/analysis/gu/final/review/phyml_audit_20261009/`，包含工作簿、阶段统计、全部 loci、双方向树支持、探索性分支、逐参考缺失原因、输入排除记录和校验清单。独立的论文阳性对照序列重建得到 GRCh37 `3:45859651–45909024`、450 个 SNP 和 253 种现代单倍型，与论文报告一致。原始 GWAS 归档不改写；普通续跑会重新检查旧规则下报告 lead 缺失的 9 个位点一次，其余有效完成缓存继续复用。
+
+可重复执行审计；`--refresh-report` 可选，仅刷新现有概览的诊断列，先备份旧表，不重新推断树或改写原始风险调用：
+
+```bash
+python3 f/phyml.py audit \
+  --dataset-dir /mnt/d/analysis/gu/phyml/1kg \
+  --lead-table /mnt/d/analysis/gu/phyml/1kg/inputs/bald0.jma.cojo.dbac4a5b8be8/gwas_leads.GRCh37.tsv \
+  --output /mnt/d/analysis/gu/final/review/phyml_audit_20261009 \
+  --refresh-report /mnt/d/analysis/gu/final/review/phyml_locus_report.tsv
+python3 tests/test_phyml_science.py -v
+python3 tests/test_phyml_runtime.py -v
+/home/huangj/anaconda3/envs/gu/bin/Rscript --vanilla tests/test_shiny_evidence.R
+```
 
 ## 2026-10-06 chrX 复核更新
 

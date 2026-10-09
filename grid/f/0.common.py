@@ -63,7 +63,7 @@ ALIASES = {
 	"N": ["N", "N_TOTAL", "TOTAL_N", "OBS_CT", "N_SAMPLES"],
 	"NCASE": ["N_CASE", "NCASE", "NCASES", "CASES", "N_CASES"],
 	"NCTRL": ["N_CONTROL", "N_CONTROLS", "NCTRL", "NCONTROLS", "CONTROLS"],
-	"EAF": ["EAF", "AF", "POOLED_ALT_AF", "EFFECT_ALLELE_FREQUENCY", "A1FREQ", "FREQ1", "ALT_FREQ"],
+	"EAF": ["EAF", "EFFECT_ALLELE_FREQUENCY", "A1FREQ", "FREQ1"],
 }
 
 
@@ -74,6 +74,41 @@ def canon(s):
 def choose(cols, key):
 	d = {canon(c): c for c in cols}
 	return next((d[canon(x)] for x in ALIASES[key] if canon(x) in d), None)
+
+
+def effect_allele_frequency(table, columns, a1, a2):
+	"""Return A1 frequency only when the source identifies the counted allele.
+
+	ALT frequency is not necessarily effect-allele frequency: a GWAS may test REF.
+	A generic AF column without an explicit AF_ALLELE/FREQ_ALLELE is left missing;
+	this cannot affect BETA+SE inference, and posterior centering then requires the
+	user's correctly oriented discovery EAF table instead of silently guessing.
+	"""
+	names = {canon(c): c for c in table.columns}
+	col = columns.get("EAF")
+	if col:
+		frequency = pd.to_numeric(table[col], errors="coerce")
+		source = f"{col}:effect_allele"
+	else:
+		col = next((names[x] for x in ("POOLED_ALT_AF", "ALT_FREQ", "ALT_AF") if x in names), None)
+		if col:
+			if "ALT" in names:
+				allele = table[names["ALT"]].astype(str).str.strip().str.upper()
+			elif "REF" in names:
+				reference = table[names["REF"]].astype(str).str.strip().str.upper()
+				allele = a2.where(reference == a1, a1.where(reference == a2, ""))
+			else:
+				return pd.Series(np.nan, index=table.index), f"{col}:ALT_allele_unavailable"
+		else:
+			col = names.get("AF")
+			allele_col = next((names[x] for x in ("AF_ALLELE", "FREQ_ALLELE", "FREQUENCY_ALLELE") if x in names), None)
+			if not col or not allele_col:
+				return pd.Series(np.nan, index=table.index), "AF_orientation_unspecified" if col else "unavailable"
+			allele = table[allele_col].astype(str).str.strip().str.upper()
+		frequency = pd.to_numeric(table[col], errors="coerce")
+		frequency = frequency.where(allele == a1, (1 - frequency).where(allele == a2))
+		source = f"{col}:oriented_to_effect_allele"
+	return frequency.where(np.isfinite(frequency) & frequency.between(0, 1)), source
 
 
 def read_snpinfo(path):
@@ -163,7 +198,9 @@ def prepare_sumstats_main():
 		"duplicates": 0,
 		"coordinate_checked": 0,
 		"coordinate_mismatch": 0,
+		"eaf_unavailable": 0,
 	}
+	eaf_sources = set()
 	coordinate_examples = []
 	first = True
 	staging = str(a.output) + f".tmp.{os.getpid()}"
@@ -210,8 +247,8 @@ def prepare_sumstats_main():
 						"reference_bp": positions[s][1],
 					}
 				)
-		a1 = d[cols["A1"]].astype(str).str.upper()
-		a2 = d[cols["A2"]].astype(str).str.upper()
+		a1 = d[cols["A1"]].astype(str).str.strip().str.upper()
+		a2 = d[cols["A2"]].astype(str).str.strip().str.upper()
 		beta = (
 			pd.to_numeric(d[cols["BETA"]], errors="coerce")
 			if cols["BETA"]
@@ -241,7 +278,8 @@ def prepare_sumstats_main():
 			n = pd.Series(np.nan, index=d.index)
 			n_source = "unavailable; override required"
 		n = n.where(np.isfinite(n) & (n > 0))
-		eaf = pd.to_numeric(d[cols["EAF"]], errors="coerce") if cols.get("EAF") else pd.Series(np.nan, index=d.index)
+		eaf, eaf_source = effect_allele_frequency(d, cols, a1, a2)
+		eaf_sources.add(eaf_source)
 		out = pd.DataFrame(
 			{
 				"SNP": sid,
@@ -275,6 +313,7 @@ def prepare_sumstats_main():
 		out = out[~dup]
 		seen.update(out.SNP.tolist())
 		if len(out):
+			stats["eaf_unavailable"] += int(out.EAF.isna().sum())
 			nvals.extend(out.N.dropna().to_numpy().tolist())
 			out.to_csv(
 				staging,
@@ -306,6 +345,7 @@ def prepare_sumstats_main():
 		"output": str(Path(a.output).resolve()),
 		"n_gwas_median": nmed,
 		"n_source": n_source,
+		"eaf_source": sorted(eaf_sources),
 		"coordinate_match_min": MIN_COORDINATE_MATCH,
 		"coordinate_mismatch_examples": coordinate_examples,
 		"preparation_signature": preparation_signature(a.input, a.snpinfo, a.trait, a.pop),
@@ -344,15 +384,60 @@ def filter_samples(d, idcol, remove):
 	return d.loc[~ids.str.startswith("-") & ~ids.isin(excluded_ids(remove))].copy()
 
 
-def update_csx_table(d, dest, remove=""):
+def score_source_records(weights, joint_inference_signature, chromosomes):
+	chromosomes = sorted(map(int, chromosomes))
+	if not chromosomes or len(set(chromosomes)) != len(chromosomes) or not set(chromosomes) <= set(range(1, 23)):
+		raise ValueError("Scoring provenance requires unique autosomes 1..22")
+	if not joint_inference_signature:
+		raise ValueError("Scoring provenance requires the joint inference signature")
+	return {
+		name: {
+			"joint_inference_signature": joint_inference_signature,
+			"weights_file": str(Path(path).resolve()), "weights_sha256": sha256(path),
+			"chromosomes": chromosomes, "scoring_convention": "PLINK2_SCORESUM_no_mean_imputation",
+		}
+		for name, path in weights.items()
+	}
+
+
+def score_provenance_cli():
+	p = argparse.ArgumentParser()
+	p.add_argument("--weights", nargs="+", required=True, help="csx.AFR=weight_file ...")
+	p.add_argument("--signature", required=True)
+	p.add_argument("--chrs", required=True)
+	p.add_argument("--output", required=True)
+	a = p.parse_args()
+	pairs = [value.split("=", 1) for value in a.weights]
+	if any(len(pair) != 2 for pair in pairs) or len({pair[0] for pair in pairs}) != len(pairs):
+		raise ValueError("Need one named weight file per score column")
+	atomic_json(a.output, score_source_records(dict(pairs), a.signature, a.chrs.split()))
+
+
+def update_csx_table(d, dest, remove="", provenance=None):
 	"""Atomically replace only supplied score columns, preserving other models."""
 	d = d.rename(columns={"IID": "eid"}).copy()
 	dest = Path(dest)
+	provenance_path = dest.with_suffix(".provenance.json")
+	updated_columns = set(d) - {"eid"}
+	provenance = {} if provenance is None else provenance
+	if not isinstance(provenance, dict) or not set(provenance) <= updated_columns:
+		raise ValueError("Scoring provenance contains a column not supplied in this update")
+	for record in provenance.values():
+		if record.get("weights_sha256") != sha256(record["weights_file"]):
+			raise ValueError("A scoring weight file changed before score publication")
 	dest.parent.mkdir(parents=True, exist_ok=True)
 	lock_path = cache_directory(dest) / "write.lock"
 	lock_path.parent.mkdir(parents=True, exist_ok=True)
 	with lock_path.open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
+		models = {}
+		if dest.exists() and provenance_path.exists():
+			try:
+				previous = json.loads(provenance_path.read_text())
+				if previous.get("schema") == "grid_csx_scores_v1" and previous.get("score_file_sha256") == sha256(dest):
+					models = {name: record for name, record in previous.get("models", {}).items() if name not in updated_columns}
+			except (ValueError, OSError, AttributeError):
+				models = {}
 		if dest.exists():
 			old = read_result_table(dest, dtype={"eid": str, "IID": str}).rename(columns={"IID": "eid"})
 			old = filter_samples(old, "eid", remove)
@@ -368,11 +453,20 @@ def update_csx_table(d, dest, remove=""):
 			raise ValueError("Empty/missing/duplicate CSx IDs")
 		if not np.isfinite(d.drop(columns="eid").to_numpy(float)).all():
 			raise ValueError("Nonfinite CSx scores")
+		# Remove the old attestation before mutation; a failed write cannot leave an
+		# apparently valid lineage record for a partly published score table.
+		provenance_path.unlink(missing_ok=True)
 		write_rds(d, dest)
+		models.update(provenance)
+		atomic_json(provenance_path, {
+			"schema": "grid_csx_scores_v1", "score_file": str(dest.resolve()),
+			"score_file_sha256": sha256(dest), "models": models,
+			"complete_population_provenance": all(f"csx.{pop}" in models for pop in ("AFR", "EAS", "EUR", "SAS")),
+		})
 	return d
 
 
-def publish_table(src, dest, method, remove):
+def publish_table(src, dest, method, remove, provenance=None):
 	d = read_result_table(src, dtype={"eid": str, "IID": str})
 	idcol = "eid" if "eid" in d else "IID"
 	before = len(d)
@@ -384,7 +478,7 @@ def publish_table(src, dest, method, remove):
 	if d.empty or d[idcol].isna().any() or d[idcol].duplicated().any():
 		raise ValueError("Empty/missing/duplicate score IDs")
 	if method == "csx":
-		update_csx_table(d, dest, remove)
+		update_csx_table(d, dest, remove, provenance=provenance)
 		print(f"{method}: retained={len(d)}; excluded={before - len(d)}; output={dest}")
 		return
 	if not np.isfinite(d.drop(columns=idcol).to_numpy(float)).all():
@@ -401,8 +495,10 @@ def score_output_cli():
 	p.add_argument("input")
 	p.add_argument("output")
 	p.add_argument("--remove", default="/mnt/d/files/ukb.exclude.id")
+	p.add_argument("--provenance", help="Named scoring source records generated by score-provenance")
 	a = p.parse_args()
-	publish_table(a.input, a.output, a.method, a.remove)
+	provenance = json.loads(Path(a.provenance).read_text()) if a.provenance else None
+	publish_table(a.input, a.output, a.method, a.remove, provenance=provenance)
 
 
 # 🚩 io: pipeline_io
@@ -430,7 +526,9 @@ def inspect(snpinfo, files):
 			raise ValueError(f"GRCh37 required: {marker}")
 		d = pd.read_csv(path, nrows=100000, **reader_options(path))
 		columns = {key: choose(d.columns, key) for key in ("SNP", "CHR", "BP", "A1", "A2", "BETA", "SE", "N")}
-		missing = [key for key in ("A1", "A2", "SE") if columns[key] is None]
+		missing = [key for key in ("A1", "A2") if columns[key] is None]
+		if columns["SE"] is None and choose(d.columns, "P") is None:
+			missing.append("SE or P")
 		if columns["BETA"] is None and choose(d.columns, "OR") is None:
 			missing.append("BETA or OR")
 		if columns["SNP"] is None and (columns["CHR"] is None or columns["BP"] is None):
@@ -979,6 +1077,7 @@ COMMANDS = {
 	"cache-path": cache_path_cli,
 	"prepare-sumstats": prepare_sumstats_cli,
 	"publish": score_output_cli,
+	"score-provenance": score_provenance_cli,
 	"io": pipeline_io_cli,
 	"sumstats-cache": sumstats_cache_cli,
 	"split-sumstats": split_sumstats_cli,

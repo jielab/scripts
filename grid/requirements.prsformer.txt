@@ -1,0 +1,11 @@
+# Tested modern CUDA 13.0 stack; native NATTEN wheels: https://whl.natten.org
+torch==2.12.0
+natten==0.21.7+torch2120cu130
+numpy==1.26.4
+pandas==2.3.3
+scipy==1.17.1
+pgenlib==0.95.1
+pyreadr==0.5.7
+matplotlib==3.11.2
+openpyxl==3.1.5
+scikit-learn==1.9.1

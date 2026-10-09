@@ -127,16 +127,45 @@ def text_stream(path):
 			yield handle
 
 
-def read_table(value):
+def read_table(value, columns=None):
 	path = required(value)
 	if path.suffix.lower() == ".rds":
+		# R deserializes large phenotype tables far more compactly than the
+		# generic Python R-object tree. Export only the columns used by GRID.
+		rscript = shutil.which("Rscript") or str(Path(sys.prefix) / "bin/Rscript")
+		if Path(rscript).is_file():
+			with tempfile.TemporaryDirectory(prefix="grid-rds-columns-") as temporary:
+				output = Path(temporary) / "selected.tsv"
+				code = '''args <- commandArgs(TRUE)
+x <- readRDS(args[1])
+if (is.list(x) && !is.data.frame(x) && length(x) == 1) x <- x[[1]]
+if (!is.data.frame(x)) stop("Expected one data.frame/data.table")
+x <- as.data.frame(x)
+if (length(args) > 2) x <- x[, intersect(args[-c(1,2)], names(x)), drop=FALSE]
+writeLines(names(x)[vapply(x, function(v) is.character(v) || is.factor(v), logical(1))], paste0(args[2], ".strings"))
+options(digits=17)
+if (requireNamespace("data.table", quietly=TRUE)) {
+  data.table::fwrite(x, args[2], sep="\\t", na="NA", quote=TRUE)
+} else write.table(x, args[2], sep="\\t", row.names=FALSE, quote=TRUE, na="NA")
+'''
+				log(f"Reading {'selected columns' if columns is not None else 'table'} with R: {path.name}")
+				# Some Rscript builds expand escaped tabs in -e before parsing
+				# arguments. A script file preserves the multi-line R expression.
+				script = Path(temporary) / "read_columns.R"
+				script.write_text(code)
+				result = subprocess.run([rscript, "--vanilla", str(script), str(path), str(output), *(columns or [])],
+					capture_output=True, text=True)
+				if result.returncode:
+					raise ValueError(f"R table reader failed for {path}: {result.stderr.strip()}")
+				text_columns = Path(str(output) + ".strings").read_text().splitlines()
+				return pd.read_csv(output, sep="\t", dtype={name: str for name in [*text_columns, "eid", "IID", "#IID", "ID"]})
 		import rdata
 		data = rdata.read_rds(path)
 		if isinstance(data, dict) and len(data) == 1 and isinstance(next(iter(data.values())), pd.DataFrame):
 			data = next(iter(data.values()))
 		if not isinstance(data, pd.DataFrame):
 			raise ValueError(f"Expected one data.frame/data.table in {path}")
-		return data.reset_index(drop=True)
+		return data.reset_index(drop=True) if columns is None else data[[c for c in columns if c in data]].reset_index(drop=True)
 	with text_stream(path) as stream:
 		lines = 0
 		for line in stream:
@@ -447,8 +476,9 @@ def prepared_tables(args, traits, covariates):
 
 def raw_tables(args, traits, covariates):
 	path = required(option(args, "pheno_file", "/mnt/d/data/ukb/phe/Rdata/all.rds"))
-	data = filter_ids(identified(read_table(path), "Phenotype"), args)
 	source_traits = {option(args, f"{t}_col", "auto" if t == "t2dm" else t) for t in traits}
+	columns = list(dict.fromkeys(["eid", "IID", "#IID", "ID", *covariates, *sorted(source_traits), "t2dm.Yr2e", "t2dm.Yt2e"]))
+	data = filter_ids(identified(read_table(path, columns), "Phenotype"), args)
 	if set(covariates) & (set(traits) | source_traits | {"y", "outcome", "t2dm.Yr2e", "t2dm.Yt2e"}):
 		raise ValueError("An outcome cannot be used as a covariate")
 	for trait in traits:
@@ -601,12 +631,42 @@ def normalize_weight_table(frame, label):
 	return frame
 
 
+def verify_weight_preparation(common, metadata, signature, source, snpinfo, trait, pop):
+	"""Validate historical weights without relabeling their preparation version.
+
+	The preparation key includes the whole preprocessing source file, whereas
+	completed CSx inference records its input identities independently. A code
+	update (including EAF-only changes) must not require rerunning that MCMC.
+	Old weights still need the exact recorded GWAS/reference and a newly verified
+	score/weight sidecar; this does not certify that old normalization is current.
+	"""
+	if metadata.get("preparation_signature") == common.preparation_signature(source, snpinfo, trait, pop):
+		return "current_preparation"
+	try:
+		inference = json.loads(signature)
+		settings = inference["settings"]
+		files = inference["files"]
+		valid = (
+			bool(metadata.get("preparation_signature"))
+			and metadata.get("trait") == trait and metadata.get("pop") == pop
+			and metadata.get("input") == str(source.resolve())
+			and isinstance(settings, dict)
+			and {"phi", "iterations", "burnin", "thin", "seed", "n_gwas", "chromosomes"} <= set(settings)
+			and common.stamp(source) in files and common.stamp(snpinfo) in files
+		)
+	except (ValueError, KeyError, TypeError):
+		valid = False
+	if not valid:
+		raise ValueError(f"CSx weights/source preparation mismatch: {source}; historical weights require their original inference input identities")
+	return "historical_preparation_inference_inputs_verified"
+
+
 def native_weights(args, trait):
 	root = Path(option(args, "gwas_dir", "/mnt/f/gwas/4grid/common"))
 	chrs = selected_chromosomes(args)
 	common = load_module(Path(__file__).with_name("0.common.py"), "grid_data_common")
 	snpinfo = required(option(args, "snpinfo", "/mnt/f/refLD/csx/snpinfo_mult_1kg_hm3"))
-	canonical, signatures, sources = None, [], []
+	canonical, signatures, sources, registry = None, [], [], {}
 	for pop in POPS:
 		tags = [f"{trait}.{pop}"] + (["t2dm.AFA"] if trait == "t2dm" and pop == "AFR" else [])
 		paths = [candidate for tag in tags for candidate in (root / tag / "gwas" / f"{tag}.gz", root / f"{tag}.gz")]
@@ -621,10 +681,11 @@ def native_weights(args, trait):
 		metadata_path = required(str(weight) + ".metadata.json")
 		signature_path = required(str(weight) + ".signature")
 		metadata = json.loads(metadata_path.read_text())
-		if metadata.get("preparation_signature") != common.preparation_signature(source, snpinfo, trait, pop):
-			raise ValueError(f"CSx weights/source preparation mismatch: {weight}")
 		signatures.append(signature_path.read_text().strip())
-		sources.extend(source_stamp(path) for path in (source, weight, metadata_path, signature_path))
+		preparation_status = verify_weight_preparation(common, metadata, signatures[-1], source, snpinfo, trait, pop)
+		registry[f"csx.{pop}"] = {"weight": weight, "signature": signatures[-1]}
+		sources.extend(source_stamp(path) for path in (source, weight, signature_path))
+		sources.append({**source_stamp(metadata_path), "preparation_validation": preparation_status})
 		frame = normalize_weight_table(read_table(weight), str(weight))
 		if "BETA" not in frame:
 			raise ValueError(f"Missing CSx BETA: {weight}")
@@ -648,7 +709,36 @@ def native_weights(args, trait):
 		canonical = merged.drop(columns=[column + "_source" for column in ("CHR", "BP", "A1", "A2")])
 	if len(set(signatures)) != 1 or not signatures[0]:
 		raise ValueError("CSx population weights are not from the same completed joint run")
+	provenance = verify_csx_score_provenance(args, trait, registry, chrs)
+	sources.append(source_stamp(provenance))
 	return normalize_weight_table(canonical, "Aligned CSx weights"), sources
+
+
+def verify_csx_score_provenance(args, trait, registry, chromosomes):
+	"""Link the four original score columns to the posterior weights being annotated."""
+	score = required(Path(option(args, "score_dir", "/mnt/d/data/ukb/pgs")) / trait / "1csx.scores.rds")
+	path = score.with_suffix(".provenance.json")
+	if not path.is_file():
+		raise ValueError(f"Missing CSx score/weight provenance: {path}. Rerun 1.csx.sh --stage score with the existing weights; MCMC need not be rerun")
+	provenance = json.loads(path.read_text())
+	def digest(file):
+		h = hashlib.sha256()
+		with Path(file).open("rb") as stream:
+			for block in iter(lambda: stream.read(4*1024*1024), b""):
+				h.update(block)
+		return h.hexdigest()
+	if provenance.get("schema") != "grid_csx_scores_v1" or provenance.get("score_file_sha256") != digest(score):
+		raise ValueError("CSx score provenance is stale or has an unknown schema; rerun --stage score before GRID")
+	models = provenance.get("models", {})
+	for column, source in registry.items():
+		record = models.get(column, {})
+		if record.get("weights_sha256") != digest(source["weight"]) or record.get("joint_inference_signature") != source["signature"]:
+			raise ValueError(f"{trait} {column}: baseline scores and evolution weights come from different CSx runs")
+		if record.get("chromosomes") != list(chromosomes):
+			raise ValueError(f"{trait} {column}: baseline/evolution chromosome sets differ; rebuild common scores on the same --chrs")
+		if record.get("scoring_convention") != "PLINK2_SCORESUM_no_mean_imputation":
+			raise ValueError(f"{trait} {column}: unsupported or undeclared baseline scoring convention")
+	return path
 
 
 def canonical_weights(args, trait):
@@ -856,6 +946,22 @@ def evolution_data(args, prepared):
 		prepared["metadata"]["evolution_verified"] = False
 		prepared["scoring_artifacts"] = {}
 		return prepared
+	if optional(option(args, "annotation_file")) is None:
+		# Existing CSx scores and projected PCs already define the reference
+		# matching inputs. Validate their weight lineage without fabricating
+		# unknown-age modules or rescoring an identical total on every chromosome.
+		metadata = {}
+		for trait, frame in prepared["tables"].items():
+			weights, sources = canonical_weights(args, trait)
+			frame = frame.drop(columns=[name for name in frame if name.startswith("evo.")])
+			prepared["tables"][trait] = frame
+			prepared["feature_groups"][trait] = feature_groups(frame, prepared["metadata"]["covariates"])
+			metadata[trait] = {"builder": {"mode": "reference_matching", "n_variants": len(weights),
+				"annotation_source": "not_requested"}, "weights_sources": sources}
+		prepared["metadata"].update(evolution=metadata, evolution_mode="reference_matching", evolution_verified=False)
+		prepared["scoring_artifacts"] = {}
+		log("No external annotation requested; using existing CSx scores and projected PCs")
+		return prepared
 	if str(option(args, "build", "GRCh37")) != "GRCh37":
 		raise ValueError("GRID requires explicitly harmonized GRCh37 inputs")
 	helper = load_module(Path(__file__).with_name("grid.evolution.py"), "grid_data_evolution")
@@ -872,22 +978,15 @@ def evolution_data(args, prepared):
 			"--populations", ",".join(POPS), "--chromosomes", ",".join(map(str, selected_chromosomes(args))),
 			"--seed", str(option(args, "seed", 20260904)), "--force"]
 		annotations = optional(option(args, "annotation_file"))
-		geva = optional(option(args, "geva_dir", "/mnt/f/ref/GEVA"))
 		if annotations is not None:
 			annotation_path = required(expand_trait(annotations, trait))
 			command += ["--annotations", str(annotation_path)]
 			sources.append(source_stamp(annotation_path))
-		# An explicit canonical file can replace a locally absent GEVA atlas.
-		if geva is not None and geva.is_dir():
-			command += ["--geva-dir", str(geva)]
-			sources += [source_stamp(geva / f"atlas.chr{chrom}.csv.gz") for chrom in sorted(weights.CHR.unique())]
-		elif annotations is None and not enabled(option(args, "allow_proxy_only", False)):
-			raise ValueError("Missing GEVA atlas/canonical age annotations; acquire source data or explicitly allow proxy-only analysis")
 		if enabled(option(args, "allow_proxy_only", False)):
 			command.append("--allow-proxy-only")
 		if enabled(option(args, "include_proxy", False)):
 			command.append("--include-proxy")
-		for name in ("min_age_quality", "age_priority", "selection_p", "chunk_size"):
+		for name in ("min_age_quality", "selection_p", "chunk_size", "min_age_variants", "age_permutation_mode"):
 			value = getattr(args, name, None)
 			if value is not None:
 				command += ["--" + name.replace("_", "-"), str(value)]
@@ -914,6 +1013,7 @@ def evolution_data(args, prepared):
 		}
 		metadata[trait] = {"builder": build_result, "weights_sources": sources, "modules": dictionary,
 			"coverage": coverage, "annotation_qc": read_table(directory / "qc.tsv"),
+			"baseline_weight_link": "external_weights_not_independently_linked" if optional(option(args, "weights_file")) else "verified_score_file_and_posterior_weight_hashes",
 			"frequency_source": "fixed_training_half_only", "missing_genotypes": "zero centred contribution",
 			"old_grid_transport_or_reshrink_used": False}
 	prepared["metadata"]["evolution"] = metadata
