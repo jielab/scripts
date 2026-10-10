@@ -33,7 +33,7 @@ dirarch=${dirarch:-${GU_ARCHAIC_ROOT:-$dir_ref/archaic/${GRCH:-37}/vcf}}
 sample_file=${sample_file:-$dirmod/samples.txt}
 target_vcf_dir=${GU_TARGET_VCF_DIR:-$dirmod/vcf}
 dirsoft=${dirsoft:-$dir0/software/gu/IBDmix}
-dirout=${dirout:-${GU_ANALYSIS_ROOT:-$dir0/analysis/gu}/ibdmix/${GU_SCOPE_ID:-genome}}
+dirout=${dirout:-${GU_ANALYSIS_ROOT:-$dir0/analysis/gu/1kg}/ibdmix/${GU_SCOPE_ID:-genome}}
 genome_build=${genome_build:-b${GRCH:-37}}
 loci_file=${GU_LOCI_FILE:-}
 chrs_arg=${chrs:-${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}}
@@ -166,7 +166,7 @@ flock -n 9 || {
 ibdmix_tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/gu-ibdmix.XXXXXX")
 trap 'rm -rf -- "$ibdmix_tmp_root"' EXIT
 ibdmix_mask_root=/tmp/gu-intermediate/$ibdmix_cache_key/mask
-ibdmix_log_root=/tmp/gu-logs/ibdmix/$ibdmix_cache_key
+ibdmix_log_root=$dirout/logs
 mkdir -p "$ibdmix_mask_root" "$ibdmix_log_root"
 
 exec > >(tee "$ibdmix_log_root/run.log") 2>&1

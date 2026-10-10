@@ -37,7 +37,7 @@
 - 带 UKB 等个体 ID 的数据保存为 `.rds`，不能混入汇总工作簿或公开查看界面。文件名按数据内容确定，如 `test_individuals.rds`、`individual_explanations.rds`、`review_split.rds`，不要统一命名为 `individual.rds`；嵌套个体解释也不用 JSONL 留在正式目录。
 - 可复用的模型或分阶段分析对象也可以保留 RDS。文件名简短、固定、说明用途，例如 `c2.dandelion.rds`、`c2.instruments.rds`、`c2.mr.rds`，不把日期、模式和版本串堆进文件名。
 - GRID 的个体 PRS-CSx posterior 使用 `1csx.posterior.rds`，不以 `individual_posterior.tsv.gz` 留在正式结果目录。迁移个体文件时更新所有生产方、读取方和报告链接，并核对行数、ID、数值和类型。
-- GRID 的评分分别使用 `1csx.scores.rds`、`2disco.scores.rds`、`Yeval.cojo.rds`；Yeval 图表使用 `Yeval.<主题>.png/.xlsx`。已有 MCMC 后验 HDF5 和 SNP 模型权重保留原生格式供复用，评分交换文件及缓存进入 `/tmp`。
+- GRID 的评分分别使用 `1csx.scores.rds`、`2disco.scores.rds`，已有 COJO 评分继续读取 `Yeval.cojo.rds`；统一评估入口为 `grid.sh final`，图表使用 `final.<主题>.png/.xlsx`，个体结果只保存为 RDS。已有 MCMC 后验 HDF5 和 SNP 模型权重保留原生格式供复用，评分交换文件及缓存进入 `/tmp`。
 - GU 的个体／单倍型及原生拟合结果按方法、数据集和位点／染色体保存为 `phyml.haplotypes.rds`、`ibdmix.tracts.rds`、`trace.segments.rds` 或 `as3.tracts.rds`；综合个体结果保存为 `final/gu.results.rds`。SQLite 仅作为 `/tmp` 中的查看缓存；`gu.validation.rds` 保留需供 Shiny 读取的个体验证数据。正式结果不重复复制到 `final/normalize`。
 - 旧图片若未保存某项作图统计量，应明确说明缺失，不能把其他汇总统计量当作原图数据。是否重新拟合须单独获得授权；允许重算时应同步更新 PNG 和 XLSX。
 - 为减少文件数量，可以迁移现有结果，并同步修改读写路径。迁移后验证数据完整、数值不变、下游可读取，再删除被替代的文件。

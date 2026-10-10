@@ -956,7 +956,7 @@ def reference_main():
 
 		if not importlib.util.find_spec("lightgbm"):
 			raise RuntimeError(
-				"LightGBM missing; install requirements.txt or explicitly choose --tree hist before training"
+				"LightGBM missing; run ./install.sh --abm or explicitly choose --tree hist before training"
 			)
 	out.mkdir(parents=True, exist_ok=True)
 	with run_lock(out), threadpool_limits(a.cores):
@@ -7767,10 +7767,42 @@ def s7_numerical_code_hash(source):
 	return hashlib.sha256(ast.dump(module,include_attributes=False).encode()).hexdigest()
 
 
+def s7_resume_code_hash(source):
+	"""Numerical/input code identity, excluding console/routing/provenance helpers."""
+	module=ast.parse(source)
+	excluded={'render_abm_figures','figures_main','s7_render_figures','s6_figures',
+		's7_main','s7_manifest','s7_numerical_code_hash','s7_resume_code_hash','s7_manifests_compatible'}
+	module.body=[node for node in module.body if not isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) or node.name not in excluded]
+	# Preserve frozen fits across the reviewed installer-help rename only.
+	# Numerical/input changes still produce a different contract hash.
+	for node in ast.walk(module):
+		if isinstance(node,ast.Constant) and node.value == "LightGBM missing; run ./install.sh --abm or explicitly choose --tree hist before training":
+			node.value = "LightGBM missing; install requirements.txt or explicitly choose --tree hist before training"
+	return hashlib.sha256(ast.dump(module,include_attributes=False).encode()).hexdigest()
+
+
+def s7_manifests_compatible(previous,current):
+	if previous.get('signature')==current.get('signature') and previous.get('signature'):return True
+	# Exact, reviewed predecessor -> unchanged numerical/input contract. Unknown
+	# legacy code is never accepted merely because its outputs exist.
+	legacy={'4e23ce5e9ef7baefca374fb51acf0a920cf0692551341ed60e038e4d0d1d3a99':
+		'c8f60c3a5b9d8c3c973ba9918fd98897906ad8c140f6556239ba7a7180408134'}
+	contracts=[];payloads=[]
+	for value in (previous,current):
+		payload=json.loads(json.dumps(value));code=payload.get('code',{})
+		full=code.pop('abm_numeric_sha256',None)
+		contracts.append(code.pop('abm_resume_sha256',None) or legacy.get(full))
+		code.pop('dispatcher',None)
+		payload.pop('signature',None);payload.pop('configuration_sources',None)
+		payloads.append(payload)
+	return bool(contracts[0] and contracts[0]==contracts[1] and payloads[0]==payloads[1])
+
+
 def s7_manifest(a):
 	data=runtime_manifest(a);data.pop('signature',None)
 	sources=data.pop('configuration_sources',{})
 	data['code']={'abm_numeric_sha256':s7_numerical_code_hash(Path(__file__).read_text()),
+		'abm_resume_sha256':s7_resume_code_hash(Path(__file__).read_text()),
 		'retrieval_kernel_sha256':hashlib.sha256(ast.dump(next(node for node in ast.parse((HERE/'0.resources.py').read_text()).body if isinstance(node,ast.ClassDef) and node.name=='BlockedKNN'),include_attributes=False).encode()).hexdigest(),
 		'dispatcher':fingerprints([HERE/'0.common.py'],True)}
 	data['signature']=digest(data);data['configuration_sources']=sources
@@ -9192,8 +9224,12 @@ def s7_main(a):
 	with run_lock(out),threadpool_limits(a.cores):
 		if (out/'MODEL_FROZEN.json').exists() and not a.replace:
 			previous=json.loads((out/'manifest.json').read_text())
-			if previous.get('signature')!=s7_manifest(a)['signature']:raise ValueError('Existing S7 fit has different numeric inputs/options; choose new analysis root or explicit --replace')
-			if (out/'DONE.json').exists() or (a.train_only and (out/'TRAIN_DONE.json').exists()):log('SKIP','S7_completed',str(out));return
+			if not s7_manifests_compatible(previous,s7_manifest(a)):raise ValueError('Existing S7 fit has different numeric inputs/options; choose new analysis root or explicit --replace')
+			if (out/'DONE.json').exists() or (a.train_only and (out/'TRAIN_DONE.json').exists()):
+				marker=out/('DONE.json' if (out/'DONE.json').exists() else 'TRAIN_DONE.json')
+				state=json.loads(marker.read_text()).get('status','trained')
+				readiness=json.loads((out/'reference_readiness.json').read_text()) if (out/'reference_readiness.json').is_file() else {}
+				log('SKIP','S7_completed',f"status={state} audit={readiness.get('status','not_reported')} | {out}");return
 			return s7_evaluate(out)
 		if not prepare_run_directory(out,replace=a.replace,train_only=a.train_only):return
 		try:

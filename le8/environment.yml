@@ -1,3 +1,5 @@
+# Main LE8 dependency source; light install profiles use the pip/cran comments.
+# Install: ./install.sh --env le8 (CIGMA: ./install.sh --env cigma).
 name: le8
 channels:
   - conda-forge
@@ -8,35 +10,35 @@ dependencies:
   - pip
   - plink=1.90
   - plink2
-  - numpy=2.3.5
-  - scipy=1.16.3
-  - pandas=2.2.3
-  - matplotlib
+  - numpy=2.3.5 # pip:report
+  - scipy=1.16.3 # pip:report
+  - pandas=2.2.3 # pip:report
+  - matplotlib>=3.8,<4 # pip:report
   # Reference ABM is included in the default le8.sh pipeline.
-  - scikit-learn>=1.4,<2
-  - joblib>=1.3,<2
-  - threadpoolctl>=3.2,<4
-  - lightgbm>=4.3,<5
-  - pyreadr>=0.5,<1
-  - requests>=2.31,<3
+  - scikit-learn>=1.4,<2 # pip:abm
+  - joblib>=1.3,<2 # pip:abm
+  - threadpoolctl>=3.2,<4 # pip:abm
+  - lightgbm>=4.3,<5 # pip:abm
+  - pyreadr>=0.5,<1 # pip:abm
+  - requests>=2.31,<3 # pip:abm
   - pyarrow=24.0.0
   # Required by the integrated MR-link-2 implementation in f/c2.mr_link2.py.
   - bitarray=3.8.0
   - duckdb=1.1.3
   - rpy2=3.6.7
   - r-base>=4.3
-  - r-data.table
+  - r-data.table # cran:data.table
   - r-dplyr
   - r-tidyr
   - r-purrr
   - r-stringr
   - r-tibble
-  - r-ggplot2
+  - r-ggplot2 # cran:ggplot2
   - r-ggrepel
   - r-patchwork
   - r-survival
   - r-scales
-  - r-openxlsx
+  - r-openxlsx # cran:openxlsx
   - r-forcats
   - r-broom
   - r-coloc
@@ -52,7 +54,18 @@ dependencies:
   - bioconductor-clusterprofiler
   - bioconductor-org.hs.eg.db
   - bioconductor-go.db
+  - pillow>=10 # pip:report
+  - openpyxl>=3.1,<4 # pip:report
+  - pytest>=8,<10 # pip:validation
+  - r-shiny # cran:shiny
+  - r-dt # cran:DT
+  - r-digest # cran:digest
+  - r-jsonlite # cran:jsonlite
+  - r-r.utils # cran:R.utils
   - pip:
       - setuptools<82
-      - torch==2.12.0
+      - torch==2.12.0 # pip:abm
       - gpu-coloc==0.6.5
+      - tabicl==2.2.0 # pip:tabicl
+      - huggingface_hub>=0.28 # pip:tabicl
+      - tabulate>=0.9 # pip:tabicl

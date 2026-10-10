@@ -12,6 +12,8 @@
 
 Shell 格式化流程、任务生成、执行及 BGZF/tabix 索引函数集中在 `f/format.f.sh`。该文件供主入口和生成的任务加载；`--base`、`--worker` 是内部加载模式。LE8 通过 `source .../format.f.sh --index` 只加载索引函数，不启动格式化流程。
 
+`f/format.resume.sh` 在生成任务前批量读取输出目录的文件名，支持 `format/thin/magma/lead/mplot` 及其组合。`--replace FALSE` 下，仅凭所请求模块的结果文件、索引和完成标记名称是否齐全判断，输出 `SKIP existing done`；不读取这些文件的内容，不检查大小、时间戳、参数、指纹或压缩文件完整性，也不调用 tabix。lead 以 `.awk.snp`、`.clump.done`、`.cojo.done` 和已清理的工作目录判断，因此正常的空选择结果也能跳过。文件名不齐全时进入原流程。修改分析参数后需要重算时使用 `--replace TRUE`；liftover、删除原始文件等请求继续走原流程。该检查单独存放，避免改动格式化代码本身的旧 rsID 指纹。
+
 `format` 默认 `--rsid TRUE --rsid-unmatched drop`：已有 rsID 保留；其他 ID 按声明的 GRCh 版本、位置和两条等位基因匹配 dbSNP，不改变效应方向。无法唯一匹配的完整标准化行写入 `common/<trait>/qc/<trait>.rsid.unresolved.tsv.gz`，统计写入 `<trait>.rsid.tsv`。`--rsid-unmatched keep` 保留未匹配的原 ID；`--rsid FALSE` 完全跳过转换。更改筛选策略时可用 `--replace TRUE` 从原始数据重新生成。
 
 `--hm3 TRUE` 先保留 HM3 rsID/坐标或 `P < --p-hm3` 的候选，再转换 ID，并以转换后的 HM3 rsID 或 P 值确认最终保留项。默认阈值为 `1e-3`，不是全基因组显著阈值 `5e-8`。dbSNP 的 BGZF/tabix 副本和按位置查询的结果共用 `<project>/.project/rsid/`，不同 GWAS 只补查新坐标，包含未匹配结果的缓存；首次使用每个版本需要准备参考索引。`--dbsnp FILE`、`--rsid-cache DIR` 可指定其他参考和共享缓存位置。

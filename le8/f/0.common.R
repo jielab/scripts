@@ -852,7 +852,7 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 			meta <- x$meta
 			if (!identical(meta$trait, y) || !identical(meta$layer, if (b == "prot") "protein" else "metabolite") || !(identical(meta$module, m) || (m == "c4_panel_validation" && identical(meta$module, "c4_focus"))))
 				stop("Cached trait/layer/module mismatch: ", f)
-			settings_match <- identical(meta$module_policy,le8_module_policy(m)) && identical(meta$analysis_options, le8_analysis_options(y)) && identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026")))
+			settings_match <- !validate_settings || (identical(meta$module_policy,le8_module_policy(m)) && identical(meta$analysis_options, le8_analysis_options(y)) && identical(as.integer(meta$seed), as.integer(Sys.getenv("SEED", "2026"))))
 			generated <- meta$generated
 			version <- if (is.null(meta$code_version)) "saved fitted result" else meta$code_version
 			present <- function(paths) all(vapply(paths, function(path) {
@@ -894,10 +894,23 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 			}
 			if (m == "c2_cause") for (n in c("RUN_MRlink2", "RUN_Dandelion"))
 				if (!identical(meta[[n]], Sys.getenv(n, "Top"))) settings_match <- FALSE
+			failed_components <- character()
+			failed_status <- function(x) is.character(x) && any(grepl("failed|error|numerically_incomplete", x, ignore.case = TRUE), na.rm = TRUE)
+			if (m == "c2_cause") {
+				if (failed_status(x$DANDELION$status)) failed_components <- c(failed_components, "DANDELION")
+				if (is.data.frame(x$MRLink2$status) && failed_status(x$MRLink2$status$status)) failed_components <- c(failed_components, "MR-link-2")
+			}
+			if (m == "c3_coloc") {
+				if (is.data.frame(x$GPU_coloc$status) && failed_status(x$GPU_coloc$status$status)) failed_components <- c(failed_components, "GPU-coloc")
+				if (is.data.frame(x$summary) && failed_status(x$summary$status)) failed_components <- c(failed_components, "coloc")
+			}
+			if (length(failed_components)) { reusable <- FALSE; complete <- FALSE }
 			if (validate_settings && (!settings_match || !identical(meta$code_signature,le8_code_fingerprint()))) { reusable <- FALSE; complete <- FALSE }
 			status <- if (complete) "completed" else if (reusable) "cached" else "incomplete"
 			detail <- if (complete) "Saved estimates and original scope retained; no refitting or relabelling" else if (reusable)
 				"Numerical results complete; regenerate presentation without refitting" else "Missing result fields or numerical exports; stage resume required"
+			if (!validate_settings && complete) detail <- "Core objects, numerical exports and figure manifest validated; no refitting"
+			if (length(failed_components)) detail <- paste("Failed subanalyses:", paste(failed_components, collapse = ", "))
 		}
 		rows[[length(rows) + 1L]] <- data.frame(trait = y, layer = b, module = m, status, generated, version, detail, stringsAsFactors = FALSE)
 	}

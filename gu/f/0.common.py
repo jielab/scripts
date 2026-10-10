@@ -853,19 +853,24 @@ def gu_rebase_paths(target, published, work):
 	if str(published) == str(work):
 		return
 	old, new = str(published).encode(), str(work).encode()
+	# A new dataset root can be nested under the old root. Protect already
+	# relocated paths so recovery is idempotent, and match whole path prefixes.
+	boundary = rb'''(?=/|[\s"']|$)'''
+	pattern = re.compile(re.escape(new) + boundary + b'|' + re.escape(old) + boundary)
 	for directory, folders, names in os.walk(target, followlinks = False):
 		for name in [*names, *[name for name in folders if (Path(directory) / name).is_symlink()]]:
 			path = Path(directory) / name
-			if name in ('.result-source-root', 'run.meta.tsv', 'cache.meta.tsv'):
+			if name in ('.result-source-root', '.gu-path-relocations.json', 'run.meta.tsv', 'cache.meta.tsv'):
 				continue
 			if path.is_symlink():
 				link = os.readlink(path)
-				if link.startswith(str(published) + '/'):
+				if link.startswith(str(published) + '/') and not link.startswith(str(work) + '/'):
 					path.unlink(); path.symlink_to(str(work) + link[len(str(published)):])
-			elif path.suffix in ('.json', '.tsv', '.txt', '.cmd', '.list'):
+			elif path.suffix in ('.json', '.tsv', '.txt', '.cmd', '.list', '.env'):
 				data = path.read_bytes()
-				if old in data:
-					stat = path.stat(); path.write_bytes(data.replace(old, new)); os.utime(path, ns = (stat.st_atime_ns, stat.st_mtime_ns))
+				rebased = pattern.sub(lambda match: new if match[0] == old else match[0], data)
+				if data != rebased:
+					stat = path.stat(); path.write_bytes(rebased); os.utime(path, ns = (stat.st_atime_ns, stat.st_mtime_ns))
 
 
 def gu_link_phyml(work, target=None):
@@ -932,6 +937,12 @@ def gu_extract_native(archive, destination, run, work, replace=False):
 					os.replace(temporary,p)
 					os.utime(p, ns=(row['mtime_ns'],row['mtime_ns']))
 				finally:Path(temporary).unlink(missing_ok=True)
+	# Keep original archives and their checksums intact when a dataset moves.
+	# Only recovered working files receive the new operational paths.
+	relocations = work / '.gu-path-relocations.json'
+	if relocations.is_file():
+		for origin in json.loads(relocations.read_text()):
+			gu_rebase_paths(destination, Path(origin), work)
 	return manifest
 
 
@@ -1019,7 +1030,8 @@ def _gu_compact_results(work, methods, run_only=None):
 				# Archive and read copy both verified. Keep only user exports and
 				# the small caller roster/provenance required by density summaries.
 				for p in list(run.iterdir()):
-					if p.name.startswith(method + '.') or p.name in ('run.meta.tsv','cache.meta.tsv','.published-content') or '.part.' in p.name:continue
+					if p.name.startswith(method + '.') or p.name in ('run.meta.tsv','cache.meta.tsv','.published-content','logs') or '.part.' in p.name:continue
+					if p.suffix in ('.cmd', '.log', '.err'):continue
 					if method == 'phyml' and p.name in ('.phyml.locus.complete.json', run.name + '.cmd', run.name + '.log'):continue
 					if p.name == 'samples' and method == 'ibdmix':
 						for q in list(p.rglob('*')):

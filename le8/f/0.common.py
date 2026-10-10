@@ -1481,6 +1481,8 @@ C4 connect (including interactions and nonlinearity)/panel validation/explain, C
 def dispatch_main(argv=None):
 	p = parser()
 	a, extra = p.parse_known_args(argv)
+	if a.cigma_results is None and a.cigma_manifest is None and os.getenv('C5_CIGMA_RESULTS'):
+		a.cigma_results = Path(os.environ['C5_CIGMA_RESULTS'])
 	try:
 		shared, config_sources, shared_env = shared_analysis_settings(a)
 	except ValueError as exc:
@@ -1734,7 +1736,10 @@ def dispatch_main(argv=None):
 			for key in ["atlas", "universe", "panels", "contrasts", "cigma_manifest", "cigma_results", "cigma_cells"]:
 				if getattr(a, key) is not None:
 					cmd += ["--" + key.replace("_", "-"), str(getattr(a, key))]
-			call(cmd, env, a.dry_run)
+			for trait in traits:
+				command = list(cmd)
+				command[command.index('--Y') + 1] = trait
+				call(command, env, a.dry_run)
 		elif module == "final":
 			fit_options = dict(
 				traits=traits,
@@ -2223,6 +2228,7 @@ def main(argv=None):
 					if not isinstance(count,int):raise ValueError('Unsupported variable-length public option: '+key)
 					abm_options.extend(options[i:i+count]);i+=count
 			if 'c1_abm' in mods:dispatch_main(['c1_abm',*abm_options,'--preflight'])
+			if 'c5_cellulation' in mods:dispatch_main(['c5_cellulation',*abm_options,'--preflight'])
 			previous_state = os.environ.get('LE8_RUN_STATE_DIR')
 			with tempfile.TemporaryDirectory(prefix='le8-run-state-', dir='/tmp') as state:
 				os.environ['LE8_RUN_STATE_DIR'] = state

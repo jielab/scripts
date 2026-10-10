@@ -23,6 +23,8 @@ Project and execution:
   --dir-clean DIR             Restrict to one trait's gwas folder
   --grch auto|37|38           Detect the build per GWAS by default
   --jobs 4 --replace FALSE --run-cmd FALSE --foreground TRUE --submit-bsub FALSE
+    Resume checks output file names only, without reading data or indexes.
+    Use --replace TRUE to recompute after changing analysis settings.
   --delete-raw FALSE          Delete raw only after all requested modules succeed
   --rsid TRUE --rsid-unmatched drop|keep
     Convert non-rsIDs using build-specific dbSNP CHR/POS and both alleles.
@@ -173,7 +175,9 @@ gwas_N=100000
 # Helpers define functions only; keep user-facing configuration above.
 # shellcheck source=f/format.f.sh
 source "${SCRIPT_PATH%/*}/f/format.f.sh"
-# shellcheck source=f/format.f.sh
+# Keep resume-only changes separate from the formatter fingerprint in rsid.done.
+# shellcheck source=f/format.resume.sh
+source "${SCRIPT_PATH%/*}/f/format.resume.sh"
 
 
 # 🚩 Command-line arguments
@@ -714,9 +718,21 @@ if [[ -n "$sample_info" ]]; then
 	done < "$dir_cmd/sample_sizes.tsv"
 fi
 
+gwas_format_resume_prepare "$names_tmp"
+n_checked=0
+n_skipped=0
 while read -r gwas; do
 	[[ -n "$gwas" ]] || continue
-	write_gwas_cmd "$gwas" >>"$cmd_list"
+	((++n_checked))
+	if gwas_format_resume_complete "$gwas"; then
+		((++n_skipped))
+		log "SKIP existing done [$step_key]: $gwas (output names present)"
+	else
+		write_gwas_cmd "$gwas" >>"$cmd_list"
+	fi
+	if ((n_checked % 50 == 0 || n_checked == n_discovered)); then
+		log "DONE [resume-check] checked=$n_checked/$n_discovered skipped=$n_skipped"
+	fi
 done <"$names_tmp"
 rm -f "$names_tmp"
 

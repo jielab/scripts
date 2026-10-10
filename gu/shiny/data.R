@@ -7,7 +7,7 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x) || !nzchar(x)) y else x
 
-published_root <- Sys.getenv("GU_PUBLISHED_ROOT", Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu"))
+published_root <- Sys.getenv("GU_PUBLISHED_ROOT", Sys.getenv("GU_ANALYSIS_ROOT", "/mnt/d/analysis/gu/1kg"))
 if (!nzchar(Sys.getenv("GU_SQLITE")) && Sys.getenv("GU_SUMMARY_ONLY") != "1") {
 	common_python <- normalizePath(file.path(app_dir, '..', 'f', '0.common.py'))
 	workspace <- system2('python3', c(shQuote(common_python), 'results', 'restore', '--method', 'shiny', '--published', shQuote(published_root)), stdout = TRUE)

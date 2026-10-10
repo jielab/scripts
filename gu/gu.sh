@@ -28,8 +28,6 @@ case "${1:-}:${2:-}" in
 		exec bash "$F/0.prep.sh" ukb "$@"
 		;;
 esac
-# shellcheck source=../0f/console.sh
-source "$ROOT/../0f/console.sh"
 
 
 # 🚩 Prepared UKB analysis identity
@@ -50,8 +48,8 @@ gu_ukb_prepared_context() {
 	root=$(gu_require_result_path "$GU_UKB_RESULTS_ROOT") || return $?
 	for protected in /mnt/d/analysis/gu "${GU_DATA_ROOT:-/mnt/d}/analysis/gu"; do
 		protected=$(realpath -m -- "$protected") || return $?
-		[[ $root != "$protected" && $root != "$protected/"* ]] || {
-			echo "ERROR: UKB results must use an independent root outside the 1KG results: $root" >&2
+		[[ $root != "$protected" ]] || {
+			echo "ERROR: UKB results require a dataset subdirectory, e.g. $protected/ukb003" >&2
 			return 2
 		}
 	done
@@ -159,16 +157,28 @@ TRACE_JOB_EXTRACT=2 TRACE_JOB_INFER=4 TRACE_JOB_SUMMARIZE=4 ./gu.sh trace \
 ./gu.sh shiny
 
 # UKB：以下 PhyML/IBDmix 使用同一 PSAM 第 3 批（2000 人中筛选男性）。
-GU_ANALYSIS_ROOT=/mnt/d/analysis/gu-ukb-batch03 PHYML_TREE_CPUS=2 PHYML_TREE_TIMEOUT=7200 ./gu.sh phyml \
+PHYML_TREE_CPUS=2 PHYML_TREE_TIMEOUT=7200 ./gu.sh phyml \
   --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo --loci-format cojo --grch 38 \
-  --target ukb --target-dir /mnt/f/gen/ukb/37/hap/chr \
+  --target ukb --dir-target /mnt/f/gen/ukb/37/hap/chr \
+  --dir-out /mnt/d/analysis/gu/ukb --postfix 003 \
   --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males \
   --jobs 2 --memory-cap 32G --replace-phyml FALSE --foreground TRUE
 
-GU_ANALYSIS_ROOT=/mnt/d/analysis/gu-ukb-batch03 ./gu.sh ibdmix --grch 37 --target ukb \
-  --target-dir /mnt/f/gen/ukb/37/imp/chr \
-  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males \
-  --jobs 2 --memory-cap 32G --replace-ibdmix FALSE --foreground TRUE
+./gu.sh ibdmix --grch 37 --target ukb \
+  --dir-target /mnt/f/gen/ukb/37/imp/chr \
+  --dir-out /mnt/d/analysis/gu/ukb --postfix 003 \
+  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males
+
+# --dir-target 与旧 --target-dir 同义；--dir-out 是输出根目录，--postfix 追加到末级目录名。
+# 上例输出 /mnt/d/analysis/gu/ukb003；默认 32G，UKB 有效并发为 2，前台运行且不替换完成结果。
+
+# 本次 ukb003 续跑：保留已完成的 chr1–4，仅运行其余染色体。
+# 全量命令仍会重新准备并校验已有染色体；本次请复制下面这条。
+./gu.sh ibdmix --grch 37 --target ukb \
+  --chr 5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,X \
+  --dir-target /mnt/f/gen/ukb/37/imp/chr \
+  --dir-out /mnt/d/analysis/gu/ukb --postfix 003 \
+  --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,2000,3 --keep-males
 
 # UKB TRACE/AS3：先设置已准备的 phased VCF 配置 UKB37_ENV/UKB38_ENV；TRACE 还需同队列 UKB_ARG_DIR。
 ( source "${UKB37_ENV:?请设置 GRCh37 准备目录中的 gu-target.env 路径}" && \
@@ -178,8 +188,8 @@ GU_ANALYSIS_ROOT=/mnt/d/analysis/gu-ukb-batch03 ./gu.sh ibdmix --grch 37 --targe
 ( source "${UKB38_ENV:?请设置 GRCh38 准备目录中的 gu-target.env 路径}" && \
   ./gu.sh as3 --chr 22 --grch 38 --jobs 1 --memory-cap 32G --replace-as3 FALSE --foreground TRUE )
 
-( source /mnt/d/analysis/gu-ukb-batch03/gu-target.env && ./gu.sh final )
-( source /mnt/d/analysis/gu-ukb-batch03/gu-target.env && ./gu.sh shiny )
+./gu.sh final --dir-out /mnt/d/analysis/gu/ukb --postfix 003
+./gu.sh shiny --dir-out /mnt/d/analysis/gu/ukb --postfix 003
 
 HELP
 	}
@@ -236,6 +246,8 @@ HELP
 	GRCH_INPUT=""
 	TARGET_INPUT=""
 	TARGET_DIR_INPUT=""
+	DIR_OUT_INPUT=""
+	POSTFIX_INPUT=""
 	GU_KEEP=${GU_KEEP:-}
 	GU_KEEP_PSAM=""
 	KEEP_SET=0
@@ -357,13 +369,23 @@ HELP
 				GU_KEEP_PSAM=$2; KEEP_PSAM_SET=1; shift 2 ;;
 			--keep-males)
 				GU_MALE_ONLY=1; shift ;;
-			--target-dir)
+			--dir-target | --target-dir)
 				[[ $# -ge 2 && -n ${2:-} ]] || {
-					echo "ERROR: --target-dir requires a per-chromosome prefix" >&2
+					echo "ERROR: --dir-target requires a per-chromosome prefix" >&2
 					exit 2
 				}
 				TARGET_DIR_INPUT=$2
 				TARGET_DIR_INPUT_SET=1
+				shift 2
+				;;
+			--dir-out | --postfix)
+				[[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || {
+					echo "ERROR: $1 requires a value" >&2; exit 2;
+				}
+				case "$1" in
+					--dir-out) DIR_OUT_INPUT=$2 ;;
+					--postfix) POSTFIX_INPUT=$2 ;;
+				esac
 				shift 2
 				;;
 			--archaic-path)
@@ -767,7 +789,7 @@ HELP
 		echo "ERROR: --keep/--keep-psam/--keep-males are supported by phyml and ibdmix" >&2; exit 2
 	fi
 	if ((TARGET_INPUT_SET != TARGET_DIR_INPUT_SET)); then
-		echo "ERROR: --target and --target-dir must be supplied together" >&2
+		echo "ERROR: --target and --dir-target (--target-dir) must be supplied together" >&2
 		exit 2
 	fi
 	if ((TARGET_INPUT_SET)); then
@@ -780,6 +802,10 @@ HELP
 			echo "ERROR: --target must contain only letters, numbers, '.', '_' or '-', and must not be '.' or '..'" >&2
 			exit 2
 		}
+	fi
+	if [[ -n $DIR_OUT_INPUT || -n $POSTFIX_INPUT ]]; then
+		[[ $METHOD != ukb ]] || { echo "ERROR: UKB preparation uses --ukb-results-root" >&2; exit 2; }
+		gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$DIR_OUT_INPUT" "$POSTFIX_INPUT" >/dev/null || return $?
 	fi
 
 	PLOT_PHY_INPUT=$(gu_bool "$PLOT_PHY_INPUT") || {
@@ -924,6 +950,33 @@ HELP
 
 	GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
 	GU_REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
+	# Resolve the public directory before selection replaces TARGET_INPUT with
+	# a cohort identity. Workers and saved final/Shiny contexts inherit a resolved
+	# root; fresh analysis requests use the CLI, not a stale GU_ANALYSIS_ROOT.
+	if [[ $METHOD != ukb ]]; then
+		local output_base=$DIR_OUT_INPUT output_root
+		if [[ -z $output_base && -z $POSTFIX_INPUT ]]; then
+			if [[ ${GU_CMD_WORKER:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
+				output_base=${GU_UKB_RESULTS_ROOT:-${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-}}}
+			elif [[ $METHOD == final || $METHOD == shiny ]]; then
+				output_base=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/1kg}}
+			fi
+		fi
+		output_root=$(gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$output_base" "$POSTFIX_INPUT") || return $?
+		if [[ ($METHOD == final || $METHOD == shiny) && -s $output_root/gu-target.env ]]; then
+			source "$output_root/gu-target.env"
+		fi
+		GU_ANALYSIS_ROOT=$output_root
+		GU_PUBLISHED_ROOT=$output_root
+		# Preparation must receive exactly the same root as the caller.
+		GU_UKB_RESULTS_ROOT=$output_root
+		export GU_ANALYSIS_ROOT GU_PUBLISHED_ROOT GU_UKB_RESULTS_ROOT
+	fi
+	# Start console capture only after resolving the destination. A stale global
+	# SCRIPT_LOG_DIR must not send this batch's log into another dataset.
+	export SCRIPT_LOG_DIR=${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/ukb}/logs
+	# shellcheck source=../0f/console.sh
+	source "$ROOT/../0f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
 	if [[ -n $GU_KEEP_PSAM ]]; then
 		local chunk_context
 		chunk_context=$(python3 "$F/0.target.py" --chunk-only --keep-psam "$GU_KEEP_PSAM") || return $?
@@ -952,14 +1005,14 @@ HELP
 	fi
 	if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
 		GU_TARGET=${TARGET_INPUT:-$GU_TARGET}
-		GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu-$GU_TARGET}
+		GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/$GU_TARGET}
 		GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
 		GU_TARGET_NATIVE_VCF_PREFIX=""
 		export GU_FILTERED_TARGET GU_TARGET_NATIVE_VCF_PREFIX GU_KEEP GU_MALE_ONLY GU_SAMPLE_PANEL
 	fi
 	if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
 		GU_TARGET=$TARGET_INPUT
-		GU_UKB_RESULTS_ROOT=${GU_UKB_RESULTS_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu-$GU_TARGET}}
+		GU_UKB_RESULTS_ROOT=${GU_UKB_RESULTS_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/ukb}}
 		GU_UKB_RESULTS_ROOT=$(python3 - "$F" "$GU_UKB_RESULTS_ROOT" <<'PYROOT'
 import importlib.util,sys
 from pathlib import Path
@@ -976,7 +1029,7 @@ PYROOT
 	if [[ ($METHOD == ibdmix || $METHOD == phyml) && (${GU_UKB_DIRECT:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1) ]]; then
 		gu_plan_ukb_resources "$MEMORY_CAP_INPUT" "$GU_UNIT_JOBS" || return $?
 	fi
-	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu}}
+	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/1kg}}
 	export GU_PUBLISHED_ROOT
 	if [[ $METHOD == shiny && ${GU_SUMMARY_ONLY:-0} == 1 ]]; then
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results work-root --published "$GU_PUBLISHED_ROOT")
@@ -995,7 +1048,11 @@ PYROOT
 	# Explicit overrides must not silently send primary outputs back to /tmp.
 	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT AS3_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
 		if [[ -n ${!result_var:-} ]]; then
-			gu_require_result_path "${!result_var}" >/dev/null || return $?
+			result_path=$(gu_require_result_path "${!result_var}") || return $?
+			[[ $result_path == "$GU_ANALYSIS_ROOT/"* ]] || {
+				echo "ERROR: $result_var must be under the selected output directory $GU_ANALYSIS_ROOT" >&2
+				return 2
+			}
 		fi
 	done
 	GU_SOFT=${GU_SOFT:-$GU_DATA_ROOT/software/gu}
@@ -1020,7 +1077,7 @@ PYROOT
 		echo "ERROR: target name must contain only letters, numbers, '.', '_' or '-', and must not be '.' or '..'" >&2
 		exit 2
 	}
-	if [[ ${GU_UKB_DIRECT:-0} == 1 || ${GU_FILTERED_TARGET:-0} == 1 ]]; then
+	if [[ $METHOD == phyml || $METHOD == ibdmix || $METHOD == trace || $METHOD == as3 ]]; then
 		mkdir -p "$GU_ANALYSIS_ROOT"
 		local result_env=$GU_ANALYSIS_ROOT/gu-target.env result_env_part
 		result_env_part=$(mktemp "$GU_ANALYSIS_ROOT/.gu-target.XXXXXX")
@@ -1028,9 +1085,9 @@ PYROOT
 			printf '# Saved cohort context for final/Shiny after temporary inputs are cleaned.\n'
 			printf 'export GU_TARGET=%q\nexport GU_BUILD=%q\n' "$GU_TARGET" "$([[ $METHOD == phyml ]] && printf 37 || printf '%s' "$GU_BUILD")"
 			printf 'export GU_ANALYSIS_ROOT=%q\nexport GU_PUBLISHED_ROOT=%q\n' "$GU_ANALYSIS_ROOT" "$GU_PUBLISHED_ROOT"
-			if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
+			if [[ ${GU_UKB_DIRECT:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
 				printf 'export GU_UKB_PGEN_PREPARED=1\nexport GU_UKB_RESULTS_ROOT=%q\n' "$GU_UKB_RESULTS_ROOT"
-			else
+			elif [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
 				printf 'export GU_FILTERED_TARGET=1\n'
 			fi
 		} >"$result_env_part"
@@ -1359,6 +1416,8 @@ PYKEY
 		fi
 		cmd_args+=(--grch "$GU_BUILD")
 		cmd_args+=(--memory-cap "$MEMORY_CAP_INPUT")
+		# Use the legacy spelling in saved commands for existing cache readers;
+		# the resolved output root is exported below, without appending twice.
 		cmd_args+=(--target "$GU_TARGET" --target-dir "$GU_TARGET_GEN_PREFIX")
 		if [[ -n $GU_KEEP_PSAM ]]; then
 			cmd_args+=(--keep-psam "$GU_KEEP_PSAM")
@@ -1554,7 +1613,7 @@ PYKEY
 			return 2
 		}
 		((effective_jobs <= request_units)) || effective_jobs=$request_units
-		cmd_root=/tmp/gu-commands/$METHOD/$GU_TARGET_NAMESPACE
+		cmd_root=$GU_ANALYSIS_ROOT/commands/$METHOD/$GU_TARGET_NAMESPACE
 		mkdir -p "$cmd_root"
 		list=$cmd_root/${scope_label}.cmd.list
 		list_tmp=$list.tmp.$$
@@ -1595,8 +1654,8 @@ PYKEY
 		GU_PUBLICATION_DEFERRED=1
 		local log_root stamp base log pid_file status_file pid cmd_list job_pattern
 		local runner
-		log_root=/tmp/gu-logs/$METHOD/$GU_TARGET_NAMESPACE
-		cmd_list=/tmp/gu-commands/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
+		log_root=$GU_ANALYSIS_ROOT/logs/$METHOD/$GU_TARGET_NAMESPACE
+		cmd_list=$GU_ANALYSIS_ROOT/commands/$METHOD/$GU_TARGET_NAMESPACE/${scope_label}.cmd.list
 		mkdir -p "$log_root"
 		stamp=$(date '+%Y%m%d-%H%M%S')
 		# METHOD-specific roots allow different modules to run concurrently.  The
@@ -1817,7 +1876,7 @@ exit "$rc"'
 		mkdir -p "$target_tmp_parent"
 		GU_TARGET_TMP_DIR=$(mktemp -d "$target_tmp_parent/run.XXXXXX")
 		GU_TARGET_VCF_DIR="$GU_TARGET_TMP_DIR/vcf"
-		GU_METHOD_LOG_DIR=/tmp/gu-logs/$METHOD/$GU_TARGET_NAMESPACE
+		GU_METHOD_LOG_DIR=$GU_ANALYSIS_ROOT/logs/$METHOD/$GU_TARGET_NAMESPACE
 		mkdir -p "$GU_METHOD_LOG_DIR" "$GU_TARGET_VCF_DIR"
 		GU_CHECK_LOG="$GU_METHOD_LOG_DIR/${METHOD}.${GU_SCOPE_ID}.log"
 		: >"$GU_CHECK_LOG"

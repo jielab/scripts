@@ -1247,7 +1247,11 @@ run_one() {
 		return "$rc"
 	}
 	if [[ "$job" == c[1234]_* && "$job" != c4_explain ]]; then
-		"$R_BIN" "$fdir/0.common.R" --audit-results "$analysis_root" "$trait" "$run_biom" "$job" "$log_file.audit.csv"
+		"$R_BIN" "$fdir/0.common.R" --audit-results "$analysis_root" "$trait" "$run_biom" "$job" "$log_file.audit.csv" || {
+			local rc=$?
+			echo "[LE8] FAIL $job Y=$trait biom=$run_biom output-validation exit=$rc log=$log_file.audit.csv" >&2
+			return "$rc"
+		}
 		"${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" record "$analysis_root" "$trait" "$run_biom" "$job"
 	fi
 	echo "[LE8] DONE $job Y=$trait biom=$run_biom elapsed=$((SECONDS - started))s"

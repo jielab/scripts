@@ -12,7 +12,7 @@ value <- function(flag, default = NULL) {
 	args[[ix + 1L]]
 }
 data_dir <- value("--data")
-if (is.null(data_dir)) stop("Usage: Rscript shiny/app.R --review --data /mnt/d/analysis/gu/final/review [--port 3839] [--host 127.0.0.1]")
+if (is.null(data_dir)) stop("Usage: Rscript shiny/app.R --review --data /mnt/d/analysis/gu/1kg/final/review [--port 3839] [--host 127.0.0.1]")
 port <- suppressWarnings(as.integer(value("--port", "3839")))
 if (is.na(port) || port < 1L || port > 65535L) stop("Invalid port")
 host <- value("--host", "127.0.0.1")

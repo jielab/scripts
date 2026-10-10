@@ -393,7 +393,7 @@ PY
 		echo "MISSING command: $cmd" >&2
 		bad=1
 	}; done
-	for cmd in data.table ape pegas writexl shiny bslib plotly DT DBI RSQLite; do
+	for cmd in data.table R.utils ape pegas writexl shiny bslib plotly DT DBI RSQLite; do
 		Rscript -e "quit(status=if(requireNamespace('$cmd', quietly=TRUE)) 0 else 1)" >/dev/null 2>&1 || {
 			echo "MISSING or unloadable R package: $cmd" >&2
 			bad=1

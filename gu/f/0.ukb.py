@@ -94,8 +94,8 @@ def permanent_path(value):
 		if path == root or root in path.parents:
 			fail(f"scientific results need a permanent directory: {path}")
 	legacy = Path("/mnt/d/analysis/gu")
-	if path == legacy or legacy in path.parents:
-		fail("UKB results must use a separate directory outside /mnt/d/analysis/gu, whose existing outputs are 1KG results")
+	if path == legacy:
+		fail("UKB results require a dataset subdirectory, e.g. /mnt/d/analysis/gu/ukb003")
 	return path
 
 
@@ -799,7 +799,7 @@ def export_vcf(args):
 	out = temporary_path(args.ukb_vcf_out or args.work / "vcf")
 	if out != args.work and args.work not in out.parents:
 		fail("--ukb-vcf-out must be inside --ukb-work so its cohort identity and preparation lock are shared")
-	results_root = permanent_path(args.ukb_results_root or f"/mnt/d/analysis/gu-ukb-{args.ukb_source}-pilot")
+	results_root = permanent_path(args.ukb_results_root or f"/mnt/d/analysis/gu/ukb-{args.ukb_source}-pilot")
 	env = args.work / "gu-target.env"
 	env.unlink(missing_ok = True)
 	metadata_path = metadata_psam(args)
@@ -1143,7 +1143,7 @@ def stage_qc(args):
 	payload = {"cohort_scope": "fixed UKB pilot; IBDmix frequencies are not frozen across different sample batches", "chromosomes": rows}
 	identity = _preparation_identity(payload)
 	dataset = os.environ.get("GU_TARGET") or f"ukb-{identity['source']}-pilot"
-	results_root = Path(args.ukb_results_root or f"/mnt/d/analysis/gu-ukb-{identity['source']}-pilot").expanduser().resolve()
+	results_root = permanent_path(args.ukb_results_root or f"/mnt/d/analysis/gu/ukb-{identity['source']}-pilot")
 	content = json.dumps(payload, indent = 2, sort_keys = True) + "\n"
 	with _result_cohort_lock(results_root):
 		validate_result_cohort(results_root, dataset, identity, run_dir.relative_to(results_root).parts[0])

@@ -33,6 +33,7 @@ dependencies:
   - zarr<3
   - r-base>=4.3
   - r-data.table
+  - r-r.utils
   - r-ape
   - r-pegas
   - r-writexl

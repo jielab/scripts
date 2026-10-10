@@ -724,7 +724,15 @@ def integrate_cigma(results, resources, out, cellfile=None):
         for context,dt in d.groupby(["cohort","tissue","component"],dropna=False):
             # Only truly tested, assayed genes define the enrichment background.
             bg=(set(dt.loc[dt.specific_p.notna(),"gene"]) & set(u.gene)) - {""}
-            sig=set(dt.loc[dt.specific_FDR_manifest<.05,"gene"]) & bg
+            if "source_cs_egene" in dt:
+                source_selected=textcol(dt.source_cs_egene).str.lower()
+                if not source_selected.isin(["true","false"]).all():
+                    raise ValueError("source_cs_egene must contain explicit true/false source calls")
+                sig=set(dt.loc[source_selected.eq("true"),"gene"]) & bg
+                rule="Source cs-eGene calls; see source_significance_rule"
+            else:
+                sig=set(dt.loc[dt.specific_FDR_manifest<.05,"gene"]) & bg
+                rule="specific_FDR_manifest < 0.05; see adjustment_family"
             for model,pg in p.groupby("model"):
                 g=set(pg.gene)&bg; hit=len(g&sig)
                 valid=bool(g and sig and len(g)<len(bg) and len(sig)<len(bg))
@@ -732,6 +740,7 @@ def integrate_cigma(results, resources, out, cellfile=None):
                 rows.append(dict(model=model,cohort=context[0],tissue=context[1],component=context[2],
                     panel_tested_genes=len(g),assayed_tested_background=len(bg),hits=hit,
                     cs_egene_background=len(sig),odds_ratio=odds,p=pv,
+                    significance_rule=rule,
                     interpretation="Enrichment of source-defined cs-eGenes; a gene-level joint test is not a cell label"))
         e=pd.DataFrame(rows)
         if len(e): e["FDR_panel_context"]=bh(e.p)
@@ -948,6 +957,8 @@ def main_driver(argv):
     ap.add_argument("--allow-untested-cigma",action="store_true")
     ap.add_argument("--preflight",action="store_true")
     a=ap.parse_args(argv)
+    if a.cigma_results is None and a.cigma_manifest is None and os.getenv("C5_CIGMA_RESULTS"):
+        a.cigma_results=Path(os.environ["C5_CIGMA_RESULTS"])
     if (a.universe is None)!=(a.panels is None): ap.error("Provide --universe and --panels together")
     if a.cigma_manifest and a.cigma_results: ap.error("Choose a native manifest OR precomputed CIGMA results")
     if a.cigma_cells and not a.cigma_results: ap.error("--cigma-cells requires --cigma-results")
@@ -1017,6 +1028,7 @@ def main_driver(argv):
                 results=a.cigma_results
                 native_failed=False
                 if a.cigma_manifest and layer=="prot":
+                    print(f"[LE8] START C5/CIGMA-native Y={trait} biom={layer}", flush=True)
                     native_out=out/"cigma_native"; native_out.mkdir(exist_ok=True)
                     command=[a.python,str(Path(__file__).resolve()),"cigma","--manifest",str(a.cigma_manifest.resolve()),
                         "--outdir",str(native_out),"--seed",str(a.seed)]
@@ -1031,8 +1043,9 @@ def main_driver(argv):
                     try:
                         print(f"[LE8] START C5/CIGMA Y={trait} biom={layer}", flush=True)
                         d=integrate_cigma(results,resources,stage,a.cigma_cells)
+                        origin=json.loads((stage/"c5.CIGMA_source.json").read_text())["record_type"]
                         status.append(dict(analysis="CIGMA",status="completed" if len(d) else "unavailable",
-                            detail=f"{len(d)} gene/context rows; read c5.CIGMA_source.json for external vs native provenance"))
+                            detail=f"{len(d)} gene/context rows; origin={origin}; see c5.CIGMA_source.json"))
                     except Exception as exc:
                         for part in stage.glob("c5.CIGMA*"): part.unlink()
                         write_csv(pd.DataFrame(columns=["gene","tissue","specific_p","specific_FDR_manifest","specificity"]),stage/"c5.CIGMA_results.csv")

@@ -84,7 +84,7 @@ Altai 和 Denisova 的 minimal filters 也在各自目录，保留原始长文�
 
 ```bash
 Rscript --vanilla shiny/app.R --review \
-  --data /mnt/d/analysis/gu/final/review --port 3839 --host 127.0.0.1
+  --data /mnt/d/analysis/gu/1kg/final/review --port 3839 --host 127.0.0.1
 ```
 
 AXT 及其发布者 MD5 清单也只从本地读取，缺失或校验失败会报错；分析代码已移除自动下载实现。

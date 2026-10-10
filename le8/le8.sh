@@ -94,6 +94,8 @@ Main options (defaults are set below in this script):
   --atlas, --universe, --panels, --contrasts FILE
   --matched-draws N      C5 matched draws: 0 or >=100
   --cigma-manifest, --cigma-results, --cigma-cells FILE
+                         Downloaded Chen 2026 summaries are used when installed;
+                         C5_CIGMA_RESULTS overrides the published-summary path.
   --allow-untested-cigma C5 explicit version override
   --no-plots            C5 only: skip annotation plots
   --abm-root, --abm-tf-root DIR  Explicit external import sources
@@ -150,6 +152,10 @@ le8_main() {
 	export C2_FEATURE_SCOPE=${C2_FEATURE_SCOPE:-all_qtl} C2_MAX_FEATURES=${C2_MAX_FEATURES:-0}
 	export C4_FOCUS_BUDGETS=${C4_FOCUS_BUDGETS:-5,10,50}
 	export C4_MODULE_BOOT=${C4_MODULE_BOOT:-100} C4_MODULE_STABILITY=${C4_MODULE_STABILITY:-0.70}
+	# Author-published CIGMA inference remains labelled as external evidence.
+	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/d/data/reference/cigma/chen2026/cigma.results.csv ]]; then
+		export C5_CIGMA_RESULTS=/mnt/d/data/reference/cigma/chen2026/cigma.results.csv
+	fi
 	if [[ $# -gt 0 && $1 != -* ]]; then
 		modules=$1
 		shift

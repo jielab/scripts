@@ -101,6 +101,24 @@ gu_require_result_path() {
 	printf '%s\n' "$path"
 }
 
+# --dir-out names the result root itself; the postfix is appended to its final
+# component, before canonicalization. Cohort hashes remain provenance, not the
+# public batch directory name.
+gu_result_root() {
+	local target=${1:-1kg} directory=${2:-} postfix=${3:-}
+	[[ -z $postfix || $postfix =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || {
+		echo "ERROR: --postfix must start with a letter, number, '_' or '-' and contain no path separators" >&2
+		return 2
+	}
+	if [[ -z $directory ]]; then
+		directory=/mnt/d/analysis/gu/$target
+	fi
+	# Strip trailing slashes without losing the root-directory check.
+	while [[ $directory == */ && $directory != / ]]; do directory=${directory%/}; done
+	[[ $directory != / ]] || { echo "ERROR: --dir-out must not be /" >&2; return 2; }
+	gu_require_result_path "$directory$postfix"
+}
+
 gu_chr_result_dir() {
 	local analysis_root=${1:?} method=${2:?} unit_label=${3:?}
 	local target_namespace=${4:-} override=${5:-} request_unit_count=${6:-1} out

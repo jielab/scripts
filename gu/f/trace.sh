@@ -18,7 +18,7 @@ case "$ACTION" in run | extract | infer | segments | check) ;; *)
 esac
 ARG_DIR=${GU_ARG_DIR:-${GU_TARGET_ROOT:-.}/arg.tsinfer}
 TARGET_VCF_DIR=${GU_TARGET_VCF_DIR:-}
-OUT=${TRACE_OUT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu}/trace/${GU_SCOPE_ID:-genome}}
+OUT=${TRACE_OUT:-${GU_ANALYSIS_ROOT:-/mnt/d/analysis/gu/1kg}/trace/${GU_SCOPE_ID:-genome}}
 BUILD=GRCh${GU_BUILD:-37}
 CHRS=${TRACE_CHRS:-${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}}
 LOCI_FILE=${TRACE_LOCI_FILE:-${GU_LOCI_FILE:-}}
