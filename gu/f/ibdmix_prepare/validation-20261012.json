@@ -1,0 +1,41 @@
+{
+  "region": "1:10000000-15000000",
+  "samples": 4564,
+  "references": [
+    {
+      "ref": "Altai",
+      "legacy_seconds": 13.977198392996797,
+      "sha256_uncompressed": "3903b5b97d9c29bb10b21c23d630cfe610e176a3c3a85cdc334c0f2434269f6b",
+      "rows": 90658
+    },
+    {
+      "ref": "Chagyr",
+      "legacy_seconds": 14.60285402199952,
+      "sha256_uncompressed": "e569d9d8db82c5726701abf784a2176dd6fb6d506d3c64e500a2571b8641fdb3",
+      "rows": 90595
+    },
+    {
+      "ref": "Denisova",
+      "legacy_seconds": 14.5779416099831,
+      "sha256_uncompressed": "1b9f1125eeae7c2b67effe7934cea66f7d46abdac36962632575da926c113a08",
+      "rows": 90571
+    },
+    {
+      "ref": "Denisova25",
+      "legacy_seconds": 15.341136193019338,
+      "sha256_uncompressed": "7be68265abe93cb456cc29d61f42a258aab7bbccc63c4e5f15c631eaf785c36c",
+      "rows": 90604
+    },
+    {
+      "ref": "Vindija",
+      "legacy_seconds": 14.666815267002676,
+      "sha256_uncompressed": "3aea029cc366018e08db5b3a9973b6226ce64ab08dcfe32688e2d448897dbe95",
+      "rows": 90628
+    }
+  ],
+  "shared_seconds": 18.341961663012626,
+  "legacy_seconds": 73.16594548500143,
+  "speedup": 3.9889923896495643,
+  "scope": "Genotype preparation including QC; sequential old five-reference streaming baseline, one shared new pass; not total caller/pipeline time. Timings are one measurement per implementation.",
+  "binary_sha256": "2aee90ea005324d4d4b4e75f68de701135293ab7eae5cc7913c1fd414cfe3a92"
+}

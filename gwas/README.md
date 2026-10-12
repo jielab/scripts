@@ -1,0 +1,33 @@
+# GWAS
+
+三个根目录入口与辅助代码一一对应。默认参数及命令示例见各入口的 `--help`。
+
+GPU 审查（2026-10-11）：计算由 REGENIE、PLINK2、SAIGE 等上游程序执行，
+当前包装脚本保持 CPU 路径，不增加无实际计算后端的 `--gpu` 参数。
+GPU 版本需要单独验证统计内核，不能替代现有二分类 SPA/Firth 行为。
+
+| 模块 | Shell | Python | R |
+|---|---|---|---|
+| GWAS | `gwas.sh`、`f/gwas.f.sh` | `f/gwas.py` | `f/gwas.inputs.R` |
+| 比较、LDSC | `compare.sh`、`f/compare.f.sh` | `f/compare.py` | `f/compare.R` |
+| 格式化、后处理 | `format.sh`、`f/format.f.sh` | `f/format.py` | `f/format.R` |
+
+`gwas.py merge` 合并 PLINK/REGENIE/SAIGE 结果，其余子命令负责计划、执行和缓存。`compare.py` 包含 compare/ldsc/shiny 流程，以及 ldsc-run、ldsc-summary、ld-blocks 工具。`format.py` 包含 liftover、h2、magma-ids、yap2018-mpb。`compare.R` 使用 compare/ldsc 模式；`format.R` 使用 thin/mplot 模式。
+
+Shell 格式化流程、任务生成、执行及 BGZF/tabix 索引函数集中在 `f/format.f.sh`。该文件供主入口和生成的任务加载；`--base`、`--worker` 是内部加载模式。LE8 通过 `source .../format.f.sh --index` 只加载索引函数，不启动格式化流程。
+
+`f/format.resume.sh` 在生成任务前批量读取输出目录的文件名，支持 `format/thin/magma/lead/mplot` 及其组合。`--replace FALSE` 下，仅凭所请求模块的结果文件、索引和完成标记名称是否齐全判断，输出 `SKIP existing done`；不读取这些文件的内容，不检查大小、时间戳、参数、指纹或压缩文件完整性，也不调用 tabix。lead 以 `.awk.snp`、`.clump.done`、`.cojo.done` 和已清理的工作目录判断，因此正常的空选择结果也能跳过。文件名不齐全时进入原流程。修改分析参数后需要重算时使用 `--replace TRUE`；liftover、删除原始文件等请求继续走原流程。该检查单独存放，避免改动格式化代码本身的旧 rsID 指纹。
+
+`format` 默认 `--rsid TRUE --rsid-unmatched drop`：已有 rsID 保留；其他 ID 按声明的 GRCh 版本、位置和两条等位基因匹配 dbSNP，不改变效应方向。无法唯一匹配的完整标准化行写入 `common/<trait>/qc/<trait>.rsid.unresolved.tsv.gz`，统计写入 `<trait>.rsid.tsv`。`--rsid-unmatched keep` 保留未匹配的原 ID；`--rsid FALSE` 完全跳过转换。更改筛选策略时可用 `--replace TRUE` 从原始数据重新生成。
+
+`--hm3 TRUE` 先保留 HM3 rsID/坐标或 `P < --p-hm3` 的候选，再转换 ID，并以转换后的 HM3 rsID 或 P 值确认最终保留项。默认阈值为 `1e-3`，不是全基因组显著阈值 `5e-8`。dbSNP 的 BGZF/tabix 副本和按位置查询的结果共用 `<project>/.project/rsid/`，不同 GWAS 只补查新坐标，包含未匹配结果的缓存；首次使用每个版本需要准备参考索引。`--dbsnp FILE`、`--rsid-cache DIR` 可指定其他参考和共享缓存位置。
+
+WSL 本机运行默认 `--local-io AUTO`：排序和 SQLite 临时文件放在 `/tmp/gwas-post-<uid>/<project-key>/<steps>/`，rsID 缓存放在 `~/.cache/gwas/format/projects/<project-key>/rsid/`，MAGMA/HM3 参考放在同一缓存根目录的 `references/`。原始数据和最终结果仍位于原项目。旧项目 rsID 缓存首次使用时在持锁后复制，复制件通过 SQLite 检查并恢复中断事务；不覆盖已有的本地缓存。缓存命中的查询直接持共享锁，只有缺失位置才申请写锁并补查。已完成全套请求模块的 GWAS 在复制参考文件之前即跳过，不因这些性能修改重新计算。
+
+`--local-cache DIR` 可修改持久缓存根目录，`GWAS_POST_TMP_BASE` 可覆盖临时目录；选择 WSL 本地文件系统才能避免 `/mnt/f` 的跨系统访问开销。显式 `--rsid-cache DIR` 始终优先，不自动搬动用户指定的缓存。`--local-io FALSE` 保留原来的项目内缓存/临时目录，非 WSL 或 bsub 提交默认也保留原行为。修改目录配置只影响之后生成和启动的任务。当前 rsID 缓存仍保留写锁以保护并发补查；不会通过关闭 SQLite 同步或移除锁来加速。
+
+列识别函数是 `0f/phenotype.sh` 的 `phe_header_names()`，由 `gwas_clean_header_names()` 调用，支持 CKB 的 `EA_FREQ → EAF`、`AA/A2 → NEA`。`--sample-info FILE` 接受 `phenocode,num_samples,num_cases,num_controls` 或 `GWAS,N` 的 TSV，逐性状补充缺失 N，已有有效 N 保留。可选 `grch` 列用于检查显式版本，或在 `--grch auto` 时提供版本；样本量和版本冲突会在启动任务前报错。
+
+CKB 已按原始版本拆成 `/mnt/f/gwas/ckb_37`、`/mnt/f/gwas/ckb_38` 两个项目，各自包含 `raw0/`、`raw/`、`ckb_decrypt.sh` 和本版本的 `phenotypes.tsv`。解密脚本接受空格或 Tab 分隔，输出到各项目自己的 `raw/[gwas].gz`。自动扫描 GWAS 时跳过 `decryption_report_*.tsv` 解密报告（含 `.gz`、`.bgz` 压缩版本），保留普通 TSV 数据输入。分析分别指定 `--dir-raw /mnt/f/gwas/ckb_37/raw --dir-out /mnt/f/gwas/ckb_37 --label ckb_37 --grch 37 --sample-info /mnt/f/gwas/ckb_37/phenotypes.tsv`，或对应的 `ckb_38`/`38` 参数；模块及执行参数为 `format,magma,lead,mplot --hm3 TRUE --run-cmd TRUE --foreground TRUE --jobs 4`，不含 PGS。输出分别位于两个项目的 `common/`、`mplot/`。
+
+三个 AWK 文件按归属命名为 `gwas.extract.awk`、`format.hm3.awk`、`format.thin.awk`。Shiny 仍在 `shiny/`；临时验证和测试放在 `/tmp`。没有旧文件名转发脚本。

@@ -1,0 +1,22 @@
+# GU 内部模块
+
+日常分析从上一级的 `gu.sh`、`arg.sh` 启动。此目录按功能组织内部实现。
+
+| 文件 | 用途 |
+| --- | --- |
+| `ukb_prepare.py` | UKB PGEN 检查、样本选择、固定队列、VCF 导出及质控、古人类评分输入准备 |
+| `ukb_prepare.sh` | UKB 原始 BGEN/芯片输入检查、VCF 导出和祖先等位基因注释；PGEN 操作交给同名 Python 模块 |
+| `gwas_loci_prepare.py` | COJO 信号归并、基因组坐标转换、GRCh37 区间及审计表生成 |
+| `introgression_review.py` | 渗入证据复核、原始 lead 与单倍型标签比较、HTML/TSV 报告 |
+| `results_normalize.py` | 整合各方法结果到 SQLite、参考结果缓存和渗入密度汇总 |
+| `arg.sh` / `arg.py` | ARG 内部工作流及数据转换、缓存工具；入口为上一级 `arg.sh` |
+| `arg.singer.py` / `arg.threads.py` | SINGER、Threads 各自的 ARG 后端 |
+| `ibdmix.sh` / `ibdmix.py` | IBDmix 调度、掩膜、群体样本、质控和片段汇总 |
+| `ibdmix_prepare/` | 一次读取现代基因型，为多个古人类参考生成压缩输入 |
+| `ibdmix_gpu/` | IBDmix CUDA 片段调用器 |
+| `phyml.py` / `phyml.R` | PhyML 分析、结果检查及绘图 |
+| `trace.sh` / `trace.py` | TRACE 分析及片段处理 |
+| `as3.sh` / `as3.py` | ArchaicSeeker 3 分析及输入、结果处理 |
+| `0.common.py` / `0.common.sh` / `0.common.R` | 跨方法共享的坐标、样本、路径、缓存和结果归档工具 |
+
+UKB 的 Shell 和 Python 模块分别承担原始 BGEN/芯片与 PGEN 准备，保持独立以避免把两套输入流程混在一起。独立的位点准备、证据复核和结果整合也保留各自入口；重复的空命令分发层和模块加载已去除。

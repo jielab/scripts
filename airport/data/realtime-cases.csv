@@ -1,0 +1,15 @@
+航空公司ID,出发地ID,日期,出发地机场名称,出发地城市,出发地国家,src_lng,src_lat,出发地新冠确诊病例,出发地猴痘确诊病例,航空公司名称,航空公司国家,病例,exits_radius
+4,1358,2030-01-31,Creil,Creil,France,2.519139,49.253547,7721578.0,11.0,China Eastern Airlines,China,11.0,101.0
+3,1529,2030-01-31,Pratica Di Mare,Pratica Di Mare,Italy,12.445183,41.654522,5042923.0,1.0,Southwest Airlines,United States,1.0,1.0
+4,337,2030-01-31,Erfurt,Erfurt,Germany,10.958106,50.979811,5964563.0,9.0,China Eastern Airlines,China,9.0,81.0
+4,418,2030-01-31,Helsinki Malmi,Helsinki,Finland,25.042828,60.254558,2736294.0,1.0,China Eastern Airlines,China,1.0,1.0
+4,343,2030-01-31,Dusseldorf,Duesseldorf,Germany,6.766775,51.289453,5466041.0,9.0,China Eastern Airlines,China,9.0,81.0
+4,1498,2030-01-31,Bresso,Milano,Italy,9.203333,45.542222,5216058.0,1.0,China Eastern Airlines,China,1.0,1.0
+3,7424,2030-01-31,Hohe Duene,Warnemuende,Germany,12.132082,54.181438,6312277.0,9.0,Southwest Airlines,United States,9.0,81.0
+5,5385,2030-01-31,HLP HQ GT,Paetz,Germany,13.6667,52.2361,5385225.0,9.0,Air China,China,9.0,81.0
+4,7875,2030-01-31,Delft Central,Delft,Netherlands,4.356667,52.006667,2150378.0,4.0,China Eastern Airlines,China,4.0,31.0
+5,4217,2030-01-31,Riem,Munich,Germany,11.690278,48.137778,5068974.0,9.0,Air China,China,9.0,81.0
+3,6468,2030-01-31,Nannhausen,Nannhausen,Germany,7.591667,50.0,6032262.0,9.0,Southwest Airlines,United States,9.0,81.0
+10,1491,2030-01-31,Sigonella,Sigonella,Italy,14.922358,37.401664,5438830.0,1.0,American Airlines,United States,1.0,1.0
+10,301,2030-01-31,Bertrix,Bertrix,Belgium,5.223889,49.891667,1982865.0,2.0,American Airlines,United States,2.0,11.0
+10,1489,2030-01-31,Reggio Calabria,Reggio Calabria,Italy,15.651556,38.071206,4818965.0,1.0,American Airlines,United States,1.0,1.0
