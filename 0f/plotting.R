@@ -44,6 +44,93 @@ plot_forest <- function(dat1, lab.X = NA, x = "estimate", xmin = "conf.low", xma
 
 
 # 🚩 Phenome-wide association plots
+# Pure rendering helpers shared by border, UKB association and MAHA.
+# Sample counts describe the exposure cohort before disease-specific missingness.
+phewas_sample_info <- function(data, exposure, covariates = character(), phenotype_ids = NULL,
+                              id = 'eid', type = 'auto', case_level = NULL, control_level = NULL) {
+  needed <- unique(c(id, exposure, covariates))
+  if (length(setdiff(needed, names(data)))) stop('Missing PheWAS sample columns: ',paste(setdiff(needed,names(data)),collapse=', '))
+  d <- as.data.frame(data)[,needed,drop=FALSE]; ok <- complete.cases(d)
+  for (v in names(d)[vapply(d,is.numeric,logical(1))]) ok <- ok & is.finite(d[[v]])
+  if (!is.null(phenotype_ids)) ok <- ok & as.character(d[[id]]) %in% as.character(phenotype_ids)
+  d <- d[ok,,drop=FALSE]
+  if (anyDuplicated(as.character(d[[id]]))) stop('Duplicate IDs in PheWAS sample cohort')
+  x <- d[[exposure]]; N <- length(x); values <- if(is.logical(x)) as.character(as.integer(x)) else as.character(x)
+  observed <- unique(values)
+  if(type=='auto') type <- if(is.ordered(x)) 'ordinal' else if(is.logical(x) || (length(observed)>0 && all(observed %in% c('0','1')))) 'binary' else if(is.factor(x)||is.character(x)) 'categorical' else 'continuous'
+  if(!type %in% c('binary','continuous','ordinal','categorical')) stop('Unknown PheWAS exposure type: ',type)
+  fmt <- function(n)format(n,big.mark=',',scientific=FALSE,trim=TRUE)
+  counts <- table(values); case_n <- control_n <- NA_integer_
+  if(type=='binary') {
+    if(is.null(case_level) && all(observed %in% c('0','1'))) {case_level<-'1';control_level<-'0'}
+    if(is.null(case_level)||is.null(control_level)) stop('Binary labels require explicit case_level and control_level')
+    if(any(!values %in% c(as.character(case_level),as.character(control_level)))) stop('Unexpected binary exposure value')
+    case_n<-sum(values==as.character(case_level));control_n<-sum(values==as.character(control_level))
+    label<-paste0(fmt(case_n),' cases vs ',fmt(control_n),' controls')
+  } else if(type=='continuous') label<-paste0('N=',fmt(N)) else {
+    detail<-if(type=='ordinal' && is.numeric(x) && N>0) paste0('ordinal ',min(x),'-',max(x)) else paste0(type,', ',length(observed),' levels')
+    label<-paste0('N=',fmt(N),'; ',detail)
+  }
+  list(exposure=exposure,type=type,N=N,cases=case_n,controls=control_n,
+       case_level=case_level,control_level=control_level,counts=counts,label=label)
+}
+
+make_phewas_xmap <- function(results) {
+  x <- data.frame(category=as.character(results$category),phenotype=as.character(results$phenotype))
+  x$category <- tolower(trimws(x$category));x$category[is.na(x$category)|!nzchar(x$category)]<-'other'
+  x <- unique(x);x<-x[order(x$category,suppressWarnings(as.numeric(x$phenotype)),x$phenotype),,drop=FALSE]
+  x$phe_x<-seq_len(nrow(x));x
+}
+
+plot_phewas_results <- function(results, title='PheWAS', sample_info=NULL, significance_threshold=NULL,
+                               xmap=NULL, colors=NULL, show_x=TRUE, logp_cap=50, label_n=10, base_size=11) {
+  req<-c('phenotype','category','p','beta')
+  if(length(setdiff(req,names(results)))) stop('Missing plot columns: ',paste(setdiff(req,names(results)),collapse=', '))
+  d<-as.data.frame(results);d$phenotype<-as.character(d$phenotype)
+  d$category<-tolower(trimws(as.character(d$category)));d$category[is.na(d$category)|!nzchar(d$category)]<-'other'
+  if(is.null(xmap))xmap<-make_phewas_xmap(d)
+  d<-d[is.finite(d$p)&d$p>=0&d$p<=1,,drop=FALSE]
+  if(!nrow(d))return(NULL)
+  if(is.null(significance_threshold) && 'bonferroni_threshold' %in% names(d))significance_threshold<-unique(d$bonferroni_threshold)
+  if(is.null(significance_threshold))significance_threshold<-.05/nrow(d)
+  if(length(significance_threshold)!=1||!is.finite(significance_threshold)||significance_threshold<=0||significance_threshold>1)stop('Invalid significance threshold')
+  if(is.null(sample_info))stop('sample_info is required to label the PheWAS sample size accurately')
+  categories<-unique(xmap$category)
+  if(is.null(colors))colors<-setNames(scales::hue_pal()(length(categories)),categories)
+  d<-merge(d,xmap[,c('category','phenotype','phe_x')],by=c('category','phenotype'),all.x=TRUE,sort=FALSE)
+  if(anyNA(d$phe_x))stop('Incomplete PheWAS x-axis map')
+  d$logp_display<-pmin(-log10(pmax(d$p,.Machine$double.xmin)),logp_cap)
+  d$direction<-ifelse(d$p<significance_threshold & is.finite(d$beta)&d$beta>0,'Positive beta',
+                     ifelse(d$p<significance_threshold & is.finite(d$beta)&d$beta<0,'Negative beta','Not significant'))
+  d$point_fill<-ifelse(d$direction=='Positive beta','transparent',unname(colors[d$category]))
+  if(!'description' %in% names(d))d$description<-d$phenotype
+  d$description<-trimws(gsub('[[:space:]]+',' ',as.character(d$description)))
+  labels<-head(d[order(d$p,d$phenotype),,drop=FALSE],label_n)
+  centers<-aggregate(phe_x~category,xmap,mean);centers<-centers[order(centers$phe_x),]
+  p<-ggplot2::ggplot(d,ggplot2::aes(phe_x,logp_display,color=category))+
+    ggplot2::geom_point(data=d[d$direction=='Not significant',,drop=FALSE],shape=16,size=1,alpha=.8)+
+    ggplot2::geom_point(data=d[d$direction!='Not significant',,drop=FALSE],
+      ggplot2::aes(shape=direction,fill=point_fill),size=2.1,stroke=.65)+
+    ggplot2::geom_hline(yintercept=-log10(significance_threshold),color='#F2A3A3',linewidth=.4)+
+    ggrepel::geom_text_repel(data=labels,ggplot2::aes(label=description),size=2.8,fontface='bold',color='black',
+      segment.color='black',segment.size=.25,box.padding=.3,point.padding=.15,max.overlaps=Inf,
+      min.segment.length=0,seed=12345,max.time=2,show.legend=FALSE)+
+    ggplot2::scale_color_manual(values=colors,guide='none')+ggplot2::scale_fill_identity()+
+    ggplot2::scale_shape_manual(values=c('Positive beta'=24,'Negative beta'=25),
+      limits=c('Positive beta','Negative beta'),drop=FALSE,guide='none')+
+    ggplot2::scale_x_continuous(breaks=centers$phe_x,labels=centers$category,
+      limits=range(xmap$phe_x)+c(-.5,.5),expand=ggplot2::expansion(mult=c(.01,.01)))+
+    ggplot2::labs(title=paste0(title,' (',sample_info$label,')'),x=NULL,y='-log10(P); display cap 50')+
+    ggplot2::theme_bw(base_size=base_size)+ggplot2::theme(
+      plot.title=ggplot2::element_text(hjust=.5,face='bold',size=base_size+2),
+      axis.title=ggplot2::element_text(face='bold'),axis.text.y=ggplot2::element_text(face='bold'),
+      axis.text.x=if(show_x)ggplot2::element_text(angle=35,hjust=1,size=8,face='bold') else ggplot2::element_blank(),
+      axis.ticks.x=ggplot2::element_blank(),panel.grid=ggplot2::element_blank(),legend.position='none',
+      plot.margin=ggplot2::margin(8,8,8,8))
+  attr(p,'phewas_sample_info')<-sample_info
+  p
+}
+
 plot_phewas <- function(dat1, phecode, Xs, varX, output_dir = NULL, resume = TRUE, make_plots = TRUE,
 		cores = suppressWarnings(as.integer(Sys.getenv("PHEWAS_CORES", unset = "1")))) {
 	if (length(cores) != 1L || is.na(cores) || cores < 1L) {
@@ -51,7 +138,7 @@ plot_phewas <- function(dat1, phecode, Xs, varX, output_dir = NULL, resume = TRU
 		cores <- 1L
 	}
 	message("Running PheWAS with ", cores, " core(s), one genetic variable at a time")
-	phenos <- if(length(phecode) == 1 && is.na(phecode)) readRDS(paste0(indir, "/Rdata/PheWAS.rds")) else phecode
+	phenos <- if(is.atomic(phecode) && length(phecode) == 1 && is.na(phecode)) readRDS(paste0(indir, "/Rdata/PheWAS.rds")) else phecode
 	cov <- dplyr::select(dat1, id = eid, all_of(varX))
 	checkpoint_dir <- if (is.null(output_dir)) NULL else file.path(output_dir, "phewas_checkpoints")
 	if (!is.null(checkpoint_dir)) dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
@@ -78,10 +165,9 @@ plot_phewas <- function(dat1, phecode, Xs, varX, output_dir = NULL, resume = TRU
 			}
 		}
 		dat2 <- res_x[res_x$snp == x & is.finite(res_x$p), ]
-		p <- if (!isTRUE(make_plots) || !nrow(dat2)) NULL else suppressMessages(phewasManhattan(dat2,
-			annotate.phenotype.description = dat2[, c("phenotype", "description")], title = x, OR.direction = FALSE, size.x.labels = 14, size.y.labels = 14)
-		) + theme(text = element_text(size = 12))
-		if (!is.null(png_file) && !is.null(p) && (!isTRUE(resume) || !file.exists(png_file))) {
+		p <- if (!isTRUE(make_plots) || !nrow(dat2)) NULL else plot_phewas_results(dat2,
+            title=paste0(x, " PheWAS"), sample_info=phewas_sample_info(dat1,x,varX,phenos$id))
+		if (!is.null(png_file) && !is.null(p) ) {
 			ggsave(png_file, p, width = 14, height = 8, dpi = 300, bg = "white", limitsize = FALSE)
 		}
 		message(sprintf("[%d/%d] DONE %s%s", i, length(Xs), x,

@@ -95,7 +95,7 @@ reuse_phewas <- method == "phewas" && isTRUE(opt$resume) && !is.null(prior_phewa
 	all(Xs %in% unique(as.character(prior_phewas_res$snp)))
 needs_data <- (method == "phewas" && action %in% c("all", "save_rds") && !reuse_phewas) ||
 	(method %in% c("forest", "medwas") && action %in% c("all", "save_rds"))
-if (needs_data) {
+if (needs_data || (method == "phewas" && action %in% c("all", "plot"))) {
 	dat1 <- read_rds("all") %>% filter(ethnic.c == "White")
 	missing_x <- setdiff(Xs, names(dat1))
 	if (length(missing_x)) stop("Selected gen variables missing from all.rds: ", paste(missing_x, collapse = ", "))
@@ -178,13 +178,12 @@ if (method == "forest") {
 		}
 		plot_xs <- intersect(Xs, unique(as.character(res$snp)))
 		if (!length(plot_xs)) stop("None of the selected --Xs are present in: ", result_file)
+		phewas_plot_ids <- read_rds("PheWAS")$id
 		for (X in plot_xs) {
 			dat2 <- res[res$snp == X & is.finite(res$p), , drop = FALSE]
 			if (!nrow(dat2)) { warning("No finite PheWAS results for ", X, call. = FALSE); next }
-			p <- suppressMessages(phewasManhattan(dat2,
-				annotate.phenotype.description = dat2[, c("phenotype", "description")],
-				title = X, OR.direction = FALSE, size.x.labels = 14, size.y.labels = 14)) +
-				theme(text = element_text(size = 12))
+			p <- plot_phewas_results(dat2, title=paste0(X, " PheWAS"),
+                sample_info=phewas_sample_info(dat1, X, varX, phewas_plot_ids))
 			png <- analysis_file(paste0(X, if (nzchar(mode)) paste0(".", mode) else "", ".phewas.png"))
 			ggsave(png, p, width = 14, height = 8, dpi = 300, bg = "white", limitsize = FALSE)
 			message("Wrote: ", png)

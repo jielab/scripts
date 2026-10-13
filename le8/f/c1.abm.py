@@ -1327,18 +1327,23 @@ def run_complete(root, train_only=False):
 	marker = "TRAIN_DONE.json" if train_only else "DONE.json"
 	if train_only and (root / "DONE.json").is_file():
 		return run_complete(root)
+	try:
+		record = json.loads((root / marker).read_text())
+	except (ValueError, OSError):
+		return False
+	if not isinstance(record, dict) or not record.get("version"):
+		return False
 	if not train_only:
-		required += ["REPORT.md", "test_metrics.csv"]
+		required.append("test_metrics.csv")
+		# S7 publishes evaluated tables and figures, without the legacy report.
+		if record.get("design") != "selective_attention":
+			required.append("REPORT.md")
 	if any(
 		not (root / name).is_file() or (root / name).stat().st_size == 0
 		for name in required + [marker]
 	):
 		return False
-	try:
-		record = json.loads((root / marker).read_text())
-		return isinstance(record, dict) and bool(record.get("version"))
-	except (ValueError, OSError):
-		return False
+	return True
 
 
 def prepare_run_directory(root, resume=False, replace=False, train_only=False):
@@ -9261,12 +9266,14 @@ def s7_main(a):
 	with run_lock(out),threadpool_limits(a.cores):
 		if (out/'MODEL_FROZEN.json').exists() and not a.replace:
 			previous=json.loads((out/'manifest.json').read_text())
-			if not s7_manifests_compatible(previous,s7_manifest(a)):raise ValueError('Existing S7 fit has different numeric inputs/options; choose new analysis root or explicit --replace')
-			if (out/'DONE.json').exists() or (a.train_only and (out/'TRAIN_DONE.json').exists()):
+			if any(previous.get('config',{}).get(k)!=getattr(a,k) for k in ('trait','biom','abm_design')):
+				raise ValueError('Existing S7 fit has a different outcome, omic layer or design')
+			if run_complete(out,a.train_only):
 				marker=out/('DONE.json' if (out/'DONE.json').exists() else 'TRAIN_DONE.json')
 				state=json.loads(marker.read_text()).get('status','trained')
 				readiness=json.loads((out/'reference_readiness.json').read_text()) if (out/'reference_readiness.json').is_file() else {}
 				log('SKIP','S7_completed',f"status={state} audit={readiness.get('status','not_reported')} | {out}");return
+			if not s7_manifests_compatible(previous,s7_manifest(a)):raise ValueError('Incomplete S7 fit has different numeric inputs/options; choose new analysis root or explicit --replace')
 			return s7_evaluate(out)
 		if not prepare_run_directory(out,replace=a.replace,train_only=a.train_only):return
 		try:

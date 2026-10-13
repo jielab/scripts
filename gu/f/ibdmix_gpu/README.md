@@ -31,8 +31,15 @@ bash f/ibdmix_gpu/build.sh
 This example writes to `/mnt/d/analysis/gu/ukb003/ibdmix-GPU/<unit>/`.
 The default 1KG destination is `/mnt/d/analysis/gu/1kg/ibdmix-GPU/<unit>/`.
 `--dir-out` selects the shared result root; each module uses its exact CLI name
-for the next directory, command lists and logs. GPU runs use one chromosome
-and one population worker at a time. Results retain method `ibdmix`; their
+for the next directory, command lists and logs. GPU runs default to `--jobs 4`
+chromosome workers, subject to the RAM budget. At the default `--memory-cap 32G`,
+each UKB worker receives a 4096 MiB PLINK workspace, with 2048 MiB per worker
+and 8192 MiB shared overhead reserved. An explicit `GU_PREP_MEMORY_MB` is honored
+and can reduce concurrency. `--jobs 1` restores serial chromosome processing.
+Preparation can overlap across chromosomes; CUDA calls share a per-user,
+per-device lock and run one at a time to avoid adding their peak VRAM usage.
+The lock coordinates GU IBDmix callers, not unrelated GPU programs. Each
+chromosome still uses one population worker. Results retain method `ibdmix`; their
 provenance records `cuda-segment-v1`, a distinct pipeline version and the
 binary SHA-256. For a summary using these GPU calls, run
 `GU_RESULT_MODULE=ibdmix-GPU ./gu.sh final --dir-out /mnt/d/analysis/gu/ukb003`.
@@ -53,6 +60,14 @@ one modern genotype pass supplies all five references, with QC during emission.
 CPU/GPU callers receive the same canonical genotype text as before. Progress on
 screen is limited to preparation and reference/chromosome completion; detailed
 diagnostics are retained in log files.
+
+UKB preparation also reports the current process, elapsed time and input file
+offset every 30 seconds, including an estimate for the current read when it is
+advancing. A file offset is not whole-chromosome completion: VCF export, audit,
+shared genotype preparation and reference calls follow the PGEN subset pass.
+The monitor is separate from the preparation implementation so adding progress
+does not invalidate its scientific cache receipts. Already-running schedulers
+keep their original concurrency; these defaults apply on the next launch.
 
 Site batches preserve all pending stacks, so a batch boundary does not create
 a segment boundary or change frequencies. Candidate storage grows before each

@@ -61,8 +61,10 @@ Example usage (WSL; default traits: height,ldl,t2dm):
 
   # After training is already complete, refresh final and open the webpage.
   ./grid.sh final,shiny
-  # Resume an interrupted PRSformer run with unchanged inputs/settings/code.
+  # Resume after the last saved PRSformer epoch; only patience may change.
   ./grid.sh prsformer --prsformer-arg --resume
+  # Then continue the downstream modules after successful training/reporting.
+  ./grid.sh abm,final,shiny
   # Summarize existing reports only, without recalculating comparisons.
   ./grid.sh final --summary-only
 

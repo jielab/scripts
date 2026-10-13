@@ -1318,7 +1318,6 @@ NATIVE = {
 	"c3_coloc",
 	"pgs_focus",
 	"c4_connect",
-	"c4_panel_validation",
 }
 ORDER = [
 	"c1_correlate",
@@ -1327,13 +1326,24 @@ ORDER = [
 	"c3_coloc",
 	"pgs_focus",
 	"c4_connect",
-	"c4_panel_validation",
-	"c4_explain",
 	"c5_cellulation",
 	"final",
 	"shiny",
 	"share",
 ]
+
+
+def canonical_modules(csv):
+	aliases = {
+		"c1_connect": "c1_correlate",
+		"c4_focus": "c4_connect",
+		"c4_panel_validation": "c4_connect",
+		"c4_explain": "c4_connect",
+		"s1_interact": "c4_connect",
+		"s1_interaction": "c4_connect",
+		"s2_nonlin": "c4_connect",
+	}
+	return list(dict.fromkeys(aliases.get(x.strip(), x.strip()) for x in csv.split(",")))
 
 
 def call(cmd, env, dry=False):
@@ -1376,19 +1386,20 @@ def parser():
   ./le8.sh final,shiny --Y cvd_cad,ra --biom prot,met
   ./le8.sh shiny --Y cvd_cad,ra --port 3839
   ./le8.sh final --index-only --Y cvd_cad,ra
-  ./le8.sh c4_explain --Y cvd_cad --biom prot
+  ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
+  C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad --biom prot
   ./le8.sh c1_abm --Y cvd_cad --biom prot
   ./le8.sh final --fit-joint --Y cvd_cad,ra --biom prot,met --replace TRUE
 
 Modules: C1 correlation (c1_connect is accepted as an alias), C2 cause, C3 coloc,
-C4 connect (including interactions and nonlinearity)/panel validation/explain, C5 cellulation, final, shiny. 
+C4 connect (including interactions, nonlinearity, panel validation and reconstruction bootstrap), C5 cellulation, final, shiny.
 --abm-args is parsed as arguments, NEVER evaluated by a shell.
 """,
 	)
 	p.add_argument(
 		"modules",
 		nargs="?",
-		default="c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation",
+		default="c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c5_cellulation",
 	)
 	p.add_argument("--Y", "--trait", "-Y", default=os.getenv("Y", "cvd_cad,ra"))
 	p.add_argument("--biom", "-b", default=os.getenv("BIOM", "prot,met"))
@@ -1523,14 +1534,7 @@ def dispatch_main(argv=None):
 		p.error(
 			"Network binding needs LE8_SHINY_ALLOW_NETWORK=TRUE and your own authentication/proxy."
 		)
-	aliases = {
-		"c1_connect": "c1_correlate",
-		"c4_focus": "c4_panel_validation",
-		"s1_interact": "c4_connect",
-		"s1_interaction": "c4_connect",
-		"s2_nonlin": "c4_connect",
-	}
-	requested = [aliases.get(x, x) for x in a.modules.split(",")]
+	requested = canonical_modules(a.modules)
 	if any(x not in ORDER for x in requested):
 		p.error("Unknown module; see --help.")
 	if a.run_abm and "c1_abm" not in requested:
@@ -1579,8 +1583,6 @@ def dispatch_main(argv=None):
 	if a.cpu_task_memory_gib is not None:env['LE8_CPU_TASK_MEMORY_GIB']=str(a.cpu_task_memory_gib)
 	env.update(shared_env)
 	env["LE8_SHARED_CONFIG_SOURCES"] = json.dumps(config_sources, sort_keys=True)
-	if extra or a.ukb_phe:
-		env["LE8_RESUME_COMPLETED"] = "FALSE"
 	if a.ukb_phe:
 		env["UKB_PHE"] = str(a.ukb_phe)
 	if a.cores:
@@ -1708,24 +1710,6 @@ def dispatch_main(argv=None):
 			if not a.preflight:
 				for cmd in abm_commands:
 					phase(cmd,"c1_abm",gpu="cpu" not in cmd)
-		elif module == "c4_explain":
-			if a.preflight:
-				call(
-					[
-						a.r_bin,
-						"-e",
-						"p<-c('data.table','dplyr','survival','glmnet');m<-p[!vapply(p,requireNamespace,logical(1),quietly=TRUE)];if(length(m))stop(paste('Missing',paste(m,collapse=', ')))",
-					],
-					env,
-					a.dry_run,
-				)
-				continue
-			for Y in traits:
-				call(
-					[a.r_bin, HERE / "c4.connect.R"],
-					dict(env, Y=Y, LE8_PANEL_ACTION="reconstruct"),
-					a.dry_run,
-				)
 		elif module == "c5_cellulation":
 			cmd = [sys.executable, HERE / "c5.cellulation.py", *base,
 				"--seed", str(a.seed), "--matched-draws", str(a.matched_draws)]
@@ -1877,7 +1861,18 @@ def _table_runtime(argv):
 		train_abm = parsed.run_abm is not False and (parsed.run_abm or "c1_abm" in module_arg.split(","))
 	if not traits or any(not re.fullmatch(r"[A-Za-z0-9_]+", y) for y in traits) or not layers or not layers <= {"prot", "met"}:
 		raise ValueError("Invalid outcome/layer")
-	modules = set(module_arg.split(","))
+	modules = set(canonical_modules(module_arg))
+	if modules == {"c4_connect"} and not os.getenv("LE8_C4_STAGE"):
+		# One public C4 entry, with a committed transaction for each substage.
+		# Later validation/bootstrap failures must retain earlier fitted results.
+		try:
+			for stage in ("c4_connect", "c4_panel_validation", "c4_explain"):
+				print(f"[LE8] C4 stage: {stage}; publish before the next stage", flush=True)
+				os.environ["LE8_C4_STAGE"] = stage
+				_table_runtime(argv)
+		finally:
+			os.environ.pop("LE8_C4_STAGE", None)
+		return True
 	scopes = None if modules & {"final", "shiny", "index", "share"} else {(y, b) for y in traits for b in layers}
 	if (modules == {"c1_abm"} or (modules == {"c1_correlate"} and not train_abm)) and len(scopes) > 1:
 		# A fresh R process releases the preceding layer's full-cohort PGS heap.
@@ -2221,7 +2216,9 @@ def main(argv=None):
 	if os.getenv('LE8_TABLE_WORKSPACE')!='1' and not any(v in argv for v in ('--help','-h','--dry-run','--preflight')) and argv[:1]!=['index']:
 		args=argv[1:] if argv[:1]==['dispatch'] else argv
 		parsed,unknown=parser().parse_known_args(args)
-		mods=parsed.modules.split(',')
+		mods=canonical_modules(parsed.modules)
+		if any(v not in ORDER for v in mods):
+			raise ValueError('Unknown module; see --help.')
 		if parsed.run_abm is False:mods=[v for v in mods if v!='c1_abm']
 		if parsed.run_abm and 'c1_abm' not in mods:mods.append('c1_abm')
 		mods=[v for v in ORDER if v in mods]

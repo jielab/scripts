@@ -1,7 +1,7 @@
 # 🚩 c4.connect
 # C4 connections, matched-budget panel validation and reconstruction.
 # LE8_C4_MODE selects connect/panel/reconstruct; the dispatcher sets the job/action.
-.c4_mode <- Sys.getenv("LE8_C4_MODE", unset = if (identical(Sys.getenv("LE8_PANEL_ACTION"), "reconstruct")) "reconstruct" else if (identical(Sys.getenv("LE8_JOB"), "c4_panel_validation") || toupper(Sys.getenv("LE8_FOCUS_FUNCTIONS_ONLY")) %in% c("TRUE", "1", "YES")) "panel" else "connect")
+.c4_mode <- Sys.getenv("LE8_C4_MODE", unset = if (identical(Sys.getenv("LE8_PANEL_ACTION"), "reconstruct") || identical(Sys.getenv("LE8_JOB"), "c4_explain")) "reconstruct" else if (identical(Sys.getenv("LE8_JOB"), "c4_panel_validation") || toupper(Sys.getenv("LE8_FOCUS_FUNCTIONS_ONLY")) %in% c("TRUE", "1", "YES")) "panel" else "connect")
 if (!.c4_mode %in% c("connect", "panel", "reconstruct")) stop("Unknown LE8_C4_MODE: ", .c4_mode)
 if (.c4_mode %in% c("panel", "reconstruct")) {
 # Focused, prospective test of LE8 supervision and use of prevalent (Yang) donors.  All risk models use
@@ -104,7 +104,7 @@ suppressPackageStartupMessages({
 	}
 })
 # Stable result key used by existing saved panels and reports.
-LE8_JOB <- "c4_panel_validation"
+LE8_JOB <- if (.c4_mode == "reconstruct") "c4_explain" else "c4_panel_validation"
 # Edit f/0.common.R; C4_FOCUS_BUDGETS=5,10,50 overrides one run.
 C4_FOCUS_BUDGETS <- LE8_ASSAY_BUDGETS
 
@@ -519,6 +519,7 @@ run_c4_panel_validation <- function(layer) {
 		}
 		if (LE8_REUSE_RESULTS || identical(old$signature, signature)) {
 			message("C4 focus: matching completed result reused; regenerate presentation files")
+			if (is.data.frame(old$roles)) data.table::fwrite(old$roles, file.path(rd, "c4.focus.roles.csv.gz"), compress = "gzip")
 			focus_write_outputs(old$tables, rd)
 			return(invisible(old))
 		}
@@ -613,10 +614,11 @@ run_c4_panel_validation <- function(layer) {
 	background_measured_LE8 <- unique(c(background_measured_LE8,components))
 	clinical <- unique(c(background_basic,background_measured_LE8,background_PRS))
 	message("C4 focus: training=", nrow(train), ", validation=", nrow(test), ", Yang=", nrow(yang))
-	data.table::fwrite(bind_rows(
+	frozen_roles <- bind_rows(
 		tibble(eid = train$eid, group = train$.group, role = "incident_training", proxy_half=train$.le8_proxy_half), tibble(eid = test$eid, group = test$.group, role = "incident_validation",proxy_half=NA_integer_),
 		tibble(eid = yang$eid, group = yang$.group, role = "Yang_proxy_training",proxy_half=yang$.le8_proxy_half)
-	), file.path(rd, "c4.focus.roles.csv.gz"), compress = "gzip")
+	)
+	data.table::fwrite(frozen_roles, file.path(rd, "c4.focus.roles.csv.gz"), compress = "gzip")
 	screen <- stage("training_screen", cox_scan(train, features, clinical, Y, time_var = tvar, event_var = evar))
 	ranked <- screen |>
 		filter(is.finite(p.value)) |>
@@ -842,18 +844,30 @@ run_c4_panel_validation <- function(layer) {
 		tables$PGS <- le8_pgs_bridge(pd, features, half, basic, screen, mm, layer, prd)
 	}
 	out <- list(signature = signature, meta = module_meta(layer, extra = list(status = "ok",roster_hash=le8_hash_object(list(sort(train$eid),sort(test$eid))),baseline="clinical plus available measured LE8; disease PRS only if explicitly configured",grouping=if (nzchar(Sys.getenv("LE8_GROUP_FILE",Sys.getenv("LE8_GROUP_COLUMN","")))) "declared families" else "participant IDs; relatives not supplied")), tables = tables)
+	out$roles <- frozen_roles
 	saveRDS(out, cache)
 	focus_write_outputs(tables, rd)
 	invisible(out)
 }
 run_c4_reconstruction <- function(layer) {
+	rd <- file.path(out.base, layer, "c4_connect")
+	cache <- file.path(rd, "c4.explain.rds")
+	result_names <- c("metrics", "contrasts", "bootstrap", "provenance")
+	if (cache_valid(cache)) {
+		old <- readRDS(cache)
+		if (identical(old$meta$trait, Y) && identical(old$meta$layer, if (layer == "prot") "protein" else "metabolite") &&
+			identical(old$meta$module, "c4_explain") && all(result_names %in% names(old$tables))) {
+			for (nm in result_names) write_raw_csv(old$tables[[nm]], paste0("c4.explain.", nm, ".csv"), rd)
+			cache_message(paste0("C4/reconstruction/", layer), cache)
+			return(invisible(old))
+		}
+	}
 	B <- as.integer(Sys.getenv("C4_EXPLAIN_BOOT", "500"))
 	if (!is.finite(B) || B < 50) stop("C4_EXPLAIN_BOOT must be at least 50")
-	rd <- file.path(out.base, layer, "c4_connect")
 	roles_file <- file.path(rd, "c4.focus.roles.csv.gz")
 	panel_file <- file.path(rd, "c4.focus.panel_members.csv")
 	if (!file.exists(roles_file) || !file.exists(panel_file))
-		stop("Frozen C4 roles/panels missing for ", layer, "; run c4_panel_validation first. No new split is invented.")
+		stop("Frozen C4 roles/panels missing for ", layer, "; run c4_connect to complete panel validation first. No new split is invented.")
 	roles <- as.data.frame(fread(roles_file))
 	panels <- as.data.frame(fread(panel_file))
 	if (!all(c("eid", "role") %in% names(roles)) || anyDuplicated(roles$eid))
@@ -966,29 +980,23 @@ run_c4_reconstruction <- function(layer) {
 	ct <- bind_rows(contrasts)
 	if (nrow(ct))
 		ct$FDR_all_proxy_contrasts <- p.adjust(ct$p, "BH")
-	for (x in list(c("metrics", "c4.explain.metrics.csv"), c("contrasts", "c4.explain.contrasts.csv"), c(
-		"bootstrap",
-		"c4.explain.bootstrap.csv"
-	))) {
-		d <- switch(x[1],
-			metrics = bind_rows(metrics),
-			contrasts = ct,
-			bootstrap = bind_rows(boots)
-		)
-		fwrite(d, file.path(rd, x[2]))
-	}
-	fwrite(tibble(role = c("roles", "panels"), path = c(roles_file, panel_file), md5 = unname(tools::md5sum(c(
+	tables <- list(metrics = bind_rows(metrics), contrasts = ct, bootstrap = bind_rows(boots))
+	tables$provenance <- tibble(role = c("roles", "panels"), path = c(roles_file, panel_file), md5 = unname(tools::md5sum(c(
 		roles_file,
 		panel_file
-	))), note = "Reuses original roles and panels; no outcome or validation-based selection"), file.path(
-		rd,
-		"c4.explain.provenance.csv"
-	))
+	))), note = "Reuses original roles and panels; no outcome or validation-based selection")
+	for (nm in result_names) write_raw_csv(tables[[nm]], paste0("c4.explain.", nm, ".csv"), rd)
+	out <- list(meta = module_meta(if (layer == "prot") "protein" else "metabolite", extra = list(bootstrap_requested = B)), tables = tables)
+	tmp <- tempfile(tmpdir = rd)
+	on.exit(unlink(tmp), add = TRUE)
+	saveRDS(out, tmp, compress = "xz")
+	if (!file.rename(tmp, cache)) stop("Cannot save C4 reconstruction result: ", cache)
 	message("C4 explanation contrasts saved: ", nrow(ct), " / ", layer)
+	invisible(out)
 }
 
 if (.c4_mode == "reconstruct") {
-	for (layer in strsplit(BIOM, ",", fixed = TRUE)[[1]]) run_c4_reconstruction(layer)
+	for (layer in strsplit(BIOM, ",", fixed = TRUE)[[1]]) le8_stage(paste0("C4/reconstruction/", layer), run_c4_reconstruction(layer))
 } else {
 	if (!truthy(Sys.getenv("LE8_FOCUS_FUNCTIONS_ONLY", unset = "FALSE"))) {
 		if (prot_DO)

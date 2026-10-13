@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "transitions": [
+    {
+      "from": "d85bfafd29e51d2c583818f2d49ae415e31c3a11f9faa4e804683aff845cd2ef",
+      "to": "2479d84f7c4fe51694e5e8c1b04f5a4ceaa0c885279ff91adb528ebe8e6da275",
+      "change": "Default patience 5 to 3; allow patience-only resume changes. Training updates, data, architecture and all other settings remain identical."
+    }
+  ]
+}

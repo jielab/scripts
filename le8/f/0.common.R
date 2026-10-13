@@ -812,14 +812,14 @@ le8_evidence_policy <- function() {
 
 le8_module_policy <- function(module) {
 	prefix <- switch(module,c1_correlate="^C1_",c2_cause="^(C2_|DANDELION_|MRLINK2_)",c3_coloc="^(C3_|COLOC_|LE8_REFERENCE_|LE8_GWAS_MANIFEST)",
-		c4_connect="^C4_",c4_panel_validation="^C4_",final_prediction="^FINAL_","^$")
+		c4_connect="^C4_",c4_panel_validation="^C4_",c4_explain="^C4_",final_prediction="^FINAL_","^$")
 	env <- Sys.getenv(); settings <- env[grepl(prefix,names(env))]
 	paths <- unname(settings[file.exists(settings)])
 	list(settings=settings,files=if(length(paths)) tools::md5sum(paths) else character(),
 		evidence=if(module %in% c("c2_cause","c3_coloc","c4_connect","c4_panel_validation","final_prediction")) le8_evidence_policy() else NULL)
 }
 
-le8_completed_results <- function(root, traits, layers, modules, validate_settings = TRUE) {
+le8_completed_results <- function(root, traits, layers, modules, validate_settings = FALSE) {
 	stores <- new.env(parent = emptyenv())
 	table_entry <- function(path) {
 		store <- dirname(path)
@@ -835,19 +835,21 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 	required <- list(
 		c1_correlate = c("association", "prevalent"),
 		c2_cause = c("MR", "MR_reverse", "MR_best"), c3_coloc = c("summary", "variants"),
-		c4_connect = c("scan", "membership", "mediation"), c4_panel_validation = "tables"
+		c4_connect = c("scan", "membership", "mediation"), c4_panel_validation = "tables",
+		c4_explain = "tables"
 	)
 	exported <- list(
 		c1_correlate = c("c1.cohort.csv", "c1.directionality_triage.csv"),
 		c2_cause = c("c2.MR_all.csv", "c2.evidence_grades.csv"),
 		c3_coloc = c("c3.coloc_summary.csv", "c3.credible_set_audit.csv"),
 		c4_connect = c("c4.LE8_feature_associations.csv", "c4.proxy_membership_YS_YSP_NS.csv", "c4.sex_interaction.csv"),
-		c4_panel_validation = c("c4.focus.metrics.csv", "c4.focus.panel_members.csv")
+		c4_panel_validation = c("c4.focus.metrics.csv", "c4.focus.panel_members.csv"),
+		c4_explain = paste0("c4.explain.", c("metrics", "contrasts", "bootstrap", "provenance"), ".csv")
 	)
 	rows <- list()
 	for (y in traits) for (b in layers) for (m in intersect(modules, names(required))) {
-		d <- file.path(root, y, b, if (m == 'c4_panel_validation') 'c4_connect' else m)
-		f <- file.path(d, if (m == 'c4_panel_validation') 'c4.validation.rds' else paste0(substr(m, 1, 2), '.res.rds'))
+		d <- file.path(root, y, b, if (m %in% c('c4_panel_validation', 'c4_explain')) 'c4_connect' else m)
+		f <- file.path(d, switch(m, c4_panel_validation = 'c4.validation.rds', c4_explain = 'c4.explain.rds', paste0(substr(m, 1, 2), '.res.rds')))
 		status <- "missing" ; detail <- "No completed result" ; generated <- version <- ""
 		if (file.exists(f) && file.info(f)$size > 0) {
 			x <- tryCatch(readRDS(f), error = function(e) stop("Unreadable completed cache: ", f, ": ", conditionMessage(e)))
@@ -859,7 +861,7 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 			version <- if (is.null(meta$code_version)) "saved fitted result" else meta$code_version
 			present <- function(paths) all(vapply(paths, function(path) {
 				if (file.exists(path)) return(isTRUE(file.info(path)$size > 0))
-				grepl('[.]csv$', path) && !is.null(table_entry(path))
+				grepl('[.]csv([.]gz)?$', path) && !is.null(table_entry(path))
 			}, logical(1)))
 			files <- file.path(d, exported[[m]])
 			manifest <- file.path(d, "figure_manifest.csv")
@@ -870,7 +872,9 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 					mf <- mf[(mf$group %in% c('equal_budget','deployed_concept_fidelity')) == (m == 'c4_panel_validation'), , drop = FALSE]
 				figures_ok <- "file" %in% names(mf) && nrow(mf) > 0 && present(file.path(d, mf$file))
 			}
-			reusable <- all(required[[m]] %in% names(x)) && present(files[grepl("[.]csv$", files)])
+			if (m == "c4_explain") figures_ok <- TRUE
+			reusable <- all(required[[m]] %in% names(x)) && present(files)
+			if (m == "c4_explain") reusable <- reusable && all(c("metrics", "contrasts", "bootstrap", "provenance") %in% names(x$tables))
 			complete <- reusable && present(files) && figures_ok
 			if (m == "c4_connect") {
 				shared <- d
@@ -889,7 +893,9 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 			}
 			if (m == "c4_panel_validation") {
 				reusable <- reusable && all(c("metrics", "panel_members", "design") %in% names(x$tables))
-				complete <- complete && reusable
+				roles_present <- present(file.path(d, "c4.focus.roles.csv.gz"))
+				reusable <- reusable && (roles_present || is.data.frame(x$roles))
+				complete <- complete && reusable && roles_present
 				budgets <- sort(unique(as.numeric(strsplit(Sys.getenv("C4_FOCUS_BUDGETS", "5,10,50"), ",")[[1]])))
 				actual <- sort(unique(x$tables$metrics$budget[x$tables$metrics$budget > 0]))
 				if (!identical(as.numeric(actual), budgets)) settings_match <- FALSE
@@ -924,12 +930,17 @@ if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] %in%
 	if (length(args) != 6L) stop("--check-completed requires root, traits, layers, modules and audit path")
 	split <- function(z) strsplit(z, ",", fixed = TRUE)[[1]]
 	audit <- args[1] == "--audit-results"
-	z <- le8_completed_results(args[2], split(args[3]), split(args[4]), split(args[5]), validate_settings = !audit)
+	# --replace TRUE is the only request to refit a completed analysis. Check
+	# identity, readable results, exports and failure states, not current inputs
+	# or code fingerprints; retain the saved methods and provenance unchanged.
+	z <- le8_completed_results(args[2], split(args[3]), split(args[4]), split(args[5]), validate_settings = FALSE)
 	if (nrow(z)) {
 		write.csv(z, args[6], row.names = FALSE)
-		# Output completeness alone cannot prove unchanged inputs, groups or LD.
-		# Each module revalidates its full stage signature before reusing its fits.
-		# Explicit presentation-only entry points retain their frozen-results path.
+		if (!audit) for (i in seq_len(nrow(z))) {
+			key <- paste(z$trait[i], z$module[i], z$layer[i], sep = "|")
+			if (z$status[i] == "completed") cat(key, "\n", sep = "")
+			else if (z$status[i] == "cached") cat(key, "|reuse-results\n", sep = "")
+		}
 	}
 	if (audit && (!nrow(z) || any(z$status != "completed"))) {
 		print(z)
@@ -1599,14 +1610,14 @@ le8_final_layer <- function(outdir) {
 le8_job_dir <- function(outdir = getwd(), job = LE8_JOB) {
 	if (is.null(job) || !nzchar(job)) job <- "raw"
 	if (job == "final_prediction") return(le8_final_dir(le8_final_layer(outdir), "prediction"))
-	if (job == 'c4_panel_validation') job <- 'c4_connect'
+	if (job %in% c('c4_panel_validation', 'c4_explain')) job <- 'c4_connect'
 	bn <- basename(normalizePath(outdir, winslash = "/", mustWork = FALSE))
 	if (bn %in% c("prot", "met")) file.path(outdir, job) else outdir
 }
 # Module artifacts stay beside their numerical results; root is publication-only.
 le8_artifact_path <- function(file, outdir = getwd(), module = LE8_JOB) {
 	if (module == "final_prediction") outdir <- le8_job_dir(outdir, module)
-	if (module == 'c4_panel_validation') module <- 'c4_connect'
+	if (module %in% c('c4_panel_validation', 'c4_explain')) module <- 'c4_connect'
 	target <- if (grepl("^(/|[A-Za-z]:)", file)) file else file.path(outdir, file)
 	parent <- dirname(target)
 	if (basename(parent) %in% c("prot", "met") && nzchar(module) && module != "final")
@@ -1684,16 +1695,16 @@ le8_stage_fingerprint <- function() {
 	le8_hash_object(list(code=.le8_loaded_code,env=env,files=logical_files,size=info$size,mtime=as.numeric(info$mtime),
 		upstream=get0(".le8_stage_source_values",ifnotfound=NULL)))
 }
-read_stage_cache <- function(path, version = NULL) {
+read_stage_cache <- function(path, version = NULL, validate_inputs = TRUE) {
 	if (!cache_valid(path)) return(NULL)
 	z <- tryCatch(readRDS(path), error = function(e) NULL)
 	if (is.null(z) || !is.list(z) || is.null(z$data)) return(NULL)
-	if (!identical(z$source_signature,le8_stage_fingerprint())) {
+	if (validate_inputs && !identical(z$source_signature,le8_stage_fingerprint())) {
 		message("Cache inputs/settings changed: ", basename(path), "; validating and recomputing this stage")
 		return(NULL)
 	}
 	if (!is.null(version) && !identical(z$version, version)) return(NULL)
-	if (!is.null(z$analysis_options) && !identical(z$analysis_options, le8_analysis_options())) return(NULL)
+	if (validate_inputs && !is.null(z$analysis_options) && !identical(z$analysis_options, le8_analysis_options())) return(NULL)
 	z$data
 }
 write_stage_cache <- function(data, path, version = NULL) {

@@ -3,24 +3,28 @@
 
 # 🚩 github_copy
 # Scan analysis results for UKB participant IDs before publishing to GitHub.
-# The copy list contains ONLY approved files. scan never copies analysis files.
+# Scan first, then copy the approved list after the user's confirmation.
 set -Eeuo pipefail
 command -v python3 >/dev/null 2>&1 || {
 	echo 'ERROR: python3 is required' >&2
 	exit 1
 }
-exec python3 - "$@" <<'PY'
+# Keep the caller's stdin available for confirmation while Python reads this heredoc.
+exec python3 - "$@" 3<&0 <<'PY'
 import codecs
 import collections
 from contextlib import contextmanager
+import csv
 import decimal
 import gzip
-import html
+import hashlib
 from html.parser import HTMLParser
 import io
+import itertools
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import stat
@@ -47,22 +51,22 @@ INTERMEDIATE_DIRECTORIES = frozenset({
 	'tmp', 'temp', 'normalize', 'storage-migration',
 })
 
-# In UKB scope, check VALUES regardless of header, extension or row position.
-# Boundaries avoid matching rs1234567, longer integers and the fractional part of
-# 0.1234567. Also catch integers exported as 2545852.0 or 2.545852e+06.
-# Seven-digit counts/coordinates are conservatively excluded too.
-ID = re.compile(r'(?<![A-Za-z0-9.])[0-9]{7}(?:\.0+)?(?![A-Za-z0-9]|\.[0-9])')
-SCIENTIFIC = re.compile(
-	r'(?<![A-Za-z0-9.])[0-9]+(?:\.[0-9]+)?[eE][+-]?[0-9]+(?![A-Za-z0-9.])'
-)
-ESCAPED_CHAR = re.compile(r'\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2})')
+# A UKB ID column must satisfy BOTH user-defined conditions:
+# its name contains "id" (case-insensitive), and every data row is a
+# seven-digit integer. Numeric Excel/CSV exports may use .0 or scientific form.
+SEVEN_DIGIT_ID = re.compile(r'[0-9]{7}(?:\.0+)?')
+NUMERIC_ID = re.compile(r'[0-9]+(?:\.[0-9]+)?[eE][+-]?[0-9]+')
+EXCEL_ESCAPE = re.compile(r'_x([0-9a-fA-F]{4})_')
 BAD_CONTROL = re.compile(r'[\x00-\x08\x0b\x0e-\x1f]')
 RASTER = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.tif', '.tiff', '.bmp'}
 RESULT_SUFFIXES = RASTER | {'.xlsx', '.xlsm', '.pdf', '.svg'}
+SHEET_NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
 
 class Rejected(Exception):
-	pass
+	def __init__(self, reason, locations=()):
+		super().__init__(reason)
+		self.locations = locations
 
 
 class RecoveryFailed(Exception):
@@ -87,45 +91,60 @@ def staging_directory():
 				print(f'WARNING: could not remove temporary directory: {stage}', file=sys.stderr)
 
 
-def has_id(value):
-	text = str(value)
-	if '\\' in text:
-		text = ESCAPED_CHAR.sub(
-			lambda m: (
-				chr(int(m.group()[2:], 16))
-				if int(m.group()[2:], 16) <= 0x10FFFF
-				else m.group()
-			),
-			text,
-		)
-	if ID.search(text):
+def is_seven_digit_id(value):
+	text = str(value).strip()
+	if SEVEN_DIGIT_ID.fullmatch(text):
 		return True
-	for match in SCIENTIFIC.finditer(text):
-		token = match.group()
-		if len(token) > 64:
-			continue
+	if len(text) <= 64 and NUMERIC_ID.fullmatch(text):
 		try:
-			number = decimal.Decimal(token)
-			if (
-				1_000_000 <= number <= 9_999_999
-				and number == number.to_integral_value()
-			):
-				return True
+			number = decimal.Decimal(text)
+			return 1_000_000 <= number <= 9_999_999 and number == number.to_integral_value()
 		except decimal.InvalidOperation:
-			continue
+			pass
 	return False
 
 
+class IdColumns:
+	def __init__(self, header):
+		self.candidates = {i for i, name in enumerate(header) if 'id' in str(name).lower()}
+		self.rows = 0
+
+	def add(self, values):
+		self.rows += 1
+		self.candidates = {
+			i for i in self.candidates if i < len(values) and is_seven_digit_id(values[i])
+		}
+
+	def finish(self):
+		if self.rows and self.candidates:
+			raise Rejected('ukb_id_column')
+
+
 def check_value(value):
+	# JSON tables may be arrays of records, arrays with a header row, or
+	# objects of column arrays. Isolated scalar values do not define a column.
 	if isinstance(value, dict):
-		for key, item in value.items():
-			check_value(key)
-			check_value(item)
+		for name, items in value.items():
+			if (
+				'id' in str(name).lower() and isinstance(items, (list, tuple))
+				and items and all(is_seven_digit_id(item) for item in items)
+			):
+				raise Rejected('ukb_id_column')
+			check_value(items)
 	elif isinstance(value, (list, tuple)):
+		if value and isinstance(value[0], dict):
+			header = list(value[0])
+			columns = IdColumns(header)
+			for row in value:
+				columns.add([row.get(name) for name in header] if isinstance(row, dict) else [])
+			columns.finish()
+		elif value and isinstance(value[0], (list, tuple)):
+			columns = IdColumns(value[0])
+			for row in value[1:]:
+				columns.add(row if isinstance(row, (list, tuple)) else [])
+			columns.finish()
 		for item in value:
 			check_value(item)
-	elif value is not None and has_id(value):
-		raise Rejected('ukb_id')
 
 
 def relative_parts(relative):
@@ -139,8 +158,6 @@ def relative_parts(relative):
 	parts = relative.split('/')
 	if len(parts) < 2 or any(p in {'', '.', '..'} for p in parts):
 		raise Rejected('unsafe_path')
-	if parts[0] not in NON_UKB_PROJECTS and has_id(relative):
-		raise Rejected('ukb_id_in_path')
 	return parts
 
 
@@ -196,10 +213,12 @@ def check_file_count(files):
 
 def excluded_artifact(path):
 	name = path.name.lower()
+	if name.startswith('~$'):
+		return 'office_lock_file'
 	if name.endswith('.gz'):
 		name = name[:-3]
 	# RDS may contain individual IDs and is opaque to this scanner. Keep
-	# it out of scan and old sync lists even in confirmed non-UKB projects.
+	# it out of scan lists even in confirmed non-UKB projects.
 	if name.endswith('.rds'):
 		return 'rds_file'
 	if name.endswith('.log'):
@@ -212,11 +231,11 @@ def excluded_artifact(path):
 
 
 def file_policy(path, details):
+	if details.st_size > MAX_FILE_BYTES:
+		raise Rejected('over_50_MB')
 	reason = excluded_artifact(path)
 	if reason:
 		raise Rejected(reason)
-	if details.st_size > MAX_FILE_BYTES:
-		raise Rejected('over_50_MB')
 
 
 def text_handle(raw):
@@ -232,111 +251,242 @@ def text_handle(raw):
 
 
 class MarkupChecker(HTMLParser):
-	"""Check rendered text too: inline spans may split a visible identifier."""
-
-	breaks = {'p', 'div', 'tr', 'td', 'th', 'br', 'hr', 'li', 'text', 'script', 'style'}
+	"""Apply the same column rule to rendered HTML tables."""
 
 	def __init__(self):
 		super().__init__(convert_charrefs=True)
-		self.tail = ''
+		self.tables = []
 
 	def handle_starttag(self, tag, attrs):
-		check_value(attrs)
-		if tag in self.breaks:
-			self.tail = ''
+		if tag == 'table':
+			self.tables.append({'columns': None, 'row': None, 'cell': None})
+		elif self.tables:
+			table = self.tables[-1]
+			if tag == 'tr':
+				table['row'] = []
+			elif tag in {'td', 'th'} and table['row'] is not None:
+				table['cell'] = []
 
 	def handle_endtag(self, tag):
-		if tag in self.breaks:
-			self.tail = ''
+		if not self.tables:
+			return
+		table = self.tables[-1]
+		if tag in {'td', 'th'} and table['cell'] is not None:
+			table['row'].append(''.join(table['cell']))
+			table['cell'] = None
+		elif tag == 'tr' and table['row'] is not None:
+			if table['columns'] is None:
+				table['columns'] = IdColumns(table['row'])
+			else:
+				table['columns'].add(table['row'])
+			table['row'] = None
+		elif tag == 'table':
+			if table['columns'] is not None:
+				table['columns'].finish()
+			self.tables.pop()
 
 	def handle_data(self, data):
-		combined = self.tail + data
-		check_value(combined)
-		self.tail = combined[-256:]
+		if self.tables and self.tables[-1]['cell'] is not None:
+			self.tables[-1]['cell'].append(data)
+
+
+def checked_lines(handle):
+	for line in handle:
+		if BAD_CONTROL.search(line):
+			raise Rejected('uninspectable_binary_content')
+		yield line
+
+
+def check_table(rows):
+	rows = (row for row in rows if row)
+	columns = IdColumns(next(rows, []))
+	for row in rows:
+		columns.add(row)
+	columns.finish()
 
 
 def check_text(raw, suffix):
 	with text_handle(raw) as handle:
 		if suffix == '.json':
-			# Decode escaped strings and dictionary keys as well as numeric IDs.
-			# Preserve duplicate keys; a later value must not hide an earlier ID.
-			check_value(json.load(handle, object_pairs_hook=list))
+			check_value(json.load(handle, object_pairs_hook=unique_json_object))
 			return
 		if suffix == '.jsonl':
-			for line in handle:
-				if line.strip():
-					check_value(json.loads(line, object_pairs_hook=list))
+			check_value([
+				json.loads(line, object_pairs_hook=unique_json_object)
+				for line in handle if line.strip()
+			])
 			return
-		# Full-file scan, including headerless/unknown-extension files, all
-		# columns, multiline fields, logs, scripts, and embedded HTML/JS data.
-		markup = (
-			MarkupChecker() if suffix in {'.html', '.htm', '.svg', '.xml'} else None
-		)
-		for line in handle:
-			if BAD_CONTROL.search(line):
-				raise Rejected('uninspectable_binary_content')
-			check_value(html.unescape(line) if markup else line)
-			if markup:
+		lines = checked_lines(handle)
+		if suffix in {'.html', '.htm', '.svg', '.xml'}:
+			markup = MarkupChecker()
+			for line in lines:
 				markup.feed(line)
-		if markup:
 			markup.close()
+			return
+		csv.field_size_limit(MAX_XML_BYTES)
+		if suffix in {'.csv', '.tsv'}:
+			check_table(csv.reader(lines, delimiter='\t' if suffix == '.tsv' else ',', strict=True))
+			return
+		# Headered text tables also occur in .psam/.sscore/.out and unknown
+		# suffixes. Headerless data and free text cannot satisfy both criteria.
+		first = next((line for line in lines if line.strip()), '')
+		lines = itertools.chain([first], lines)
+		delimiter = '\t' if '\t' in first else ',' if ',' in first else None
+		if delimiter:
+			check_table(csv.reader(lines, delimiter=delimiter))
+		else:
+			check_table(line.split() for line in lines)
 
 
 def check_printer_settings(data):
-	# Excel/openxlsx printer metadata may be binary or a hexadecimal dump.
-	# Inspect its readable strings too; other embedded binary objects stay blocked.
+	# Known Excel/openxlsx printer metadata is not a table of participants.
 	if len(data) > 1024 * 1024:
 		raise Rejected('xlsx_printer_settings_too_large')
-	check_value(data.decode('latin-1'))
-	if re.fullmatch(rb'(?:[0-9a-fA-F]{2}\s*)+', data.strip()):
-		data = bytes.fromhex(data.decode('ascii'))
-	check_value(data.decode('latin-1').replace('\x00', ''))
-	for encoding in ('utf-16-le', 'utf-16-be'):
-		for offset in (0, 1):
-			check_value(data[offset:].decode(encoding, errors='ignore'))
 
 
-def check_xml_attributes(element):
-	attributes = element.attrib
-	if element.tag.startswith(
-		'{http://schemas.openxmlformats.org/drawingml/2006/main}'
-	):
-		# DrawingML expresses angles in 1/60000 degree and lengths in EMUs.
-		# These typed layout attributes (e.g. a shadow direction) are not cell
-		# data. Still inspect labels/names and every text node, chart and cell.
-		geometry = {
-			'ang',
-			'dir',
-			'rot',
-			'stAng',
-			'endAng',
-			'fov',
-			'lat',
-			'lon',
-			'rev',
-			'x',
-			'y',
-			'cx',
-			'cy',
-			'w',
-			'h',
-			'dist',
-			'blurRad',
-			'l',
-			'r',
-			't',
-			'b',
-			'sx',
-			'sy',
-			'kx',
-			'ky',
-		}
-		attributes = {
-			key: value
-			for key, value in attributes.items()
-			if key not in geometry or not re.fullmatch(r'[+-]?[0-9]+', value)
-		}
-	check_value(attributes)
+def unique_json_object(pairs):
+	result = {}
+	for key, value in pairs:
+		if key in result:
+			raise Rejected('duplicate_json_key')
+		result[key] = value
+	return result
+
+
+def check_workbook_exports(book):
+	checked = set()
+	formats = {'le8': 'le8-workbook-v1', 'results': 'analysis-tables-v1'}
+	for prefix, expected in formats.items():
+		manifest_name = prefix + '/manifest.json'
+		if manifest_name not in book.namelist():
+			continue
+		manifest = json.loads(book.read(manifest_name), object_pairs_hook=unique_json_object)
+		if not isinstance(manifest, dict) or manifest.get('format') != expected:
+			raise Rejected('xlsx_invalid_export_manifest')
+		files = manifest.get('files')
+		if not isinstance(files, dict):
+			raise Rejected('xlsx_invalid_export_manifest')
+		check_value({key: value for key, value in manifest.items() if key != 'files'})
+		for source, entry in files.items():
+			check_value(source)
+			if (
+				Path(source).name != source or '\\' in source
+				or not isinstance(entry, dict)
+			):
+				raise Rejected('xlsx_invalid_export_manifest')
+			sha = entry.get('sha256')
+			if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha):
+				raise Rejected('xlsx_invalid_export_manifest')
+			part = entry.get('part')
+			if part != f'{prefix}/exports/{sha}.bin' or part not in book.namelist():
+				raise Rejected('xlsx_invalid_export_manifest')
+			# A verified byte count describes storage, not an individual.
+			if 'size' in entry and (
+				type(entry['size']) is not int or entry['size'] != book.getinfo(part).file_size
+			):
+				raise Rejected('xlsx_export_size_mismatch')
+			check_value({key: value for key, value in entry.items() if key != 'size'})
+			suffix = Path(source).suffix.lower()
+			inner_suffix = Path(Path(source).stem).suffix.lower() if suffix == '.gz' else suffix
+			if inner_suffix not in {'.csv', '.tsv', '.json', '.jsonl', '.txt'}:
+				raise Rejected('xlsx_uninspectable_embedded_content')
+			data = book.read(part)
+			if hashlib.sha256(data).hexdigest() != sha:
+				raise Rejected('xlsx_export_checksum_mismatch')
+			try:
+				with io.BytesIO(data) as raw:
+					if suffix == '.gz':
+						check_gzip(raw, inner_suffix)
+					else:
+						check_text(raw, suffix)
+			except Rejected as exc:
+				if str(exc) == 'ukb_id_column':
+					raise Rejected('ukb_id_column', [('embedded table', source)]) from None
+				raise
+			checked.add(part)
+		checked.add(manifest_name)
+	return checked
+
+
+def excel_text(value):
+	return EXCEL_ESCAPE.sub(lambda match: chr(int(match.group(1), 16)), value)
+
+
+def workbook_strings(book):
+	if 'xl/sharedStrings.xml' not in book.namelist():
+		return []
+	strings = []
+	with book.open('xl/sharedStrings.xml') as handle:
+		for _, element in ET.iterparse(handle):
+			if element.tag == SHEET_NS + 'si':
+				strings.append(excel_text(''.join(t.text or '' for t in element.iter(SHEET_NS + 't'))))
+				element.clear()
+	return strings
+
+
+def cell_value(cell, strings):
+	if cell.get('t') == 's':
+		index = int(cell.findtext(SHEET_NS + 'v'))
+		if not 0 <= index < len(strings):
+			raise Rejected('xlsx_invalid_shared_string')
+		return strings[index]
+	if cell.get('t') == 'inlineStr':
+		return excel_text(''.join(t.text or '' for t in cell.iter(SHEET_NS + 't')))
+	if cell.get('t') not in {None, 'n', 'str'}:
+		# Boolean/error/date cells are populated non-ID values, not missing rows.
+		return False
+	return excel_text(cell.findtext(SHEET_NS + 'v', ''))
+
+
+def check_worksheet(book, name, strings):
+	columns, addresses = None, []
+	with book.open(name) as handle:
+		in_row = False
+		for event, element in ET.iterparse(handle, events=('start', 'end')):
+			if event == 'start':
+				if element.tag == SHEET_NS + 'row':
+					in_row = True
+				continue
+			if in_row and element.tag != SHEET_NS + 'row':
+				continue
+			if in_row:
+				values = {}
+				for index, cell in enumerate(element.findall(SHEET_NS + 'c')):
+					address = re.sub(r'[0-9]+$', '', cell.get('r', '')) or index
+					if address in values:
+						raise Rejected('xlsx_duplicate_cell')
+					values[address] = cell_value(cell, strings)
+				# Formatting-only blank rows do not add data records. A missing
+				# ID in a populated row disqualifies that column, as requested.
+				if any(value not in {None, ''} for value in values.values()):
+					if columns is None:
+						addresses = list(values)
+						columns = IdColumns(list(values.values()))
+					else:
+						columns.add([values.get(address) for address in addresses])
+			element.clear()
+			in_row = False
+	if columns is not None:
+		columns.finish()
+
+
+def worksheet_names(book):
+	names = book.namelist()
+	if 'xl/workbook.xml' not in names or 'xl/_rels/workbook.xml.rels' not in names:
+		return {}
+	relationships = {}
+	for item in ET.fromstring(book.read('xl/_rels/workbook.xml.rels')):
+		target = item.get('Target', '')
+		if item.get('TargetMode') != 'External':
+			relationships[item.get('Id')] = posixpath.normpath(
+				target.lstrip('/') if target.startswith('/') else posixpath.join('xl', target)
+			)
+	labels = {}
+	for sheet in ET.fromstring(book.read('xl/workbook.xml')).iter(SHEET_NS + 'sheet'):
+		relation = sheet.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+		if relation in relationships:
+			labels[relationships[relation]] = sheet.get('name', relationships[relation])
+	return labels
 
 
 def check_xlsx(path):
@@ -348,31 +498,32 @@ def check_xlsx(path):
 		):
 			raise Rejected('xlsx_expansion_limit')
 		names = book.namelist()
+		if len(names) != len(set(names)):
+			raise Rejected('xlsx_duplicate_archive_member')
 		if not any(re.fullmatch(r'xl/worksheets/[^/]+\.xml', n) for n in names):
 			raise Rejected('xlsx_content_check_failed')
-		# Inspect all XML, including unused shared strings, hidden sheets,
-		# comments, formula caches and relationships, not just visible cells.
+		strings = workbook_strings(book)
+		labels = worksheet_names(book)
+		worksheets = [name for name in names if re.fullmatch(r'xl/worksheets/[^/]+\.xml', name)]
+		blocked = []
+		for name in worksheets:
+			try:
+				check_worksheet(book, name, strings)
+			except Rejected as exc:
+				if str(exc) != 'ukb_id_column':
+					raise
+				blocked.append(('worksheet', labels.get(name, name)))
+		if blocked:
+			raise Rejected('ukb_id_column', blocked)
+		exports = check_workbook_exports(book)
+		# Check every worksheet, including hidden ones, and exact exports.
+		# XML metadata and unused strings alone do not define an ID column.
 		for name in names:
-			check_value(name)
-			if name.endswith('/'):
+			if name.endswith('/') or name in exports or name in worksheets or name == 'xl/sharedStrings.xml':
 				continue
 			if name.lower().endswith(('.xml', '.rels', '.vml')):
 				with book.open(name) as handle:
-					rich_text = None
-					for event, element in ET.iterparse(handle, events=('start', 'end')):
-						tag = element.tag.rsplit('}', 1)[-1]
-						if event == 'start':
-							if tag in {'si', 'is'}:
-								rich_text = []
-							continue
-						check_value(element.text)
-						check_value(element.tail)
-						check_xml_attributes(element)
-						if rich_text is not None and tag == 't':
-							rich_text.append(element.text or '')
-						if tag in {'si', 'is'} and rich_text is not None:
-							check_value(''.join(rich_text))
-							rich_text = None
+					for _, element in ET.iterparse(handle):
 						element.clear()
 			elif Path(name).suffix.lower() in RASTER:
 				with book.open(name) as handle:
@@ -381,10 +532,22 @@ def check_xlsx(path):
 			elif re.fullmatch(r'xl/printerSettings/printerSettings[0-9]+\.bin', name):
 				check_printer_settings(book.read(name))
 			else:
-				# Embedded objects, macros and opaque payloads cannot bypass
-				# the detector by living inside an otherwise readable workbook.
 				raise Rejected('xlsx_uninspectable_embedded_content')
 	return 'xlsx_embedded_images' if visual else ''
+
+
+def check_gzip(raw, suffix):
+	with tempfile.TemporaryFile(dir='/tmp') as expanded:
+		with gzip.GzipFile(fileobj=raw, mode='rb') as handle:
+			while True:
+				chunk = handle.read(1024 * 1024)
+				if not chunk:
+					break
+				if expanded.tell() + len(chunk) > MAX_EXPANDED_BYTES:
+					raise Rejected('gzip_expansion_limit')
+				expanded.write(chunk)
+		expanded.seek(0)
+		check_text(expanded, suffix)
 
 
 def check_image(path):
@@ -459,17 +622,8 @@ def content_check(path, check_ids=True):
 		inner_suffix = Path(path.stem).suffix.lower()
 		if inner_suffix == '.rds':
 			raise Rejected('rds_file')
-		with tempfile.TemporaryFile(dir='/tmp') as expanded:
-			with gzip.open(path, 'rb') as handle:
-				while True:
-					chunk = handle.read(1024 * 1024)
-					if not chunk:
-						break
-					if expanded.tell() + len(chunk) > MAX_EXPANDED_BYTES:
-						raise Rejected('gzip_expansion_limit')
-					expanded.write(chunk)
-			expanded.seek(0)
-			check_text(expanded, inner_suffix)
+		with path.open('rb') as raw:
+			check_gzip(raw, inner_suffix)
 		return ''
 	# Text sniffing instead of a narrow extension whitelist: .psam, .fam,
 	# .sscore, .out, .R, custom suffixes and extensionless files all work.
@@ -482,11 +636,11 @@ def inspect(root, relative):
 	try:
 		before = file_stat(root, relative)
 		path = root / relative
-		reason = excluded_artifact(path) or excluded_result(relative)
+		file_policy(path, before)
+		reason = excluded_result(relative)
 		if reason:
 			raise Rejected(reason)
 		check_ids = relative.split('/')[0] not in NON_UKB_PROJECTS
-		file_policy(path, before)
 		review = content_check(path, check_ids)
 		if version(before) != version(file_stat(root, relative)):
 			raise Rejected('file_changed_during_check')
@@ -629,6 +783,13 @@ def scan(projects):
 					size, review = inspect(SOURCE, relative)
 				except Rejected as exc:
 					excluded.append((relative, str(exc)))
+					for kind, label in exc.locations:
+						print(
+							f'WARNING: {relative!r}: {kind} {label!r} contains a UKB ID column '
+							'(name includes id; all data rows are seven-digit integers). '
+							'File excluded; review after scan.',
+							flush=True,
+						)
 				else:
 					approved.append(relative)
 					totals[project]['files'] += 1
@@ -647,19 +808,21 @@ def scan(projects):
 	approved.sort()
 	check_file_count(approved)
 	header = (
-		'# Generated by github_copy.sh scan. Paths are relative to '
+		'# Generated by github_copy.sh. Paths are relative to '
 		+ str(SOURCE)
 		+ '.\n'
 		'# Project scope: ' + ','.join(projects) + '\n'
 		'# Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf and files over 50 MB in every project.\n'
-		'# Unreadable content and possible UKB IDs (7 digits) are excluded except in non-UKB projects.\n'
+		'# UKB ID columns: name contains id (case-insensitive) AND every data row is a 7-digit integer.\n'
+		'# Isolated numbers and filenames do not identify UKB IDs. Unreadable content remains excluded.\n'
+		'# Workbook source exports are checksum-verified and content-scanned; Office lock files are excluded.\n'
 		'# Non-UKB projects (content/ID inspection skipped; formal results only): '
 		+ ','.join(p for p in projects if p in NON_UKB_PROJECTS) + '\n'
 		'# Non-UKB results: XLSX/XLSM and figures only; intermediate directories excluded.\n'
 		f'# Non-UKB selection must contain fewer than {MAX_NON_UKB_FILES} files per project.\n'
 		'# RDS/log/done exclusions include gzip files.\n'
 		'# Images retained by request; visual review list is printed to the terminal.\n'
-		'# sync rechecks an exact staged snapshot before changing destination projects.\n'
+		'# Review warnings and confirm the copy prompt. Listed files are copied without rechecks.\n'
 	)
 	print(f'  Inspected {checked} files recursively.')
 	print_summary(projects, approved, excluded, reviews, totals)
@@ -668,13 +831,14 @@ def scan(projects):
 		f'SCAN OK: wrote {len(approved)} approved paths to {DEST / MANIFEST}',
 		flush=True,
 	)
+	return approved
 
 
-# 🚩 Sync approved results
+# 🚩 Copy approved results
 def read_manifest(arguments):
 	path = DEST / MANIFEST
 	if path.is_symlink() or not path.is_file():
-		raise ValueError('manifest missing or unsafe; run scan first')
+		raise ValueError('manifest missing or unsafe; rerun with the project list')
 	lines = path.read_text(encoding='utf-8').splitlines()
 	scopes = [
 		line[len('# Project scope: ') :]
@@ -683,13 +847,13 @@ def read_manifest(arguments):
 	]
 	if len(scopes) != 1:
 		raise ValueError(
-			'manifest must contain exactly one project scope; run scan again'
+			'manifest must contain exactly one project scope; rerun with the project list'
 		)
 	scope = project_list(scopes)
 	projects = project_list(arguments) if arguments else scope
 	if not set(projects) <= set(scope):
-		raise ValueError('sync project is outside the manifest scope')
-	files, excluded, seen = [], [], set()
+		raise ValueError('copy project is outside the manifest scope')
+	files, seen = [], set()
 	for line in lines:
 		if not line or line.startswith('#'):
 			continue
@@ -698,13 +862,8 @@ def read_manifest(arguments):
 			raise ValueError('invalid scope or duplicate manifest entry')
 		seen.add(line)
 		if parts[0] in projects:
-			reason = excluded_artifact(Path(line)) or excluded_result(line)
-			if reason:
-				excluded.append((line, reason))
-			else:
-				files.append(line)
-	check_file_count(files)
-	return projects, files, excluded
+			files.append(line)
+	return projects, files
 
 
 def check_target(project):
@@ -713,14 +872,15 @@ def check_target(project):
 		raise ValueError('unsafe destination project: ' + project)
 
 
-def sync(arguments):
-	projects, files, excluded = read_manifest(arguments)
+def copy_files(arguments):
+	projects, files = read_manifest(arguments)
 	totals = totals_for(projects)
-	reviews, staged_files = [], []
+	staged_files, missing = [], []
 	for project in projects:
 		check_target(project)
-	# Keep all temporary data in /tmp. Publication uses copies because /tmp
-	# and DEST may be on different filesystems; retain backups for rollback.
+	# The reviewed scan list is the sole selection. Do not reapply size,
+	# artifact or content/ID checks here. Stage copies and backups in /tmp
+	# so a failed copy can be rolled back without rebuilding whole projects.
 	with staging_directory() as stage:
 		payload, backup = stage / 'payload', stage / 'backup'
 		payload.mkdir()
@@ -728,124 +888,90 @@ def sync(arguments):
 		last_progress = time.monotonic()
 		for index, relative in enumerate(files, 1):
 			try:
-				before = file_stat(SOURCE, relative)
+				file_stat(SOURCE, relative)
 			except FileNotFoundError:
-				# A manifest can outlive source cleanup. Only absence at the
-				# initial check is skipped; copy errors and subsequent changes
-				# still abort before any destination project is replaced.
-				excluded.append((relative, 'missing_source_file'))
+				missing.append(relative)
 			else:
-				file_policy(SOURCE / relative, before)
 				target = payload / relative
 				target.parent.mkdir(parents=True, exist_ok=True)
 				shutil.copy2(SOURCE / relative, target, follow_symlinks=False)
-				if version(before) != version(file_stat(SOURCE, relative)):
-					raise Rejected('source_changed_during_copy')
-				size, review = inspect(payload, relative)
 				staged_files.append(relative)
 				project = relative.split('/')[0]
 				totals[project]['files'] += 1
-				totals[project]['bytes'] += size
-				if review:
-					reviews.append((relative, review))
-					totals[project]['review'] += 1
+				totals[project]['bytes'] += target.stat().st_size
 			if time.monotonic() - last_progress > 15:
-				print(
-					f'  Processed {index}/{len(files)} entries; '
-					f'staged and rechecked {len(staged_files)} files.',
-					flush=True,
-				)
+				print(f'  Prepared {len(staged_files)} copies from {index}/{len(files)} list entries.', flush=True)
 				last_progress = time.monotonic()
-		# Missing-only projects have no payload and must not be rebuilt.
-		represented = sorted({p.split('/')[0] for p in staged_files})
-		# Finish checking and backing up all affected paths before changing any.
-		for project in represented:
-			check_target(project)
-			target = DEST / project
-			if target.exists():
-				shutil.copytree(target, backup / project, symlinks=True)
-		artifacts = []
-		# Projects without approved entries retain results except exclusions.
-		for project in sorted(set(projects) - set(represented)):
-			check_target(project)
-			for folder, directories, filenames in os.walk(DEST / project):
-				directories[:] = [
-					name for name in directories
-					if not (Path(folder) / name).is_symlink()
-				]
-				for name in filenames:
-					target = Path(folder) / name
-					if excluded_artifact(target):
-						saved = backup / target.relative_to(DEST)
-						saved.parent.mkdir(parents=True, exist_ok=True)
-						shutil.copy2(target, saved, follow_symlinks=False)
-						artifacts.append((target, saved))
-		changed, removed = [], []
+		for relative in staged_files:
+			try:
+				file_stat(DEST, relative)
+			except FileNotFoundError:
+				continue
+			saved = backup / relative
+			saved.parent.mkdir(parents=True, exist_ok=True)
+			shutil.copy2(DEST / relative, saved, follow_symlinks=False)
+		changed = []
 		try:
-			for project in represented:
-				check_target(project)
-				target = DEST / project
-				# Track even a partial removal/copy so it is also rolled back.
-				changed.append(project)
-				if target.exists():
-					shutil.rmtree(target)
-				shutil.copytree(payload / project, target)
-			for target, saved in artifacts:
-				removed.append((target, saved))
-				target.unlink()
+			for relative in staged_files:
+				target = DEST / relative
+				target.parent.mkdir(parents=True, exist_ok=True)
+				changed.append(relative)
+				shutil.copy2(payload / relative, target, follow_symlinks=False)
 		except BaseException:
 			failed = []
-			for target, saved in reversed(removed):
+			for relative in reversed(changed):
 				try:
-					target.unlink(missing_ok=True)
-					shutil.copy2(saved, target, follow_symlinks=False)
+					target, saved = DEST / relative, backup / relative
+					if saved.exists():
+						shutil.copy2(saved, target, follow_symlinks=False)
+					else:
+						target.unlink(missing_ok=True)
 				except BaseException:
-					failed.append(str(target.relative_to(DEST)))
-			for project in reversed(changed):
-				try:
-					target = DEST / project
-					if target.exists():
-						shutil.rmtree(target)
-					if (backup / project).exists():
-						shutil.copytree(backup / project, target, symlinks=True)
-				except BaseException:
-					failed.append(project)
+					failed.append(relative)
 			if failed:
 				raise RecoveryFailed(
 					'restoration failed for ' + ', '.join(failed)
 					+ f'; recovery files retained at {stage}'
 				) from None
 			raise
-	print_summary(projects, staged_files, excluded, reviews, totals)
-	missing = [path for path, reason in excluded if reason == 'missing_source_file']
+	for project, total in totals.items():
+		print(f'  {project}: {total["files"]} files copied, {total["bytes"] / 1048576:.2f} MiB')
 	if missing:
 		print(f'WARNING: skipped {len(missing)} missing source files; manifest unchanged.')
 		for relative in missing[:5]:
 			print('  Missing source: ' + relative)
 		if len(missing) > 5:
 			print(f'  ... and {len(missing) - 5} more missing source files.')
-	print(f'SYNC OK: {len(represented)} projects rebuilt, {len(staged_files)} files copied.')
-	untouched = set(projects) - set(represented)
-	if untouched:
-		print(
-			'No approved entries; retained existing results and removed '
-			f'{len(removed)} excluded artifacts: ' + ','.join(sorted(untouched))
-		)
+	print(f'COPY OK: {len(staged_files)} files copied from the list; no content recheck.')
+
+
+def confirm_copy():
+	print('Review the warnings above and the generated file list before copying.', flush=True)
+	print(f'Copy files listed in {DEST / MANIFEST} to {DEST}? [y/N]: ', end='', flush=True)
+	try:
+		with os.fdopen(3, 'r', encoding='utf-8') as handle:
+			answer = handle.readline().strip().lower()
+	except (OSError, KeyboardInterrupt):
+		answer = ''
+	return answer in {'y', 'yes'}
 
 
 def main():
 	arguments = sys.argv[1:]
 	if not arguments or arguments[0] in {'-h', '--help', 'help'}:
 		print(f"""Usage:
-  ./github_copy.sh scan gu
-  ./github_copy.sh scan le8,grid,abm,abm_TF
-  ./github_copy.sh sync [le8,grid,abm,abm_TF]
+  ./github_copy.sh gu
+  ./github_copy.sh le8,grid
+  ./github_copy.sh le8 grid abm abm_TF
 
-scan recursively builds github_files.lst without copying analysis files.
-Exclude .rds, .log, .done, unnamed plots.pdf/Rplots.pdf and files over 50 MB
-(50,000,000 bytes). RDS/log/done exclusions include gzip in every project.
+Each run scans the requested projects and writes github_files.lst.
+Review the screen warnings and list, then enter y/yes at the prompt to copy.
+Enter, n, or end-of-input cancels copying and keeps the generated list.
+Scanning first excludes files over 50 MB (50,000,000 bytes), then RDS, then
+checks eligible content for UKB ID columns. Existing exclusions for .log,
+.done, unnamed plots.pdf/Rplots.pdf also apply. RDS/log/done include gzip.
 RDS contents may contain individual IDs and cannot be reliably inspected here;
-all RDS are excluded, including in gu and when listed in an old manifest.
+Scanning excludes all RDS, including in gu.
 User-confirmed non-UKB projects: {','.join(sorted(NON_UKB_PROJECTS))}.
 For those projects, content/ID inspection is skipped for formal results only:
 XLSX/XLSM, raster images, SVG and named PDF files.
@@ -853,32 +979,41 @@ Public 1KG individuals, embedded result tables and seven-digit coordinates are a
 Expanded text/native inputs and these intermediate directories are excluded:
 {', '.join(sorted(INTERMEDIATE_DIRECTORIES))}.
 Selecting {MAX_NON_UKB_FILES} or more files in one non-UKB project fails before
-writing the manifest or changing destination projects; narrow the selection first.
-Size, path, symlink and artifact rules still apply in both scan and sync.
-Other projects exclude RDS and inspect possible UKB IDs in paths/content,
-regardless of header or row; ambiguous 7-digit integers are excluded as possible IDs.
+writing the scan manifest; narrow the selection first.
+Scanning applies size and artifact rules; copying enforces safe paths.
+Other projects exclude a file as UKB data only when a table column's name
+contains 'id' (case-insensitive: id, eid, IID, participant_id, etc.) AND every
+data row in that column is a seven-digit integer. Both conditions are required.
+Empty tables do not match; missing/blank/non-seven-digit cells disqualify a column.
+Equivalent numeric forms such as 2545852.0 and 2.545852e+06 count as integers.
+All worksheets (including hidden sheets) and embedded source tables are checked.
+Scanning prints WARNING with the workbook path and each matching worksheet name.
+All scanning finishes before the confirmation prompt; no result files are copied first.
+Isolated numbers, coordinates, GO terms, metadata and filenames do not trigger ID exclusion.
+Known le8/results workbook exports are validated by manifest, size and SHA-256,
+then inspected as text tables/JSON (including gzip). Unknown embedded objects
+remain excluded. Office temporary lock files (~$...) are excluded.
 Other file names and directories remain eligible for content inspection.
 In UKB scope, readable text, Excel, PDF and gzip text are inspected; unreadable content is excluded.
 Images are retained with a manual-review list printed to the terminal (Pillow required).
 Every admitted file is <=50 MB; eligible directories are scanned recursively.
-sync rechecks staged contents, then rebuilds only projects with selected entries.
-Source files already missing when staging begins are skipped and summarized;
-the manifest is unchanged. Copy errors, file changes and failed checks still abort.
-Only projects with successfully staged files are rebuilt.
-Staging, scratch files and rollback backups live in /tmp; publication copies across filesystems.
-Excluded RDS, logs, completion markers and unnamed PDFs are skipped even in old lists.
-Projects without approved entries retain existing results except those artifacts.
+After confirmation, copy exactly the selected list entries without size, type or content rechecks.
+Listed target files are overwritten; unlisted target files remain unchanged.
+Source files already missing when copying begins are skipped and summarized;
+the manifest is unchanged. Copy errors abort, with rollback on publication failure.
+Staging and rollback backups live in /tmp; publication copies across filesystems.
 No Git commit or push is performed. PDF inspection uses pdftotext or Ghostscript.
 Roots: GITHUB_COPY_SOURCE_ROOT, GITHUB_COPY_DEST_ROOT.
 Summaries and manual-review lists are printed to the terminal; no report files are written.""")
 		return
-	if arguments[0] not in {'scan', 'sync'}:
-		raise ValueError('unknown command; use scan, sync or --help')
 	prepare_roots()
-	if arguments[0] == 'scan':
-		scan(project_list(arguments[1:]))
+	projects = project_list(arguments)
+	if not scan(projects):
+		print('No approved files; nothing to copy.')
+	elif confirm_copy():
+		copy_files(projects)
 	else:
-		sync(arguments[1:])
+		print('\nCopy cancelled; the generated file list is retained.')
 
 
 try:

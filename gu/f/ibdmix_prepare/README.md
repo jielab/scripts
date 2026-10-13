@@ -23,27 +23,7 @@ Build explicitly with `bash f/ibdmix_prepare/build.sh`. The build uses the GU
 Conda environment's HTSlib, with overrides `IBDMIX_HTSLIB_PREFIX`, `CXX`, and
 `IBDMIX_PREPARE_BIN`. Production runs rebuild only when sources change.
 
-## Validation
-
-In the GU environment, run:
-
-```bash
-python3 f/ibdmix_prepare/test_prepare.py
-```
-
-The eight tests compare all five references against the previous bcftools plus
-upstream generator, including GT missingness/phasing/ploidy, allele mismatches,
-indels, indexed regions, EOF and GRCh37/38 X non-PAR boundaries. They also compare
-CPU/GPU raw and final results on autosomes and X, and resume a partially completed
-chromosome without rewriting completed reference calls. Invalid input must fail
-without committed genotype/QC outputs.
-
-On 2026-10-12, 4,564 real UKB samples at chr1:10,000,000–15,000,000 produced
-byte-identical genotype streams and matching QC for all five references
-(about 90,600 rows each). Preparation including QC took **73.17 s** for the old
-five-pass pipeline and **18.34 s** for the shared pass, **3.99×** faster in this
-single timing comparison. This measures preparation only, not complete chromosome
-calling. Details and hashes: `validation-20261012.json`.
+## Logs
 
 Console output is limited to chromosome boundaries, shared preparation, reference
 completion/reuse and failure summaries. Full diagnostics remain in the main log;

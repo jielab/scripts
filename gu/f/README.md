@@ -5,6 +5,7 @@
 | 文件 | 用途 |
 | --- | --- |
 | `ukb_prepare.py` | UKB PGEN 检查、样本选择、固定队列、VCF 导出及质控、古人类评分输入准备 |
+| `ukb_progress.py` | 旁路观察 UKB 子进程与文件读取进度，报告当前读取的预计剩余时间，不改动准备缓存身份 |
 | `ukb_prepare.sh` | UKB 原始 BGEN/芯片输入检查、VCF 导出和祖先等位基因注释；PGEN 操作交给同名 Python 模块 |
 | `gwas_loci_prepare.py` | COJO 信号归并、基因组坐标转换、GRCh37 区间及审计表生成 |
 | `introgression_review.py` | 渗入证据复核、原始 lead 与单倍型标签比较、HTML/TSV 报告 |

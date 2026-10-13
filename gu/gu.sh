@@ -55,7 +55,7 @@ gu_run_ukb_preparation() (
 	stderr_file=$(mktemp "${TMPDIR:-/tmp}/gu-ukb-prepare.XXXXXX") || return $?
 	trap 'rm -f -- "$stderr_file"' EXIT
 	while true; do
-		if python3 "$F/ukb_prepare.py" "$@" 2>"$stderr_file"; then
+		if python3 "$F/ukb_progress.py" -- python3 "$F/ukb_prepare.py" "$@" 2>"$stderr_file"; then
 			cat "$stderr_file" >&2
 			return 0
 		else
@@ -186,7 +186,8 @@ gu_main() {
 # --keep-psam FILE,每批人数,批次号（从 1 开始）；--keep-males 在分批后筛男性。
 # 可追加 --chr 22 或 --chr 1,2,X；默认五个参考 Altai,Chagyr,Denisova,Denisova25,Vindija。
 # 追加 --archaic-gen Altai,Denisova 可仅使用这两个参考；也可从上述五个中任选一个或多个，以逗号分隔，替换默认列表。
-# 默认 --memory-cap 32G --replace-ibdmix FALSE --foreground TRUE --auto-final FALSE；GPU 单染色体并发。
+# 默认 --jobs 4 --memory-cap 32G --replace-ibdmix FALSE --foreground TRUE --auto-final FALSE。
+# IBDmix-GPU 并行准备染色体，GPU 调用按设备串行，避免显存叠加。
 
 ./gu.sh trace --chr 22 --grch 37 --arg-dir /mnt/f/gen/1kg/37/arg.threads/trees --target 1kg --dir-target /mnt/f/gen/1kg/37/pfile/chr --jobs 1 --memory-cap 32G
 ./gu.sh as3 --chr 22 --grch 38 --target 1kg --dir-target /mnt/f/gen/1kg/38/pfile/chr --jobs 1 --memory-cap 32G
@@ -936,14 +937,13 @@ HELP
 	GU_FOREGROUND=$FOREGROUND_INPUT
 	GU_UNIT_JOBS=$UNIT_JOBS_INPUT
 	if [[ $METHOD == ibdmix && $IBDMIX_BACKEND == cuda ]]; then
-		GU_UNIT_JOBS=1
 		IBDMIX_GPU_BIN=${IBDMIX_GPU_BIN:-${GU_SOFT:-/mnt/d/software/gu}/ibdmix-gpu/ibdmix-gpu}
 		export IBDMIX_GPU_BIN
 		[[ -x $IBDMIX_GPU_BIN ]] || { echo "ERROR: build the CUDA caller with bash $F/ibdmix_gpu/build.sh" >&2; return 2; }
 		"$IBDMIX_GPU_BIN" --gpu-check --gpu-device "${IBDMIX_GPU_DEVICE:-0}" || return $?
-		echo '[GU GPU] experimental CUDA segment caller; one chromosome worker; CPU genotype preparation and frequency/LOD calculation'
+		echo "[GU GPU] experimental CUDA segment caller; requested chromosome workers=$GU_UNIT_JOBS; GPU calls serialized per device; CPU genotype preparation and frequency/LOD calculation"
 	fi
-	if [[ -n $GPU_METHOD ]]; then
+	if [[ -n $GPU_METHOD && $GPU_METHOD != ibdmix ]]; then
 		GU_UNIT_JOBS=1
 	fi
 	if [[ $METHOD == phyml && $PHYML_BACKEND == cuda ]]; then
@@ -1625,7 +1625,8 @@ PYKEY
 	}
 
 	gu_run_analysis_cmds_local() {
-		local list=$1 jobs=$2 cmd running=0 status=0
+		local list=$1 jobs=$2 cmd pid status=0
+		local -a pids=() active=()
 		local pending_list=""
 		if [[ $METHOD == phyml && $REPLACE_PHYML_INPUT == FALSE ]]; then
 			pending_list=$(mktemp)
@@ -1641,15 +1642,24 @@ PYKEY
 		while IFS= read -r cmd; do
 			[[ -s $cmd ]] || continue
 			gu_run_one_analysis_cmd "$cmd" &
-			running=$((running + 1))
-			if ((running >= jobs)); then
-				if ! wait -n; then status=1; fi
-				running=$((running - 1))
-			fi
+			pids+=("$!")
+			while ((${#pids[@]} >= jobs)); do
+				active=()
+				for pid in "${pids[@]}"; do
+					if kill -0 "$pid" 2>/dev/null; then
+						active+=("$pid")
+					else
+						# wait -n can lose already-finished siblings and return 127
+						# when several cached/short units complete together.
+						if ! wait "$pid"; then status=1; fi
+					fi
+				done
+				pids=("${active[@]}")
+				if ((${#pids[@]} >= jobs)); then sleep 0.2; fi
+			done
 		done <"$list"
-		while ((running)); do
-			if ! wait -n; then status=1; fi
-			running=$((running - 1))
+		for pid in "${pids[@]}"; do
+			if ! wait "$pid"; then status=1; fi
 		done
 		[[ -z $pending_list ]] || rm -f "$pending_list"
 		((status == 0)) || {
@@ -2265,7 +2275,7 @@ PYCONTRACT
 				if [[ ! -f $ukb_work/request.bed ]] || ! cmp -s "$GU_LOCI_FILE" "$ukb_work/request.bed"; then cp "$GU_LOCI_FILE" "$ukb_work/request.bed"; fi
 				ukb_args+=(--regions "$ukb_work/request.bed")
 			fi
-			if ! gu_run_ukb_preparation "$ukb_work" "${ukb_args[@]}" >>"$GU_CHECK_LOG" 2>&1; then
+			if ! gu_run_ukb_preparation "$ukb_work" "${ukb_args[@]}" 2>&1 | tee -a "$GU_CHECK_LOG"; then
 				tail -20 "$GU_CHECK_LOG" >&2
 				gu_check_fail "UKB PGEN preparation failed"
 			fi

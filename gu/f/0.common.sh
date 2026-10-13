@@ -560,7 +560,12 @@ gu_plan_ukb_resources() {
 		}
 		memory_mb=$((10#$GU_PREP_MEMORY_MB))
 	else
-		memory_mb=8192
+		# Divide the default workspace across requested workers before capping
+		# concurrency. 32G / four workers => 4096 MiB PLINK + 2048 MiB overhead
+		# each, with 8192 MiB shared reserve. Explicit overrides remain binding.
+		memory_mb=$((usable_mb / requested_jobs - 2048))
+		((memory_mb >= 640)) || memory_mb=640
+		((memory_mb <= 8192)) || memory_mb=8192
 		((memory_mb <= max_plink_mb)) || memory_mb=$max_plink_mb
 	fi
 	if ((memory_mb < 640 || memory_mb > max_plink_mb)); then

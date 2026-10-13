@@ -546,6 +546,23 @@ PYQC
 	fi
 }
 
+# Serialize only the CUDA caller, allowing other chromosomes to prepare in
+# parallel. Keep the lock outside result roots so separate runs share it too.
+run_ibdmix_caller() (
+	if [[ ${IBDMIX_BACKEND:-cpu} == cuda ]]; then
+		local device=${IBDMIX_GPU_DEVICE:-0}
+		[[ $device =~ ^[0-9]+$ ]] || { echo 'ERROR: IBDMIX_GPU_DEVICE must be a non-negative ordinal' >&2; return 2; }
+		mkdir -p /tmp/gu-locks
+		exec 8>"/tmp/gu-locks/ibdmix-gpu-${UID}-${device}.lock"
+		if ! flock -n 8; then
+			log "GPU WAIT device=$device"
+			flock 8 || return $?
+		fi
+		log "GPU ACQUIRED device=$device"
+	fi
+	"$ibdmix_bin" "${ibdmix_options[@]}" "$@"
+)
+
 run_population() {
 	local u=$1 ref=$2 pop=$3 sample_list=$4 gt=$5 tmp=$6 raw
 	raw=$dirout/raw/$u/$ref.$pop.raw.txt.gz
@@ -558,7 +575,7 @@ run_population() {
 			# Header-only components have no informative sites and no calls.
 			[[ $(gzip -dc "$part" | wc -l) -gt 1 ]] || continue
 			part_raw="$tmp/$ref.$pop.part.$count.txt"
-			"$ibdmix_bin" "${ibdmix_options[@]}" --genotype <(gzip -dc "$part") --output "$part_raw" --sample "$sample_list" \
+			run_ibdmix_caller --genotype <(gzip -dc "$part") --output "$part_raw" --sample "$sample_list" \
 				--mask "$ibdmix_mask_root/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
 				--minor-allele-count-threshold "$IBDMIX_X_MINOR_ALLELE_COUNT" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
 				--modern-error-proportion "$modern_error_proportion" --more-stats >>"$ibdmix_log_root/$ref.$u.$pop.ibdmix.log" 2>&1 || {
@@ -573,7 +590,7 @@ run_population() {
 		done
 		((count > 0)) || { echo "ERROR: no non-PAR genotype components" >&2; return 1; }
 	else
-	"$ibdmix_bin" "${ibdmix_options[@]}" --genotype <(gzip -dc "$gt") --output "$tmp/$ref.$pop.raw.txt" --sample "$sample_list" \
+	run_ibdmix_caller --genotype <(gzip -dc "$gt") --output "$tmp/$ref.$pop.raw.txt" --sample "$sample_list" \
 		--mask "$ibdmix_mask_root/$u/$ref.exclude.bed" --LOD-threshold "$emit_lod_cut" \
 		--minor-allele-count-threshold "$minor_allele_count" --archaic-error "$archaic_error" --modern-error-max "$modern_error_max" \
 		--modern-error-proportion "$modern_error_proportion" --more-stats >"$ibdmix_log_root/$ref.$u.$pop.ibdmix.log" 2>&1 || {

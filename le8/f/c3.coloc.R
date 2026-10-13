@@ -56,7 +56,8 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 		""
 	)), N = Sys.getenv("C2_SUMSTAT_N", "NA")))
 	cache <- file.path(cache_root, paste0(key, ".rds"))
-	iv <- read_stage_cache(cache)
+	# This key already identifies the QTL file and requested instruments.
+	iv <- read_stage_cache(cache, validate_inputs = FALSE)
 	if (is.data.frame(iv)) {
 		message("  QTL instrument cache hit: ", nrow(iv), " records")
 		return(le8_normalize_variants(iv,le8_gwas_metadata(qfile)))
@@ -104,7 +105,9 @@ c3_locus_settings <- function() list(policy=le8_evidence_policy(),window = WINDO
 	""
 )), metadata = c3_file_stamp(Sys.getenv("LE8_GWAS_MANIFEST", "")), N = Sys.getenv("C2_SUMSTAT_N", "NA"))
 c3_cached_locus <- function(cache, legacy_files, feature, layer, chr, pos, cls, qfile, yfile, outtype, sfrac) {
-	z <- read_stage_cache(cache)
+	# Reuse completed loci after dispatcher/other-module edits. The filename
+	# already keys the locus, scientific settings and GWAS/QTL input stamps.
+	z <- read_stage_cache(cache, validate_inputs = FALSE)
 	if (!is.null(z))
 		return(z)
 	NULL

@@ -1473,6 +1473,28 @@ def save_history(history, filename, best_epoch):
 	atomic_table(table, filename)
 
 
+def validate_resume_signature(saved_signature, saved_context, current_payload):
+	"""Allow patience changes without accepting different data or training logic."""
+	previous_options = saved_context.get("training_options", {})
+	previous_adapter = saved_context.get("adapter_logic_sha256")
+	current_adapter = current_payload["adapter_logic_sha256"]
+	previous_patience = previous_options.get("patience")
+	if type(previous_patience) is not int or previous_patience < 1:
+		raise ValueError("Resume checkpoint lacks valid early-stopping settings.")
+	if previous_adapter != current_adapter:
+		# Pin BOTH versions: later, unrelated code changes must still fail closed.
+		compatibility_file = Path(__file__).with_name("prsformer.resume.json")
+		transitions = json.loads(compatibility_file.read_text())["transitions"] if compatibility_file.is_file() else []
+		if not any(item["from"] == previous_adapter and item["to"] == current_adapter for item in transitions):
+			raise ValueError("Resume adapter source differs from the saved run; no verified compatibility transition exists.")
+	previous_payload = dict(current_payload)
+	previous_payload["training"] = {**current_payload["training"], "patience": previous_patience}
+	previous_payload["adapter_logic_sha256"] = previous_adapter
+	if previous_options != previous_payload["training"] or saved_signature != digest_json(previous_payload):
+		raise ValueError("Resume input, split, source, preprocessing or model/training settings differ; only patience may change.")
+	return previous_patience
+
+
 def run_training(args):
 	traits = csv_list(args.traits) or list(SUPPORTED_TRAITS)
 	if len(set(traits)) != len(traits) or not set(traits).issubset(SUPPORTED_TRAITS):
@@ -1533,11 +1555,13 @@ def run_training(args):
 	}
 	adapter_logic = ast.dump(ast.parse(Path(__file__).read_text()), include_attributes=False)
 	adapter_digest = hashlib.sha256(adapter_logic.encode()).hexdigest()
-	signature = digest_json({
+	signature_payload = {
 		"identity": identity, "architecture": architecture, "traits": traits, "covariates": covariates,
 		"training": training_options, "sources": upstream["source_sha256"], "adapter_logic_sha256": adapter_digest,
 		"preprocessing": preprocessing, "preparation": preparation,
-	})
+	}
+	signature = digest_json(signature_payload)
+	resume_context = {"training_options": training_options, "adapter_logic_sha256": adapter_digest}
 	random.seed(args.seed)
 	np.random.seed(args.seed)
 	torch.manual_seed(args.seed)
@@ -1565,8 +1589,19 @@ def run_training(args):
 	}
 	if args.resume:
 		state = torch.load(training_file, map_location="cpu", weights_only=True)
+		previous_patience = args.patience
 		if state.get("signature") != signature:
-			raise ValueError("Resume input, split, source, preprocessing or model/training settings differ from the interrupted run.")
+			saved_context = state.get("resume_context")
+			if saved_context is None:
+				# Legacy training.pt stores this context only in the best model.
+				previous_best = torch.load(best_file, map_location="cpu", weights_only=True)
+				saved_context = {key: previous_best.get(key) for key in resume_context}
+				del previous_best
+			previous_patience = validate_resume_signature(state.get("signature"), saved_context, signature_payload)
+			# Persist the verified transition before any best-model metadata changes,
+			# including when the new patience has already been reached.
+			state.update(signature=signature, resume_context=resume_context)
+			atomic_torch_save(torch, state, training_file)
 		model.load_state_dict(state["model_state"])
 		optimizer.load_state_dict(state["optimizer_state"])
 		scheduler.load_state_dict(state["scheduler_state"])
@@ -1576,9 +1611,11 @@ def run_training(args):
 		torch.set_rng_state(state["torch_rng"])
 		if device.type == "cuda" and state["cuda_rng"]:
 			torch.cuda.set_rng_state_all(state["cuda_rng"])
+		print(f"RESUME: completed epoch {state['epoch']}; next epoch {start_epoch}; stale epochs {stale_epochs}; patience {previous_patience}->{args.patience}", flush=True)
 		del state
 	for epoch in range(start_epoch, args.epochs + 1):
 		if stale_epochs >= args.patience:
+			print(f"EARLY STOP: {stale_epochs} consecutive epochs without improvement; patience={args.patience}; best epoch={best_epoch}", flush=True)
 			break
 		model.train()
 		optimizer.zero_grad(set_to_none=True)
@@ -1630,6 +1667,7 @@ def run_training(args):
 		save_history(history, output_directory / "history.tsv", best_epoch)
 		atomic_torch_save(torch, {
 			"signature": signature, "epoch": epoch, "best_epoch": best_epoch, "best_loss": best_loss,
+			"resume_context": resume_context,
 			"stale_epochs": stale_epochs, "history": history, "model_state": cpu_state(model),
 			"optimizer_state": optimizer.state_dict(), "scheduler_state": scheduler.state_dict(), "scaler_state": scaler.state_dict(),
 			"torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else [],
@@ -1646,6 +1684,7 @@ def run_training(args):
 	best["completed_epochs"] = max(record["epoch"] for record in history)
 	best["test_evaluated"] = True
 	best["history"] = history
+	best.update(resume_context, signature=signature)
 	atomic_torch_save(torch, best, best_file)
 	stage_evaluation(args, identity, preparation, best)
 	# Keep the final optimizer/RNG checkpoint as well as the selected model.
@@ -1725,7 +1764,7 @@ def add_model_arguments(parser):
 	parser.add_argument("--batch-size", type=int, default=1)
 	parser.add_argument("--accumulation-steps", type=int, default=64)
 	parser.add_argument("--epochs", type=int, default=30)
-	parser.add_argument("--patience", type=int, default=5)
+	parser.add_argument("--patience", type=int, default=3)
 	parser.add_argument("--min-delta", type=float, default=1e-4)
 	parser.add_argument("--lr", type=float, default=5e-4)
 	parser.add_argument("--weight-decay", type=float, default=0.05)
@@ -1736,7 +1775,7 @@ def add_model_arguments(parser):
 	parser.add_argument("--threads", type=int, default=4)
 	parser.add_argument("--seed", type=int, default=12345)
 	parser.add_argument("--check", action="store_true", help="Validate aligned inputs, baselines and a small actual official-model forward/backward pass")
-	parser.add_argument("--resume", action="store_true", help="Resume an interrupted training run with identical settings")
+	parser.add_argument("--resume", action="store_true", help="Resume after the last saved epoch; only early-stopping patience may change")
 	parser.add_argument("--checkpoint", help="Saved model.pt for predict")
 
 

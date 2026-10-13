@@ -228,37 +228,12 @@ score_0_100 <- function(x) { x <- as.numeric(x); ok <- is.finite(x); if (sum(ok)
 score_0_100_q5 <- function(x) { x <- as.numeric(x); ok <- is.finite(x); if (sum(ok) < 2 || diff(range(x[ok])) == 0) rep(NA_real_, length(x)) else { z <- rep(NA_real_, length(x)); z[ok] <- (x[ok] - min(x[ok])) / diff(range(x[ok])) * 100; as.numeric(as.character(cut(z, c( - Inf, 20, 40, 60, 80, Inf), labels = c(0, 25, 50, 75, 100), right = FALSE))) } }
 
 make_phewas_panel <- function(diet_name, show_x = TRUE) {
-	d <- res %>% filter(Diet == diet_name) %>% left_join(phewas_xmap, by = c("category", "phenotype"))
-	lab_d <- d %>% filter(is.finite(logp)) %>% slice_max(logp, n = 12, with_ties = FALSE)
-	panel_title <- recode(diet_name, MAHA = "a. MAHA PheWAS", DASH = "b. DASH PheWAS", .default = diet_name)
-	ggplot(d, aes(phe_x, logp_display, color = category)) +
-		geom_point(size = 0.85, alpha = 0.85) +
-		geom_hline(yintercept = bonf_line, color = "#F2A3A3", linewidth = 0.35) +
-		ggrepel::geom_text_repel(
-			data = lab_d, aes(label = description),
-			size = 2.0, fontface = "bold", color = "black", segment.color = "black", segment.size = 0.25,
-			box.padding = 0.18, point.padding = 0.10, max.overlaps = Inf, min.segment.length = 0,
-			show.legend = FALSE
-		) +
-		scale_color_manual(values = phewas_cols, guide = "none") +
-		scale_x_continuous(
-			breaks = phewas_centers$phe_x,
-			labels = phewas_centers$category,
-			expand = expansion(mult = c(0.01, 0.01))
-		) +
-		labs(title = panel_title, x = if (show_x) "Phenotypes" else NULL, y = "-log10(P); display cap 50") +
-		theme_bw(base_size = 9) +
-		theme(
-			plot.title = element_text(hjust = 0.5, face = "bold", size = 11),
-			axis.title = element_text(face = "bold"),
-			axis.text.y = element_text(face = "bold"),
-			axis.title.x = if (show_x) element_text(size = 9, margin = margin(t = 4)) else element_blank(),
-			axis.text.x = if (show_x) element_text(size = 5.5, angle =  - 30, vjust = 1, hjust = 1, face = "bold") else element_blank(),
-			axis.ticks.x = if (show_x) element_line(linewidth = 0.25) else element_blank(),
-			panel.grid.major = element_blank(),
-			panel.grid.minor = element_blank(),
-			plot.margin = margin(4, 4, 4, 4)
-		)
+    d <- res %>% filter(Diet == diet_name)
+    exposure <- names(lab)[unname(lab) == diet_name][1]
+    info <- phewas_sample_info(dat1, exposure, vars.basic, phewas_plot_ids, type = "continuous")
+    plot_phewas_results(d, title = paste0(diet_name, " PheWAS"), sample_info = info,
+        significance_threshold = 10^(-bonf_line), xmap = phewas_xmap,
+        colors = phewas_cols, show_x = show_x, label_n = 12, base_size = 9)
 }
 
 fit_disc_reftrad <- function(dat, Y, trad_nm, trad_lab, covs, maha_nm = "maha", maha_lab = "MAHA") {
@@ -1301,10 +1276,11 @@ p_cmp_beta <- ggplot(dm, aes(beta.DASH, beta.MAHA)) +
 	theme_bw(base_size = 14) +
 	theme(axis.title = element_text(face = "bold"), axis.text = element_text(face = "bold"))
 
+phewas_plot_ids <- readRDS(file.path(indir, "Rdata", "PheWAS.rds"))$id
 phewas_maha <- make_phewas_panel("MAHA", show_x = FALSE)
-phewas_dash <- make_phewas_panel("DASH", show_x = FALSE)
-Fig1 <- phewas_maha / phewas_dash / p_cat
-Fig1 <- Fig1 + plot_layout(heights = c(0.8, 0.8, 0.70))
+phewas_dash <- make_phewas_panel("DASH", show_x = TRUE)
+Fig1 <- phewas_maha / phewas_dash
+Fig1 <- Fig1 + plot_layout(heights = c(1, 1))
 save_plot(Fig1, "Fig1.phewas.png", width = 8.6, height = 8.2, dpi = 320)
 write_xlsx(
 	list(

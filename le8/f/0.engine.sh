@@ -30,8 +30,7 @@ Modules (executed in pipeline order):
   c1_correlate   Omic/PGS associations, temporal sensitivity, enrichment
   c2_cause       cis/trans MR, MR-link-2 and DANDELION
   c3_coloc       Coloc and optional fine-mapping/GPU-coloc
-  c4_connect    LE8 proxies, omic PGS, mediation, interactions and nonlinearity
-  c4_panel_validation  Matched-budget Yin/Yang supervision and held-out proxy validation
+  c4_connect    LE8 connections, interactions, nonlinearity, panel validation and reconstruction bootstrap
   pgs_focus     Matched measured/PGS, cross-fitted G/R, source and locus analyses
   final_prediction Joint prot/met/biomarker PGS + automatic all.rds [Y].pgs; outputs in final/<trait>/
   final         Assemble publication figures, tables and result summary
@@ -42,11 +41,11 @@ Examples:
   # Selected modules for multiple diseases and both omic layers.
   ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met
   ./le8.sh c1_correlate --Y cvd_cad --biom prot
-  ./le8.sh c4_connect,c4_panel_validation,final_prediction --Y cvd_cad --biom prot
+  ./le8.sh c4_connect --Y cvd_cad --biom prot
   # Disease PRS is read automatically from all.rds cvd_cad.pgs (or [Y].pgs).
   ./le8.sh final_prediction --Y cvd_cad --biom prot,met --replace TRUE
   # Default budgets c(5,10,50) are editable in f/0.common.R.
-  C4_FOCUS_BUDGETS=5,10,50 ./le8.sh c4_panel_validation --Y cvd_cad --biom prot
+  C4_FOCUS_BUDGETS=5,10,50 ./le8.sh c4_connect --Y cvd_cad --biom prot
   # Reassemble existing results without fitting models.
   ./le8.sh final --Y cvd_cad --biom prot,met
   # Recover Final after every joint fold is saved; also retry per-layer reference.
@@ -626,8 +625,8 @@ export BIOM="$(
 	echo "${biom_layers[*]}"
 )"
 
-jobs=(c1_correlate c2_cause c3_coloc pgs_focus c4_connect c4_panel_validation final_prediction final)
-files=(c1.correlate.R c2.cause.R c3.coloc.R c1.correlate.R c4.connect.R c4.connect.R final.R final.R)
+jobs=(c1_correlate c2_cause c3_coloc pgs_focus c4_connect c4_panel_validation c4_explain final_prediction final)
+files=(c1.correlate.R c2.cause.R c3.coloc.R c1.correlate.R c4.connect.R c4.connect.R c4.connect.R final.R final.R)
 
 job_index() {
 	local q="$1" i
@@ -651,10 +650,20 @@ if [[ -n "$module_csv" ]]; then
 	for j in "${raw_selected[@]}"; do
 		j="$(echo "$j" | xargs)"
 		[[ -z "$j" ]] && continue
-		[[ "$j" == c4_focus ]] && j=c4_panel_validation
-		case "$j" in s1_interact | s1_interaction | s2_nonlin) j=c4_connect ;; esac
+		case "$j" in c4_focus | c4_panel_validation | c4_explain | s1_interact | s1_interaction | s2_nonlin) j=c4_connect ;; esac
+		if [[ "$j" == c4_connect && -n "${LE8_C4_STAGE:-}" ]]; then
+			case "$LE8_C4_STAGE" in
+				c4_connect | c4_panel_validation | c4_explain) j=$LE8_C4_STAGE ;;
+				*) echo 'ERROR: invalid internal C4 stage.' >&2; exit 2 ;;
+			esac
+		fi
 		job_index "$j" >/dev/null || exit 2
 		[[ " ${selected[*]} " == *" $j "* ]] || selected+=("$j")
+		if [[ "$j" == c4_connect && -z "${LE8_C4_STAGE:-}" ]]; then
+			for c4_stage in c4_panel_validation c4_explain; do
+				[[ " ${selected[*]} " == *" $c4_stage "* ]] || selected+=("$c4_stage")
+			done
+		fi
 	done
 else
 	# The explicit genetic benchmark requires a local frozen C4 split and score
@@ -702,10 +711,9 @@ plink_prefix_probe() {
 }
 
 # Validate saved estimates and their exports once, before loading analysis packages.
-# Code refactoring alone must not trigger refitting or relabel saved estimates.
+# Completed fits keep their original inputs and methods unless explicitly replaced.
 declare -A completed_results=()
-# A successful upstream stage in this invocation has already checked its inputs.
-# A fresh invocation has no receipts and follows the full signature checks below.
+# Receipts avoid repeating output checks within the same invocation.
 declare -A run_completed=()
 if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
 	checked_run=$("${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" read "$analysis_root" "$trait_csv" "$BIOM" "$(IFS=,; echo "${jobs[*]}")")
@@ -713,7 +721,7 @@ if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
 		[[ -z "$key" ]] || run_completed[$key]=TRUE
 	done <<<"$checked_run"
 fi
-if [[ "$replace" != TRUE && "${LE8_RESUME_COMPLETED:-TRUE}" == TRUE ]]; then
+{
 	le8_log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
 	mkdir -p "$le8_log_root"
 	resume_audit="$le8_log_root/completed_results.${module_csv//,/-}.$(date +%Y%m%d-%H%M%S).csv"
@@ -722,13 +730,26 @@ if [[ "$replace" != TRUE && "${LE8_RESUME_COMPLETED:-TRUE}" == TRUE ]]; then
 		case "$job" in
 			c3_coloc) check_jobs+=(c2_cause c1_correlate) ;;
 			c2_cause | c4_connect) check_jobs+=(c1_correlate) ;;
+			c4_explain) check_jobs+=(c4_panel_validation) ;;
 		esac
 	done
+	if [[ "$replace" == TRUE ]]; then
+		# A replacement must also be able to repair unreadable selected outputs.
+		# Validate only dependencies that were not explicitly selected for refit.
+		check_dependencies=()
+		for job in "${check_jobs[@]}"; do
+			[[ " ${requested[*]} " == *" $job "* ]] || check_dependencies+=("$job")
+		done
+		check_jobs=("${check_dependencies[@]}")
+	fi
 	check_modules="$(
 		IFS=,
 		echo "${check_jobs[*]}"
 	)"
-	checked=$("$R_BIN" "$fdir/0.common.R" --check-completed "$analysis_root" "$trait_csv" "$BIOM" "$check_modules" "$resume_audit")
+	checked=""
+	if [[ -n "$check_modules" ]]; then
+		checked=$("$R_BIN" "$fdir/0.common.R" --check-completed "$analysis_root" "$trait_csv" "$BIOM" "$check_modules" "$resume_audit")
+	fi
 	while IFS= read -r key; do
 		if [[ "$key" == *'|reuse-results' ]]; then
 			completed_results[${key%|reuse-results}]=RENDER
@@ -736,12 +757,13 @@ if [[ "$replace" != TRUE && "${LE8_RESUME_COMPLETED:-TRUE}" == TRUE ]]; then
 			completed_results[$key]=TRUE
 		fi
 	done <<<"$checked"
-fi
+}
 
 layer_complete() {
 	local trait="$1" job="$2" layer="$3"
+	# --replace applies only to selected stages; completed dependencies stay frozen.
+	if [[ "$replace" == TRUE && " ${requested[*]} " == *" $job "* ]]; then return 1; fi
 	[[ "${run_completed["$trait|$job|$layer"]:-}" != TRUE ]] || return 0
-	[[ "$replace" != TRUE ]] || return 1
 	[[ "${completed_results["$trait|$job|$layer"]:-}" == TRUE ]]
 }
 
@@ -759,7 +781,8 @@ plan_job() {
 		job_actions[$key]=completed
 		return 0
 	fi
-	if [[ "${completed_results[$key]:-}" == RENDER ]]; then
+	if [[ "${completed_results[$key]:-}" == RENDER ]] &&
+		[[ "$replace" != TRUE || " ${requested[*]} " != *" $job "* ]]; then
 		job_actions[$key]=reuse-results
 		return 0
 	fi
@@ -768,14 +791,13 @@ plan_job() {
 	case "$job" in
 		c3_coloc) deps=(c2_cause) ;;
 		c2_cause | c4_connect) deps=(c1_correlate) ;;
+		c4_explain) deps=(c4_panel_validation) ;;
 		final_prediction)
 			deps=()
 			;; # Joint Final relearns predictive selection inside outer training.
 	esac
 	for dep in "${deps[@]}"; do
-		if ! layer_complete "$trait" "$dep" "$layer"; then
-			plan_job "$trait" "$dep" "$layer"
-		fi
+		plan_job "$trait" "$dep" "$layer"
 	done
 }
 
@@ -927,7 +949,7 @@ preflight() {
 		echo "  MISSING: Rscript ($R_BIN)"
 		bad=1
 	}
-	if [[ " ${pending_jobs[*]} " == *" c4_panel_validation "* || " ${pending_jobs[*]} " == *" final_prediction "* ]]; then
+	if [[ " ${pending_jobs[*]} " == *" c4_panel_validation "* || " ${pending_jobs[*]} " == *" c4_explain "* || " ${pending_jobs[*]} " == *" final_prediction "* ]]; then
 		if command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("glmnet",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
 			echo "  MISSING: R package glmnet (training-only ridge CV)."
 			bad=1
@@ -1189,7 +1211,7 @@ run_one() {
 		echo "${run_layers[*]}"
 	)"
 	if [[ "$action" == completed ]]; then
-		echo "[LE8] DONE $job Y=$trait biom=$run_biom mode=reuse-completed (original estimates retained)"
+		echo "[LE8] SKIP $job Y=$trait biom=$run_biom: completed outputs validated; original estimates retained (--replace TRUE to refit)"
 		return 0
 	fi
 	grch="${trait_grch[$trait]:-$LE8_GRCH}"
@@ -1246,7 +1268,7 @@ run_one() {
 		echo "[LE8] FAIL $job Y=$trait biom=$run_biom exit=$rc log=$log_file" >&2
 		return "$rc"
 	}
-	if [[ "$job" == c[1234]_* && "$job" != c4_explain ]]; then
+	if [[ "$job" == c[1234]_* ]]; then
 		"$R_BIN" "$fdir/0.common.R" --audit-results "$analysis_root" "$trait" "$run_biom" "$job" "$log_file.audit.csv" || {
 			local rc=$?
 			echo "[LE8] FAIL $job Y=$trait biom=$run_biom output-validation exit=$rc log=$log_file.audit.csv" >&2

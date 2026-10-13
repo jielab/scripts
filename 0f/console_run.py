@@ -226,6 +226,8 @@ class IbdmixConsole(Le8Console):
 	def feed(self, line):
 		# Reuse diagnostic capture, but only display IBDmix milestones below.
 		super().feed(line)
+		if line.startswith("[GU UKB] PROGRESS "):
+			return line
 		created = re.match(r"^\[GU CMD\] created=(\d+)", line)
 		if created:
 			return f"[gu] 染色体任务数={created.group(1)}"
@@ -373,6 +375,14 @@ def run(script, args):
 				r"(?:Starting|Finished|Running) (?:module|step|stage)\b)",
 				line,
 			)
+			# Border emits bounded milestones; retain per-exposure and mediation
+			# progress in the console without exposing package/model chatter.
+			if label == "border":
+				major = major or re.match(
+					r"^\[(?:mediation|PheWAS|PheWAS plot)\] |"
+					r"^\[border\] PROGRESS\b|"
+					r"^(?:Follow-up end:|R packages OK|Input .*|Final figures:)", line,
+				)
 			# LE8 console: stage boundaries and completed-work progress, plus diagnostics.
 			if label == "le8":
 				major = bool(re.match(r"^\[LE8\] (START|DONE|FAIL|ERROR|PROGRESS)\b", line))

@@ -58,7 +58,7 @@ Model and training:
   --layers N / --ff-dim N       2 / 128.
   --kernel-size N              385; --dilation 1 (or one value per layer).
   --batch-size N               1; --accumulation-steps 64.
-  --epochs N / --patience N     30 / 5; --min-delta 1e-4.
+  --epochs N / --patience N     30 / 3; --min-delta 1e-4.
   --lr N / --weight-decay N     5e-4 / 0.05; --clip-grad 1.0.
   --amp fp16|bf16|off           fp16; CPU smoke tests require off.
   --no-gradient-checkpointing  Disable activation checkpointing (enabled by default).
@@ -72,7 +72,8 @@ Controls:
                                checks runtime and raw data; an existing cache also enables
                                an actual small official-model forward/backward check.
   --dry-run [TRUE|FALSE]        Print commands only; do not read datasets or import GPU code.
-  --resume [TRUE|FALSE]         Resume an interrupted all/train run with identical settings.
+  --resume [TRUE|FALSE]         Resume after the last saved epoch using frozen cached inputs;
+                               raw source files are not reread; only patience may change.
   --replace [TRUE|FALSE]        Replace preparation cache and/or published reports/scores.
                                Saved models are retained: choose a new --run-dir to retrain.
   --help                       Show this message.
@@ -143,7 +144,7 @@ DILATION=1
 BATCH_SIZE=1
 ACCUMULATION_STEPS=64
 EPOCHS=30
-PATIENCE=5
+PATIENCE=3
 MIN_DELTA=1e-4
 LR=5e-4
 WEIGHT_DECAY=0.05
@@ -302,6 +303,14 @@ cache_ready() {
 }
 need_cache() { cache_ready || die "Prepared cache incomplete: $CACHE_DIR; run --mode prepare first"; }
 
+prepare_for_training() {
+	if [[ $RESUME == TRUE ]]; then
+		printf 'RESUME: reuse frozen prepared inputs in %s; training validates them against the saved checkpoint.\n' "$CACHE_DIR"
+	else
+		run_command "${PREPARE[@]}"
+	fi
+}
+
 # 🚩 Dependencies: fail before decoding a production dataset when GPU setup is invalid
 dependencies() {
 	"$PYTHON" - "$MODE" "$ATTENTION" "$DEVICE" "$AMP" "$UPSTREAM_DIR" "$SPLIT_GROUP_FILE" "$ROOT" <<'PY'
@@ -351,7 +360,10 @@ if [[ $DRY_RUN == TRUE ]]; then
 		run_command "${RUNTIME[@]}"
 	elif [[ $CHECK == TRUE ]]; then
 		case $MODE in
-			all) run_command "${PREPARE[@]}" --check; run_command "${TRAIN[@]}" --check ;;
+			all)
+				if [[ $RESUME == FALSE ]]; then run_command "${PREPARE[@]}" --check; fi
+				run_command "${TRAIN[@]}" --check
+				;;
 			prepare) run_command "${PREPARE[@]}" --check ;;
 			train) run_command "${TRAIN[@]}" --check ;;
 			predict) run_command "${PREDICT[@]}" --check ;;
@@ -359,7 +371,7 @@ if [[ $DRY_RUN == TRUE ]]; then
 		esac
 	else
 		case $MODE in
-			all) run_command "${PREPARE[@]}"; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
+			all) prepare_for_training; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
 			prepare) run_command "${PREPARE[@]}" ;;
 			train) run_command "${TRAIN[@]}" ;;
 			predict) run_command "${PREDICT[@]}" ;;
@@ -419,7 +431,7 @@ if [[ $CHECK_RUNTIME == TRUE ]]; then
 fi
 if [[ $CHECK == TRUE ]]; then
 	dependencies
-	if [[ $MODE == all || $MODE == prepare ]]; then run_command "${PREPARE[@]}" --check; fi
+	if [[ $MODE == prepare || ( $MODE == all && $RESUME == FALSE ) ]]; then run_command "${PREPARE[@]}" --check; fi
 	case $MODE in
 		all)
 			if cache_ready; then run_command "${TRAIN[@]}" --check; else printf 'CHECK: raw inputs passed; prepare the cache to enable the official-model data/forward/backward check.\n'; fi
@@ -460,7 +472,7 @@ if [[ $MODE == all || $MODE == train ]]; then
 	fi
 fi
 case $MODE in
-	all) run_command "${PREPARE[@]}"; need_cache; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
+	all) prepare_for_training; need_cache; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
 	prepare) run_command "${PREPARE[@]}" ;;
 	train) need_cache; run_command "${TRAIN[@]}" ;;
 	predict) need_cache; run_command "${PREDICT[@]}" ;;

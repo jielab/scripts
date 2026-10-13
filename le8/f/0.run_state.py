@@ -2,7 +2,7 @@
 """Receipts for native stages validated in this invocation only.
 
 Receipts live in a dispatcher-owned temporary directory. They never substitute
-for input validation on the next invocation. Result hashes also prevent a
+for output validation on the next invocation. Result hashes also prevent a
 changed or missing upstream result from being skipped between transactions.
 """
 import argparse
@@ -19,6 +19,7 @@ RESULTS = {
     "c4_connect": ["c4_connect/" + name for name in
                    ("c4.res.rds", "c4.interactions.res.rds", "c4.nonlin.res.rds", "c4.penalty.res.rds")],
     "c4_panel_validation": ["c4_connect/c4.validation.rds"],
+    "c4_explain": ["c4_connect/c4.explain.rds"],
 }
 
 
@@ -61,7 +62,7 @@ def receipts(action, root, traits, layers, modules):
                 except (ValueError, OSError):
                     if action == "record":
                         raise
-                    # Invalid receipts require ordinary dependency/input validation.
+                    # Invalid receipts require ordinary output-completeness checks.
     return found
 
 

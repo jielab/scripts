@@ -18,9 +18,10 @@ le8_usage() {
 	cat <<'HELP'
 Usage: ./le8.sh [module[,module...]] [options]
 
-No module list: C1 + CUDA selective-attention ABM -> C2 -> C3 -> C4 (connect/panel validation) -> C5.
+No module list: C1 + CUDA selective-attention ABM -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
-Completed results keep their original methods/scope; --replace TRUE requests new fits.
+Completed results are checked and skipped, preserving original methods/scope.
+Input timestamps or code changes do not refit completed modules; use --replace TRUE.
 C1 and ABM publish each outcome/omic layer separately so completed layers survive later failures.
 Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
@@ -37,15 +38,16 @@ After that analysis succeeds, build the report and open Shiny:
 
 Resume an interrupted run with valid checkpoints (no forced refit):
   ./le8.sh --Y cvd_cad --biom prot,met
+Continue from C3; completed C1/C2 dependencies are checked and skipped:
+  ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
 
 Modules:
   c1_correlate   Measured/PGS associations, temporal analyses and enrichment
   c1_abm         Agent-based modeling (ABM): selective reference and TabICLv2
   c2_cause       MR and genetic decomposition
   c3_coloc       Colocalization and locus evidence
-  c4_connect     LE8 connections, proxies, mediation, interactions and nonlinearity
-  c4_panel_validation  Frozen matched-budget prediction and reconstruction
-  c4_explain     Optional paired reconstruction bootstrap
+  c4_connect     LE8 connections, interactions, nonlinearity, panel validation
+                 and paired reconstruction bootstrap (one entry point)
   c5_cellulation Cell annotation and explicit CIGMA jobs
   pgs_focus      Dedicated matched-PGS analysis
   final         Existing aggregate reports; aggregate reporting, no fitting
@@ -69,7 +71,7 @@ Main options (defaults are set below in this script):
   --s7-attention-temperature-grid CSV  Q/K temperatures; default 0.5,1,2
   --s7-reconstruction-weight X  Actual auxiliary-loss weight; default 0.05
   --seed N               2026
-  --replace TRUE|FALSE   FALSE; validate/reuse completed outputs; TRUE refits selected stages
+  --replace TRUE|FALSE   FALSE; check/skip completed outputs; TRUE refits selected stages
   --r-bin FILE           Rscript
   --port N               3839
   --host ADDRESS         127.0.0.1
@@ -84,7 +86,7 @@ Main options (defaults are set below in this script):
   --index-only           Build index without report figures or R
   --prepare-only         Prepare without launching the Shiny server
   --no-reindex           Read the existing Shiny index
-  --preflight            Check dependencies / inputs (ABM checked before native scans)
+  --preflight            Check dependencies / inputs (CUDA checked before native scans)
   --dry-run              Print planned commands
   --shiny-review         Validate prepared sources and exit
   --out DIR              Must be <analysis-root>/final
@@ -112,7 +114,7 @@ Native analysis options also pass through: --Y-date, --vars.adj,
 Outputs: <analysis-root>/<Y>/<biom>/<module>/; optional Final fits: final/<Y>/;
 summary report: final/; index: shiny/; execution logs and caches: /tmp/.
 Question-led C1 → C2 → C4 overview and figures: final/; Shiny opens the research-question view.
-LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_explain --Y cvd_cad,ra --biom prot,met
+LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
 Shared RAM budget: LE8_RESOURCE_MEMORY_GIB=32 by default (GiB).
 Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
@@ -120,6 +122,7 @@ SCRIPT_VERBOSE=1 streams all diagnostics to the terminal.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
 ABM requires CUDA by default and checks GPU forward/backward before native scans.
+GPU-coloc checks CUDA through R before analysis; WSL driver libraries take priority.
 LE8 and GRID share the optimized ABM kernels in ../0f/abm.py.
 Explicit CPU testing: --abm-args '--device cpu'; legacy CPU baseline: --abm-args '--abm-design selective --device cpu'.
 
@@ -133,13 +136,41 @@ Additional module entry points:
 HELP
 }
 
+le8_coloc_cuda_preflight() {
+	local r_bin=$1 python_bin=$2 r_libraries
+	# R on Debian prepends its system library directories to LD_LIBRARY_PATH.
+	# On WSL these can contain a Linux libcuda that cannot access the Windows GPU.
+	# Preserve the selected R runtime's paths, but put the WSL driver first for R
+	# and its Python/Conda children. Keep this runtime fix outside f/: changing
+	# analysis-source fingerprints would invalidate completed scientific caches.
+	if [[ -r /usr/lib/wsl/lib/libcuda.so.1 ]]; then
+		r_libraries=${R_LD_LIBRARY_PATH:-}
+		if [[ -z $r_libraries ]]; then
+			r_libraries=$("$r_bin" --vanilla -e 'cat(Sys.getenv("LD_LIBRARY_PATH"))') || return 2
+		fi
+		export R_LD_LIBRARY_PATH="/usr/lib/wsl/lib${r_libraries:+:$r_libraries}"
+		export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	fi
+	echo '[LE8] START GPU-coloc CUDA preflight (R -> Python)'
+	if ! "$r_bin" --vanilla -e '
+		a <- commandArgs(trailingOnly = TRUE)
+		status <- system2(a[1], shQuote(c(a[2], "check-cuda")))
+		if (status != 0L) cat("GPU-coloc R child LD_LIBRARY_PATH=", Sys.getenv("LD_LIBRARY_PATH"), "\n", sep = "", file = stderr())
+		quit(save = "no", status = status)
+	' "$python_bin" "$LE8_ROOT/f/c3.coloc_GPU.py"; then
+		echo 'ERROR: GPU-coloc CUDA preflight failed before analysis.' >&2
+		return 2
+	fi
+	echo '[LE8] DONE GPU-coloc CUDA preflight (R -> Python)'
+}
+
 le8_main() {
 	# Shared defaults, deliberately visible at the public entry point.
-	local modules=c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c4_panel_validation,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
+	local modules=c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
 	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
-	local backend=reference cores="" ukb_phe="" memory_limit="" memory_swap=""
+	local backend=reference cores="" ukb_phe="" memory_limit="" memory_swap="" dry_run=FALSE
 	local abm_args='--selective-repeats 3'
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
@@ -178,6 +209,21 @@ le8_main() {
 		--eigh-backend)
 			case "${2:-}" in auto|cpu|cuda) export MRLINK2_EIGH_BACKEND=$2 ;; *) echo 'ERROR: --eigh-backend requires auto|cpu|cuda' >&2; return 2 ;; esac
 			shift 2
+			;;
+		--run-gpu-coloc)
+			local gpu_coloc_arg=${2:?--run-gpu-coloc requires TRUE or FALSE}
+			case "${gpu_coloc_arg,,}" in
+				true | 1 | yes | y) export RUN_GPU_COLOC=TRUE ;;
+				false | 0 | no | n) export RUN_GPU_COLOC=FALSE ;;
+				*) echo 'ERROR: --run-gpu-coloc requires TRUE or FALSE' >&2; return 2 ;;
+			esac
+			extra+=("$1" "$RUN_GPU_COLOC")
+			shift 2
+			;;
+		--dry-run)
+			dry_run=TRUE
+			extra+=("$1")
+			shift
 			;;
 		--Y | --trait | -Y)
 			trait_csv=${2:?--Y requires CSV}
@@ -256,6 +302,9 @@ le8_main() {
 		return 2
 	}
 	export PYTHON_BIN=$python_bin LE8_ANALYSIS_ROOT=$analysis_root DIRSCRIPT=$LE8_ROOT LE8_FDIR=$LE8_ROOT/f
+	if [[ ",$modules," == *,c3_coloc,* && $RUN_GPU_COLOC == TRUE && $dry_run != TRUE ]]; then
+		le8_coloc_cuda_preflight "$r_bin" "$python_bin" || return 2
+	fi
 	args=("$modules" --Y "$trait_csv" --biom "$biom_csv" --analysis-root "$analysis_root"
 		--seed "$seed" --replace "$replace" --r-bin "$r_bin" --port "$port" --host "$host"
 		--abm-backend "$backend" --abm-args "$abm_args")
