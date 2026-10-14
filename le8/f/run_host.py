@@ -132,6 +132,10 @@ def main(args):
     cfg.validate()
     dc=deviation.read_config(args.deviation_config or ROOT/f'config/deviation_{args.biom}.json')
     dc=replace(dc,trait=args.Y,layer=args.biom,seed=args.seed);dc.validate()
+    # Explicit alternative endpoints have distinct directories and completion
+    # identities; they cannot overwrite or resume an objective-plaque analysis.
+    deviation_target=(scope/'molecular_deviation' if dc.task=='objective_plaque'
+                      else scope/dc.task/'molecular_deviation')
     if args.Y!='cvd_cad':
         # Do not reinterpret another disease's prevalence as known CAD.
         deviation_supported=False
@@ -153,7 +157,8 @@ def main(args):
     lock_key=hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:20]
     with open('/tmp/le8-abm-'+lock_key+'.lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
-        todo={name for name in ['abm_twin','molecular_deviation'] if args.replace=='TRUE' or not completed(scope/name)}
+        targets={'abm_twin':scope/'abm_twin','molecular_deviation':deviation_target}
+        todo={name for name,target in targets.items() if args.replace=='TRUE' or not completed(target)}
         if not todo:
             print('[LE8 twin] SKIP: both twin modules completed; --replace TRUE creates an archived replacement',flush=True)
             return
@@ -183,7 +188,8 @@ def main(args):
                     write_tables(stage/'aggregate',{'status':pd.DataFrame([dict(status='not_applicable_non_CAD_trait',trait=args.Y)])},
                                  'deviation',args.biom,args.Y,'not_applicable')
                     finish(stage,audit)
-                publish(stage,scope/'molecular_deviation')
+                deviation_target.parent.mkdir(parents=True,exist_ok=True)
+                publish(stage,deviation_target)
                 print('[LE8 twin] DONE deviation',flush=True)
         except BaseException:
             print('[LE8 twin] Failed; earlier published results retained. Local diagnostics: '+str(work),file=sys.stderr)

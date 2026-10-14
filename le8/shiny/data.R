@@ -25,6 +25,16 @@ query_table <- function(con,record,feature='ALL',limit=100000L,trait='all',layer
   sql<-paste(sql,'LIMIT',as.integer(limit)+1L)
   d<-if(length(params))DBI::dbGetQuery(con,sql,params=params)else DBI::dbGetQuery(con,sql)
   if(private_names(names(d)))stop('Private columns detected; table withheld')
+  if(record$name%in%c('feature_state_summary','feature_distribution','feature_state_association')) {
+    if(!'task'%in%names(d))d$task<-rep(NA_character_,nrow(d))
+    d$task_label<-rep(deviation_task_label(d),nrow(d))
+    # Old effect tables hard-coded "objective" even for an unknown task. Correct
+    # the display/export label without altering the stored historical results.
+    if('effect_measure'%in%names(d)) {
+      mean_difference<-grepl('^adjusted mean Z difference',d$effect_measure)
+      d$effect_measure[mean_difference]<-paste0('adjusted mean Z difference, ',d$task_label[mean_difference],': state 1 minus state 0')
+    }
+  }
   attr(d,'truncated')<-nrow(d)>limit
   if(nrow(d)>limit)d<-d[seq_len(limit),,drop=FALSE]
   d

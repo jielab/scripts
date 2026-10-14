@@ -20,6 +20,9 @@ No module list: c1_correlate -> c1_abm (Twin/deviation) -> C2 -> C3 -> C4 (conne
 Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results are checked and skipped, preserving original methods/scope.
 Input timestamps or code changes do not refit completed modules; use --replace TRUE.
+ABM molecular-QC repair requires an explicit new fit; existing fits are not upgraded in place.
+For an integrated refit use c1_abm --replace TRUE; successful replacements retain _history snapshots.
+Keep the original --outer-roster. Previously inspected tests remain exploratory.
 C1 and ABM publish each outcome/omic layer separately so completed layers survive later failures.
 Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
@@ -103,6 +106,7 @@ Main options (defaults are set below in this script):
   --abm-config FILE       Twin model configuration (default config/abm.json)
   --abm-host-args STRING  Original phenotype/omics input options; parsed without shell evaluation
   --deviation-config FILE  Deviation configuration; defaults per omic layer
+                           Explicit known_cad_state / coronary_calcium tasks use separate result directories
   --objective-file FILE    Optional eid-keyed objective coronary endpoint table
   --pgs-root PATH     PGS file/directory; use {biom} for layer-specific paths
   --pgs-mapping FILE  Explicit PGS assay mapping

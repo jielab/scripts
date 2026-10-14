@@ -13,6 +13,11 @@ def plot_deviation(tables,out,anchors):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
+    status=tables.get('status',pd.DataFrame())
+    tasks=status.task.dropna().unique() if 'task' in status else []
+    labels={'objective_plaque':'Objective coronary plaque','coronary_calcium':'Coronary calcium',
+            'known_cad_state':'Known CAD state (exploratory)'}
+    endpoint=labels.get(tasks[0],'Recorded outcome state') if len(tasks)==1 else 'Recorded outcome state'
     t=tables.get('reference_calibration',pd.DataFrame())
     if len(t):
         v=pd.to_numeric(t.own_PGS_partial_R2,errors='coerce').dropna()
@@ -22,13 +27,13 @@ def plot_deviation(tables,out,anchors):
     t=tables.get('model_metrics',pd.DataFrame())
     if len(t) and 'AUC' in t:
         fig,ax=plt.subplots(figsize=(10,5));ax.plot(t.AUC,t.model,'o')
-        ax.set(xlabel='Held-out AUC (same objective-endpoint population)',title='Frozen diagnostic models; not clinical authorization')
+        ax.set(xlabel='Held-out AUC (same endpoint population)',title=endpoint+'; frozen research models')
         _save(fig,out/'Fig2_diagnostic_comparison.png')
     t=tables.get('roc_points',pd.DataFrame())
     if len(t):
         fig,ax=plt.subplots(figsize=(7,6))
         for name,d in t.groupby('model',sort=False):ax.plot(d.FPR,d.TPR,label=name)
-        ax.plot([0,1],[0,1],ls='--');ax.set(xlabel='False-positive rate',ylabel='True-positive rate',title='Held-out objective endpoint ROC')
+        ax.plot([0,1],[0,1],ls='--');ax.set(xlabel='False-positive rate',ylabel='True-positive rate',title=endpoint+'; held-out ROC')
         ax.legend(fontsize=8);_save(fig,out/'Fig3_ROC.png')
     t=tables.get('paired_contrasts',pd.DataFrame())
     if len(t):
@@ -41,7 +46,7 @@ def plot_deviation(tables,out,anchors):
         d=t[t.feature.isin(anchors)] if anchors else t[t.feature.isin(t.feature.unique()[:3])]
         fig,ax=plt.subplots(figsize=(10,5))
         for state,s in d.groupby('state'):
-            ax.plot(s.feature,s.mean_deviation,'o',label=f'Objective state={state}')
+            ax.plot(s.feature,s.mean_deviation,'o',label=f'{endpoint}={state}')
         ax.axhline(0,ls='--');ax.set(ylabel='Mean genetic deviation (reference residual SD)',title='Declared illustrative assays; all assays available in browser')
         ax.legend();_save(fig,out/'Fig5_anchor_deviations.png')
     t=tables.get('decision_curve',pd.DataFrame())
@@ -53,7 +58,7 @@ def plot_deviation(tables,out,anchors):
         ax.legend(fontsize=7);_save(fig,out/'Fig6_decision_curve.png')
     if not len(tables.get('model_metrics',[])):
         fig,ax=plt.subplots(figsize=(9,4));ax.axis('off')
-        ax.text(.03,.6,'Objective diagnostic validation not completed',fontsize=16)
+        ax.text(.03,.6,endpoint+': validation not completed',fontsize=16)
         ax.text(.03,.3,'Reference calibration is available. Missing endpoints are not negative results.',wrap=True)
         _save(fig,out/'Fig_status_not_validated.png')
 

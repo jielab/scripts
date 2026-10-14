@@ -73,7 +73,7 @@ def fit_command(development,output,config):
         'selected_panel':pd.DataFrame({'feature':model.panel_names,'input_index':model.panel_indices,
            'fixed_covariate':[j in config.always_include_indices for j in model.panel_indices]}),
         'model_tuning':pd.DataFrame(model.model_tuning),
-        'role_counts':pd.DataFrame([dict(role=r,N=v['N'],cases=v['cases']) for r,v in audit['roles'].items()])
+        'role_counts':pd.DataFrame([dict(role=r,N=v['N'],cases=v['cases'],technical_QC_excluded=v['technical_QC_excluded']) for r,v in audit['roles'].items()])
     },'ABM twin',config.layer,config.trait,model_hash(model))
     ix=data['role']=='calibration_audit'
     before=model_hash(model)

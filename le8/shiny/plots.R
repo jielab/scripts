@@ -1,4 +1,9 @@
 # One reactive figure for the selected table / assay. No 3000-file plot loop.
+deviation_task_label <- function(d) {
+  labels<-c(objective_plaque='客观冠脉病变',coronary_calcium='冠脉钙化',known_cad_state='已知CAD状态（探索性）')
+  task<-if('task'%in%names(d))unique(as.character(d$task))else character()
+  if(length(task)==1L&&!is.na(task)&&task%in%names(labels))unname(labels[task])else'记录状态/结局状态'
+}
 make_plot <- function(d,kind,title,x=NULL,y=NULL,group=NULL) {
   if(!nrow(d))return(empty_plot())
   base<-theme_bw(base_size=13)+theme(plot.title=element_text(size=13),legend.position='bottom')
@@ -22,11 +27,11 @@ make_plot <- function(d,kind,title,x=NULL,y=NULL,group=NULL) {
   if(kind=='decision')return(ggplot(d,aes(threshold,net_benefit,colour=model))+geom_line()+geom_hline(yintercept=0,linetype=2)+labs(x='风险阈值',y='Net benefit',title=title)+base)
   if(kind=='deviation_state') {
     if(!'feature'%in%names(d))return(empty_plot())
-    return(ggplot(d,aes(feature,mean_deviation,colour=factor(state)))+geom_point(size=3)+geom_hline(yintercept=0,linetype=2)+coord_flip()+labs(colour='客观病变状态',x=NULL,y='遗传校正偏离（参考残差 SD）',title=title)+base)
+    return(ggplot(d,aes(feature,mean_deviation,colour=factor(state)))+geom_point(size=3)+geom_hline(yintercept=0,linetype=2)+coord_flip()+labs(colour=deviation_task_label(d),x=NULL,y='遗传校正偏离（参考残差 SD）',title=title)+base)
   }
   if(kind=='deviation_histogram') {
     d<-d[is.finite(d$lower)&is.finite(d$upper),,drop=FALSE];d$mid<-(d$lower+d$upper)/2
-    return(ggplot(d,aes(mid,N,colour=factor(state),group=interaction(feature,state)))+geom_line(na.rm=TRUE)+geom_point(na.rm=TRUE)+labs(x='遗传校正偏离 Z',y='人数（小于10的单元格未显示）',colour='状态',title=title)+base)
+    return(ggplot(d,aes(mid,N,colour=factor(state),group=interaction(feature,state)))+geom_line(na.rm=TRUE)+geom_point(na.rm=TRUE)+labs(x='遗传校正偏离 Z',y='人数（小于10的单元格未显示）',colour=deviation_task_label(d),title=title)+base)
   }
   if(kind=='pgs_capture')return(ggplot(d,aes(own_PGS_partial_R2))+geom_histogram(bins=40)+geom_vline(xintercept=0,linetype=2)+labs(x='OOF own-PGS partial R²',y='Assays',title=title)+base)
   if(kind=='coverage') {
@@ -56,6 +61,7 @@ make_plot <- function(d,kind,title,x=NULL,y=NULL,group=NULL) {
       return(ggplot(d,aes(beta,minus_logp))+geom_point(alpha=.5)+labs(x='Reported β; filter analysis/units before comparing',y='−log10(P)',title=title)+base)
     }
     p<-ggplot(d,aes(beta,label))+geom_point()+geom_vline(xintercept=0,linetype=2)+labs(x='Reported β (not pooled across effect measures)',y=NULL,title=title)+base
+    if(all(c('covariates_before','covariates_after')%in%names(d)))p<-p+labs(x='调整后平均偏离差 β（状态1 − 状态0）',subtitle=deviation_task_label(d))
     if(all(c('lo','hi')%in%names(d)))p<-p+geom_segment(aes(x=lo,xend=hi,yend=label))
     if('effect_measure'%in%names(d))p<-p+facet_wrap(~effect_measure,scales='free')
     return(p)

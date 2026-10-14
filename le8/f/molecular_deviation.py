@@ -19,6 +19,12 @@ from abm_twin_core import NumericPrep,Config,Calibrator,logloss_rows,model_hash,
 from research_io import write_tables
 
 VERSION='MOLECULAR-DEVIATION-2026-10-14'
+TASK_LABELS={'objective_plaque':'客观冠脉病变','coronary_calcium':'冠脉钙化',
+             'known_cad_state':'已知CAD状态（探索性）'}
+
+
+def task_label(task):
+    return TASK_LABELS.get(task, '记录状态/结局状态')
 
 
 @dataclass(frozen=True)
@@ -244,7 +250,8 @@ class DeviationStudy:
         k=self.keep;missing=np.maximum(np.mean(~np.isfinite(M[:,k]),axis=1),np.mean(~np.isfinite(G[:,k]),axis=1))
         qc=(missing<=self.config.sample_missing)&np.all(np.isfinite(np.asarray(C,float)),axis=1)
         return dict(eid=ids,group=groups,probability=p,Z=r['Z'],Z0=r['Z0'],measured=r['M'],expected=r['expected'],covariate_values=np.asarray(C,float),qc=qc,
-                    frozen_hash=model_hash(self),features=self.features,classification_status=self.classification_status)
+                    frozen_hash=model_hash(self),features=self.features,covariate_names=self.covariates,
+                    task=self.config.task,classification_status=self.classification_status)
 
 
 def binary_metrics(y,p,threshold=.5):
@@ -258,27 +265,57 @@ def binary_metrics(y,p,threshold=.5):
                 PPV=float(tp/max(1,tp+fp)))
 
 
-def feature_state_associations(pred,y,eligible):
+def feature_state_associations(pred,y,eligible,task=None):
     """Evaluation-only adjusted mean deviation difference (NOT an odds ratio).
     Family-cluster sandwich standard errors; FDR across the assayed family.
     """
+    from scipy.linalg import qr
     from scipy.stats import t as student_t
-    C=pred['covariate_values'];rows=[]
+    C=np.asarray(pred['covariate_values'],float);rows=[]
+    y=np.asarray(y,float);eligible=np.asarray(eligible,bool)
+    task=pred.get('task') if task is None else task
+    names=list(pred.get('covariate_names',[f'covariate_{j}' for j in range(C.shape[1])]))
+    if len(names)!=C.shape[1]:raise ValueError('Covariate names/order mismatch')
     for j,feature in enumerate(pred['features']):
-        good=eligible&np.isfinite(pred['Z'][:,j])&np.all(np.isfinite(C),axis=1)
+        good=eligible&np.isin(y,[0,1])&np.isfinite(pred['Z'][:,j])&np.all(np.isfinite(C),axis=1)
         row=dict(feature=feature,N=int(good.sum()),beta=np.nan,se=np.nan,p=np.nan,lo=np.nan,hi=np.nan,
-                 effect_measure='adjusted mean Z difference, objective case minus control',status='insufficient_information')
+                 task=task,task_label=task_label(task),
+                 effect_measure=f'adjusted mean Z difference, {task_label(task)}: state 1 minus state 0',
+                 covariates_before=C.shape[1],covariates_after=0,dropped_covariates='[]',
+                 design_rank=np.nan,residual_df=np.nan,family_N=0,status='insufficient_information')
         if good.sum()<30 or len(np.unique(y[good]))<2:rows.append(row);continue
-        cov=C[good];cov=cov[:,np.std(cov,axis=0)>1e-10];x=np.c_[np.ones(good.sum()),y[good],cov]
-        if np.linalg.matrix_rank(x)<x.shape[1]:row['status']='rank_deficient_covariates';rows.append(row);continue
-        inverse=np.linalg.inv(x.T@x);b=inverse@x.T@pred['Z'][good,j];r=pred['Z'][good,j]-x@b
+        # Keep the intercept and choose a full-rank nuisance basis locally. The
+        # clinical matrix used by reference/penalized models is never recoded.
+        cov=C[good];centered=cov-cov.mean(axis=0);scale=np.linalg.norm(centered,axis=0)
+        candidates=np.flatnonzero(scale>1e-10)
+        kept=np.array([],int)
+        if len(candidates):
+            q,r,pivot=qr(centered[:,candidates]/scale[candidates],mode='economic',pivoting=True)
+            diagonal=np.abs(np.diag(r))
+            tolerance=max(centered.shape)*np.finfo(float).eps*diagonal.max()
+            rank=int(np.sum(diagonal>tolerance))
+            kept=candidates[pivot[:rank]]
+        nuisance=np.c_[np.ones(good.sum()),centered[:,kept]/scale[kept]]
+        q,_=np.linalg.qr(nuisance,mode='reduced')
+        state=y[good];state_residual=state-q@(q.T@state)
+        row.update(covariates_after=len(kept),
+                   retained_covariates=json.dumps([names[k] for k in kept],ensure_ascii=False),
+                   dropped_covariates=json.dumps([names[k] for k in range(C.shape[1]) if k not in kept],ensure_ascii=False),
+                   nuisance_rank=q.shape[1])
+        if np.linalg.norm(state_residual)<=1e-10*max(1.,np.linalg.norm(state)):
+            row['status']='disease_state_not_estimable';rows.append(row);continue
+        # State is always retained as the coefficient of interest (last column).
+        x=np.c_[q,state];rank=x.shape[1];n=len(x)
         groups,gi=np.unique(pred['group'][good],return_inverse=True);ng=len(groups)
-        if ng<5:rows.append(row);continue
-        score=r*(x@inverse[:,1]);score=np.bincount(gi,weights=score)
-        var=float(score@score)*ng/(ng-1)*(len(r)-1)/(len(r)-x.shape[1]);se=np.sqrt(max(0,var))
+        row.update(design_rank=rank,residual_df=n-rank,family_N=ng)
+        if n<=rank:row['status']='insufficient_residual_degrees_of_freedom';rows.append(row);continue
+        if ng<5:row['status']='insufficient_independent_groups';rows.append(row);continue
+        inverse=np.linalg.pinv(x);b=inverse@pred['Z'][good,j];residual=pred['Z'][good,j]-x@b
+        score=np.bincount(gi,weights=residual*inverse[-1])
+        var=float(score@score)*ng/(ng-1)*(n-1)/(n-rank);se=np.sqrt(max(0,var))
         crit=student_t.ppf(.975,ng-1)
-        row.update(beta=float(b[1]),se=float(se),p=float(2*student_t.sf(abs(b[1]/se),ng-1)) if se>0 else np.nan,
-                   lo=float(b[1]-crit*se),hi=float(b[1]+crit*se),family_N=ng,status='estimated_cluster_robust')
+        row.update(beta=float(b[-1]),se=float(se),p=float(2*student_t.sf(abs(b[-1]/se),ng-1)) if se>0 else np.nan,
+                   lo=float(b[-1]-crit*se),hi=float(b[-1]+crit*se),status='estimated_cluster_robust')
         rows.append(row)
     d=pd.DataFrame(rows)
     if len(d):d['FDR']=bh(d.p)
@@ -349,8 +386,11 @@ def evaluate_deviation(model,pred,truth,output):
     tables={'reference_calibration':pd.DataFrame(model.reference_table),'model_metrics':pd.DataFrame(rows),
             'paired_contrasts':pd.DataFrame(contrasts),'roc_points':pd.DataFrame(roc),'probability_calibration':pd.DataFrame(cal),
             'decision_curve':pd.DataFrame(dca),'feature_distribution':pd.DataFrame(dist),'feature_state_summary':pd.DataFrame(paired),
-            'feature_state_association':feature_state_associations(pred,y,eligible),'status':pd.DataFrame([status])}
-    for table in tables.values():table['grouping_unit']=cfg.grouping_unit
+            'feature_state_association':feature_state_associations(pred,y,eligible,task=cfg.task),'status':pd.DataFrame([status])}
+    for table in tables.values():
+        table['grouping_unit']=cfg.grouping_unit
+        table['task']=cfg.task
+        table['task_label']=task_label(cfg.task)
     write_tables(output,tables,'Molecular deviation',cfg.layer,cfg.trait,run_id=pred['frozen_hash'],workbook='molecular_deviation.results.xlsx')
     json_write(Path(output)/'status.json',status)
     return tables,status

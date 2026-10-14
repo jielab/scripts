@@ -165,6 +165,9 @@ def evaluate(model, prediction, time, event, truth_ids, bootstrap=None, full_cur
         rr = c[(label,metric)]
         return bool(info and rr['valid_boot'] >= max(200,math.ceil(.8*B)) and (rr['lower']>0 if lower else rr['upper']<0))
     status = dict(information_adequate=bool(info),selected_cases=sel['cases'],selected_controls=sel['controls'],
+      original_N=len(ids),technical_QC_excluded=int((~qc).sum()),technical_QC_N=int(qc.sum()),
+      selected_N=int(selected.sum()),actual_coverage=float(selected.mean()),
+      no_adequate_twins_N=int((qc & ~prediction['diagnostics']['supported']).sum()),
       selective_discrimination_supported=supported('combined_vs_bulk'),
       selection_only_supported=supported('selection_effect'),
       training_gain_supported=supported('training_effect_same_subset'),

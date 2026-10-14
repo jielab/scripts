@@ -14,6 +14,30 @@ cd /mnt/d/scripts/le8
 
 默认完整流程包含 C1–C5；需要分析 RA 时设 `--Y cvd_cad,ra`。当前完成结果仍支持断点续跑，`--replace TRUE` 明确重拟合。家系与客观冠脉终点缺失时明确标记。
 
+## 2026-10-14 最小质控修复
+
+此次仅修复分子缺失质控、偏离效应回归的冗余协变量，以及展示/下载口径。默认10分子预算、twin 距离、profile_concordance 筛选、Full/Clean/Soft/Random 和三类效应分解保持原设置。
+
+- 分子列由 `always_include_indices` 明确区分。每个 OOF teacher 在自己的训练数据上冻结可用分子列、样本QC、面板及预处理；最终模型和 donor bank 同时检查冻结的分子集合与实际面板。临床哑变量不进入分子缺失率的分母。技术排除和 profile 不一致排除分别记入审计。
+- query 的 `molecular_missing_fraction` 指实际冻结面板；`frozen_molecular_missing_fraction` 指选面板前冻结的可用分子集合。任一超过预设阈值均拒绝。全分子缺失者 confidence=0、selected=false、policy risk=NA，保留原始行与人数分母；技术合格但无 twin 时仍可使用 full-model fallback。
+- 解释性状态均值差回归保留截距、用满秩 nuisance basis 去掉冗余协变量，再检查状态项能否识别；保留 cluster-robust SE/FDR，记录保留/删除列、设计秩和自由度。参考校准及七个疾病预测模型不重编码。
+- Shiny 的图、PNG 和“当前筛选 TSV”共用 DT 全部分页的过滤行；零行保持为空，切换表/分子后旧行号失效。实现依据 [DT Shiny §2.2 的 rows_all 语义](https://rstudio.github.io/DT/shiny.html)。已知CAD、冠脉钙化、客观冠脉病变按 task 分别标注；无 task 的旧分子表展示为“记录状态/结局状态”，不改写历史源表。
+
+**旧 ABM 拟合不能原地升级。** 新投影遇到旧模型时会要求显式重拟合。独立 `abm fit` 应复用原 development/test 文件和保存的配置（尤其临床列索引），输出到新的 run 目录。宿主流程可执行 `./le8.sh c1_abm --Y cvd_cad --biom prot,met --replace TRUE`，同时沿用原运行参数及原 `--outer-roster`；成功替换前会将旧模块保存到 `_history`。该命令会运行 c1_abm 的 twin/deviation 两部分，不重跑 C1关联及 C2–C5。仅重做解释性回归或展示时，可用旧 deviation 模型与预测执行 `deviation evaluate` 到新目录，再更新 evidence/展示，无需重拟合七个疾病模型。
+
+宿主显式配置 `task=known_cad_state` 或 `coronary_calcium` 时，分别存入 `c1_abm/<task>/molecular_deviation/`；默认客观病变仍使用原 `c1_abm/molecular_deviation/`。这些独立任务可在证据浏览器中查看，不混入默认客观病变汇总。
+
+没有家系信息的宿主运行继续按个人 ID 分组并标记 `individual_unverified`，不添加 `assume_unrelated=true`；无客观检查仍可校准，诊断评价为 unavailable。原测试名单保持不变，已查看/未核实的测试结果继续标记 exploratory。
+
+回归检查（在本目录运行）：
+
+```bash
+python -m pytest -q tests/test_qc_repairs.py -p no:cacheprovider
+Rscript --vanilla tests/test_shiny_filters.R
+```
+
+R 检查需要 Shiny、DT、DBI、RSQLite、ggplot2、plotly、testthat；使用 SQLite 合成表和 `shiny::testServer` 实际验证过滤、分页、下载、切换范围、零行与 task 绘图。合成验收覆盖20名全缺失 query、30名全缺失 donor、dummy数量不变性、同人单独/批量投影、家系排除、原 outer roster、共线状态不可估计等。此次修复前后合成完整样本的 ABM 预测/选择/confidence 一致，参考校准和七模型预测也一致；有缺失样本的模型会因排除不合格训练者、重新冻结预处理/半径等发生必要数值变化。这里不声称完成真实 UKB 重跑或整个仓库的历史测试。
+
 ## 1. 本版落实的研究目标
 
 ### ABM 的主线

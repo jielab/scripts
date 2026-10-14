@@ -28,7 +28,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.model_selection import StratifiedGroupKFold
 
-VERSION = "ABM-TWIN-2026-10-14"
+VERSION = "ABM-TWIN-2026-10-14-molecular-qc"
 ROLES = ("build", "tune_model", "tune_gate", "calibration_fit", "calibration_audit")
 
 
@@ -189,16 +189,42 @@ class NumericPrep:
     def fit(self, X, config: Config):
         x = np.asarray(X, float)
         self.input_columns = x.shape[1]
+        self.clinical_columns = tuple(config.always_include_indices)
+        self.sample_missing = config.sample_missing
+        if not set(self.clinical_columns) <= set(range(self.input_columns)):
+            raise ValueError("Mandatory clinical column index outside input schema")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             variance = np.nanvar(x, axis=0)
         self.keep = np.flatnonzero((np.mean(np.isnan(x), axis=0) < config.feature_missing) & (variance > 1e-12))
         if len(self.keep) < 2: raise ValueError("Fewer than two usable numeric features")
-        z = x[:, self.keep]
-        self.median = np.nanmedian(z, axis=0)
-        z = np.where(np.isfinite(z), z, self.median)
-        self.mean, self.scale = z.mean(0), np.maximum(z.std(0), 1e-8)
+        # Explicit schema identities, never name heuristics or clinical dummy counts.
+        self.molecular_qc_columns = self.molecular_columns.copy()
+        good = self.technical_qc(x)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            variance = np.nanvar(x[good][:, self.keep], axis=0)
+        self.keep = self.keep[np.isfinite(variance) & (variance > 1e-12)]
+        if len(self.keep) < 2 or not len(self.molecular_columns):
+            raise ValueError("No usable molecular panel after sample QC")
+        self.fit_statistics(x[self.technical_qc(x)])
         return self
+
+    @property
+    def molecular_columns(self):
+        return np.asarray([j for j in self.keep if j not in self.clinical_columns], int)
+
+    def fit_statistics(self, X):
+        """Freeze imputation/scale using only technically eligible training rows."""
+        z = np.asarray(X, float)[:, self.keep]
+        if not len(z): raise ValueError("No molecular-QC eligible training samples")
+        self.median = np.nanmedian(z, axis=0)
+        if not np.isfinite(self.median).all(): raise ValueError("Unmeasured predictor after molecular QC")
+        z = np.where(np.isfinite(z), z, self.median)
+        molecular = np.isin(self.keep, self.molecular_columns)
+        if not np.any(np.var(z[:, molecular], axis=0) > 1e-12):
+            raise ValueError("No variable molecular predictors after panel sample QC")
+        self.mean, self.scale = z.mean(0), np.maximum(z.std(0), 1e-8)
 
     def transform(self, X):
         x = np.asarray(X, float)
@@ -207,8 +233,14 @@ class NumericPrep:
         z = x[:, self.keep]
         return (np.where(np.isfinite(z), z, self.median) - self.mean) / self.scale
 
-    def missing(self, X):
-        return np.mean(np.isnan(np.asarray(X)[:, self.keep]), axis=1)
+    def missing(self, X, *, panel=True):
+        columns = self.molecular_columns if panel else self.molecular_qc_columns
+        if not len(columns): raise ValueError("No usable molecular columns for QC")
+        return np.mean(~np.isfinite(np.asarray(X)[:, columns]), axis=1)
+
+    def technical_qc(self, X):
+        # The broad frozen assay QC cannot be relaxed by selecting a smaller panel.
+        return (self.missing(X, panel=False) <= self.sample_missing) & (self.missing(X) <= self.sample_missing)
 
 
 def check_classes(y, w, minimum=2):
@@ -248,10 +280,11 @@ def choose_model_panel(prep, X, y, w, config):
     Clinical columns named by explicit indices are retained outside the omic budget.
     """
     if not set(config.always_include_indices)<=set(range(np.asarray(X).shape[1])):raise ValueError("Mandatory clinical column index outside input schema")
-    fit = fit_classifier(prep.transform(X), y, w, config, parameter=config.pilot_c)
+    fit = fit_classifier(prep.transform(X), y, w * prep.technical_qc(X), config, parameter=config.pilot_c)
     importance = np.abs(fit.coef_[0])
     mandatory = np.array([j for j,k in enumerate(prep.keep) if k in config.always_include_indices], int)
     candidate = np.array([j for j,k in enumerate(prep.keep) if k not in config.always_include_indices], int)
+    if not len(candidate): raise ValueError("No usable molecular predictors for panel selection")
     if len(candidate) and not np.any(importance[candidate] > 1e-10):
         raise ValueError("Panel pilot has no nonzero molecular coefficients; change the development-only specification")
     order = candidate[np.lexsort((prep.keep[candidate], -importance[candidate]))]
@@ -263,6 +296,7 @@ def choose_model_panel(prep, X, y, w, config):
     prep.panel_source = "this fit's training data only"
     prep.panel_pilot_coefficients = fit.coef_[0][chosen].copy()
     prep.panel_pilot_zero_count = int(np.sum(np.abs(prep.panel_pilot_coefficients)<1e-10))
+    prep.fit_statistics(np.asarray(X)[prep.technical_qc(X)])
     return original
 
 
@@ -291,6 +325,7 @@ def crossfit_quality(X, time, event, ids, groups, config: Config):
     n = len(ids)
     prob = np.full((config.repeats, n), np.nan)
     losses = np.full_like(prob, np.nan)
+    technical = np.zeros((config.repeats, n), bool)
     logs = []
     strat = ((np.asarray(event) == 1) & (np.asarray(time) <= config.horizon)).astype(int)
     for repeat in range(config.repeats):
@@ -298,28 +333,40 @@ def crossfit_quality(X, time, event, ids, groups, config: Config):
         for fold, (tr, va) in enumerate(splitter.split(X, strat, groups)):
             if set(groups[tr]) & set(groups[va]): raise AssertionError("Family leakage in OOF")
             prep = NumericPrep().fit(X[tr], config)
-            km = CensoringKM().fit(time[tr], event[tr], config.horizon, config.min_censor_survival)
+            train_qc = prep.technical_qc(X[tr])
+            km = CensoringKM().fit(time[tr][train_qc], event[tr][train_qc], config.horizon, config.min_censor_survival)
             y, w = km.labels_weights(time[tr], event[tr])
             panel = choose_model_panel(prep, X[tr], y, w, config)
-            model = fit_classifier(prep.transform(X[tr]), y, w, config, parameter=config.pilot_c)
+            train_qc = prep.technical_qc(X[tr])
+            km = CensoringKM().fit(time[tr][train_qc], event[tr][train_qc], config.horizon, config.min_censor_survival)
+            y, w = km.labels_weights(time[tr], event[tr])
+            model = fit_classifier(prep.transform(X[tr]), y, w * train_qc, config, parameter=config.pilot_c)
             p = model.predict_proba(prep.transform(X[va]))[:, 1]
             yy, ww = km.labels_weights(time[va], event[va])
+            technical[repeat, va] = prep.technical_qc(X[va])
             prob[repeat, va] = p
-            losses[repeat, va] = np.where(ww > 0, logloss_rows(yy, p), np.nan)
+            losses[repeat, va] = np.where((ww > 0) & technical[repeat, va], logloss_rows(yy, p), np.nan)
             logs.append(dict(repeat=repeat, fold=fold, train_n=len(tr), recipient_n=len(va),
+                             train_technical_QC_excluded=int((~train_qc).sum()),
+                             recipient_technical_QC_excluded=int((~technical[repeat, va]).sum()),
+                             molecular_qc_input_indices=prep.molecular_qc_columns.tolist(),
+                             molecular_panel_input_indices=prep.molecular_columns.tolist(),
                              recipient_hash=fingerprint(ids[va]), family_disjoint=True, panel_input_indices=panel.tolist(),
                              selection_in_teacher_only=True))
     if not np.isfinite(prob).all(): raise AssertionError("Incomplete OOF predictions")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         quality = np.nanmedian(losses, axis=0)
+    quality[~technical.all(axis=0)] = np.nan
     return dict(oof_probability=prob.mean(0), oof_sd=prob.std(0),
-                oof_loss=quality, model_concordance=np.exp(-quality), repeat_losses=losses, audit=logs)
+                oof_loss=quality, model_concordance=np.exp(-quality), repeat_losses=losses,
+                technical_qc=technical.all(axis=0), audit=logs)
 
 
 def prune_donors(y, w, quality, ids, config: Config):
     """Never deletes rows from the evaluation population. Returns training weights."""
-    valid = (w > 0) & np.isfinite(quality["oof_loss"])
+    valid = (w > 0) & quality["technical_qc"] & np.isfinite(quality["oof_loss"])
+    if not valid.any(): raise ValueError("No QC-eligible donors with known outcomes and OOF quality")
     p, err = quality["oof_probability"], quality["oof_loss"]
     edges = np.unique(np.quantile(p[valid], np.linspace(0, 1, config.risk_bins + 1)))[1:-1]
     bins = np.searchsorted(edges, p, side="right")
@@ -522,16 +569,25 @@ class TwinABM:
         parts = {r: np.flatnonzero(roles == r) for r in ROLES}
         b, t, gate, cal = (parts[r] for r in ROLES[:4])
         self.prep = NumericPrep().fit(X[b], a)
-        self.km = CensoringKM().fit(time[b], event[b], a.horizon, a.min_censor_survival)
+        initial_qc = self.prep.technical_qc(X[b])
+        self.km = CensoringKM().fit(time[b][initial_qc], event[b][initial_qc], a.horizon, a.min_censor_survival)
         # Audit outcomes are not even passed to label/weight computation during fit.
         non_audit = roles != "calibration_audit"
         y, w = np.zeros(len(X), int), np.zeros(len(X))
         y[non_audit], w[non_audit] = self.km.labels_weights(time[non_audit], event[non_audit])
-        for r in ROLES[:4]: check_classes(y[parts[r]], w[parts[r]], a.min_events)
         self.panel_indices = choose_model_panel(self.prep, X[b], y[b], w[b], a)
         self.panel_names = [self.feature_names[j] for j in self.panel_indices]
+        technical = self.prep.technical_qc(X)
+        self.molecular_qc_version = VERSION
+        self.km = CensoringKM().fit(time[b][technical[b]], event[b][technical[b]], a.horizon, a.min_censor_survival)
+        y[non_audit], w[non_audit] = self.km.labels_weights(time[non_audit], event[non_audit])
+        horizon_known = w > 0
+        w *= technical
+        for r in ROLES[:4]: check_classes(y[parts[r]], w[parts[r]], a.min_events)
         z = self.prep.transform(X)
         quality = crossfit_quality(X[b], time[b], event[b], ids[b], groups[b], a)
+        oof_qc = quality['technical_qc'].copy()
+        quality['technical_qc'] &= technical[b]
         pruning = prune_donors(y[b], w[b], quality, ids[b], a)
         multipliers = {"full":np.ones(len(b)), "clean":pruning["keep"].astype(float),
                        "soft":pruning["soft"], "random":pruning["random_keep"].astype(float)}
@@ -552,7 +608,8 @@ class TwinABM:
         for arm, select in (("full", eligible), ("clean", pruning["keep"])):
             bb = b[select]
             bank = TwinBank().fit(z[bb], y[bb], w[bb], ids[bb], groups[bb], quality["oof_loss"][select], a, common_pca)
-            bank.calibrate_radius(z[t], ids[t], groups[t])
+            tt = t[technical[t]]
+            bank.calibrate_radius(z[tt], ids[tt], groups[tt])
             self.banks[arm] = bank
         self.calibrators = {}
         pred, _ = self._raw(X[cal], ids[cal], groups[cal])
@@ -574,15 +631,22 @@ class TwinABM:
         cp, cd = self._calibrated(X[cal], ids[cal], groups[cal])
         score, _ = self._scores(cp, cd, ids[cal])
         self.rules = {}
-        technical = cd["technical_qc"]
+        calibration_qc = cd["technical_qc"]
         for name, values in score.items():
-            allowed = technical if name in ("confidence", "lowrisk", "random") else technical & cd["supported"]
+            allowed = calibration_qc if name in ("confidence", "lowrisk", "random") else calibration_qc & cd["supported"]
             for q in a.coverages:
                 self.rules[(name,q)] = FrozenRule().fit(values, allowed, ids[cal], q, a.seed+91)
-        self.risk_edges = np.unique(np.quantile(cp["elasticnet_full"], np.linspace(0, 1, 11)))[1:-1]
-        self.quality_edges = np.unique(np.quantile(score[a.selector], np.linspace(0,1,6)))[1:-1]
+        self.risk_edges = np.unique(np.quantile(cp["elasticnet_full"][calibration_qc], np.linspace(0, 1, 11)))[1:-1]
+        self.quality_edges = np.unique(np.quantile(score[a.selector][calibration_qc], np.linspace(0,1,6)))[1:-1]
         self.training_audit = dict(oof=quality["audit"], pruning=pruning["audit"], known_donors=int(eligible.sum()),
             retained_donors=int(pruning["keep"].sum()), build_n=len(b),
+            molecular_qc_version=VERSION,
+            technical_QC_excluded=int((~quality['technical_qc']).sum()),
+            profile_discordance_excluded=int((eligible & ~pruning['keep']).sum()),
+            outcome_unavailable_N=int((~horizon_known[b]).sum()),
+            molecular_qc_features=[self.feature_names[j] for j in self.prep.molecular_qc_columns],
+            molecular_panel_features=[self.feature_names[j] for j in self.prep.molecular_columns],
+            sample_missing_threshold=a.sample_missing,
             selected_panel=self.panel_names, panel_budget=a.panel_size,
             selected_zero_pilot_coefficients=self.prep.panel_pilot_zero_count,
             final_nonzero_coefficients={n:int(np.sum(np.abs(m.coef_[0])>1e-10)) for n,m in self.models.items() if hasattr(m,"coef_")},
@@ -591,23 +655,39 @@ class TwinABM:
             retained_cases=int(np.sum(y[b][pruning["keep"]])), known_cases=int(np.sum(y[b])),
             literal_pruning_is_supervised_selection_not_proof_of_noise=True,
             roles={r:dict(N=len(parts[r]),cases=int(y[parts[r]].sum()) if r != "calibration_audit" else None,
+                         technical_QC_excluded=int((~technical[parts[r]]).sum()),
                          id_hash=fingerprint(ids[parts[r]])) for r in ROLES})
         self.donor_table = dict(eid=ids[b], group=groups[b], oof_probability=quality["oof_probability"],
             oof_sd=quality["oof_sd"], oof_loss=quality["oof_loss"],
             model_concordance=quality["model_concordance"], retained=pruning["keep"],
-            soft_weight=pruning["soft"], random_retained=pruning["random_keep"], horizon_known=eligible)
+            soft_weight=pruning["soft"], random_retained=pruning["random_keep"], horizon_known=horizon_known[b],
+            technical_qc=quality['technical_qc'], oof_technical_qc=oof_qc, panel_technical_qc=technical[b],
+            molecular_missing_fraction=self.prep.missing(X[b]),
+            donor_eligible=eligible, technical_QC_excluded=~quality['technical_qc'],
+            profile_discordance_excluded=eligible & ~pruning['keep'])
         self.frozen = True
         # calibration_audit labels have not been used for fitting or threshold choice.
         return self
 
     def _raw(self, X, ids, groups):
+        if getattr(self, 'molecular_qc_version', None) != VERSION:
+            raise RuntimeError("ABM molecular QC requires an explicit refit in a new run; preserve the old snapshot")
+        qc = self.prep.technical_qc(X)
         z = self.prep.transform(X)
         pred = {name:model.predict_proba(z)[:, 1] for name,model in self.models.items()}
         diag = None
         for arm, bank in self.banks.items():
-            pred["twin_"+arm], d = bank.predict(z, ids, groups, pred["elasticnet_full"])
-            if arm == "clean": diag = d
-        diag["technical_qc"] = self.prep.missing(X) <= self.config.sample_missing
+            prob, d = bank.predict(z[qc], ids[qc], groups[qc], pred["elasticnet_full"][qc])
+            pred["twin_"+arm] = pred["elasticnet_full"].copy()
+            pred["twin_"+arm][qc] = prob
+            if arm == "clean":
+                diag = {name:np.zeros(len(X), dtype=value.dtype) for name,value in d.items()}
+                for name,value in d.items(): diag[name][qc] = value
+                for name in ('radius_ratio', 'nearest_radius_ratio'): diag[name][~qc] = 100.
+                diag['donor_loss'][~qc] = 10.
+        diag["technical_qc"] = qc
+        diag["molecular_missing_fraction"] = self.prep.missing(X)
+        diag["frozen_molecular_missing_fraction"] = self.prep.missing(X, panel=False)
         return pred, diag
 
     def _calibrated(self, X, ids, groups):
@@ -654,7 +734,8 @@ class TwinABM:
             masks[f"{name}:{q:g}"] = rule.apply(scores[name], eligible, ids)
         selected = masks[f"{self.config.selector}:{self.config.primary_coverage:g}"]
         p["fallback_policy"] = np.where(d["technical_qc"], np.where(selected, p[self.config.primary], p["elasticnet_full"]), np.nan)
-        reason = np.where(~d["technical_qc"],"technical_qc",np.where(~d["supported"],"no_adequate_twins",
+        qc_reason = np.where(d['molecular_missing_fraction'] == 1, 'all_panel_molecules_missing', 'molecular_missingness_exceeds_threshold')
+        reason = np.where(~d["technical_qc"],qc_reason,np.where(~d["supported"],"no_adequate_twins",
                     np.where(selected,"selected","below_frozen_quality_cutoff")))
         return dict(eid=ids, group=groups, probability=p, diagnostics=d, estimated_error=est,
                     masks=masks, selected=selected, reason=reason, selector_scores=scores,
