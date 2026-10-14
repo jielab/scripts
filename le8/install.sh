@@ -41,7 +41,7 @@ while (($#)); do
     case "$1" in
     --report) profile=report; shift ;;
     --abm) profile=abm; shift ;;
-    --all) profile=tabicl; shift ;;
+    --all) profile=abm; shift ;;
     --validation) profile=validation; shift ;;
     --env) mode=conda; environment_name=${2:?--env requires le8 or cigma}; shift 2 ;;
     --print-environment) mode=print; environment_name=${2:?--print-environment requires le8 or cigma}; shift 2 ;;
@@ -59,7 +59,7 @@ Usage:
 Main dependencies come from environment.yml; the isolated CIGMA recipe is in this script.
 No separate requirements.txt or CIGMA YAML file is needed.
 Default: report Python dependencies + Shiny/workbook R packages.
---abm adds reference ABM; --all also adds TabICLv2; --validation adds pytest to --all.
+--abm / --all add current twin/deviation dependencies; --validation also adds pytest.
 --env creates or updates the complete named Conda environment.
 CIGMA stays isolated in le8-cigma; select it with C5_CIGMA_PYTHON when needed.
 --print-environment writes a standard Conda YAML recipe to stdout.
@@ -91,7 +91,6 @@ environment_recipe le8 | awk -v profile="$profile" '
     sub(/^[[:space:]]*-[[:space:]]*/, "", package)
     if (package ~ /^[A-Za-z0-9_.-]+=[^=]/) sub(/=/, "==", package)
     if (group=="report" || (profile!="report" && group=="abm") ||
-        ((profile=="tabicl" || profile=="validation") && group=="tabicl") ||
         (profile=="validation" && group=="validation")) print package
   }
 ' > "$requirement_file"

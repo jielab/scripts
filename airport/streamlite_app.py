@@ -29,7 +29,7 @@ tab1, tab2 = st.tabs(["实时航班", "历史航班"])
 # Historical flights tab
 with tab2:
 	# Load data from data folder
-	routes = pd.read_csv("data/flights.v3.3.3.csv")
+	routes = pd.read_csv("data/flights.csv")
 
 	col1, col2, col3 = st.columns(3)
 

@@ -179,19 +179,23 @@ build_dashboard <- function(analysis_root, final_root, score_dir, pca_dir, ances
   }
   new_layout <- file.exists(file.path(prs,"split.rds")) || dir.exists(file.path(prs,"scores"))
   pf_prefix <- if(new_layout) "" else "3.prsformer."
-  for (kind in c("performance","training")) {
+  pf_split <- file.path(prs,paste0(pf_prefix,"split.rds"))
+  pf_scores <- setNames(vapply(traits,function(trait) {
+    if(new_layout) file.path(prs,"scores",trait,"predictions.rds") else if(identical(prs_root,analysis_root))
+      file.path(score_dir,trait,"3.prsformer.scores.rds") else file.path(prs_root,"scores",trait,"3.prsformer.scores.rds")
+  },character(1)),traits)
+  pf_available <- file.exists(pf_split) & file.exists(pf_scores)
+  names(pf_available) <- traits
+  # Cached training artifacts alone do not make this optional method available.
+  if(any(pf_available)) for (kind in c("performance","training")) {
     path <- file.path(prs,paste0(pf_prefix,kind,".xlsx"))
     z <- read_sheets(path)
     add_tables("prsformer","all",prefix_tables(z,paste0(kind,"_")))
     add_assets("prsformer","all",prs,paste0(pf_prefix,kind,".png"))
   }
   for (trait in traits) {
-    pf_score <- if(new_layout) file.path(prs,"scores",trait,"predictions.rds") else if(identical(prs_root,analysis_root))
-      file.path(score_dir,trait,"3.prsformer.scores.rds") else file.path(prs_root,"scores",trait,"3.prsformer.scores.rds")
-    pf_split <- file.path(prs,paste0(pf_prefix,"split.rds"))
-    pf_available <- file.exists(pf_score)&&file.exists(pf_split)
-    add_status("prsformer",trait,if(pf_available) "available" else "missing",
-      if(!pf_available) "尚无完整预测和测试名单，请完成 PRSformer 运行" else if(new_layout)
+    pf_score <- pf_scores[[trait]]
+    if(pf_available[[trait]]) add_status("prsformer",trait,"available",if(new_layout)
         "独立训练指标仅描述本模型；跨方法比较以 final 为准" else "旧版输出：测试名单兼容性须由 final 验证")
     gr <- file.path(grid_root,trait)
     available <- file.exists(file.path(gr,"grid.test_individuals.rds"))
@@ -238,8 +242,6 @@ build_dashboard <- function(analysis_root, final_root, score_dir, pca_dir, ances
     findings[[length(findings)+1L]] <- data.table(trait=trait,category="comparison",text=paste0(
       if(stale) "比较报告早于部分输入或输入已改变，请重跑 final。" else "已有保存的比较报告。",
       "纳入方法：",paste(found,collapse="、"),"。"))
-    if(!"PRSformer" %in% found) findings[[length(findings)+1L]] <- data.table(trait=trait,category="pending",
-      text="PRSformer 尚未纳入这份比较；完成共享测试名单训练后重新运行 final。")
     # A point-estimate winner is descriptive, never a significance or generalization claim.
     if(!stale) for (group in unique(perf$target)) {
       z <- perf[target==group & is.finite(estimate)]
@@ -269,9 +271,11 @@ build_dashboard <- function(analysis_root, final_root, score_dir, pca_dir, ances
   write_book(list(modules=inv,findings=findings,performance=perf),file.path(snapshot,"summary.xlsx"))
   copy_result(file.path(snapshot,"summary.xlsx"),file.path(final_root,"summary.xlsx"))
   esc <- function(x) { x<-gsub("&","&amp;",as.character(x),fixed=TRUE); x<-gsub("<","&lt;",x,fixed=TRUE); gsub('"',"&quot;",x,fixed=TRUE) }
+  module_labels <- c(pca="PCA",csx="CSx",disco="Disco",prsformer="PRSformer",abm="ABM")
+  module_labels <- module_labels[names(module_labels) %in% inv$module]
   html <- c('<!doctype html><html lang="zh"><meta charset="utf-8"><title>GRID 综合结果</title>',
     '<style>body{font:16px system-ui;max-width:1200px;margin:40px auto;padding:0 24px;color:#183139;background:#f6f8f7}h1{font-size:36px}section{background:white;padding:24px;margin:20px 0;border-radius:12px}img{max-width:100%}li{margin:10px 0}a{color:#14786d}</style>',
-    '<h1>GRID · 综合结果</h1>',paste0('<p>',esc(value$generated_at),' · PCA / CSx / Disco / PRSformer / ABM</p>'),
+    '<h1>GRID · 综合结果</h1>',paste0('<p>',esc(value$generated_at),' · ',paste(module_labels,collapse=" / "),'</p>'),
     '<p><a href="summary.xlsx">下载综合汇总</a> · 交互浏览：运行 <code>./grid.sh shiny</code></p>',
     '<section><h2>结果解读</h2><ul>',paste0('<li>',esc(findings$trait),'：',esc(findings$text),'</li>'),'</ul></section>',
     '<section><h2>模块状态</h2><ul>',paste0('<li>',esc(inv$module),' / ',esc(inv$trait),' — ',esc(inv$status),'：',esc(inv$note),'</li>'),'</ul></section>',

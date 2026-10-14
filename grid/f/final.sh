@@ -13,7 +13,7 @@ Example usage:
   # Optional: one trait or validation only.
   bash grid.sh final --trait height
   bash grid.sh final --check
-  # Rebuild the five-module summary from existing reports, without refitting.
+  # Rebuild the available-module summary from existing reports, without refitting.
   bash grid.sh final --summary-only
 
 Defaults: height,ldl,t2dm; ct for height/ldl, baseline dt for t2dm.
@@ -31,6 +31,7 @@ Inputs:
   --prsformer-root DIR         Parent containing prsformer/split.rds and
                               prsformer/scores/TRAIT/predictions.rds; default parent
                               of --grid-root. Older output names remain readable.
+                              Optional: a missing prediction file or split skips PRSformer.
   --grid-file FILE|none        Override/disable ABM; requires --grid-split FILE.
   --prsformer-file FILE|none   Override/disable PRSformer; requires --prsformer-split FILE.
   --pheno-file FILE            /mnt/d/data/ukb/phe/Rdata/all.rds.
@@ -53,7 +54,7 @@ Evaluation:
   --min-n N                   100 per ancestry/bin.
   --write-predictions TRUE|FALSE  FALSE; private individual predictions use RDS.
   --out-root DIR              /mnt/d/analysis/grid/final; one subdirectory per trait.
-  --analysis-root DIR         /mnt/d/analysis/grid; five-module report namespace.
+  --analysis-root DIR         /mnt/d/analysis/grid; module report namespace.
   --pca-dir DIR               PCA QC workbook/figure directory; default beside --pca-file.
   --summary-only              Publish available PCA/CSx/Disco reports and summarize
                              saved comparisons. Marks stale comparisons; no model fitting.
@@ -64,7 +65,8 @@ Evaluation:
 
 Original Yeval options for distance bins, posterior uncertainty, covariates, folds,
 COJO inputs and prevalence remain supported. Each figure has a matching XLSX table.
-Missing optional methods are reported; malformed or incompatible learned results fail.
+Missing PRSformer results are skipped and omitted from the summary.
+Explicitly requested missing inputs and malformed or incompatible learned results fail.
 HELP
 }
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac

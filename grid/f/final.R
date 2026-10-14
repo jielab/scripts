@@ -334,8 +334,6 @@ load_learned <- function() {
 	new_layout <- file.exists(new_split) || dir.exists(file.path(prs_root, "prsformer", "scores"))
 	prs_split <- if (new_layout) new_split else file.path(prs_root, "prsformer", "3.prsformer.split.rds")
 	prs_default <- if (new_layout) new_scores else if (identical(prs_root, default_root)) file.path(score_dir, "3.prsformer.scores.rds") else file.path(prs_root, "scores", Y, "3.prsformer.scores.rds")
-	if (new_layout && is.null(arg("prsformer-file")) && is.null(arg("prsformer-split")) && (file.exists(new_split) != file.exists(new_scores)))
-		stop("Incomplete PRSformer output for ", Y, ": need ", new_split, " and ", new_scores, "; finish PRSformer publication before final")
 	specs <- list(
 		ABM = list(file = arg("grid-file", file.path(grid_root, Y, "grid.test_individuals.rds")), split = arg("grid-split", file.path(grid_root, "grid.split.rds")), prediction = "GRID_policy", outcome = "y"),
 		PRSformer = list(file = arg("prsformer-file", prs_default), split = arg("prsformer-split", prs_split), prediction = "prediction", outcome = "outcome"))
@@ -343,6 +341,15 @@ load_learned <- function() {
 	for (method in names(specs)) {
 		spec <- specs[[method]]
 		if (identical(spec$file, "none")) next
+		if (method == "PRSformer") {
+			missing <- c(spec$file, spec$split)[!file.exists(c(spec$file, spec$split))]
+			if (length(missing)) {
+				if (!is.null(arg("prsformer-file")) || !is.null(arg("prsformer-split")))
+					stop("Missing requested PRSformer input: ", paste(missing, collapse = ", "))
+				message("Skipping optional PRSformer for ", Y, ": missing ", paste(missing, collapse = ", "), "; evaluating other available methods.")
+				next
+			}
+		}
 		if (!file.exists(spec$file)) {
 			explicit <- arg(if (method == "ABM") "grid-file" else "prsformer-file")
 			if (!is.null(explicit)) stop("Missing requested ", method, " predictions: ", spec$file)
@@ -1176,7 +1183,7 @@ yeval_write_results(out, as.data.frame(performance), as.data.frame(comparison), 
 	as.data.frame(rbindlist(fold_coefficients)), as.data.frame(rbindlist(audit, fill = TRUE)), individual, if (length(all_predictions)) rbindlist(all_predictions,
 		fill = TRUE) else NULL, plot_data)
 
-methods_text <- c(if (heldout) paste0(if (allow_test_intersection) "Explicit legacy/custom/sensitivity analysis uses the intersection of saved test IDs; original and retained counts are in final.models.xlsx/test_cohort. " else "Saved learned methods use identical frozen outer test registries and complete predictions for observed endpoints. ", "Verified missing trait outcomes are excluded; missing-outcome and prediction-coverage counts are in final.models.xlsx/test_cohort. Only baseline regressions are fitted, on the common development intersection. Training budgets can differ between methods. PRSformer and ABM are neither recalibrated nor retrained here."), paste0("# ", Y, " PRS evaluation"), "", paste("Outcome:", outcome_definition), paste("Covariates:", paste(covars,
+methods_text <- c(if (heldout) paste0(if (allow_test_intersection) "Explicit legacy/custom/sensitivity analysis uses the intersection of saved test IDs; original and retained counts are in final.models.xlsx/test_cohort. " else "Saved learned methods use identical frozen outer test registries and complete predictions for observed endpoints. ", "Verified missing trait outcomes are excluded; missing-outcome and prediction-coverage counts are in final.models.xlsx/test_cohort. Only baseline regressions are fitted, on the common development intersection. Training budgets can differ between methods. Saved learned methods (", paste(fixed_methods, collapse = ", "), ") are neither recalibrated nor retrained here."), paste0("# ", Y, " PRS evaluation"), "", paste("Outcome:", outcome_definition), paste("Covariates:", paste(covars,
 	collapse = ", ")), paste("Evaluation:", ci_text), "", "## Prediction metrics", "- Continuous: OOF_residual_correlation_R2 = cor(y - baseline_OOF, full_OOF - baseline_OOF)^2. This is covariate-adjusted squared prediction correlation. All residualization, score standardization and combination fitting use training folds.",
 	"- OLS full_OOF - baseline_OOF equals the score-weighted, training-covariate-residualized score. No regression is fitted within a held-out distance bin.",
 	"- Squared correlation does not assess calibration or direction. OOF_predictive_R2 = full_R2 = 1 - SSE_full / sum((y - mean(y))^2) evaluates the same frozen OOF predictions and can be negative. prediction_r, RMSE, baseline_R2, delta_R2 and SSE_partial_R2 = 1 - SSE_full / SSE_baseline remain in final.comparison.xlsx.",

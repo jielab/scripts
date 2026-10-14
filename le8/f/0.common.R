@@ -9,7 +9,7 @@ le8_table_private_columns <- c(
 )
 le8_table_private <- function(x) {
 	names <- tolower(names(x))
-	# S7 aggregate metrics use reference_id for a MODEL; participant reference IDs
+	# Aggregate model metrics use reference_id for a MODEL; participant reference IDs
 	# remain private in every other schema, and eid columns are always private.
 	if (all(c('run_id', 'model_id', 'primary_id', 'reference_id', 'n', 'uno_c_horizon') %in% names))
 		names <- names[names != 'reference_id']
@@ -368,22 +368,13 @@ le8_table_result_groups <- function(names, directory) {
 			penalty = 'penalty', networks = 'state_network', imaging = 'imaging'
 		),
 		c5 = c(cellulation = 'cell'),
-		abm_reference = c(validation = 'test_|subgroup|development_metrics',
-			development = 'tuning|oof_fits|embedding|metric_features|mosaic_weights|token_membership',
-			selective_training = 'c1[.]selective[.](training_comparison|model_tuning|crossfit_audit)',
-			selective_validation = 'c1[.]selective[.](risk_stratified_gain|gate_diagnostics|audit_contrasts|decision_curve)'),
-		abm_selective_attention = c(validation = 'test_|coverage|paired|development_metrics|audit_decision|audit_contrasts|censoring_sensitivity',
-			training = 'model_registry|model_tuning|gate_training|crossfit_audit|fit_status',
-			inputs = 'preprocessing_audit|role_audit|reference_diagnostics'),
-		abm_tabicl = c(model = 'test_|tuning|learning_curve|feature_selection'),
-		attention = c(interventions = 'intervention'),
 		le8_annotations = c(protein_interactions = 'string_physical'),
 		Yin = c(connections = 'connection'), YinYang = c(connections = 'connection'),
 		NULL
 	)
 	if (module %in% c('final', 'shiny')) rules <- c(
 		catalogue = '^(tables|figures|status|question_sources)[.]',
-		abm = '(questions[.]|question_)(abm_|s7_)', cell = '(questions[.]|question_)(cell|cigma)',
+		abm = '(questions[.]|question_)(abm_|deviation_)', cell = '(questions[.]|question_)(cell|cigma)',
 		metabolite = '(questions[.]|question_)met_',
 		dandelion = 'dandelion', nonlinear = 'nonlinear|age_models', mediation = 'mediation',
 		state_projection = 'state_projection',
@@ -608,7 +599,7 @@ le8_table_stores <- function(root) {
 le8_tables_pack <- function(root, clean = TRUE) {
 	root <- normalizePath(root, winslash = '/', mustWork = TRUE)
 	paths <- list.files(root, pattern = '[.](csv|tsv|jsonl)([.]gz)?$|[.]xlsx$|[.]json$', recursive = TRUE, full.names = TRUE, all.files = TRUE)
-	internal <- grepl('^c5[.].*[.]json$',basename(paths)) | grepl('/abm_(reference|tabicl|selective_attention)(/attention)?/[^/]+[.]json$', paths)
+	internal <- grepl('^c5[.].*[.]json$',basename(paths))
 	paths <- paths[!grepl('[.]json$', paths) | internal]
 	paths <- le8_table_result_paths(paths, root)
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
@@ -690,7 +681,6 @@ le8_tables_restore <- function(root) {
 	for (path in paths) {
 		x <- le8_table_load(dirname(path))
 		for (name in names(x$files)) le8_table_restore_entry(x$files[[name]], dirname(path), name)
-		if (grepl('/abm_(reference|tabicl|selective_attention)/', path) && Sys.getenv('LE8_TABLE_ABM_PRIVATE', 'TRUE') != 'TRUE') next
 		for (filename in names(x$private_files)) {
 			if (basename(filename) != filename) stop('Unsafe private table path')
 			data <- readRDS(file.path(dirname(path), filename))
@@ -3229,7 +3219,7 @@ le8_mock_enrich <- function(a, enrich, outdir, enrich_prev = tibble()) {
 	cached <- all(file.exists(file.path(rawdir, c('c1.mock_function_terms.csv', 'c1.mock_tf_edges.csv', 'c1.mock_ppi_edges.csv'))))
 	# Download dictionaries are reusable inputs; only derived analyses are published.
 	annotation_cache <- le8_cache_dir('annotations',basename(outdir))
-	py <- Sys.which('python3') ; status <- if (LE8_REUSE_RESULTS && cached) 0L else if (nzchar(py)) system2(py, shQuote(c(file.path(Sys.getenv('LE8_FDIR'), 'c1.abm.py'), 'annotations', sf, rawdir, annotation_cache)), timeout = 600) else 1L
+	py <- Sys.which('python3') ; status <- if (LE8_REUSE_RESULTS && cached) 0L else if (nzchar(py)) system2(py, shQuote(c(file.path(Sys.getenv('LE8_FDIR'), 'c1.annotations.py'), sf, rawdir, annotation_cache)), timeout = 600) else 1L
 	rd <- function(n) {
 		f <- file.path(rawdir, n) ; if (status == 0L && file.exists(f)) as_tibble(data.table::fread(f)) else tibble()
 	}

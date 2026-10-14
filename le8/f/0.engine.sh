@@ -980,7 +980,7 @@ preflight() {
 		echo "  MISSING: MR-link-2 Python dependencies (including bitarray). Run: conda env update -n le8 -f $script_dir/../environment.yml"
 		bad=1
 	fi
-	for f in "${files[@]}" 0.common.R final.R c1.abm.py c2.mr_link2.py c2.cause.sh c3.coloc_GPU.py c3.coloc_GPU.sh; do
+	for f in "${files[@]}" 0.common.R final.R c1.annotations.py c2.mr_link2.py c2.cause.sh c3.coloc_GPU.py c3.coloc_GPU.sh; do
 		[[ -s "$fdir/$f" ]] || {
 			echo "  MISSING: $fdir/$f"
 			bad=1

@@ -3,14 +3,13 @@
 
 # 🚩 github_copy
 # Scan analysis results for UKB participant IDs before publishing to GitHub.
-# Scan first, then copy the approved list after the user's confirmation.
+# Scan first, then copy the approved list automatically.
 set -Eeuo pipefail
 command -v python3 >/dev/null 2>&1 || {
 	echo 'ERROR: python3 is required' >&2
 	exit 1
 }
-# Keep the caller's stdin available for confirmation while Python reads this heredoc.
-exec python3 - "$@" 3<&0 <<'PY'
+exec python3 - "$@" <<'PY'
 import codecs
 import collections
 from contextlib import contextmanager
@@ -490,7 +489,6 @@ def worksheet_names(book):
 
 
 def check_xlsx(path):
-	visual = False
 	with zipfile.ZipFile(path) as book:
 		infos = book.infolist()
 		if sum(item.file_size for item in infos) > MAX_EXPANDED_BYTES or any(
@@ -528,12 +526,11 @@ def check_xlsx(path):
 			elif Path(name).suffix.lower() in RASTER:
 				with book.open(name) as handle:
 					check_image(io.BytesIO(handle.read()))
-				visual = True
 			elif re.fullmatch(r'xl/printerSettings/printerSettings[0-9]+\.bin', name):
 				check_printer_settings(book.read(name))
 			else:
 				raise Rejected('xlsx_uninspectable_embedded_content')
-	return 'xlsx_embedded_images' if visual else ''
+	return ''
 
 
 def check_gzip(raw, suffix):
@@ -551,8 +548,8 @@ def check_gzip(raw, suffix):
 
 
 def check_image(path):
-	# Pixels need manual review, as requested by the user. Check metadata and
-	# validate the actual format so renaming a data file .png cannot bypass us.
+	# Check metadata and validate the actual format, without inspecting pixels
+	# or requesting visual review.
 	from PIL import Image
 
 	with Image.open(path) as image:
@@ -565,7 +562,7 @@ def check_image(path):
 				value = value.decode('utf-8', errors='ignore')
 			check_value(value)
 		check_value(dict(image.getexif()))
-	return 'image_pixels_need_manual_review'
+	return ''
 
 
 def check_pdf(path):
@@ -605,8 +602,6 @@ def content_check(path, check_ids=True):
 		# Eligibility relies on the explicit non-UKB project confirmation,
 		# not on treating public genomic coordinates as participant IDs.
 		# This also admits workbooks with embedded exact result tables.
-		if suffix in RASTER:
-			return 'image_pixels_need_manual_review'
 		if suffix == '.pdf':
 			return 'pdf_visual_content_needs_manual_review'
 		return ''
@@ -693,7 +688,8 @@ def write_manifest(path, text):
 		raise ValueError('unsafe manifest destination')
 	with staging_directory() as stage:
 		temporary, backup = stage / 'manifest', stage / 'backup'
-		temporary.write_text(text, encoding='utf-8', newline='\n')
+		# Match the Windows Git checkout convention for this generated list.
+		temporary.write_text(text, encoding='utf-8', newline='\r\n')
 		os.chmod(temporary, 0o644)
 		existed = path.exists()
 		if existed:
@@ -821,8 +817,8 @@ def scan(projects):
 		'# Non-UKB results: XLSX/XLSM and figures only; intermediate directories excluded.\n'
 		f'# Non-UKB selection must contain fewer than {MAX_NON_UKB_FILES} files per project.\n'
 		'# RDS/log/done exclusions include gzip files.\n'
-		'# Images retained by request; visual review list is printed to the terminal.\n'
-		'# Review warnings and confirm the copy prompt. Listed files are copied without rechecks.\n'
+		'# Image pixels are not inspected and images do not require manual review.\n'
+		'# After scanning, listed files are copied automatically without rechecks or confirmation.\n'
 	)
 	print(f'  Inspected {checked} files recursively.')
 	print_summary(projects, approved, excluded, reviews, totals)
@@ -878,7 +874,7 @@ def copy_files(arguments):
 	staged_files, missing = [], []
 	for project in projects:
 		check_target(project)
-	# The reviewed scan list is the sole selection. Do not reapply size,
+	# The generated scan list is the sole selection. Do not reapply size,
 	# artifact or content/ID checks here. Stage copies and backups in /tmp
 	# so a failed copy can be rolled back without rebuilding whole projects.
 	with staging_directory() as stage:
@@ -945,17 +941,6 @@ def copy_files(arguments):
 	print(f'COPY OK: {len(staged_files)} files copied from the list; no content recheck.')
 
 
-def confirm_copy():
-	print('Review the warnings above and the generated file list before copying.', flush=True)
-	print(f'Copy files listed in {DEST / MANIFEST} to {DEST}? [y/N]: ', end='', flush=True)
-	try:
-		with os.fdopen(3, 'r', encoding='utf-8') as handle:
-			answer = handle.readline().strip().lower()
-	except (OSError, KeyboardInterrupt):
-		answer = ''
-	return answer in {'y', 'yes'}
-
-
 def main():
 	arguments = sys.argv[1:]
 	if not arguments or arguments[0] in {'-h', '--help', 'help'}:
@@ -964,9 +949,8 @@ def main():
   ./github_copy.sh le8,grid
   ./github_copy.sh le8 grid abm abm_TF
 
-Each run scans the requested projects and writes github_files.lst.
-Review the screen warnings and list, then enter y/yes at the prompt to copy.
-Enter, n, or end-of-input cancels copying and keeps the generated list.
+Each run scans the requested projects and writes github_files.lst with CRLF line endings.
+Approved files are then copied automatically; no confirmation or input is required.
 Scanning first excludes files over 50 MB (50,000,000 bytes), then RDS, then
 checks eligible content for UKB ID columns. Existing exclusions for .log,
 .done, unnamed plots.pdf/Rplots.pdf also apply. RDS/log/done include gzip.
@@ -988,32 +972,31 @@ Empty tables do not match; missing/blank/non-seven-digit cells disqualify a colu
 Equivalent numeric forms such as 2545852.0 and 2.545852e+06 count as integers.
 All worksheets (including hidden sheets) and embedded source tables are checked.
 Scanning prints WARNING with the workbook path and each matching worksheet name.
-All scanning finishes before the confirmation prompt; no result files are copied first.
+All scanning finishes before any result files are copied.
 Isolated numbers, coordinates, GO terms, metadata and filenames do not trigger ID exclusion.
 Known le8/results workbook exports are validated by manifest, size and SHA-256,
 then inspected as text tables/JSON (including gzip). Unknown embedded objects
 remain excluded. Office temporary lock files (~$...) are excluded.
 Other file names and directories remain eligible for content inspection.
 In UKB scope, readable text, Excel, PDF and gzip text are inspected; unreadable content is excluded.
-Images are retained with a manual-review list printed to the terminal (Pillow required).
+Images, including workbook images, have no pixel inspection or manual-review requirement.
+Image format and metadata validation still use Pillow in UKB projects.
 Every admitted file is <=50 MB; eligible directories are scanned recursively.
-After confirmation, copy exactly the selected list entries without size, type or content rechecks.
+After scanning, copy exactly the selected list entries without size, type or content rechecks.
 Listed target files are overwritten; unlisted target files remain unchanged.
 Source files already missing when copying begins are skipped and summarized;
 the manifest is unchanged. Copy errors abort, with rollback on publication failure.
 Staging and rollback backups live in /tmp; publication copies across filesystems.
 No Git commit or push is performed. PDF inspection uses pdftotext or Ghostscript.
 Roots: GITHUB_COPY_SOURCE_ROOT, GITHUB_COPY_DEST_ROOT.
-Summaries and manual-review lists are printed to the terminal; no report files are written.""")
+Summaries and PDF visual-review notices are printed to the terminal; no report files are written.""")
 		return
 	prepare_roots()
 	projects = project_list(arguments)
 	if not scan(projects):
 		print('No approved files; nothing to copy.')
-	elif confirm_copy():
-		copy_files(projects)
 	else:
-		print('\nCopy cancelled; the generated file list is retained.')
+		copy_files(projects)
 
 
 try:

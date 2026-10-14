@@ -2,6 +2,9 @@
 # PRSformer: UKB genotype/phenotype alignment -> supervised training -> held-out scores.
 # Official architecture: https://github.com/23andMe/PRSformer (developed by 23andMe, Inc.).
 # Internal PRSformer module implementation; public entry: grid.sh prsformer; helper: f/prsformer.py.
+# Parse every stage before starting training so in-place script edits cannot
+# replay training/publication when a long-running command returns.
+{
 set -euo pipefail
 umask 077
 export PYTHONDONTWRITEBYTECODE=1
@@ -478,3 +481,7 @@ case $MODE in
 	predict) need_cache; run_command "${PREDICT[@]}" ;;
 	report) need_cache; run_command "${PUBLISH[@]}" ;;
 esac
+
+# Exit inside the parsed block without rereading the script from disk.
+exit 0
+}

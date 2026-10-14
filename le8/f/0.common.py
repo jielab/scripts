@@ -78,7 +78,7 @@ PRIVATE_COLUMNS = {
 
 def has_private_columns(columns):
 	names = [str(name).lower() for name in columns]
-	# S7 aggregate tables identify the comparator model with reference_id.
+	# Aggregate model tables may identify the comparator with reference_id.
 	if {'run_id', 'model_id', 'primary_id', 'reference_id', 'n', 'uno_c_horizon'} <= set(names):
 		names = [name for name in names if name != 'reference_id']
 	private = {re.sub(r"[^a-z0-9]", "", name) for name in PRIVATE_COLUMNS}
@@ -1150,97 +1150,6 @@ class Index:
 		)
 
 
-ABM_BACKENDS = {
-	"reference": ("reference", "v5_attention_allteachers"),
-	"tf": ("tabicl", "tabiclv2_finetuned"),
-	"tabicl": ("tabicl", "tabiclv2_finetuned"),
-	"selective_attention": ("selective_attention", "selective_attention"),
-}
-
-
-def result_candidates(root, trait, layer, kind, external_root=None):
-	root = Path(root)
-	backend, legacy_run = ABM_BACKENDS[kind]
-	base = root / trait / layer / "c1_correlate" / ("abm_" + backend)
-	candidates = [base]
-	if external_root is not None:
-		candidates.insert(0, Path(external_root) / trait / layer / legacy_run)
-	return candidates
-
-
-ABM_TABLES = [
-	"test_metrics.csv",
-	"raw_test_metrics.csv",
-	"approach_comparison.csv",
-	"paired_contrasts.csv",
-	"support_error_audit.csv",
-	"subgroup_metrics.csv",
-	"coverage_curve.csv",
-	"masked_feature_metrics.csv",
-	"masked_reconstruction_summary.csv",
-	"learning_curve.csv",
-	"embedding_diagnostics.csv",
-	"test_calibration.csv",
-	"test_calibration_groups.csv",
-]
-
-ABM_FIGURES = [
-	"Fig_coverage.png",
-	"Fig_masked_reconstruction.png",
-	"Fig_model_comparison.png",
-]
-
-
-def import_abm_results(
-	root, traits, layers, reference_root=None, tf_root=None, render_figures=False
-):
-	# Existing local results are read in place. Only explicit external results are copied.
-	for trait in traits:
-		for layer in layers:
-			for kind, external in [("reference", reference_root), ("tf", tf_root)]:
-				backend = "tabicl" if kind == "tf" else kind
-				target = root / trait / layer / "c1_correlate" / ("abm_" + backend)
-				source = next(
-					(
-						p
-						for p in result_candidates(root, trait, layer, kind, external)
-						if any(
-							(p / name).is_file() for name in ABM_TABLES + ABM_FIGURES
-						)
-					),
-					None,
-				)
-				if source is None:
-					continue
-				if source.resolve() != target.resolve():
-					target.mkdir(parents=True, exist_ok=True)
-					for name in ABM_TABLES + ABM_FIGURES + ["cohort_audit.json"]:
-						path = source / name
-						if not path.is_file():
-							continue
-						if path.stat().st_size > 128 * 1024**2:
-							raise ValueError(
-								f"External ABM aggregate is too large: {path}"
-							)
-						if name.endswith(".csv") and has_private_columns(
-							pd.read_csv(path, nrows=0).columns
-						):
-							raise ValueError(
-								f"Participant data cannot be imported as an aggregate: {path}"
-							)
-						shutil.copy2(path, target / name)
-				if kind == "reference" and render_figures:
-					subprocess.run(
-						[
-							sys.executable,
-							str(Path(__file__).with_name("c1.abm.py")),
-							"figures",
-							str(target),
-						],
-						check=True,
-					)
-
-
 def index_main(argv=None):
 	_load_index_dependencies()
 	p = argparse.ArgumentParser(description=__doc__)
@@ -1254,13 +1163,6 @@ def index_main(argv=None):
 		action="store_true",
 		help="Render question-led aggregate report figures",
 	)
-	p.add_argument(
-		"--import-abm",
-		action="store_true",
-		help="Import aggregate ABM outputs before indexing",
-	)
-	p.add_argument("--abm-root", type=Path)
-	p.add_argument("--abm-tf-root", type=Path)
 	a = p.parse_args(argv)
 	traits = a.Y.split(",")
 	layers = a.biom.split(",")
@@ -1270,15 +1172,6 @@ def index_main(argv=None):
 		p.error("Invalid outcome/layer")
 	if a.max_table_mb < 1:
 		p.error("--max-table-mb must be positive")
-	if a.import_abm:
-		import_abm_results(
-			a.analysis_root,
-			traits,
-			layers,
-			a.abm_root,
-			a.abm_tf_root,
-			render_figures=a.question_figures,
-		)
 	idx = Index(
 		a.analysis_root,
 		a.out or Path(os.getenv("LE8_BROWSER_INDEX", str(a.analysis_root / "shiny"))),
@@ -1425,9 +1318,6 @@ C4 connect (including interactions, nonlinearity, panel validation and reconstru
 	p.add_argument('--mrlink2-inner-threads',type=int,default=int(os.getenv('MRLINK2_INNER_THREADS','1')))
 	p.add_argument('--cpu-task-memory-gib',type=float,default=None)
 	p.add_argument('--gpu-jobs',type=int,default=int(os.getenv('LE8_GPU_JOBS','1')))
-	p.add_argument('--s7-retrieval-device',choices=['cpu','cuda'],default=None)
-	p.add_argument('--s7-attention-temperature-grid',default=None)
-	p.add_argument('--s7-reconstruction-weight',type=float,default=None)
 	p.add_argument("--seed", type=int, default=int(os.getenv("SEED", "2026")))
 	p.add_argument("--group-file", type=Path)
 	p.add_argument("--group-col", "--group-column", dest="group_col")
@@ -1439,29 +1329,6 @@ C4 connect (including interactions, nonlinearity, panel validation and reconstru
 	p.add_argument("--replace", choices=["TRUE", "FALSE"], default="FALSE")
 	p.add_argument("--memory-limit-gb", type=int, default=None)
 	p.add_argument("--memory-swap-gb", type=int, default=None)
-	p.add_argument(
-		"--abm-root",
-		type=Path,
-		help="Read existing external reference results; not a code dependency",
-	)
-	p.add_argument(
-		"--abm-tf-root",
-		type=Path,
-		help="Read existing external TF results; not a code dependency",
-	)
-	p.add_argument(
-		"--abm-backend",
-		"--abm-engine",
-		dest="abm_backend",
-		choices=["reference", "tabicl", "tf", "both"],
-		default="reference",
-		help="Unified ABM backends; reference defaults to selective_attention on CUDA, tf is an alias for tabicl",
-	)
-	p.add_argument(
-		"--abm-args",
-		default="",
-		help='Additional explicit ABM arguments, e.g. "--epochs 10 --device cuda"',
-	)
 	abm = p.add_mutually_exclusive_group()
 	abm.add_argument("--run-abm", dest="run_abm", action="store_true", default=None)
 	abm.add_argument("--skip-abm", dest="run_abm", action="store_false")
@@ -1617,74 +1484,13 @@ def dispatch_main(argv=None):
 			HERE / "0.common.py",
 			"index",
 			*report_base(),
-			"--import-abm",
 			"--max-table-mb",
 			a.max_table_mb,
 		]
-		for key in ["abm_root", "abm_tf_root"]:
-			if getattr(a, key) is not None:
-				cmd += ["--" + key.replace("_", "-"), str(getattr(a, key))]
 		if "final" in modules and not a.index_only:
 			cmd += ["--question-figures"]
 		call(cmd, env, a.dry_run)
 		indexed = True
-
-	abm_commands = []
-	if "c1_abm" in modules:
-		py = os.getenv("ABM_PYTHON") or sys.executable
-		more = shlex.split(a.abm_args) + (extra if modules == ["c1_abm"] else [])
-		for key in ('s7_retrieval_device','s7_attention_temperature_grid','s7_reconstruction_weight'):
-			if getattr(a,key) is not None:more += ['--'+key.replace('_','-'),str(getattr(a,key))]
-		mode_parser = argparse.ArgumentParser(add_help=False)
-		mode_parser.add_argument("--abm-design")
-		mode, _ = mode_parser.parse_known_args(more)
-		if mode.abm_design == "selective_attention" and a.abm_backend != "reference":
-			raise ValueError("selective_attention requires --abm-backend reference; tabicl/both are incompatible")
-		for Y in traits:
-			for layer in layers:
-				selected = "tabicl" if a.abm_backend == "tf" else a.abm_backend
-				for kind in (
-					["reference", "tabicl"] if selected == "both" else [selected]
-				):
-					worker = HERE / "c1.abm.py"
-					args = [
-						"--backend",
-						kind,
-						"--device",
-						"cuda",
-						"--abm-design",
-						"selective_attention" if kind == "reference" else "selective",
-						"--Y",
-						Y,
-						"--biom",
-						layer,
-						"--analysis-root",
-						str(a.analysis_root),
-						"--seed",
-						str(a.seed),
-					]
-					for key in ["group_file", "group_col", "end_date", "diagnosis_col", "outer_roster"]:
-						if shared[key]:
-							args += ["--" + key.replace("_", "-"), shared[key]]
-					if shared["shared_covariates"]:
-						args += ["--covariates", shared["shared_covariates"]]
-					if a.ukb_phe:
-						args += ["--ukb-phe", str(a.ukb_phe)]
-					if a.cores:
-						args += ["--cores", str(a.cores)]
-					if a.replace == "TRUE":
-						args += ["--replace"]
-					for key in ["memory_limit_gb", "memory_swap_gb"]:
-						v = getattr(a, key)
-						if v is not None:
-							args += ["--" + key.replace("_", "-"), str(v)]
-					abm_commands.append([py, worker, *args, "--r-bin", a.r_bin, *more])
-		# Fail before costly native C1 scans, using the selected ABM interpreter.
-		# Explicit evaluate/project/device/download actions must execute only once.
-		management = {"evaluate", "project", "--check-device", "--download-model", "--dry-run", "--help", "-h"}
-		if a.preflight or not management.intersection(more):
-			for cmd in abm_commands:
-				call([*cmd, "--preflight"], env, a.dry_run)
 
 	def phase(command,label,cores=None,gpu=False,memory=None):
 		if a.preflight:return call(command,env,a.dry_run)
@@ -1707,9 +1513,7 @@ def dispatch_main(argv=None):
 			phase(["bash", engine, module, *base, *native, *extra],module,
                 gpu=module=='c3_coloc' and env.get('RUN_GPU_COLOC','TRUE')=='TRUE')
 		elif module == "c1_abm":
-			if not a.preflight:
-				for cmd in abm_commands:
-					phase(cmd,"c1_abm",gpu="cpu" not in cmd)
+			call([sys.executable, HERE / 'pipeline.py', 'c1_abm', *argv[1:]], env, a.dry_run)
 		elif module == "c5_cellulation":
 			cmd = [sys.executable, HERE / "c5.cellulation.py", *base,
 				"--seed", str(a.seed), "--matched-draws", str(a.matched_draws)]
@@ -1751,7 +1555,7 @@ def dispatch_main(argv=None):
 				call(["bash", engine, "final", *base, *native, *extra], env, a.dry_run)
 			if not a.index_only and not a.preflight:
 				cmd = [sys.executable, HERE / "final.py", "report", *report_base()]
-				for key in ["out", "abm_root", "abm_tf_root"]:
+				for key in ["out"]:
 					if getattr(a, key) is not None:
 						cmd += ["--" + key.replace("_", "-"), str(getattr(a, key))]
 				if a.strict:
@@ -1933,21 +1737,12 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 					continue
 				relative = path.relative_to(root)
 				parts = relative.parts
+				# twin publishes its own transactional directories and LOCAL_ONLY files.
+				# The native workbook exporter must never repack these artifacts.
+				if any(x in {"abm_twin", "molecular_deviation", "evidence", "_pgs_fullprecision"} or x.startswith('_abm_staging_') for x in parts):
+					continue
 				if not owns_scope(relative, scopes):
 					continue
-				# Aggregate-only ABM reports never need checkpoints or participant matrices.
-				if not train_abm and any(
-					x in {"abm_reference", "abm_tabicl", "abm_selective_attention"} for x in parts
-				):
-					if (
-						path.suffix == ".rds"
-						or path.suffix in {".npy", ".npz", ".pt", ".joblib", ".ckpt"}
-						or any(
-							x in {"input", "neural", "quality_neural", "checkpoints"}
-							for x in parts
-						)
-					):
-						continue
 				stat = path.stat()
 				initial[str(relative)] = (stat.st_size, stat.st_mtime_ns)
 				target = work / relative
@@ -1967,8 +1762,6 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 			PYTHONPYCACHEPREFIX="/tmp/python-cache",
 		)
 		run_table_storage("--tables-restore", work, r_bin, env)
-		for path in work.rglob("c1.abm_import_manifest.csv"):
-			path.unlink()
 		new_args = []
 		skip = False
 		def map_path(value):
@@ -1985,10 +1778,6 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 				skip = True
 			elif value.startswith("--analysis-root="):
 				new_args.append("--analysis-root=" + str(work))
-			elif (i and argv[i - 1] == '--abm-args') or value.startswith('--abm-args='):
-				# A sibling such as results-external is not inside results.
-				prefix, content = ('--abm-args=', value.split('=', 1)[1]) if value.startswith('--abm-args=') else ('', value)
-				new_args.append(prefix + shlex.join([map_path(word) for word in shlex.split(content)]))
 			else:
 				new_args.append(map_path(value))
 		if not any(
@@ -2146,73 +1935,15 @@ def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 
 
 def share_viewer(root, output, r_bin):
-	import zipfile
-
-	root = root.resolve()
-	output = output.resolve()
-	if output.suffix.lower() != ".zip" or output.is_relative_to(root):
-		raise ValueError("Use a ZIP path outside the analysis result directory")
-	with tempfile.TemporaryDirectory(prefix="le8-share-", dir="/tmp") as scratch:
-		bundle = Path(scratch) / "le8-share"
-		(bundle / "shiny").mkdir(parents=True)
-		(bundle / "f").mkdir()
-		shutil.copy2(ROOT / "shiny/app.R", bundle / "shiny/app.R")
-		shutil.copy2(HERE / "0.common.R", bundle / "f/0.common.R")
-		subprocess.run(
-			[
-				r_bin,
-				str(HERE / "0.common.R"),
-				"--tables-share",
-				str(root),
-				str(bundle / "results"),
-			],
-			check=True,
-		)
-		(bundle / "README.md").write_text(
-			"# LE8 结果查看包\n\n"
-			"包含已登记的汇总表、PNG 和 Shiny 查看代码，不含个体 RDS、原始 UKB 数据或模型权重。\n\n"
-			"1. 安装 R，并在 R 控制台安装依赖：\n\n"
-			"```r\ninstall.packages(c('shiny', 'DT', 'data.table', 'ggplot2', 'digest', 'openxlsx', 'jsonlite'))\n```\n\n"
-			"2. 解压整个文件夹。在解压目录运行：\n\n"
-			"```sh\nRscript shiny/app.R\n```\n\n"
-			"3. 浏览器打开 http://127.0.0.1:3839 。无需 Python、WSL 或原作者的数据路径。\n\n"
-			"Windows 的 RStudio 也可把工作目录切到解压后的 shiny 文件夹，然后运行 `source('app.R')`。\n\n"
-			"保留 results 内的相对目录结构；只改最外层目录的位置。工作簿包含精确来源数据，供查看器读取，"
-			"请勿在 Excel 中覆盖保存。`--port 3840` 可更改端口。\n",
-			encoding="utf-8",
-		)
-		check_env = dict(os.environ)
-		for name in ["LE8_ANALYSIS_ROOT", "LE8_BROWSER_INDEX"]:
-			check_env.pop(name, None)
-		subprocess.run(
-			[r_bin, str(bundle / "shiny/app.R"), "--review"], env=check_env, check=True
-		)
-		archive = Path(scratch) / "le8-share.zip"
-		with zipfile.ZipFile(
-			archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1
-		) as stream:
-			for path in sorted(bundle.rglob("*")):
-				if path.is_file():
-					if path.suffix.lower() not in {
-						".r",
-						".md",
-						".xlsx",
-						".png",
-						".jpg",
-						".jpeg",
-					}:
-						raise ValueError(f"Unexpected share artifact: {path}")
-					stream.write(path, path.relative_to(bundle.parent))
-		with zipfile.ZipFile(archive) as stream:
-			if stream.testzip() is not None:
-				raise ValueError("ZIP verification failed")
-		output.parent.mkdir(parents=True, exist_ok=True)
-		shutil.copy2(archive, output)
-	print(f"[LE8] Share package: {output} ({output.stat().st_size / 1024**2:.1f} MiB)")
+	from share import share_viewer as export
+	return export(root, output, r_bin)
 
 
 def main(argv=None):
 	argv = list(sys.argv[1:] if argv is None else argv)
+	public = argv[1:] if argv[:1] == ['dispatch'] else argv
+	if public and not public[0].startswith('-') and set(canonical_modules(public[0])) & {'c1_abm','shiny','share'}:
+		return subprocess.run([sys.executable, HERE / 'pipeline.py', *public], check=True)
 	if os.getenv('LE8_TABLE_WORKSPACE')!='1' and not any(v in argv for v in ('--help','-h','--dry-run','--preflight')) and argv[:1]!=['index']:
 		args=argv[1:] if argv[:1]==['dispatch'] else argv
 		parsed,unknown=parser().parse_known_args(args)

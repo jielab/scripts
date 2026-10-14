@@ -1,0 +1,8 @@
+field	definition
+known_cad_at_index	0=no known CAD; 1=known CAD; missing=unknown
+index_date	date of molecular sample
+objective_date	date of independently read coronary assessment
+objective_cad	predeclared adjudicated 0/1 objective lesion endpoint
+objective_modality	CCTA or INVASIVE_CORONARY_ANGIOGRAPHY; CAC_CT only in separate calcium task
+intervening_cad	0=no CAD event between measurements; required when dates differ
+intervening_treatment	0=no relevant new/change in treatment between measurements; required when dates differ

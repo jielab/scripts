@@ -104,7 +104,7 @@ c3_locus_settings <- function() list(policy=le8_evidence_policy(),window = WINDO
 	"LE8_LD_MANIFEST",
 	""
 )), metadata = c3_file_stamp(Sys.getenv("LE8_GWAS_MANIFEST", "")), N = Sys.getenv("C2_SUMSTAT_N", "NA"))
-c3_cached_locus <- function(cache, legacy_files, feature, layer, chr, pos, cls, qfile, yfile, outtype, sfrac) {
+c3_cached_locus <- function(cache) {
 	# Reuse completed loci after dispatcher/other-module edits. The filename
 	# already keys the locus, scientific settings and GWAS/QTL input stamps.
 	z <- read_stage_cache(cache, validate_inputs = FALSE)
@@ -253,130 +253,6 @@ infer_outcome_type <- function(y) {
 
 # Retained for reproducibility of the original four-panel output.  The publication function below is the
 # active implementation.
-plot_coloc_results_legacy <- function(res, regional, variants, layer, outdir) {
-	ok <- res |>
-		filter(status == "ok") |>
-		arrange(desc(PP.H4))
-	if (!nrow(ok)) {
-		blank_files <- c(
-			"c3.Fig1.posterior_lollipop.png", "c3.Fig2.posterior_hypotheses.png", "c3.Fig3.regional_top_loci.png",
-			"c3.Fig4.coloc_network.png"
-		)
-		for (i in seq_along(blank_files)) save_plot(blank_plot(paste0("C3 Figure ", i), "No locus passed the minimum aligned-SNP requirement"),
-			blank_files[[i]], 9, 5,
-			outdir = outdir
-		)
-		return(invisible(NULL))
-	}
-	top <- ok |>
-		slice_head(n = 50) |>
-		mutate(label = paste(feature, locus, sep = " | "), label = factor(label, levels = rev(label)), tier = ifelse(le8_coloc_pass(pick(everything())),"Policy-supported region","Below/incomplete evidence policy"))
-	p1 <- ggplot(top, aes(PP.H4, label)) +
-		geom_segment(aes(x = 0, xend = PP.H4, y = label, yend = label, color = tier),
-			linewidth = 0.75
-		) +
-		geom_point(aes(color = tier, size = n_snps), alpha = 0.9) +
-		geom_vline(
-			xintercept = H4_STRONG,
-			linetype = 2, color = "grey45"
-		) +
-		scale_color_manual(values = c(
-			`Policy-supported region` = "#1B9E77", `Below/incomplete evidence policy` = "grey70"
-		)) +
-		scale_x_continuous(limits = c(0, 1), labels = label_percent()) +
-		labs(
-			title = "Colocalization posterior probability", subtitle = "Each row is a QTL locus tested against the disease GWAS",
-			x = "PP(H4): shared causal signal", y = NULL, color = NULL, size = "Aligned SNPs"
-		) +
-		theme_5c(9) +
-		theme(legend.position = "bottom")
-	save_plot(p1, "c3.Fig1.posterior_lollipop.png", 10, 10, outdir = outdir)
-
-	post <- top |>
-		select(label, starts_with("PP.H")) |>
-		pivot_longer(starts_with("PP.H"), names_to = "hypothesis", values_to = "posterior") |>
-		mutate(hypothesis = factor(hypothesis, levels = paste0("PP.H", 0 : 4)))
-	p2 <- ggplot(post, aes(label, posterior, fill = hypothesis)) +
-		geom_col(width = 0.78) +
-		coord_flip() +
-		scale_fill_brewer(palette = "Set2") +
-		scale_y_continuous(labels = label_percent()) +
-		labs(
-			title = "Competing colocalization hypotheses", x = NULL,
-			y = "Posterior probability", fill = "Hypothesis"
-		) +
-		theme_5c(9) +
-		theme(legend.position = "bottom")
-	save_plot(p2, "c3.Fig2.posterior_hypotheses.png", 10, 10, outdir = outdir)
-
-	loci <- ok |>
-		slice_head(n = 6) |>
-		pull(locus)
-	rr <- regional |>
-		filter(locus %in% loci, is.finite(p), p > 0) |>
-		mutate(y =  - log10(pmax(p, 1e-300)), position_mb = position / 1e+06)
-	p3 <- ggplot(rr, aes(position_mb, y, color = dataset)) +
-		geom_point(size = 0.8, alpha = 0.72) +
-		geom_vline(data = ok |>
-			filter(locus %in% loci), aes(xintercept = lead_pos / 1e+06), inherit.aes = FALSE, linetype = 2, color = "grey55") +
-		facet_grid(dataset ~ feature + locus, scales = "free_x", space = "free_x") +
-		scale_color_manual(values = c(
-			QTL = "#4C78A8",
-			setNames("#E45756", Y)
-		)) +
-		labs(
-			title = "Regional QTL–disease comparison at top loci", x = "Position (Mb)",
-			y = expression( - log[10](P)), color = NULL
-		) +
-		theme_5c(8) +
-		theme(legend.position = "bottom", axis.text.x = element_text(
-			angle = 45,
-			hjust = 1
-		))
-	save_plot(p3, "c3.Fig3.regional_top_loci.png", 17, 7.8, outdir = outdir)
-
-	# Evidence network: feature nodes on the outside, genomic loci inside; edge width is PP4.
-	net <- ok |>
-		filter(PP.H4 >= 0.5) |>
-		distinct(feature, locus, PP.H4, chr, lead_pos)
-	if (!nrow(net))
-		p4 <- blank_plot("Colocalization evidence network", "No locus had PP(H4) >= 0.5") else {
-		fnode <- tibble(name = unique(net$feature), type = "feature", angle = seq(0, 2 * pi, length.out = n_distinct(net$feature) +
-			1)[ - (n_distinct(net$feature) + 1)], r = 1)
-		lnode <- tibble(name = unique(net$locus), type = "locus", angle = seq(0, 2 * pi, length.out = n_distinct(net$locus) +
-			1)[ - (n_distinct(net$locus) + 1)] + pi / 10, r = 0.48)
-		nodes <- bind_rows(fnode, lnode) |>
-			mutate(x = r * cos(angle), y = r * sin(angle))
-		edges <- net |>
-			left_join(nodes |>
-				select(feature = name, x1 = x, y1 = y), by = "feature") |>
-			left_join(nodes |>
-				select(locus = name, x2 = x, y2 = y), by = "locus")
-		p4 <- ggplot() +
-			geom_curve(data = edges, aes(
-				x = x1, y = y1, xend = x2, yend = y2, linewidth = PP.H4,
-				color = PP.H4
-			), curvature = 0.15, alpha = 0.65) +
-			geom_point(
-				data = nodes, aes(x, y, shape = type),
-				size = 3, fill = "white"
-			) +
-			ggrepel::geom_text_repel(
-				data = nodes, aes(x, y, label = name), size = 2.5,
-				max.overlaps = 40, seed = 4
-			) +
-			scale_linewidth(range = c(0.4, 2.5), guide = "none") +
-			scale_color_gradient(
-				low = "#FEE8C8",
-				high = "#B30000", limits = c(0.5, 1), name = "PP(H4)"
-			) +
-			coord_equal() +
-			theme_void() +
-			labs(title = "Shared-locus evidence network") +
-			theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
-	}
-	save_plot(p4, "c3.Fig4.coloc_network.png", 11, 9, outdir = outdir)
-}
 
 # Publication figures cover evidence, posterior, regional, and prior diagnostics.
 plot_coloc_results <- function(res, regional, variants, layer, outdir) {
@@ -1149,7 +1025,6 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	manifest <- list()
 	k <- 0L
 	reused_loci <- 0L
-	legacy_files <- list.files(le8_cache_dir("coloc_loci", layer), pattern = "[.]rds$", full.names = TRUE)
 	locus_cache_dir <- file.path(le8_cache_dir("coloc_loci", layer), "mr_selected_v1")
 	dir.create(locus_cache_dir, recursive = TRUE, showWarnings = FALSE)
 	selection_audit <- list()
@@ -1193,10 +1068,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 				)), settings = c3_locus_settings(), outtype = outtype, sfrac = sfrac
 			))
 			locus_cache <- file.path(locus_cache_dir, paste0(locus_key, ".rds"))
-			z <- c3_cached_locus(
-				locus_cache, legacy_files, feature, layer, leads$CHR[i], leads$POS[i], leads$analysis[i],
-				qf, ygfile, outtype, sfrac
-			)
+			z <- c3_cached_locus(locus_cache)
 			reused <- is.list(z) && all(c("summary", "variants", "regional") %in% names(z))
 			message(
 				"  locus ", i, "/", nrow(leads), " chr", leads$CHR[i], ":", leads$POS[i], " [", leads$analysis[i],

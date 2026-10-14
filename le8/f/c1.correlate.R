@@ -2614,10 +2614,10 @@ run_functional_enrichment <- function(assoc, layer, background = assoc$term) {
 			)
 	}
 	if (!nrow(ans)) {
-		py <- Sys.which("python3") ; script <- file.path(Sys.getenv("LE8_FDIR"), "c1.abm.py")
+		py <- Sys.which("python3") ; script <- file.path(Sys.getenv("LE8_FDIR"), "c1.annotations.py")
 		if (nzchar(py) && file.exists(script)) {
 			sf <- tempfile(fileext = ".txt") ; bf <- tempfile(fileext = ".txt") ; of <- tempfile(fileext = ".csv") ; on.exit(unlink(c(sf, bf, of)), add = TRUE)
-			writeLines(sig, sf) ; writeLines(background, bf) ; status <- suppressWarnings(system2(py, c(script, "annotations", "--gprofiler", sf, bf, of), stdout = FALSE, stderr = FALSE))
+			writeLines(sig, sf) ; writeLines(background, bf) ; status <- suppressWarnings(system2(py, c(script, "--gprofiler", sf, bf, of), stdout = FALSE, stderr = FALSE))
 			if (status == 0 && file.exists(of)) {
 				ans <- as_tibble(data.table::fread(of, showProgress = FALSE)) ; used_custom_bg <- TRUE
 			}
@@ -3404,17 +3404,6 @@ run_c1_layer <- function(layer = c("protein", "metabolite")) {
 	layer <- match.arg(layer) ; outdir <- if (layer == "protein") out.prot else out.met ; setwd2(outdir)
 	rawdir <- le8_job_dir(outdir, LE8_JOB) ; dir.create(rawdir, recursive = TRUE, showWarnings = FALSE)
 	scan_cache <- file.path(rawdir, "c1.scan.rds") ; selected_cache <- file.path(rawdir, "c1.res.rds")
-	# Reuse legacy version-named scans without making version changes a cache miss.
-	if (!LE8_REPLACE && !file.exists(scan_cache)) {
-		legacy <- list.files(rawdir, pattern = "^c1[.]scan[.].+[.]rds$", full.names = TRUE)
-		legacy <- legacy[order(file.info(legacy)$mtime, decreasing = TRUE)]
-		for (p in legacy) {
-			z <- tryCatch(readRDS(p), error = function(e) NULL)
-			if (is.list(z) && all(c("association_adj2", "prevalent_adj2") %in% names(z))) {
-				scan_cache <- p ; break
-			}
-		}
-	}
 	if (truthy(Sys.getenv("C1_FIG12_ONLY", unset = "FALSE"))) {
 		if (!file.exists(selected_cache) || file.size(selected_cache) <= 0)
 			stop("C1_FIG12_ONLY requires an existing C1 result: ", selected_cache, call. = FALSE)

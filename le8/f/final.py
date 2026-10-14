@@ -51,7 +51,7 @@ def load_module(filename):
 _index = load_module("0.common.py")
 final_dir = _index.final_dir
 result_file = _index.result_file
-result_candidates = _index.result_candidates
+from abm_summary import table_paths as abm_table_paths, source_root as abm_source_root, summarize as twin_summary, BOUNDARY as ABM_BOUNDARY
 atomic_csv = _index.atomic_csv
 digest = _index.digest
 safe_path = _index.safe_path
@@ -60,13 +60,6 @@ PRIVATE_COLUMNS = _index.PRIVATE_COLUMNS
 MODULE_ORDER = ("C1", "C2", "C4", "C3", "C5")
 MODULE_TITLES = dict(C1="Individual predictability", C2="Genetic vs acquired/state",
 	C4="LE8-supervised explainability", C3="Locus / colocalization support", C5="Cell-level context")
-S7_TABLES = {
-	"metrics": "test_metrics.csv", "paired": "paired_contrasts.csv",
-	"coverage": "coverage_curve.csv", "release_audit": "audit_decision.csv",
-	"registry": "model_registry.csv", "fit_status": "fit_status.csv",
-	"audit": "c1.selective.audit_contrasts.csv", "calibration": "test_calibration.csv",
-	"calibration_groups": "test_calibration_groups.csv",
-}
 MET_TABLES = {
 	"met_pgs_pairs": "c1.pgs_actual_concordance.csv",
 	"met_anchor": "c1.L_VLDL_TG_pct_deep_dive.csv",
@@ -75,13 +68,6 @@ MET_TABLES = {
 	"met_trajectory": "c1.L_VLDL_TG_pct_riskset_trajectory.csv",
 }
 MET_ANALYSES = ("Incident", "Attained-age delayed entry", "Baseline prevalent")
-S7_BOUNDARY = (
-	"Higher discrimination in a selected subset is not by itself evidence that the model is better. "
-	"The scientific claim is heterogeneity in individual-level predictability / selective prediction. "
-	"Research coverage and release coverage are different. Unless audit_status is audit_supported_gain, "
-	"the model is not validated for release. Ordinary unreleased technically eligible participants use "
-	"the frozen fallback model; technical QC failures abstain. Internal audit is not external validation."
-)
 MET_BOUNDARY = (
 	"PGS represents inherited propensity. High prospective concordance with low prevalent concordance "
 	"is compatible with disease-state/treatment/survivor remodeling; it does not prove reverse causality. "
@@ -100,66 +86,6 @@ def finite_column(d, name):
 	return pd.to_numeric(d.get(name, pd.Series(np.nan, index=d.index)), errors="coerce").replace([np.inf, -np.inf], np.nan)
 
 
-def unique_value(frames, columns):
-	"""Resolve a recorded identity without silently choosing between conflicting runs."""
-	values = {str(v) for d in frames for c in columns if c in d for v in d[c].dropna() if str(v)}
-	return next(iter(values)) if len(values) == 1 else None
-
-
-def s7_summary(metrics, decision=None, paired=None):
-	decision = pd.DataFrame() if decision is None else decision
-	paired = pd.DataFrame() if paired is None else paired
-	primary = unique_value([metrics, decision], ["primary_id", "primary"])
-	fallback = unique_value([metrics, decision], ["reference_id", "fallback"])
-	audit = unique_value([metrics], ["audit_status"])
-	decision_status = unique_value([decision], ["audit_status", "status"])
-	audit = decision_status if audit is None else audit if decision_status in (None, audit) else "inconsistent_audit_status"
-	full = metrics.loc[metrics["subset"].eq("all")].copy() if "subset" in metrics else pd.DataFrame()
-	status, result, comparisons = "insufficient evidence", "Full held-out S7 comparison unavailable.", []
-	if {"model", "Uno_C_horizon"} <= set(full) and not full.model.duplicated().any() and primary and fallback:
-		vals = dict(zip(full.model, finite_column(full, "Uno_C_horizon")))
-		comparators = [m for m in vals if m != primary and (m == fallback or m in
-			{"attention_direct_full", "elasticnet_full", "lightgbm_full", "hist_full", "tree_full", "baseline_ensemble_full"}
-			or (m.endswith("_full") and any(k in m.lower() for k in ("tree", "boost", "forest"))))]
-		for ref in comparators:
-			z = full[full.model.isin([primary, ref])]
-			# S7 all metrics use the common technically eligible mask. Verify any reported denominators.
-			common = all(z[c].notna().all() and z[c].nunique() == 1 for c in ("n", "N", "eligible_N", "policy_available_N") if c in z)
-			if common and np.isfinite(vals.get(primary, np.nan)) and np.isfinite(vals[ref]):
-				comparisons.append(dict(model=primary, reference=ref, metric="Uno_C_horizon", subset="all",
-					primary_value=vals[primary], reference_value=vals[ref], delta=vals[primary]-vals[ref]))
-		if comparisons:
-			negative = [r for r in comparisons if r["delta"] <= 0]
-			bulk_negative = [r for r in negative if r["reference"] != "attention_direct_full" or r["reference"] == fallback]
-			status = "not supported" if negative else "exploratory"
-			result = ("Selective prediction is estimable, but the retrieval model does not outperform the conventional bulk predictor "
-				"or frozen fallback on the full held-out cohort. " if bulk_negative else
-				"The retrieval model does not outperform the direct attention comparator on the full held-out cohort. " if negative else
-				"The primary has higher full-cohort Uno C point estimates than the available comparators; paired uncertainty is required. ")
-			result += "; ".join(f"{r['model']}={r['primary_value']:.4f} vs {r['reference']}={r['reference_value']:.4f}" for r in comparisons)
-			result += ". Point estimates on subset=all; no superiority inferred from selected subsets."
-	elif "model" in full and full.model.duplicated().any():
-		result = "Duplicate full-cohort S7 model rows; comparison is unverified."
-	def coverage(subset, column):
-		z = metrics[metrics["subset"].eq(subset)] if "subset" in metrics else pd.DataFrame()
-		if primary and "model" in z:
-			z = z[z.model.eq(primary)]
-		v = finite_column(z, column).dropna().unique()
-		return float(v[0]) if len(v) == 1 else np.nan
-	xcol = "actual_coverage" if "actual_coverage" in metrics else "coverage"
-	research, release = coverage("research", xcol), coverage("all", "release_coverage")
-	if not np.isfinite(release):
-		release = coverage("released", xcol)
-	policy = paired.loc[paired.contrast.eq("policy_effect") & paired["subset"].eq("all")] if {"contrast", "subset"} <= set(paired) else pd.DataFrame()
-	policy_text = "; ".join(f"{r.get('metric', '')}: delta={r.get('delta', np.nan):.5g}, "
-		f"interval=[{r.get('lower', np.nan):.5g}, {r.get('upper', np.nan):.5g}], valid_boot={r.get('valid_boot', 'unavailable')}"
-		for _, r in policy.iterrows()) or "unavailable"
-	fmt = lambda v: f"{v:.1%}" if np.isfinite(v) else "unavailable"
-	result += f" Research coverage={fmt(research)}; release coverage={fmt(release)}; audit_status={audit or 'unavailable'}. Policy effect (same-mask paired): {policy_text}."
-	return dict(status=status if len(metrics) else "unavailable", key_result=result,
-		primary_id=primary, reference_id=fallback, audit_status=audit or "unavailable",
-		research_coverage=research, release_coverage=release, policy_effect=policy_text,
-		comparisons=pd.DataFrame(comparisons))
 
 
 def metabolite_concordance(pairs):
@@ -356,7 +282,7 @@ class Report:
 		if available:
 			try:
 				# Explicit aggregate allowlist, never participant-level RDS/parquet.
-				d = pd.read_csv(chosen, low_memory=False)
+				d = pd.read_csv(chosen, sep="\t" if ".tsv" in chosen.name else ",", low_memory=False)
 				source_hash = digest(chosen)
 				status = "available" if len(d) else "header_only"
 			except pd.errors.EmptyDataError:
@@ -427,23 +353,8 @@ class Report:
 							/ f"Fig1.PGS_integrated.{layer}_{role}.csv"
 						],
 					)
-				for kind, external in [
-					("reference", self.arg.abm_root),
-					("tf", self.arg.abm_tf_root),
-					("selective_attention", None),
-				]:
-					runs = result_candidates(self.root, trait, layer, kind, external)
-					for role, filename in [
-						*[(k, v) for k, v in S7_TABLES.items() if k not in {"metrics", "coverage", "paired"}],
-						("metrics", "test_metrics.csv"),
-						("support", "support_error_audit.csv"),
-						("coverage", "coverage_curve.csv"),
-						("paired", "paired_contrasts.csv"),
-					]:
-						candidates = [run / filename for run in runs]
-						if kind == "selective_attention" and role == "audit":
-							candidates += [run / "audit_contrasts.csv" for run in runs]
-						self.read(trait, layer, "abm_" + kind + "_" + role, candidates)
+				for role, path in abm_table_paths(self.root, trait, layer).items():
+					self.read(trait, layer, role, [path])
 				cell_status = self.get(trait, layer, "cell_status")
 				if has(cell_status, "analysis", "status"):
 					for analysis, roles in [
@@ -780,84 +691,9 @@ class Report:
 				"Source-specific score analysis is marked unavailable; no cis/trans/MHC-exclusion null finding can be claimed from these placeholders.",
 				"pgs_source_status",
 			)
-		for kind in ["reference", "tf", "selective_attention"]:
-			met = self.get(trait, layer, f"abm_{kind}_metrics").copy()
-			if kind == "selective_attention":
-				if len(met):
-					result = s7_summary(met, self.get(trait, layer, "abm_selective_attention_release_audit"),
-						self.get(trait, layer, "abm_selective_attention_paired"))
-					self.flag(trait, layer, "S7_FULL_COHORT_" + result["status"].upper().replace(" ", "_"),
-						"finding", result["key_result"] + " " + S7_BOUNDARY,
-						";".join("abm_selective_attention_" + role for role in S7_TABLES))
-				continue
-			if not has(met, "model", "AUC_IPCW"):
-				continue
-			if "subset" in met and met["subset"].eq("all").any():
-				met = met[met["subset"].eq("all")]
-			if "stage" in met and met.stage.eq("calibrated").any():
-				met = met[met.stage.eq("calibrated")]
-			if met.model.duplicated().any():
-				self.flag(
-					trait,
-					layer,
-					"ABM_DUPLICATE_MODEL_ROWS",
-					"blocking",
-					"Model rows are not unique after stage selection; check strata or protocols rather than silently picking a row.",
-					"abm_" + kind + "_metrics",
-				)
-				continue
-			vals = dict(zip(met.model, num(met, "AUC_IPCW")))
-			primary = "abm_transformer" if kind == "reference" else "tabicl_finetuned"
-			if (
-				primary in vals
-				and "elasticnet" in vals
-				and vals[primary] < vals["elasticnet"]
-			):
-				self.flag(
-					trait,
-					layer,
-					"ABM_PRIMARY_BELOW_ELASTICNET",
-					"finding",
-					f"{kind}: {primary} AUC {vals[primary]:.4f}; native comparator elasticnet {vals['elasticnet']:.4f}. Point-estimate comparison, not an across-pipeline matched contrast.",
-					"abm_" + kind + "_metrics",
-				)
-			if kind == "reference" and all(
-				x in vals for x in [primary, "permuted_values_same_panel"]
-			):
-				drop = vals[primary] - vals["permuted_values_same_panel"]
-				if drop <= 0.001:
-					self.flag(
-						trait,
-						layer,
-						"REFERENCE_LABEL_PERMUTATION_NOT_INFORMATIVE",
-						"blocking",
-						f"Primary minus permuted-reference AUC={drop:.5f}; current results do not establish informative outcome borrowing.",
-						"abm_reference_metrics",
-					)
-			if (
-				kind == "reference"
-				and "copy1_topfit" in vals
-				and abs(vals["copy1_topfit"] - 0.5) < 1e-8
-			):
-				self.flag(
-					trait,
-					layer,
-					"COPY1_TOPFIT_CHANCE",
-					"finding",
-					"Top-fit COPY1 AUC is 0.5. AUC alone does not prove constant predictions; inspect class balance and raw prediction diversity before assigning a cause.",
-					"abm_reference_metrics",
-				)
-		support = self.get(trait, layer, "abm_reference_support")
-		support_gain = finite_column(support, "brier_gain_vs_elasticnet").dropna()
-		if len(support_gain) and support_gain.le(0).all():
-			self.flag(
-				trait,
-				layer,
-				"NO_SUPPORT_BIN_GAIN",
-				"finding",
-				"No estimable support/error bin shows positive Brier gain versus elasticnet. Risk/error stratification is not demonstrated incremental individual predictability.",
-				"abm_reference_support",
-			)
+		state = twin_summary(self.get(trait, layer, 'abm_metrics'))
+		self.flag(trait, layer, 'ABM_TWIN_' + state['status'].upper(), 'finding',
+			state['key_result'] + ' ' + ABM_BOUNDARY, 'abm_metrics;abm_paired;abm_support')
 
 	def panel(
 		self,
@@ -1523,7 +1359,7 @@ class Report:
 		# Fig4: completed C4 validation, followed by separately available prediction protocols.
 		f4 = []
 		comparisons = []
-		focus_used = legacy_used = joint_used = False
+		focus_used = joint_used = False
 		wanted = [
 			"C4 NS",
 			"C4 YS",
@@ -1542,45 +1378,6 @@ class Report:
 					comparisons.append(data)
 					focus_used = True
 					continue
-				z = self.get(tr, la, "performance")
-				if has(z, "biom_set", "model", "C_index", "n_selected"):
-					legacy_used = True
-					zz = z[z.model.eq("Combined") & z.biom_set.isin(wanted)].copy()
-					baseline = z[z.model.eq("Model 0")]
-					if len(baseline):
-						zz["clinical_C"] = num(baseline, "C_index").iloc[0]
-					zz["trait"] = tr
-					zz["layer"] = la
-					comparisons.append(zz)
-
-					def perf(ax, z):
-						y = np.arange(len(z))
-						ax.scatter(z.C_index, y)
-						labels = [
-							f"{s} [n={int(n)}]"
-							for s, n in zip(z.biom_set, z.n_selected)
-						]
-						ax.set_yticks(y, labels)
-						if "clinical_C" in z:
-							ax.axvline(
-								z.clinical_C.iloc[0],
-								linestyle="--",
-								label="Clinical baseline",
-								linewidth=0.8,
-							)
-						ax.set_xlabel("C-index, clinical + biomarkers")
-						ax.legend(fontsize=7)
-
-					f4.append(
-						self.panel(
-							f"Fig4_{tr}_{la}",
-							f"{tr} {la}: held-out discrimination",
-							zz,
-							perf,
-							"Legacy 80/20 within-layer comparison; unequal panel sizes; no formal noninferiority claim.",
-							[f"{tr}.{la}.performance"],
-						)
-					)
 		for tr in traits:
 			z = self.get(tr, "joint", "joint_metrics")
 			if has(z, "model", "budget", "landmark", "arm", "AUC", "N", "status"):
@@ -1640,10 +1437,6 @@ class Report:
 			notes.append(
 				"C4 display: configured assay budget shown in the panel, all validation participants, baseline to year 10. Dashed lines show clinical AUC or zero paired gain versus NS. Intervals condition on frozen fits; exploratory comparisons require external validation. Death is censored; these are not competing-risk cumulative incidences."
 			)
-		if legacy_used:
-			notes.append(
-				"Legacy C-index panels retain their original unequal assay counts and lack paired uncertainty."
-			)
 		if joint_used:
 			notes.append(
 				"Joint PRS/omics panels use their separate completed common-cohort protocol and five-year landmark."
@@ -1654,135 +1447,21 @@ class Report:
 			f4,
 			" ".join(notes),
 		)
-		# Fig5: row-based models and individual reliability, with native controls.
+		# Current full-cohort twin models and controls.
 		f5 = []
-		for kind in ["reference", "tf", "selective_attention"]:
-			pieces = []
-			metric = "Uno_C_horizon" if kind == "selective_attention" else "AUC_IPCW"
-			prespec = (
-				[
-					"abm_transformer",
-					"elasticnet",
-					"clinical",
-					"uniform_same_panel",
-					"permuted_values_same_panel",
-					"copy1_topfit",
-				]
-				if kind == "reference"
-				else ["tabicl_finetuned", "elasticnet", "clinical"]
-			)
-			for tr in traits:
-				for la in layers:
-					z = self.get(tr, la, "abm_" + kind + "_metrics")
-					if has(z, "model", metric):
-						if "subset" in z and z["subset"].eq("all").any():
-							z = z[z["subset"].eq("all")]
-						if "stage" in z and z.stage.eq("calibrated").any():
-							z = z[z.stage.eq("calibrated")]
-						z = z.copy() if kind == "selective_attention" else z[z.model.isin(prespec)].copy()
-						z["cohort"] = tr + " / " + la
-						pieces.append(z)
-			if pieces:
-				z = pd.concat(pieces, ignore_index=True)
-
-				def pan(ax, z, metric=metric):
-					cohorts = list(dict.fromkeys(z.cohort))
-					mods = list(dict.fromkeys(z.model))
-					n = len(mods)
-					for j, m in enumerate(mods):
-						g = z[z.model.eq(m)]
-						x = [
-							cohorts.index(c) + (j - (n - 1) / 2) * 0.10
-							for c in g.cohort
-						]
-						ax.scatter(x, g[metric], label=m, s=22)
-					ax.set_xticks(range(len(cohorts)), cohorts, rotation=15)
-					ax.set_ylabel(metric)
-					ax.set_ylim(0, 1)
-					ax.legend(fontsize=6, loc="lower left")
-
-				f5.append(
-					self.panel(
-						"Fig5_" + kind,
-						(
-							"ABM reference (including Transformer) and controls"
-							if kind == "reference"
-							else "S7 frozen models: common technically eligible population" if kind == "selective_attention" else "ABM TabICLv2 and native comparators"
-						),
-						z,
-						pan,
-						"Native discrimination on subset=all. Uno C is used for S7; IPCW AUC for legacy backends. Matching across codebases is not assumed from equal N.",
-						[
-							f"{tr}.{la}.abm_{kind}_metrics"
-							for tr in traits
-							for la in layers
-						],
-					)
-				)
-		support = []
 		for tr in traits:
-			z = self.get(tr, "prot", "abm_reference_support")
-			if has(z, "bin", "brier_gain_vs_elasticnet"):
-				z = z.copy()
-				z["trait"] = tr
-				support.append(z)
-		if support:
-			z = pd.concat(support, ignore_index=True)
-
-			def supportplot(ax, z):
-				for tr, g in z.groupby("trait"):
-					ax.plot(g.bin, g.brier_gain_vs_elasticnet, marker="o", label=tr)
-				ax.axhline(0, linestyle="--", linewidth=0.8)
-				ax.set_xlabel("Expected-error bin")
-				ax.set_ylabel("Brier gain relative to elasticnet")
-				ax.legend(fontsize=8)
-
-			f5.append(
-				self.panel(
-					"Fig5_support",
-					"Lower expected error is not incremental model benefit",
-					z,
-					supportplot,
-					"Negative gain indicates worse Brier error than the native elasticnet comparator within that bin.",
-					[f"{tr}.prot.abm_reference_support" for tr in traits],
-				)
-			)
-		self.compose(
-			"Fig5",
-			"Individual reference models and reliability",
-			f5,
-			"Predeclared ABM primary and controls are retained, including failures. COPY1 is a binary borrowed outcome, not a calibrated individual probability. Support/error bins may mainly reflect baseline risk; negative within-bin Brier gains do not validate individual predictability. Cellular annotation is supplementary when available.",
-		)
-		# Supplements generated only from available evidence. No empty "result" figures.
-		s1 = []
-		for tr in traits:
-			z = self.get(tr, "prot", "abm_reference_support")
-			if has(z, "expected_error", "observed_error", "event_rate_IPCW"):
-
-				def errorplot(ax, z):
-					ax.plot(z.bin, z.expected_error, marker="o", label="Expected error")
-					ax.plot(z.bin, z.observed_error, marker="o", label="Observed error")
-					ax.plot(z.bin, z.event_rate_IPCW, marker="o", label="Event rate")
-					ax.set_xlabel("Error bin")
-					ax.set_ylabel("IPCW error / event rate")
-					ax.legend(fontsize=8)
-
-				s1.append(
-					self.panel(
-						"FigS1_" + tr,
-						tr + ": reliability versus baseline risk",
-						z,
-						errorplot,
-						"Comparison against event-rate stratification is necessary before interpreting support as individual accuracy.",
-						[f"{tr}.prot.abm_reference_support"],
-					)
-				)
-		self.compose(
-			"FigS1",
-			"What does the support score stratify?",
-			s1,
-			"Both prediction error and disease rate are reported. A low-error bin is not proof that its members have accurately predicted personal outcomes.",
-		)
+			for la in layers:
+				z = self.get(tr, la, 'abm_metrics')
+				if not has(z, 'model', 'subset', 'AUC_IPCW'):
+					continue
+				z = z[z['subset'].eq('all')].copy()
+				def plot_twin(ax, data):
+					ax.barh(data.model, data.AUC_IPCW)
+					ax.set(xlim=(0,1), xlabel='IPCW AUC, all eligible test participants')
+				f5.append(self.panel('Fig5_' + tr + '_' + la, tr + ' / ' + la + ': twin models',
+					z, plot_twin, ABM_BOUNDARY, [f'{tr}.{la}.abm_metrics']))
+		self.compose('Fig5', 'Twin confidence and model controls', f5, ABM_BOUNDARY)
+		# Additional C4 panels use the current completed results.
 		s2 = []
 		for tr in traits:
 			z = self.get(tr, "prot", "focus_contrasts")
@@ -2514,8 +2193,8 @@ def write_question_html(out, overview):
 	if modules.exists():
 		content += pd.read_csv(modules).to_html(index=False, escape=True, border=0)
 	content += "<h2>Result-driven claims</h2>" + page
-	for name, title in [("s7_summary", "C1 · S7 full-cohort comparison, coverage and audit"),
-		("s7_comparisons", "C1 · Frozen full-cohort Uno C comparisons"),
+	for name, title in [("abm_summary", "C1 · Twin full-cohort comparison and confidence"),
+		("deviation_status", "C1 · Molecular deviation availability"),
 		("met_pgs_concordance", "C1 · Metabolite inherited–measured concordance"),
 		("met_temporal_counts", "C1 · Metabolite temporal classes"),
 		("met_anchor", "C1 · L_VLDL_TG.pct prespecified anchor and burden/size comparators"),
@@ -2674,24 +2353,6 @@ def attach_panel_contrasts(contrasts, metrics, diagnostics):
 	return d
 
 
-def abm_gain(d, keys):
-	"""Compare models on each native supported set, never across run families."""
-	if d.empty or not {"model", "n", "AUC_IPCW", "Brier_IPCW", *keys} <= set(d):
-		return d
-	base = d[d.model.eq("elasticnet")]
-	if base.duplicated(keys).any():
-		raise ValueError("Duplicate elasticnet rows in native ABM protocol")
-	cols = keys + ["n", "AUC_IPCW", "Brier_IPCW"]
-	b = base[cols].rename(columns={k: k + "_elasticnet" for k in cols if k not in keys})
-	z = d.merge(b, on=keys, how="left", validate="many_to_one")
-	z["same_native_subset_N"] = z.n.notna() & z.n.eq(z.n_elasticnet)
-	z["delta_AUC_vs_elasticnet"] = (z.AUC_IPCW - z.AUC_IPCW_elasticnet).where(
-		z.same_native_subset_N
-	)
-	z["Brier_gain_vs_elasticnet"] = (z.Brier_IPCW_elasticnet - z.Brier_IPCW).where(
-		z.same_native_subset_N
-	)
-	return z
 
 
 class Questions:
@@ -2702,7 +2363,8 @@ class Questions:
 
 	def read(self, path, Y, layer, role):
 		p = Path(path)
-		rel = str(p.relative_to(self.root))
+		root = self.root if p.is_relative_to(self.root) else abm_source_root(self.root)
+		rel = str(p.relative_to(root))
 		record = dict(
 			Y=Y,
 			layer=layer,
@@ -2713,11 +2375,11 @@ class Questions:
 			status="missing",
 		)
 		if p.exists():
-			if not safe_path(p, self.root) or p.stat().st_size > self.max_bytes:
+			if not safe_path(p, root) or p.stat().st_size > self.max_bytes:
 				raise ValueError(f"Unsafe or oversized question source: {rel}")
 			record["sha256"] = digest(p)
 			try:
-				d = pd.read_csv(p)
+				d = pd.read_csv(p, sep="\t" if ".tsv" in p.name else ",")
 			except pd.errors.EmptyDataError:
 				d = pd.DataFrame()
 			if _index.has_private_columns(d.columns):
@@ -2753,7 +2415,8 @@ class Questions:
 		return d
 
 	def claim(self, Y, layer, question, status, result, limitation, evidence):
-		module = ("C1" if question in {"ABM 分层", "S7 selective attention", "Metabolite inherited–measured concordance", "L_VLDL_TG.pct illustrative anchor"}
+		module = ("C1" if question in {"ABM 分层", "Twin confidence",
+					"Molecular deviation", "Metabolite inherited–measured concordance", "L_VLDL_TG.pct illustrative anchor"}
 			else "C2" if question == "遗传与实测差异" else "C5" if question == "Cellulation" else "C4")
 		self.overview.append(
 			dict(
@@ -2917,68 +2580,10 @@ class Questions:
 			"contrasts",
 		)
 
-		for kind in ["reference", "tf", "selective_attention"]:
-			runs = result_candidates(self.root, Y, layer, kind)
-			run = next((p for p in runs if (p / "test_metrics.csv").exists()), runs[0])
-			backend = "reference" if kind == "reference" else "selective_attention" if kind == "selective_attention" else "tabicl"
-			for name, filename in [
-				("abm_metrics", "test_metrics.csv"),
-				("abm_coverage", "coverage_curve.csv"),
-				("abm_paired", "paired_contrasts.csv"),
-				("abm_support", "support_error_audit.csv"),
-				("abm_training", "c1.selective.training_comparison.csv"),
-				("abm_gate", "c1.selective.gate_diagnostics.csv"),
-				("abm_risk_gain", "c1.selective.risk_stratified_gain.csv"),
-				("abm_audit", "c1.selective.audit_contrasts.csv"),
-				("abm_decision", "c1.selective.decision_curve.csv"),
-				("abm_registry", "model_registry.csv"),
-				("abm_release_audit", "audit_decision.csv"),
-				("abm_fit_status", "fit_status.csv"),
-				("abm_calibration", "test_calibration.csv"),
-				("abm_calibration_groups", "test_calibration_groups.csv"),
-			]:
-				if backend == "selective_attention" and name == "abm_audit" and not (run / filename).exists():
-					filename = "audit_contrasts.csv"
-				d = self.read(run / filename, Y, layer, name + ":" + backend)
-				if d.empty:
-					continue
-				if (
-					name in {"abm_metrics", "abm_coverage", "abm_paired"}
-					and "model" not in d
-				):
-					# A one-row status file is not a completed model result.
-					continue
-				d["backend"], d["run"] = backend, str(run.relative_to(self.root))
-				if "stage" in d and d.stage.eq("calibrated").any():
-					d = d[d.stage.eq("calibrated")].copy()
-				if name == "abm_metrics":
-					if "subset" not in d:
-						d["subset"] = "all"
-					if backend != "selective_attention":
-						d = abm_gain(d, ["subset"])
-					if backend == "reference":
-						chosen = d[
-							d.model.eq("elasticnet_weighted" if "elasticnet_weighted" in set(d.model) else "abm_transformer") & d["subset"].eq("supported")
-						]
-						if len(chosen) == 1:
-							row = chosen.iloc[0]
-							status = (
-								"分层已实现；未见同组增益"
-								if row.delta_AUC_vs_elasticnet <= 0
-								and row.Brier_gain_vs_elasticnet <= 0
-								else "分层已实现；需配对检验"
-							)
-							self.claim(
-								Y,
-								layer,
-								"ABM 分层",
-								status,
-								f"冻结规则覆盖 {row.coverage:.1%}；supported 组 AUC={row.AUC_IPCW:.3f}，同组 elastic net={row.AUC_IPCW_elasticnet:.3f}。",
-								"AUC不是C-index。需结合 rejected 组、事件率、同组基准与配对区间；低风险组 Brier 较低不证明更可预测。",
-								"abm_metrics",
-							)
-				elif name == "abm_coverage" and backend != "selective_attention":
-					d = abm_gain(d, ["selector", "quantile"] if "selector" in d else ["quantile"])
+		for name, path in abm_table_paths(self.root, Y, layer).items():
+			d = self.read(path, Y, layer, name)
+			if len(d):
+				d['backend'] = 'twin' if name.startswith('abm_') else 'molecular_deviation'
 				self.add(name, d)
 		genetic = (
 			candidates[(candidates.Y == Y) & (candidates.layer == layer)].copy()
@@ -3057,13 +2662,14 @@ class Questions:
 
 	def scientific_summaries(self, Y, layer, contrasts, proxy):
 		get = lambda name: self.current(name, Y, layer)
-		s7 = lambda name: get(name).loc[get(name).backend.eq("selective_attention")] if "backend" in get(name) else pd.DataFrame()
-		s = s7_summary(s7("abm_metrics"), s7("abm_release_audit"), s7("abm_paired"))
-		comparisons = s.pop("comparisons")
-		self.add("s7_comparisons", comparisons.assign(Y=Y, layer=layer))
-		self.add("s7_summary", pd.DataFrame([dict(Y=Y, layer=layer, **s)]).rename(columns={"primary_id": "primary", "reference_id": "fallback"}))
-		self.claim(Y, layer, "S7 selective attention", s["status"], s["key_result"], S7_BOUNDARY,
-			"abm_metrics;abm_paired;abm_release_audit;abm_registry;abm_fit_status;abm_audit;abm_calibration;abm_calibration_groups")
+		s = twin_summary(get('abm_metrics'))
+		self.add('abm_summary', pd.DataFrame([dict(Y=Y, layer=layer, **s)]))
+		self.claim(Y, layer, 'Twin confidence', s['status'], s['key_result'], ABM_BOUNDARY,
+			'abm_metrics;abm_paired;abm_support;abm_confidence')
+		status = get('deviation_status')
+		text = '; '.join(str(v) for v in status.get('validation_status', pd.Series(dtype=str)).dropna().unique())
+		self.claim(Y, layer, 'Molecular deviation', text or 'unavailable',
+			text or 'Current molecular deviation results unavailable.', ABM_BOUNDARY, 'deviation_metrics;deviation_status')
 		if layer == "met":
 			concordance = metabolite_concordance(get("met_pgs_pairs")).assign(Y=Y, layer=layer)
 			self.add("met_pgs_concordance", concordance)
@@ -3096,8 +2702,8 @@ class Questions:
 		coloc_tables = ["same_locus", "coloc_robust", "coloc_prior", "susie_pairs", "susie_diagnostics", "mr_signal_evidence"]
 		coloc_text = "; ".join(f"{name}: {len(get(name))} rows" if len(get(name)) else f"{name}: unavailable" for name in coloc_tables)
 		for module, status, result, boundary, sources in [
-			("C1", s["status"], s["key_result"], S7_BOUNDARY + (" " + MET_BOUNDARY + " " + ANCHOR_BOUNDARY if layer == "met" else ""),
-				["abm_metrics", "abm_paired", "abm_release_audit", "abm_support"] + (list(MET_TABLES) + ["temporal"] if layer == "met" else [])),
+			("C1", s["status"], s["key_result"], ABM_BOUNDARY + (" " + MET_BOUNDARY + " " + ANCHOR_BOUNDARY if layer == "met" else ""),
+				["abm_metrics", "abm_paired", "abm_support"] + (list(MET_TABLES) + ["temporal"] if layer == "met" else [])),
 			("C2", "exploratory" if len(gr) or len(genetic) else "unavailable",
 				" ".join(genetic_claims) + f" Decomposition: {len(gr)} rows; direct G−R tests: {gr_tests.notna().sum()}, FDR<0.05: {int((gr_tests < .05).sum())}. Discordant measured/PGS/MR evidence remains visible in the source tables.",
 				"G and R share the training-fold measured-omic scale. R includes uncaptured genetics, environment, treatment, disease processes and assay error. Predictive biomarkers need not be causal antecedents; no causal/consequence percentage is identifiable. MR / reverse MR are separate evidence.",
@@ -3119,7 +2725,8 @@ class Questions:
 			name: i
 			for i, name in enumerate(
 				[
-					"S7 selective attention",
+					"Twin confidence",
+					"Molecular deviation",
 					"ABM 分层",
 					"Metabolite inherited–measured concordance",
 					"L_VLDL_TG.pct illustrative anchor",
@@ -3142,7 +2749,7 @@ class Questions:
 		self.tables["overview"] = [overview]
 		self.tables["sources"] = [pd.DataFrame(self.sources)]
 		names = [
-			"module_summary", "s7_summary", "s7_comparisons", "c4_endpoints",
+			"module_summary", "abm_summary", "c4_endpoints",
 			*MET_TABLES, "met_pgs_concordance", "met_temporal_counts", "coloc_robust", "coloc_prior", "cigma",
 			"prediction",
 			"contrasts",
@@ -3156,7 +2763,7 @@ class Questions:
 			"abm_metrics",
 			"abm_coverage",
 			"abm_paired",
-			"abm_support", "abm_training", "abm_gate", "abm_risk_gain", "abm_audit", "abm_decision", "abm_registry", "abm_release_audit", "abm_fit_status", "abm_calibration", "abm_calibration_groups",
+			"abm_support", "abm_training", "abm_confidence", "deviation_metrics", "deviation_status", "deviation_support",
 			"genetic",
 			"temporal",
 			"cohort",
@@ -3323,56 +2930,30 @@ def question_figures(out, traits, layers):
 		squeeze=False,
 		constrained_layout=True,
 	)
-	colors = {
-		"elasticnet_weighted": "#247b83",
-		"elasticnet_target_tuned": "#8d5ab4",
-		"abm_transformer": "#426b91",
-		"elasticnet": "#b46724",
-		"clinical": "#777777",
-	}
 	for col, (y, l) in enumerate(pairs):
 		d = select(metrics, y, l)
-		if len(d):
-			d = d[d.backend.eq("reference")]
 		ax = axs[0, col]
-		if len(d):
-			for model, color in colors.items():
-				if model not in set(d.model):
-					continue
-				z = (
-					d[d.model.eq(model)]
-					.set_index("subset")
-					.reindex(["all", "supported", "rejected"])
-				)
-				ax.plot(range(3), z.AUC_IPCW, "o-", label=model, color=color)
-			ax.set_xticks(range(3), ["All", "Supported", "Rejected"])
-			ax.set_ylabel("IPCW AUC (not C-index)")
-			ax.legend(fontsize=7)
-		else:
-			absent(ax, "Native support strata unavailable")
-		ax.set_title(f"{y} | {l}")
+		if has(d, 'model', 'subset', 'AUC_IPCW'):
+			for model in sorted(d.model.unique()):
+				z = d[d.model.eq(model)].set_index('subset').reindex(['all','selected','rejected'])
+				ax.plot(range(3), z.AUC_IPCW, 'o-', label=model)
+			ax.set_xticks(range(3), ['All','Selected','Rejected'])
+			ax.set_ylabel('IPCW AUC')
+			ax.legend(fontsize=6)
+		else: absent(ax, 'Twin metrics unavailable')
+		ax.set_title(f'{y} | {l}')
 		ax = axs[1, col]
-		d = select(coverage, y, l)
-		if len(d):
-			primary = "elasticnet_weighted" if "elasticnet_weighted" in set(d.model) else "abm_transformer"
-			d = d[d.backend.eq("reference") & d.model.eq(primary)]
-			if "selector" in d:
-				d = d[d.selector.eq("gain")]
-		if len(d):
-			d = d.sort_values("quantile")
-			ax.plot(d.coverage, d.Brier_gain_vs_elasticnet, "o-", color="#247b83")
-			ax.axhline(0, color="grey", ls="--", lw=0.8)
-			ax.set_xlabel("Coverage of native test cohort")
-			ax.set_ylabel("Brier gain vs elastic net on SAME subset")
-			ax.set_title("All frozen thresholds; positive = improvement")
-		else:
-			absent(ax, "Native coverage comparison unavailable")
-	save(
-		fig,
-		"Fig7.question_ABM",
-		["abm_metrics", "abm_coverage", "abm_paired", "abm_support"],
-		"Native reference runs only, not comparisons across different cohorts/backends. Support thresholds were frozen on development data. Coverage curves have point estimates only. Inspect event rates and rejected participants alongside same-subset paired differences; low absolute error alone is insufficient.",
-	)
+		contrasts = select(read('abm_paired'), y, l)
+		if has(contrasts, 'contrast', 'metric', 'delta', 'lower', 'upper'):
+			z = contrasts[contrasts.metric.eq('AUC_IPCW')]
+			for j, (_, row) in enumerate(z.iterrows()):
+				ax.plot([row.lower,row.upper], [j,j], color='#247b83')
+				ax.plot(row.delta,j,'o',color='#247b83')
+			ax.set_yticks(range(len(z)),z.contrast)
+			ax.axvline(0,color='grey',ls='--')
+			ax.set_xlabel('Paired AUC contrast; predeclared comparison masks')
+		else: absent(ax, 'Paired twin contrasts unavailable')
+	save(fig, 'Fig7.question_ABM', ['abm_metrics','abm_paired','abm_support'], ABM_BOUNDARY)
 
 	genetic = read("genetic")
 	fig, axs = plt.subplots(
@@ -3437,36 +3018,6 @@ def question_figures(out, traits, layers):
 		"All matched assays in existing_full/basic; orange = measured P>=0.05 and PGS full-family FDR<0.05. Distinct own-SD scales, not an effect-difference test. Named markers are prespecified examples. PGS is inherited propensity, not birth concentration; G/R differences, MR and exact-locus coloc require separate evaluation.",
 	)
 
-	# S7 is a distinct architecture/estimand record; retain every registered model.
-	s7 = metrics.loc[metrics.backend.eq("selective_attention")].copy() if "backend" in metrics else pd.DataFrame()
-	if len(s7):
-		fig, axs = plt.subplots(2, len(pairs), figsize=(max(8, 5 * len(pairs)), 10), squeeze=False, constrained_layout=True)
-		for col, (y, l) in enumerate(pairs):
-			d = select(s7, y, l)
-			full = d[d.subset.eq("all")] if "subset" in d else pd.DataFrame()
-			ax = axs[0, col]
-			if len(full) and "Uno_C_horizon" in full:
-				ax.barh(full.model, full.Uno_C_horizon)
-				ax.set(xlim=(0, 1), xlabel="Horizon-truncated Uno C", title=f"{y} | {l}: frozen S7 models, subset=all")
-			else: absent(ax, "S7 full-cohort discrimination unavailable")
-			ax = axs[1, col]
-			curve = select(coverage, y, l)
-			if {"backend", "selector"} <= set(curve):
-				curve = curve[curve.backend.eq("selective_attention") & curve.selector.eq("release_gain")]
-			else: curve = pd.DataFrame()
-			state = s7_summary(d, select(read("abm_release_audit"), y, l))
-			xcol = "actual_coverage" if "actual_coverage" in curve else "coverage"
-			if len(curve) and {xcol, "Uno_C_horizon", "model"} <= set(curve):
-				for model in dict.fromkeys([state["primary_id"], state["reference_id"], "policy_risk", "attention_direct_full"]):
-					z = curve[curve.model.eq(model)].sort_values(xcol)
-					if len(z): ax.plot(z[xcol], z.Uno_C_horizon, "o-", label=model)
-				release = state["release_coverage"]
-				ax.set(xlabel="Actual research coverage", ylabel="Uno C on the SAME subset",
-					title=f"Audit: {state['audit_status']}; release {release:.1%}" if np.isfinite(release) else f"Audit: {state['audit_status']}; release unavailable")
-				ax.legend(fontsize=7)
-			else: absent(ax, "S7 coverage unavailable")
-		save(fig, "Fig9.question_ABM_attention", ["abm_metrics", "abm_coverage", "abm_paired", "abm_registry", "abm_release_audit", "abm_fit_status", "abm_calibration", "abm_calibration_groups"], S7_BOUNDARY)
-
 	met_pairs, met_summary = read("met_pgs_pairs"), read("met_pgs_concordance")
 	if len(met_pairs):
 		fig, axs = plt.subplots(len(traits), 3, figsize=(15, 4.5 * len(traits)), squeeze=False, constrained_layout=True)
@@ -3487,7 +3038,7 @@ def question_figures(out, traits, layers):
 				else: absent(ax, "Concordance unavailable")
 				ax.set_title(f"{y} | {analysis}")
 		save(fig, "Fig10.question_metabolite", ["met_pgs_pairs", "met_pgs_concordance"], MET_BOUNDARY)
-	figure_order = {name: i for i, name in enumerate(["Fig9.question_ABM_attention", "Fig7.question_ABM", "Fig10.question_metabolite", "Fig8.question_genetic", "Fig6.question_LE8"])}
+	figure_order = {name: i for i, name in enumerate(["Fig7.question_ABM", "Fig10.question_metabolite", "Fig8.question_genetic", "Fig6.question_LE8"])}
 	manifest.sort(key=lambda row: figure_order.get(row["figure"], len(figure_order)))
 	pd.DataFrame(manifest).to_csv(
 		out / "final.questions.figure_manifest.csv", index=False
@@ -3505,8 +3056,6 @@ def report_main(argv=None):
 	ap.add_argument("--biom", default="prot,met")
 	ap.add_argument("--analysis-root", type=Path, required=True)
 	ap.add_argument("--out", type=Path)
-	ap.add_argument("--abm-root", type=Path)
-	ap.add_argument("--abm-tf-root", type=Path)
 	ap.add_argument("--coefficient-epsilon", type=float, default=1e-8)
 	ap.add_argument("--strict", action="store_true")
 	arg = ap.parse_args(argv)

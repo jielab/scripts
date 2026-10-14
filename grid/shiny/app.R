@@ -40,8 +40,8 @@ grid_app <- function(final_dir) {
       .shiny-image-output img{max-width:100%;height:auto}.grid-card .dataTables_wrapper{overflow-x:auto}.btn{border-radius:8px}
     '))),div(class="snapshot-line",textOutput("snapshot_time",inline=TRUE),actionButton("refresh","刷新汇总"))),
     tabPanel("总览",value="overview",
-      div(class="page-heading",h2("从群体结构到预测表现"),p("五个模块的结果汇总，以及在共同测试队列上的方法比较。")),
-      fluidRow(column(3,card(div(class="kpi",strong("5"),span("分析模块")))),
+      div(class="page-heading",h2("从群体结构到预测表现"),p("已有分析结果汇总，以及在共同测试队列上的方法比较。")),
+      fluidRow(column(3,card(div(class="kpi",textOutput("module_count",container=strong),span("分析模块")))),
         column(3,card(div(class="kpi",textOutput("trait_count",container=strong),span("性状")))),
         column(3,card(div(class="kpi",textOutput("available_count",container=strong),span("已有结果的模块")))),
         column(3,card(downloadButton("summary_download","下载综合汇总"),p("状态、结论与性能表")))),
@@ -56,16 +56,27 @@ grid_app <- function(final_dir) {
         downloadButton("comparison_download","下载当前比较"))),
         column(9,card(uiOutput("comparison_notice"),plotlyOutput("comparison_plot",height="520px"),DTOutput("comparison_data")),
           card(h4("配对比较、距离分层与队列审计"),DTOutput("comparison_audit"))))),
-    module_ui("pca"),module_ui("csx"),module_ui("disco"),module_ui("prsformer"),module_ui("abm")
+    module_ui("pca"),module_ui("csx"),module_ui("disco"),
+    if(any(initial$inventory$module=="prsformer" & initial$inventory$status=="available")) module_ui("prsformer"),module_ui("abm")
   )
   server <- function(input,output,session) {
     snapshot <- reactiveVal(initial)
+    prs_visible <- reactiveVal(any(initial$inventory$module=="prsformer" & initial$inventory$status=="available"))
+    observe({
+      available <- any(snapshot()$inventory$module=="prsformer" & snapshot()$inventory$status=="available")
+      if(available != isolate(prs_visible())) {
+        if(available) insertTab("page",module_ui("prsformer"),target="abm",position="before")
+        else removeTab("page","prsformer")
+        prs_visible(available)
+      }
+    })
     observeEvent(input$refresh,{
       tryCatch({snapshot(grid_read_snapshot(final_dir));showNotification("已读取最新 final 汇总",type="message")},
         error=function(e) showNotification(conditionMessage(e),type="error",duration=NULL))
     })
     output$snapshot_time <- renderText(paste("数据快照",snapshot()$generated_at,"· 来源：final"))
     output$trait_count <- renderText(length(snapshot()$traits))
+    output$module_count <- renderText(length(unique(snapshot()$inventory$module)))
     output$available_count <- renderText(length(unique(snapshot()$inventory$module[snapshot()$inventory$status=="available"])))
     output$summary_download <- downloadHandler(filename=function() "grid-summary.xlsx",content=function(file)
       file.copy(grid_snapshot_path(final_dir,snapshot()$workbook),file))

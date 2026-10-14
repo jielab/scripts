@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-
-
 # 🚩 le8
-# Public LE8 interface. Default sequence: C1 (including reference ABM), C2, C3, C4, C5.
+# Public LE8 interface. Default sequence: integrated twin C1, C2, C3, C4, C5.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
@@ -18,19 +16,23 @@ le8_usage() {
 	cat <<'HELP'
 Usage: ./le8.sh [module[,module...]] [options]
 
-No module list: C1 + CUDA selective-attention ABM -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
+No module list: c1_correlate -> c1_abm (Twin/deviation) -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results are checked and skipped, preserving original methods/scope.
 Input timestamps or code changes do not refit completed modules; use --replace TRUE.
 C1 and ABM publish each outcome/omic layer separately so completed layers survive later failures.
 Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
-Reviewable result tables, including participant IDs, use XLSX; reusable raw/model objects use RDS.
+Native tables use XLSX and reusable objects use RDS. ABM uses aggregate XLSX/TSV and private LOCAL_ONLY arrays/models.
 
 Examples (copy directly; run/resume C1-C5 for both omic layers):
   cd /mnt/d/scripts/le8
   ./le8.sh --Y cvd_cad --biom prot,met --preflight && \
   ./le8.sh --Y cvd_cad --biom prot,met
+
+Run/resume C1 associations and the new ABM, then build the aggregate report:
+  ./le8.sh c1_correlate,c1_abm --Y cvd_cad --biom prot,met
+  ./le8.sh final --Y cvd_cad --biom prot,met
 
 After that analysis succeeds, build the report and open Shiny:
   ./le8.sh final --Y cvd_cad --biom prot,met
@@ -42,16 +44,16 @@ Continue from C3; completed C1/C2 dependencies are checked and skipped:
   ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
 
 Modules:
-  c1_correlate   Measured/PGS associations, temporal analyses and enrichment
-  c1_abm         Agent-based modeling (ABM): selective reference and TabICLv2
+  c1_correlate   C1 associations: measured/PGS, temporal analyses and enrichment
+  c1_abm         Twin confidence + genetic deviation
   c2_cause       MR and genetic decomposition
   c3_coloc       Colocalization and locus evidence
   c4_connect     LE8 connections, interactions, nonlinearity, panel validation
                  and paired reconstruction bootstrap (one entry point)
   c5_cellulation Cell annotation and explicit CIGMA jobs
   pgs_focus      Dedicated matched-PGS analysis
-  final         Existing aggregate reports; aggregate reporting, no fitting
-  share         Export aggregate workbooks, PNGs and a standalone Shiny viewer
+  final         Native reports + twin/deviation summaries + evidence browser; no fitting
+  share         Export aggregate database, catalogue and a standalone Shiny viewer
   shiny         Rebuild the aggregate index, then serve the local Shiny app
 
 Main options (defaults are set below in this script):
@@ -67,9 +69,6 @@ Main options (defaults are set below in this script):
   --cpu-task-memory-gib N  Per-worker admission estimate (not a hard RAM cap)
   --gpu-jobs N          Exclusive GPU phases; this release requires 1
   --eigh-backend MODE   MR-link-2 eigendecomposition: auto (default, GPU preferred), cpu, cuda
-  --s7-retrieval-device cpu|cuda  KNN backend; CUDA with default CUDA model
-  --s7-attention-temperature-grid CSV  Q/K temperatures; default 0.5,1,2
-  --s7-reconstruction-weight X  Actual auxiliary-loss weight; default 0.05
   --seed N               2026
   --replace TRUE|FALSE   FALSE; check/skip completed outputs; TRUE refits selected stages
   --r-bin FILE           Rscript
@@ -77,8 +76,6 @@ Main options (defaults are set below in this script):
   --host ADDRESS         127.0.0.1
   --memory-limit-gb N    Process-tree RAM cap; default 32 GiB; 0 disables it
   --memory-swap-gb N     Explicit swap cap
-  --abm-backend METHOD   reference | tabicl | both (default reference: selective_attention on CUDA)
-  --abm-args STRING      Default: '--selective-repeats 3'; parsed without shell evaluation
   --run-abm              Include ABM with an explicit module list
   --skip-abm             Skip ABM in the default C1-C5 sequence
   --fit-reference, --fit-joint, --fit-genetic  Explicit Final fitting
@@ -102,8 +99,14 @@ Main options (defaults are set below in this script):
                          C5_CIGMA_RESULTS overrides the published-summary path.
   --allow-untested-cigma C5 explicit version override
   --no-plots            C5 only: skip annotation plots
-  --abm-root, --abm-tf-root DIR  Explicit external import sources
   --max-table-mb N        128
+  --abm-config FILE       Twin model configuration (default config/abm.json)
+  --abm-host-args STRING  Original phenotype/omics input options; parsed without shell evaluation
+  --deviation-config FILE  Deviation configuration; defaults per omic layer
+  --objective-file FILE    Optional eid-keyed objective coronary endpoint table
+  --pgs-root PATH     PGS file/directory; use {biom} for layer-specific paths
+  --pgs-mapping FILE  Explicit PGS assay mapping
+  --remerge-pgs       Merge retained native scores at full precision before C1
   --share-out ZIP        Portable viewer package (default: ../le8-share.zip)
   --strict               Fail on blocking report audit findings
   --help                 Show this help
@@ -112,8 +115,8 @@ Native data options: --gwas-dir, --pqtl-dir, --mqtl-dir, --refgen-root, --grch.
 Native analysis options also pass through: --Y-date, --vars.adj,
 --white-only, --run-mrlink2, --run-dandelion, --run-gpu-coloc, --nested-cv.
 Outputs: <analysis-root>/<Y>/<biom>/<module>/; optional Final fits: final/<Y>/;
-summary report: final/; index: shiny/; execution logs and caches: /tmp/.
-Question-led C1 → C2 → C4 overview and figures: final/; Shiny opens the research-question view.
+summary report: final/; aggregate database: evidence/; execution logs and caches: /tmp/.
+Question-led C1 → C2 → C4 overview and figures: final/; Shiny opens the aggregate evidence browser.
 LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
 Shared RAM budget: LE8_RESOURCE_MEMORY_GIB=32 by default (GiB).
@@ -121,19 +124,40 @@ Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
 SCRIPT_VERBOSE=1 streams all diagnostics to the terminal.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
-ABM requires CUDA by default and checks GPU forward/backward before native scans.
 GPU-coloc checks CUDA through R before analysis; WSL driver libraries take priority.
-LE8 and GRID share the optimized ABM kernels in ../0f/abm.py.
-Explicit CPU testing: --abm-args '--device cpu'; legacy CPU baseline: --abm-args '--abm-design selective --device cpu'.
+Twin confidence and molecular deviation run on CPU.
 
 Additional module entry points:
-  python f/c1.abm.py annotations --help
-  python f/c1.abm.py figures RUN_DIR
+  ./le8.sh abm prepare|fit|project|evaluate|demo [options]
+  ./le8.sh deviation prepare|fit|project|evaluate|merge-pgs|demo [options]
+  ./le8.sh pgs-merge --manifest FILE --output FILE
+  ./le8.sh evidence --analysis-root DIR [options]
+  ./le8.sh viewer --db FILE [--port 3839]
   bash f/c2.cause.sh index-cis --help
   python f/c5.cellulation.py cigma --help
   python f/final.py report --help
   python f/final.py tables --help
 HELP
+}
+
+# Standalone model/index utilities share the public launcher and interpreter.
+le8_utility() {
+	local mode=$1
+	shift
+	local python_bin=${PYTHON:-${LE8_REPORT_PYTHON:-${PYTHON_BIN:-${HOME}/anaconda3/envs/le8/bin/python3}}}
+	command -v "$python_bin" >/dev/null 2>&1 || python_bin=python3
+	export PYTHONPATH="$LE8_ROOT/f${PYTHONPATH:+:$PYTHONPATH}"
+	case "$mode" in
+		abm)
+			if [[ ${1:-} == prepare ]]; then
+				shift
+				"$python_bin" "$LE8_ROOT/f/prepare_abm.py" "$@"
+			else "$python_bin" "$LE8_ROOT/f/run_abm_twin.py" "$@"; fi ;;
+		deviation) "$python_bin" "$LE8_ROOT/f/run_deviation.py" "$@" ;;
+		pgs-merge) "$python_bin" "$LE8_ROOT/f/run_deviation.py" merge-pgs "$@" ;;
+		evidence) "$python_bin" "$LE8_ROOT/f/evidence_index.py" "$@" ;;
+		viewer) "${R_BIN:-Rscript}" "$LE8_ROOT/shiny/app.R" "$@" ;;
+	esac
 }
 
 le8_coloc_cuda_preflight() {
@@ -165,13 +189,15 @@ le8_coloc_cuda_preflight() {
 }
 
 le8_main() {
+	case "${1:-}" in
+		abm|deviation|pgs-merge|evidence|viewer) le8_utility "$@"; return $? ;;
+	esac
 	# Shared defaults, deliberately visible at the public entry point.
 	local modules=c1_correlate,c1_abm,c2_cause,c3_coloc,c4_connect,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
 	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
-	local backend=reference cores="" ukb_phe="" memory_limit="" memory_swap="" dry_run=FALSE
-	local abm_args='--selective-repeats 3'
+	local cores="" ukb_phe="" memory_limit="" memory_swap="" dry_run=FALSE
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
@@ -202,7 +228,7 @@ le8_main() {
 			le8_usage
 			return 0
 			;;
-		--pwas-workers | --pgs-workers | --mrlink2-workers | --mrlink2-inner-threads | --cpu-task-memory-gib | --gpu-jobs | --s7-retrieval-device | --s7-attention-temperature-grid | --s7-reconstruction-weight)
+		--pwas-workers | --pgs-workers | --mrlink2-workers | --mrlink2-inner-threads | --cpu-task-memory-gib | --gpu-jobs)
 			extra+=("$1" "${2:?option requires a value}")
 			shift 2
 			;;
@@ -273,14 +299,6 @@ le8_main() {
 			memory_swap=${2:?--memory-swap-gb requires N}
 			shift 2
 			;;
-		--abm-backend | --abm-engine)
-			backend=${2:?--abm-backend requires METHOD}
-			shift 2
-			;;
-		--abm-args)
-			abm_args=${2?--abm-args requires STRING}
-			shift 2
-			;;
 		*)
 			extra+=("$1")
 			shift
@@ -306,13 +324,12 @@ le8_main() {
 		le8_coloc_cuda_preflight "$r_bin" "$python_bin" || return 2
 	fi
 	args=("$modules" --Y "$trait_csv" --biom "$biom_csv" --analysis-root "$analysis_root"
-		--seed "$seed" --replace "$replace" --r-bin "$r_bin" --port "$port" --host "$host"
-		--abm-backend "$backend" --abm-args "$abm_args")
+		--seed "$seed" --replace "$replace" --r-bin "$r_bin" --port "$port" --host "$host")
 	[[ -z $cores ]] || args+=(--cores "$cores")
 	[[ -z $ukb_phe ]] || args+=(--ukb-phe "$ukb_phe")
 	[[ -z $memory_limit ]] || args+=(--memory-limit-gb "$memory_limit")
 	[[ -z $memory_swap ]] || args+=(--memory-swap-gb "$memory_swap")
-	"$python_bin" "$LE8_ROOT/f/0.common.py" dispatch "${args[@]}" "${extra[@]}"
+	"$python_bin" "$LE8_ROOT/f/pipeline.py" "${args[@]}" "${extra[@]}"
 }
 # Parse invocation and exit together before any long-running child starts.
 {
