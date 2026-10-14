@@ -25,7 +25,8 @@ def validate_output(root, chrom, seed, iterations, burnin, thin, posterior=True)
     root = Path(root)
     pops = ('AFR', 'EAS', 'EUR', 'SAS')
     weights = {pop: read_weights(root/pop/f'{pop}.chr{chrom}.pst_eff.txt', chrom) for pop in pops}
-    meta = list(root.glob('*META*pst_eff*.txt'))
+    # Accept the concise name and historical parameterized names during migration.
+    meta = list(root.glob(f'*_META_pst_eff*_chr{chrom}.txt'))
     if len(meta) != 1:
         raise ValueError('Expected exactly one META posterior')
     meta_rows = read_weights(meta[0], chrom)

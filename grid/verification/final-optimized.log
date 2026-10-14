@@ -1,0 +1,2 @@
+[GRID] /home/huangj/miniforge3/envs/grid/bin/python3 /mnt/d/scripts/grid/f/browser_index.py --analysis-root /mnt/d/analysis/grid
+{"tables": 652, "audit_items": 4, "db": "/mnt/d/analysis/grid/evidence/evidence.sqlite"}

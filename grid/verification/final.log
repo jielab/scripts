@@ -1,0 +1,21 @@
+[GRID] /home/huangj/miniforge3/envs/grid/bin/python3 /mnt/d/scripts/grid/f/browser_index.py --analysis-root /mnt/d/analysis/grid
+Traceback (most recent call last):
+  File "/mnt/d/scripts/grid/f/browser_index.py", line 152, in <module>
+    x=a.parse_args()
+                     
+  File "/mnt/d/scripts/grid/f/browser_index.py", line 151, in main
+    a=argparse.ArgumentParser(description=__doc__);a.add_argument('--analysis-root',default='/mnt/d/analysis/grid');a.add_argument('--out');a.add_argument('--traits',default='height,ldl,t2dm');a.add_argument('--max-table-mb',type=int,default=128);a.add_argument('--summary-only',action='store_true',help='Accepted; indexing never refits models')
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/d/scripts/grid/f/browser_index.py", line 94, in run
+    legacy=legacy,columns_json=json.dumps(list(map(str,d.columns))),
+^^^^^^^
+  File "/mnt/d/scripts/grid/f/browser_index.py", line 53, in sources
+    for directory,dirs,files in os.walk(self.root,followlinks=False):
+  File "<frozen os>", line 419, in _walk
+  File "<frozen os>", line 419, in _walk
+  File "<frozen os>", line 419, in _walk
+  [Previous line repeated 2 more times]
+  File "<frozen os>", line 418, in _walk
+  File "<frozen posixpath>", line 167, in islink
+KeyboardInterrupt
+ERROR: Command '['/home/huangj/miniforge3/envs/grid/bin/python3', '/mnt/d/scripts/grid/f/browser_index.py', '--analysis-root', '/mnt/d/analysis/grid']' died with <Signals.SIGINT: 2>.

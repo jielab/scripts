@@ -1,0 +1,7 @@
+shiny
+DT
+DBI
+RSQLite
+ggplot2
+jsonlite
+testthat # testServer acceptance tests

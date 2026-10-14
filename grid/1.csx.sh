@@ -103,6 +103,8 @@ Saved outputs and input cache:
 
 Aggregate reports: <output-root>/csx/<trait>/scores.xlsx, scores.png, summary.rds.
 Inference files and command logs: <output-root>/csx/.
+META weights: <output-root>/csx/<trait>/<run>/raw/chr<N>/<trait>_META_pst_eff_chr<N>.txt.
+Inference parameters are recorded in <run>/config.json.
 Input coordinates must be GRCh37; the preflight checks rsID-position agreement.
 For another reference/target, set --csx-snpinfo and --csx-bim-prefix explicitly.
 HELP
@@ -352,7 +354,7 @@ PYMETA
 				if [[ -f $marker && $GRID_REPLACE == FALSE ]]; then
 					local valid=TRUE
 					for p in "${POPS[@]}"; do [[ -s $raw/$p/$p.chr$c.pst_eff.txt ]] || valid=FALSE; done
-					compgen -G "$raw/*META*pst_eff*.txt" >/dev/null || valid=FALSE
+					compgen -G "$raw/${trait}_META_pst_eff*_chr$c.txt" >/dev/null || valid=FALSE
 					[[ $GRID_POSTERIOR != TRUE || -s $raw/joint_posterior.h5 ]] || valid=FALSE
 					if [[ $valid == TRUE ]] && "${verify[@]}"; then
 						echo "SKIP $trait chr$c: completed posterior"

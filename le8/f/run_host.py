@@ -62,6 +62,21 @@ def completed(target):
     return bool(saved.get('files'))
 
 
+def check_input_reuse(target, current):
+    """Do not silently reuse a raw-assay fit under the cleaned-RDS contract."""
+    contract=target/'host_contract.json'
+    if not contract.is_file():
+        return
+    previous=json.loads(contract.read_text()).get('input_config',{})
+    if not previous:
+        return
+    keys=('phe_file','omics_file','met_input','transform','covariates','residualize','categorical')
+    changed=[key for key in keys if previous.get(key)!=getattr(current,key)]
+    if changed:
+        raise ValueError('ABM input configuration differs from the saved fit: '+','.join(changed)+
+                         '. Run c1_abm --replace TRUE to fit the new inputs and archive the previous results: '+str(target))
+
+
 def finish(stage, audit):
     contract=stage/'host_contract.json'
     existing=json.loads(contract.read_text()) if contract.is_file() else {}
@@ -150,8 +165,15 @@ def main(args):
         for path in [args.objective_file,args.pgs_mapping,args.group_file,args.outer_roster]:
             if path and not Path(path).is_file():
                 raise FileNotFoundError(path)
+        if args.replace!='TRUE':
+            for target in (scope/'abm_twin',deviation_target):
+                if completed(target):
+                    check_input_reuse(target,a)
         print('[LE8 twin] Preflight passed; family support='+('supplied' if a.group_col else 'unverified; individual IDs only')+
               '; objective endpoint='+('supplied' if args.objective_file else 'unavailable; reference calibration only'),flush=True)
+        print(f'[LE8] DONE ABM input preflight: biom={a.biom}; omics={a.omics_file}; '
+              f'met_input={a.met_input}; transform={a.transform}; covariates={a.covariates}; '
+              f'extra_adjustment={a.residualize or "none"}',flush=True)
         return
     scope.mkdir(parents=True,exist_ok=True)
     lock_key=hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:20]
@@ -159,6 +181,10 @@ def main(args):
         fcntl.flock(lock,fcntl.LOCK_EX)
         targets={'abm_twin':scope/'abm_twin','molecular_deviation':deviation_target}
         todo={name for name,target in targets.items() if args.replace=='TRUE' or not completed(target)}
+        if args.replace!='TRUE' and set(targets)-todo:
+            _,current=host_config(args)
+            for name in set(targets)-todo:
+                check_input_reuse(targets[name],current)
         if not todo:
             print('[LE8 twin] SKIP: both twin modules completed; --replace TRUE creates an archived replacement',flush=True)
             return

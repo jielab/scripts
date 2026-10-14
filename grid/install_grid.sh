@@ -23,7 +23,7 @@ Overrides:
 
 After installation:
   cd /mnt/d/scripts/grid
-  bash grid.sh abm --check-device
+  bash grid.sh abm --check
   bash grid.sh prsformer --standalone --check-runtime
 
 With PCA/CSx/Disco inputs ready (default traits: height,ldl,t2dm):
@@ -89,6 +89,7 @@ fi
 
 run "$solver" run -n "$ENV_NAME" python -m pip check
 run "$solver" run -n "$ENV_NAME" python -c 'import numpy,pandas,scipy,sklearn,matplotlib,openpyxl,rdata,joblib,torch,natten,pgenlib,pyreadr'
+run "$solver" run -n "$ENV_NAME" Rscript --vanilla -e 'p <- c("shiny","DT","DBI","RSQLite","ggplot2","jsonlite","testthat"); stopifnot(all(vapply(p,requireNamespace,logical(1),quietly=TRUE)))'
 run "$solver" run -n "$ENV_NAME" plink2 --version
 run "$solver" run -n "$ENV_NAME" python "$ROOT/f/main.py" --check-device
 run "$solver" run -n "$ENV_NAME" bash "$ROOT/grid.sh" prsformer --standalone \

@@ -1,0 +1,6 @@
+Calling the exact production PRSformer verifier
+/home/huangj/miniforge3/envs/grid/lib/python3.11/site-packages/rdata/conversion/_conversion.py:302: UserWarning: Unknown encoding. Assumed ASCII.
+  warnings.warn("Unknown encoding. Assumed ASCII.")  # noqa: B028
+/home/huangj/miniforge3/envs/grid/lib/python3.11/site-packages/rdata/conversion/_conversion.py:302: UserWarning: Unknown encoding. Assumed ASCII.
+  warnings.warn("Unknown encoding. Assumed ASCII.")  # noqa: B028
+{"status": {"method": "PRSformer", "status": "same_roster_endpoint_and_covariates_verified", "source_sha256": "8a17bfb9712dc59dffad7d3ed4809e213f9d8e3acca785a0121265662d3c6702", "scope": "upstream model may have a larger training-label budget; audit comparison is not claimed"}, "dtype": "float64", "N": 243372, "all_finite": true}

@@ -35,7 +35,9 @@ Important parameters:
 
 Permanent individual PCA, distance and ancestry data: /mnt/d/data/ukb/pca_proj/
 Reports: /mnt/d/analysis/grid/pca/{projection,ancestry}.xlsx/.png and summary.rds.
-Temporary chromosome scores/commands/logs: /mnt/d/analysis/grid/pca/<signature>/
+Temporary chromosome scores: <output-root>/pca/work/projection/chr<N>.sscore.
+Commands/logs: <output-root>/pca/{cmd,log}/ and work/projection/log/.
+Cache signatures are stored in files, not directory names.
 Existing PCA is reused independently of temporary files. If changing reference
 loadings/genotypes, explicitly use --replace TRUE or a different --pca-file.
 HELP
@@ -60,7 +62,7 @@ pca_run() {
 	data_dir=$(dirname -- "$pca")
 	qc="$GRID_OUTPUT_ROOT/pca"
 	distance_file="$data_dir/ukb_reference_distances.tsv.gz"
-	raw="$GRID_OUTPUT_ROOT/pca"
+	raw="$work/projection"
 	echo "input genotype: $GRID_IMP_DIR/chr{1..22}"
 	echo "input PCA weights: $GRID_PCA_WEIGHT"
 	echo "output PCA files: $pca"
@@ -75,8 +77,6 @@ pca_run() {
 	projection_valid() {
 		[[ -f $qc/projection.signature && $(cat "$qc/projection.signature") == "$projection_sig" ]] && python3 "$ROOT/f/0.pca.py" cache "$pca" "$GRID_COV_PCS"
 	}
-	raw="$raw/$projection_sig"
-
 	grid_select_r data.table,ggplot2,openxlsx,patchwork,MASS
 	if [[ $GRID_CHECK == TRUE || $GRID_DRY_RUN == TRUE ]]; then
 		if projection_valid; then
@@ -92,9 +92,16 @@ pca_run() {
 		fi
 		return 0
 	fi
-	mkdir -p "$data_dir" "$qc" "$raw/log"
+	mkdir -p "$data_dir" "$qc"
 	exec {pca_lock}>"$GRID_OUTPUT_ROOT/pca/run.lock"
 	flock -n "$pca_lock" || _grid_die 'Another PCA run is active'
+	mkdir -p "$raw/log"
+	# The directory is stable; only matching inputs may reuse chromosome markers.
+	if [[ ! -s $raw/projection.signature || $(cat "$raw/projection.signature") != "$projection_sig" ]]; then
+		rm -f -- "$raw"/chr*.done
+		printf '%s\n' "$projection_sig" >"$raw/projection.signature.tmp"
+		mv -- "$raw/projection.signature.tmp" "$raw/projection.signature"
+	fi
 	need() { [[ -s $1 ]] || _grid_die "Missing/empty file: $1"; }
 	log() { echo "[PCA] $*" >&2; }
 	# The projection cache is independent of distances and ancestry outputs.

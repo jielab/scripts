@@ -2,7 +2,7 @@
 """Prepare -> fit -> project -> evaluate. All individual artifacts stay local."""
 from __future__ import annotations
 import argparse,json,hashlib,os
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from pathlib import Path
 import joblib
 import numpy as np
@@ -48,8 +48,12 @@ def prepare(args):
     if args.group_col:
         if args.group_col not in d or d[args.group_col].isna().any():raise ValueError('Missing family/group identifiers')
         group=d[args.group_col].astype(str).to_numpy()
-    elif args.assume_unrelated:group=np.asarray(ids,str)
-    else:raise ValueError('Supply --group-col, or explicitly --assume-unrelated after removing relatives')
+    else:group=np.asarray(ids,str)
+    support=dict(family_status='verified_supplied_groups' if args.group_col else 'unavailable_individual_ID_groups_only',
+                 independent_family_support_verified=bool(args.group_col),
+                 grouping_unit='family' if args.group_col else 'individual_unverified',
+                 assume_unrelated=bool(args.assume_unrelated),validation_status='exploratory')
+    cfg=replace(cfg,grouping_unit=support['grouping_unit'])
     if args.role_col:
         if args.role_col not in d:raise ValueError('Missing role column')
         role=d[args.role_col].astype(str).to_numpy()
@@ -79,10 +83,12 @@ def prepare(args):
                   'endpoint_eligible':eligible,'endpoint_reason':reason}).to_csv(local/'roster.tsv.gz',sep='\t',index=False)
     counts=pd.DataFrame({'role':role,'endpoint_reason':reason}).groupby(['role','endpoint_reason']).size().reset_index(name='N')
     status=pd.DataFrame([dict(task=cfg.task,status='objective_endpoint_available' if eligible.any() else 'objective_endpoint_unavailable',
-                      molecular_N=len(M),assays=len(names),endpoint_N=int(eligible.sum()),clinical_release=False)])
+                      molecular_N=len(M),assays=len(names),endpoint_N=int(eligible.sum()),clinical_release=False,**support)])
     write_tables(out/'aggregate',{'pgs_quality_audit':audit,'endpoint_flow':counts,'status':status},'deviation',cfg.layer,cfg.trait,'prepared')
     json_write(out/'config.json',asdict(cfg))
-    json_write(out/'preparation.json',dict(config=asdict(cfg),group_assumption='declared_unrelated' if args.assume_unrelated and not args.group_col else args.group_col,
+    json_write(out/'preparation.json',dict(config=asdict(cfg),
+               group_assumption=args.group_col or ('declared_unrelated' if args.assume_unrelated else 'individual_ID_only_unverified'),
+               **support,
                reference_definition='known_cad_at_index==0'+(' and '+args.reference_col+'==1' if args.reference_col else ''),
                evaluation_status='exploratory_until_independent_validation',inputs={str(p):sha256(p) for p in (args.cohort_file,args.omics_file)},
                warning='PGS GWAS overlap is not corrected by calibration cross-fitting; objective ascertainment may be selected.'))
@@ -163,8 +169,11 @@ def main():
     a=argparse.ArgumentParser(description=__doc__);s=a.add_subparsers(dest='command',required=True)
     p=s.add_parser('prepare');p.add_argument('--cohort-file',required=True);p.add_argument('--omics-file',required=True)
     p.add_argument('--pgs-root',required=True);p.add_argument('--clinical',required=True);p.add_argument('--config',required=True)
-    p.add_argument('--pgs-mapping');p.add_argument('--feature-file');p.add_argument('--group-col');p.add_argument('--role-col');p.add_argument('--reference-col')
-    p.add_argument('--assume-unrelated',action='store_true');p.add_argument('--output',required=True)
+    p.add_argument('--pgs-mapping');p.add_argument('--feature-file')
+    p.add_argument('--group-col',help='Optional family/group column; absent: unverified individual ID groups')
+    p.add_argument('--role-col');p.add_argument('--reference-col')
+    p.add_argument('--assume-unrelated',action='store_true',help='Optional user declaration, not proof of independent families; unnecessary for running')
+    p.add_argument('--output',required=True)
     p=s.add_parser('fit');p.add_argument('--data',required=True);p.add_argument('--config',required=True);p.add_argument('--output',required=True)
     p=s.add_parser('project');p.add_argument('--model',required=True);p.add_argument('--data',required=True);p.add_argument('--output',required=True)
     p=s.add_parser('evaluate');p.add_argument('--model',required=True);p.add_argument('--predictions',required=True);p.add_argument('--truth',required=True);p.add_argument('--output',required=True);p.add_argument('--anchors',default='L_VLDL_TG.pct,Total_TG,ApoB')

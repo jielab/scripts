@@ -43,6 +43,8 @@ Output scores: <score-dir>/<trait>/2disco.scores.rds (IID,disco)
 Coefficients:  <score-dir>/<trait>/2disco.coefficients.xlsx
 Reports:       <output-root>/disco/<trait>/scores.xlsx, scores.png, coefficients.xlsx, summary.rds.
 Commands/logs/intermediates: <output-root>/disco/{cmd,log,work}/
+Aligned inputs: <output-root>/disco/work/<trait>/centers.tsv, pca.tsv, <POP>.tsv.
+Chromosome subsets add /chr<LIST>/; cache signatures are stored in files.
 
 Uses official DiscoDivas distance-matrix interpolation, not inverse-square mixing.
 Defaults use raw ancestry CSx scores, 1KG PC medians and quality=1. They do not
@@ -94,31 +96,35 @@ PY
 		return 0
 	}
 	sig=$(python3 "$io" signature "$GRID_DISCO_A" "$GRID_REGRESS_PCA" "$GRID_DISTANCE_PCS" --files "${inputs[@]}" "$GRID_PCA_FILE" "$GRID_MED_FILE" "$io" "$ROOT/2.disco.sh" "$ROOT/f/2.disco.R" "$ROOT/f/0.common.py")
-	run="$work/$trait/$sig"
-	mkdir -p "$run" "$logdir/$trait"
-	cache_sig="$work/$trait/disco.signature"
+	run="$work/$trait${suffix:+/${suffix#.}}"
+	trait_log="$logdir/$trait${suffix:+/${suffix#.}}"
+	mkdir -p "$run" "$trait_log"
+	cache_sig="$run/disco.signature"
 	exec {lock}>"$work/$trait/run.lock"
 	flock -n "$lock" || _grid_die "Another Disco run is active for $trait"
 	if [[ -s $score_home/2disco.scores.rds && -s $score_home/2disco.coefficients.xlsx && -s $cache_sig && $(cat "$cache_sig") == "$sig" && $GRID_REPLACE == FALSE ]]; then
 		echo "SKIP $trait: matching permanent Disco results"
 		return 0
 	fi
-	grid_run_logged "$logdir/$trait/prepare.log" python3 "$io" disco-inputs "$GRID_PCA_FILE" "$GRID_MED_FILE" "$score_home" "$run" "$GRID_DISTANCE_PCS" "$GRID_REMOVE"
-	grep '^Disco ' "$logdir/$trait/prepare.log"
+	# Invalidate completion before replacing files in this stable workspace.
+	# A failed rebuild must not make a later invocation reuse partial publication.
+	rm -f -- "$cache_sig" "$run/signature"
+	grid_run_logged "$trait_log/prepare.log" python3 "$io" disco-inputs "$GRID_PCA_FILE" "$GRID_MED_FILE" "$score_home" "$run" "$GRID_DISTANCE_PCS" "$GRID_REMOVE"
+	grep '^Disco ' "$trait_log/prepare.log"
 	prs=()
 	for p in "${POPS[@]}"; do prs+=("$run/$p.tsv"); done
-	grid_run_logged "$logdir/$trait/disco.log" "${disco_r[@]}" "$ROOT/f/2.disco.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
-	grid_run_logged "$logdir/$trait/validate.log" python3 "$io" disco-output "$run/disco.tsv.gz" "$run"
+	grid_run_logged "$trait_log/disco.log" "${disco_r[@]}" "$ROOT/f/2.disco.R" -m "$run/centers.tsv" -p "$run/pca.tsv" --prs.list "$(join_comma "${prs[@]}")" -s IID,PRS -A "$GRID_DISCO_A" --regress.PCA "$GRID_REGRESS_PCA" --print.coef TRUE -o "$run/disco"
+	grid_run_logged "$trait_log/validate.log" python3 "$io" disco-output "$run/disco.tsv.gz" "$run"
 	grid_run python3 "$ROOT/f/0.common.py" publish disco "$run/disco.tsv.gz" "$score_home/2disco.scores.rds" --remove "$GRID_REMOVE"
 	grid_run "${disco_r[@]}" "$ROOT/../0f/results.R" import-table "$run/disco.coef.tsv.gz" "$score_home/2disco.coefficients.xlsx"
-	printf '%s\n' "$sig" >"$run/signature"
-	publish "$run/signature" "$cache_sig"
 	# Permanent provenance stays usable even after deleting the scratch directory.
 	{
 		printf 'key\tvalue\n'
 		printf 'PCA\t%s\ncenters\t%s\nPCs\t%s\nA\t%s\nregress_PCA\t%s\n' "$GRID_PCA_FILE" "$GRID_MED_FILE" "$GRID_DISTANCE_PCS" "$GRID_DISCO_A" "$GRID_REGRESS_PCA"
 		for p in "${POPS[@]}"; do printf '%s\t%s\n' "$p" "$score_home/1csx.scores.rds"; done
 	} >"$run/manifest.tsv"
+	printf '%s\n' "$sig" >"$run/signature"
+	publish "$run/signature" "$cache_sig"
 	echo "DONE $trait: $score_home/2disco.scores.rds"
 }
 

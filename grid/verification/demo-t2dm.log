@@ -1,0 +1,3 @@
+[GRID] /home/huangj/miniforge3/envs/grid/bin/python3 /mnt/d/scripts/grid/f/twin_cli.py demo --binary --output /tmp/grid-twin-integration-20261014-t2dm
+[GRID twin] FIT t2dm: 1200 development; 1200 frozen test rows
+[GRID twin] COMPLETE t2dm: /tmp/grid-twin-integration-20261014-t2dm/abm/twin/t2dm/synthetic

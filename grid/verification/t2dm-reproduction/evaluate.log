@@ -1,0 +1,12 @@
+Loading frozen t2dm model and test predictions
+Evaluating internal models with bootstrap=0 to isolate deterministic failures
+{"internal_evaluation": "passed", "N": 243372}
+Reconstructing Disco predictions from saved calibration, without fitting
+Reading the frozen PRSformer predictions
+/home/huangj/miniforge3/envs/grid/lib/python3.11/site-packages/rdata/conversion/_conversion.py:302: UserWarning: Unknown encoding. Assumed ASCII.
+  warnings.warn("Unknown encoding. Assumed ASCII.")  # noqa: B028
+{"Disco_reference": {"finite": 243372, "below_zero": 0, "above_one": 0}, "PRSformer": {"finite": 243372, "below_zero": 0, "above_one": 0}}
+Evaluating the exact external methods with bootstrap=0
+{"external_evaluation": "passed", "N": 243372}
+Evaluating with the frozen configured bootstrap count
+{"full_evaluation": "passed", "N": 243372}

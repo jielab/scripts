@@ -73,7 +73,16 @@ def main(argv=None):
     def call(cmd, dry=None):
         cmd=list(map(str,cmd));print('[LE8 research] '+shlex.join(cmd),flush=True)
         if not (a.dry_run if dry is None else dry):
-            subprocess.run(cmd,check=True)
+            try:
+                subprocess.run(cmd,check=True)
+            except subprocess.CalledProcessError as exc:
+                # systemd-run can report SIGKILL as -9, which a Python wrapper
+                # exposes as 247. Keep a useful cause ahead of the long command.
+                if exc.returncode in (-9,137,247):
+                    raise RuntimeError(f'Child process exited with code {exc.returncode} (possible SIGKILL/OOM); '
+                                       'check the memory cap and kernel log. '
+                                       'Earlier published results are retained; resume without --replace TRUE.') from exc
+                raise
     if any(t.startswith(('--legacy','--abm-backend','--abm-engine','--abm-args','--s7-','--abm-tf-root','--abm-root')) for t in unknown):
         raise ValueError('Obsolete ABM options are unsupported; use --abm-config and --abm-host-args')
     if unknown and not (set(modules)&common['NATIVE'] or a.fit_joint or a.fit_reference or a.fit_genetic or a.details):
@@ -130,6 +139,6 @@ def main(argv=None):
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError,OSError,subprocess.CalledProcessError) as exc:
+    except (ValueError,OSError,RuntimeError,subprocess.CalledProcessError) as exc:
         print('ERROR: '+str(exc),file=sys.stderr)
         sys.exit(2)

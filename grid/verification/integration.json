@@ -1,0 +1,238 @@
+{
+  "completed_at": "2026-10-14T13:43:06.046080+08:00",
+  "source_package": "/mnt/d/Downloads/grid_new/grid_new",
+  "requirements": [
+    "README.md",
+    "CODEX_REVIEW.md"
+  ],
+  "installed_root": "/mnt/d/scripts/grid",
+  "backup_directory": "/mnt/d/scripts/grid/_twin_install_backups/20261014T132630896588",
+  "protected_upstream_files_unchanged": {
+    "0.pca.sh": true,
+    "1.csx.sh": true,
+    "2.disco.sh": true,
+    "f/prsformer.py": true,
+    "f/prsformer.sh": true,
+    "f/data.py": true,
+    "f/main.py": true,
+    "f/abm.py": true,
+    "f/attention.py": true,
+    "f/final.R": true,
+    "f/final.sh": true,
+    "grid.upstream.sh": true
+  },
+  "implementation": [
+    "OOF donor quality; Full/Clean/Soft/Random arms",
+    "Genetic profile matching and pre-prediction support confidence",
+    "Separate fit/project/evaluate and immutable run publication",
+    "Strict prepared-cache and PRSformer adapters",
+    "Aggregate-only SQLite index and Shiny viewer"
+  ],
+  "integration_fixes": [
+    "Existing Python and complete R runtime selection",
+    "Legacy logger delegates to preserved entry; original failure codes propagate",
+    "Exact frozen cohort and family-group identity",
+    "Reject missing PRSformer endpoint/covariate declarations",
+    "Manifest-only ingestion of new twin results; skip private/intermediate/old-run trees",
+    "Bound filesystem traversal and temporary SQLite sync before atomic publication",
+    "Namespace Shiny validation; retain all subset markers; handle bounded faceting"
+  ],
+  "verification": {
+    "python": {
+      "passed": 58,
+      "skipped": 1,
+      "skip_reason": "Installer lives in distribution, checked separately",
+      "log": "pytest.log"
+    },
+    "distribution_installer": {
+      "passed": 1,
+      "log": "installer-test.log"
+    },
+    "r_test_server": "shiny-tests.log",
+    "real_source_shiny_review": "shiny-review.log",
+    "synthetic_shiny_review": "shiny-demo-review.log",
+    "browser": "browser-acceptance.json",
+    "synthetic_continuous": "demo-height.log",
+    "synthetic_binary": "demo-t2dm.log",
+    "separate_fit_project_evaluate": "separate-flow.log",
+    "prepared_cache": [
+      {
+        "trait": "height",
+        "input": "validated",
+        "endpoint": "height",
+        "original_N": 486745,
+        "outer_train_N": 243373,
+        "outer_test_N": 243372,
+        "development_missing_y_N": 715,
+        "test_missing_y_N": 723,
+        "test_roster_hash": "2e6273256eb7bf254acab815429a067d0468557ab070008930dc872b8eb80adc",
+        "grouping_status": "individual_unverified",
+        "raw_SNP_QC": "only for explicit variant_dosage input; summaries cannot reconstruct unseen SNP combinations",
+        "genetic_columns": [
+          "csx.EUR",
+          "csx.AFR",
+          "csx.EAS",
+          "csx.SAS",
+          "match_PC1",
+          "match_PC2",
+          "match_PC3",
+          "match_PC4",
+          "match_PC5",
+          "match_PC6",
+          "match_PC7",
+          "match_PC8",
+          "match_PC9",
+          "match_PC10"
+        ],
+        "clinical_columns": [
+          "age",
+          "sex",
+          "PC1",
+          "PC2"
+        ]
+      },
+      {
+        "trait": "ldl",
+        "input": "validated",
+        "endpoint": "ldl",
+        "original_N": 486745,
+        "outer_train_N": 243373,
+        "outer_test_N": 243372,
+        "development_missing_y_N": 39693,
+        "test_missing_y_N": 39742,
+        "test_roster_hash": "2e6273256eb7bf254acab815429a067d0468557ab070008930dc872b8eb80adc",
+        "grouping_status": "individual_unverified",
+        "raw_SNP_QC": "only for explicit variant_dosage input; summaries cannot reconstruct unseen SNP combinations",
+        "genetic_columns": [
+          "csx.EUR",
+          "csx.AFR",
+          "csx.EAS",
+          "csx.SAS",
+          "match_PC1",
+          "match_PC2",
+          "match_PC3",
+          "match_PC4",
+          "match_PC5",
+          "match_PC6",
+          "match_PC7",
+          "match_PC8",
+          "match_PC9",
+          "match_PC10"
+        ],
+        "clinical_columns": [
+          "age",
+          "sex",
+          "PC1",
+          "PC2"
+        ]
+      },
+      {
+        "trait": "t2dm",
+        "input": "validated",
+        "endpoint": "baseline_t2dm_from_Yr2e_Yt2e",
+        "original_N": 486745,
+        "outer_train_N": 243373,
+        "outer_test_N": 243372,
+        "development_missing_y_N": 0,
+        "test_missing_y_N": 0,
+        "test_roster_hash": "2e6273256eb7bf254acab815429a067d0468557ab070008930dc872b8eb80adc",
+        "grouping_status": "individual_unverified",
+        "raw_SNP_QC": "only for explicit variant_dosage input; summaries cannot reconstruct unseen SNP combinations",
+        "genetic_columns": [
+          "csx.EUR",
+          "csx.AFR",
+          "csx.EAS",
+          "csx.SAS",
+          "match_PC1",
+          "match_PC2",
+          "match_PC3",
+          "match_PC4",
+          "match_PC5",
+          "match_PC6",
+          "match_PC7",
+          "match_PC8",
+          "match_PC9",
+          "match_PC10"
+        ],
+        "clinical_columns": [
+          "age",
+          "sex",
+          "PC1",
+          "PC2"
+        ]
+      }
+    ],
+    "prsformer": [
+      {
+        "trait": "height",
+        "method": "PRSformer",
+        "status": "same_roster_endpoint_and_covariates_verified",
+        "source_sha256": "0f098ffac816026266d426986b3add81bfb9ebfb64089c2ea76d24e1dee56bf9",
+        "scope": "upstream model may have a larger training-label budget; audit comparison is not claimed",
+        "N": 243372,
+        "finite_N": 243372
+      },
+      {
+        "trait": "ldl",
+        "method": "PRSformer",
+        "status": "same_roster_endpoint_and_covariates_verified",
+        "source_sha256": "2016a81160b595f5c6dbdbd7b0bee245d94b5c7701f04c8fbef28a15bd9867f6",
+        "scope": "upstream model may have a larger training-label budget; audit comparison is not claimed",
+        "N": 243372,
+        "finite_N": 243372
+      },
+      {
+        "trait": "t2dm",
+        "method": "PRSformer",
+        "status": "same_roster_endpoint_and_covariates_verified",
+        "source_sha256": "8a17bfb9712dc59dffad7d3ed4809e213f9d8e3acca785a0121265662d3c6702",
+        "scope": "upstream model may have a larger training-label budget; audit comparison is not claimed",
+        "N": 243372,
+        "finite_N": 243372
+      }
+    ]
+  },
+  "result_index": {
+    "tables": 652,
+    "sqlite_integrity": "ok",
+    "participant_columns_imported": false,
+    "model_or_individual_rds_imported": false,
+    "audit": [
+      {
+        "source": "disco/height/coefficients.xlsx",
+        "status": "source_read_failed",
+        "detail": "Expanded workbook exceeds configured limit"
+      },
+      {
+        "source": "disco/ldl/coefficients.xlsx",
+        "status": "source_read_failed",
+        "detail": "Expanded workbook exceeds configured limit"
+      },
+      {
+        "source": "disco/t2dm/coefficients.xlsx",
+        "status": "source_read_failed",
+        "detail": "Expanded workbook exceeds configured limit"
+      },
+      {
+        "source": "pca/ancestry.xlsx::Anchor_counts",
+        "status": "blocked_private",
+        "detail": "Participant identifiers must remain in _LOCAL_ONLY: group"
+      }
+    ]
+  },
+  "source_index_log": "final-optimized.log",
+  "real_ukb_models_retrained": false,
+  "original_results_overwritten": false,
+  "official_csx_disco_individual_final_predictions_available": false,
+  "benchmark_note": "Existing aggregate values retained; selected-subset comparison needs a frozen outcome-scale prediction manifest.",
+  "synthetic_run_roots": [
+    "/tmp/grid-twin-integration-20261014-height",
+    "/tmp/grid-twin-integration-20261014-t2dm"
+  ],
+  "qa_servers_stopped": true,
+  "run_commands": [
+    "./grid.sh abm --traits height,ldl,t2dm --config config/twin.json --threads 4",
+    "./grid.sh final",
+    "./grid.sh shiny"
+  ]
+}

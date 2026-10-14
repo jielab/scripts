@@ -64,6 +64,9 @@ def clinical_matrix(p, columns, categorical, training):
 
 def prepare_host(args, work):
     host,a=host_config(args)
+    print(f'[LE8] START ABM inputs: biom={a.biom}; omics={a.omics_file}; '
+          f'met_input={a.met_input}; transform={a.transform}; '
+          f'covariates={a.covariates}; extra_adjustment={a.residualize or "none"}',flush=True)
     prepared=work/'host_inputs_LOCAL_ONLY';prepared.mkdir(parents=True,mode=0o700)
     p=host.prepare(a,prepared)
     raw=np.load(prepared/'raw.npy');features=(prepared/'features.txt').read_text().splitlines()

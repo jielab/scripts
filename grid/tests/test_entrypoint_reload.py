@@ -22,7 +22,7 @@ class EntrypointReloadTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "f").mkdir()
-        for name in ("grid.sh", "f/prsformer.sh"):
+        for name in ("grid.sh", "grid.upstream.sh", "f/twin_entry.py", "f/prsformer.sh"):
             shutil.copyfile(ROOT / name, self.root / name)
         (self.root / "f/prsformer.py").touch()
         cache = self.root / "cache"
@@ -66,7 +66,7 @@ elif sys.argv[2] == "publish":
                 "--prsformer-python", str(self.python), "--prsformer-arg", "--resume"]
 
     def run_training(self, standalone=False, edit=False, status=0):
-        env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1", GRID_TEST_ROOT=str(self.root),
+        env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1", GRID_PYTHON=sys.executable, GRID_TEST_ROOT=str(self.root),
                    GRID_TEST_STATUS=str(status))
         with subprocess.Popen(self.command(standalone), env=env, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -83,7 +83,7 @@ elif sys.argv[2] == "publish":
                         self.assertTrue(chunk, output.decode())
                         output += chunk
                 if edit:
-                    script = self.root / ("f/prsformer.sh" if standalone else "grid.sh")
+                    script = self.root / ("f/prsformer.sh" if standalone else "grid.upstream.sh")
                     source = script.read_bytes()
                     marker = b"\ncase $MODE in\n" if standalone else b"\nif [[ $MODULE == prsformer ]]; then\n"
                     tail = source[source.rindex(marker) + 1:]

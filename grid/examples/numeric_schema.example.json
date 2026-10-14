@@ -1,0 +1,16 @@
+{
+  "feature_groups": {
+    "csx": ["csx.EUR", "csx.AFR", "csx.EAS", "csx.SAS"],
+    "ancestry": ["proj_PC1", "proj_PC2"],
+    "covariates": ["age", "sex", "PC1", "PC2"],
+    "frequency": [],
+    "evolution": [],
+    "disco": ["disco"]
+  },
+  "metadata": {
+    "endpoint_definition": "height",
+    "profile_scope": "existing projected PCs and source-specific PGS; not all raw SNP combinations",
+    "grouping_status": "individual_unverified",
+    "upstream_gwas_overlap": "unknown"
+  }
+}

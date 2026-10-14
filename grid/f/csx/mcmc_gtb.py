@@ -253,10 +253,8 @@ def mcmc(a, b, phi, snp_dict, beta_mrg, frq_dict, idx_dict, n, ld_blk, blk_size,
                 ff.write('%d\t%s\t%d\t%s\t%s\t%.6e\n' % (chrom, snp, bp, a1, a2, beta[0]))
 
     if meta == 'TRUE':
-        if phi_updt == True:
-            eff_file = out_dir + '/' + '%s_META_pst_eff_a%d_b%.1f_phiauto_chr%d.txt' % (out_name, a, b, chrom)
-        else:
-            eff_file = out_dir + '/' + '%s_META_pst_eff_a%d_b%.1f_phi%1.0e_chr%d.txt' % (out_name, a, b, phi, chrom)
+        # Parameters belong to the run configuration; one META file per chromosome.
+        eff_file = os.path.join(out_dir, '%s_META_pst_eff_chr%d.txt' % (out_name, chrom))
 
         with open(eff_file, 'w') as ff:
             for snp, bp, a1, a2, beta in zip(snp_dict['SNP'], snp_dict['BP'], snp_dict['A1'], snp_dict['A2'], mu):

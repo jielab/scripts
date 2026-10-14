@@ -41,16 +41,30 @@ def configure(a):
         a.group_col = '.le8_family'
     if a.demo and a.outer_roster:
         raise ValueError('Demo cannot use a real outer roster')
-    a.covariates = a.covariates if a.covariates is not None else (a.shared_covariates or 'age,sex,tdi,PC1,PC2,center')
+    a.covariates = a.covariates if a.covariates is not None else (a.shared_covariates or 'age,sex,tdi,PC1,PC2')
     a.outcome_type, a.target_col = 'survival', a.trait
     a.diagnosis_col = a.diagnosis_col or 'fod_icd10_' + a.trait
     base = Path(a.ukb_phe)
     a.phe_file = a.phe_file or str(base / 'Rdata/all.rds')
-    a.omics_file = a.omics_file or str(base / ('rap/raw/prot.tab.gz' if a.biom == 'prot' else 'rap/met.tab.gz'))
+    # Use the same cleaned, named matrices as native C1. Raw assays are an
+    # explicit alternative, never an implicit second cohort/preprocessing path.
+    a.omics_file = a.omics_file or str(base / f'Rdata/{a.biom}.rds')
     a.met_map = a.met_map or str(base / 'common/met.lst')
-    a.met_input = a.met_input or ('raw' if a.biom == 'met' else 'named')
-    a.residualize = f'{a.biom}.plate' if a.residualize is None else a.residualize
-    a.categorical = f'sex,center,{a.biom}.plate' if a.categorical is None else a.categorical
+    a.met_input = a.met_input or 'named'
+    a.residualize = '' if a.residualize is None else a.residualize
+    a.categorical = 'sex' if a.categorical is None else a.categorical
+    a.excluded_technical_covariates = []
+    for name in ('covariates', 'residualize', 'categorical'):
+        kept = []
+        for col in words(getattr(a, name)):
+            if technical_category(col):
+                if col not in a.excluded_technical_covariates:
+                    a.excluded_technical_covariates.append(col)
+            else:
+                kept.append(col)
+        setattr(a, name, ','.join(kept))
+    if a.excluded_technical_covariates:
+        log('SKIP', 'technical_covariates', ','.join(a.excluded_technical_covariates))
     a.transform = a.transform or ('log1p' if a.biom == 'met' and a.met_input == 'raw' and not a.demo else 'none')
     if a.max_samples < 0 or a.demo_features < 3:
         raise ValueError('Invalid sample limit or demo feature count')
@@ -81,6 +95,10 @@ RDS_EXPORT_SCRIPT = '# Read-only bridge. No sourcing of phenotype pipelines or i
 
 def words(value):
 	return [s.strip() for s in (value or "").split(",") if s.strip()]
+
+def technical_category(name):
+	"""Technical location/batch categories excluded from this ABM specification."""
+	return bool(set(re.split(r'[.\s_:-]+', name.casefold())) & {'plate', 'well', 'center', 'centre'})
 
 def json_safe(value):
 	if isinstance(value, dict):
@@ -482,7 +500,7 @@ def prepare(a, out):
 	p = p.set_index(a.id_col).loc[omics[a.id_col]].reset_index()
 	p = attach_shared_groups(p, a)
 	features = [
-		c for c in omics if c != a.id_col and c not in words(a.exclude_features)
+		c for c in omics if c != a.id_col and c not in words(a.exclude_features) and not technical_category(c)
 	]
 	forbidden = set(phenotype_columns(a)) | {"event", "time", "target", "split", "Y"}
 	collision = {c.casefold() for c in features} & {c.casefold() for c in forbidden}
@@ -492,8 +510,12 @@ def prepare(a, out):
 		)
 	x = numeric(omics, features, "omics", dtype="float64")
 	negative = np.sum(x < 0, axis=0)
-	x = molecular_input_qc(x, a.biom, a.demo)
-	negative_to_missing = int(negative.sum()) if a.biom == "met" and not a.demo else 0
+	# Named/preprocessed matrices keep their supplied scale, including signed
+	# values. Concentration-domain QC belongs only to explicitly raw metabolites.
+	raw_metabolites = a.biom == "met" and a.met_input == "raw" and not a.demo
+	if raw_metabolites:
+		x = molecular_input_qc(x, a.biom)
+	negative_to_missing = int(negative.sum()) if raw_metabolites else 0
 	domain_invalid = np.sum(x <= -1, axis=0)
 	if a.transform == "log1p" and domain_invalid.any():
 		bad = [f"{name} ({int(n)})" for name, n in zip(features, domain_invalid) if n]

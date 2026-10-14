@@ -16,7 +16,9 @@ def main():
     a.add_argument('--config',required=True);a.add_argument('--output',required=True)
     a.add_argument('--time-col',default='time');a.add_argument('--event-col',default='event')
     a.add_argument('--prevalent-col',default='known_cad_at_index');a.add_argument('--clinical',default='')
-    a.add_argument('--group-col');a.add_argument('--assume-unrelated',action='store_true');a.add_argument('--role-col')
+    a.add_argument('--group-col',help='Optional family/group column; absent: unverified individual ID groups')
+    a.add_argument('--assume-unrelated',action='store_true',help='Optional user declaration, not proof of independent families; unnecessary for running')
+    a.add_argument('--role-col')
     x=a.parse_args();cfg=load_config(x.config);d=id_table(x.cohort_file);m=id_table(x.omics_file)
     out=Path(x.output)
     if out.exists() and any(out.iterdir()):raise FileExistsError('Prepared output already exists')
@@ -35,8 +37,11 @@ def main():
     if x.group_col:
         if x.group_col not in d or d[x.group_col].isna().any():raise ValueError('Missing family-group IDs')
         groups=d[x.group_col].astype(str).to_numpy()
-    elif x.assume_unrelated:groups=np.asarray(ids,str)
-    else:raise ValueError('Specify family IDs or explicitly --assume-unrelated')
+    else:groups=np.asarray(ids,str)
+    support=dict(family_status='verified_supplied_groups' if x.group_col else 'unavailable_individual_ID_groups_only',
+                 independent_family_support_verified=bool(x.group_col),
+                 grouping_unit='family' if x.group_col else 'individual_unverified',
+                 assume_unrelated=bool(x.assume_unrelated),validation_status='exploratory')
     if x.role_col:
         role=d[x.role_col].astype(str).to_numpy()
     else:
@@ -50,7 +55,7 @@ def main():
     X,time,event,groups,role,ids=[v[eligible] for v in (X,time,event,groups,role,np.asarray(ids,str))]
     event=event.astype(int);dev=role!='test'
     if set(role)!=set(ROLES)|{'test'}:raise ValueError('Each development role and test must have eligible people')
-    cfg=replace(cfg,always_include_indices=tuple(range(len(m.columns),X.shape[1])))
+    cfg=replace(cfg,always_include_indices=tuple(range(len(m.columns),X.shape[1])),grouping_unit=support['grouping_unit'])
     out.mkdir(parents=True);local=out/'_LOCAL_ONLY';local.mkdir(mode=0o700)
     np.savez_compressed(local/'development.npz',X=X[dev],time=time[dev],event=event[dev],eid=ids[dev],group=groups[dev],role=role[dev],feature_names=np.asarray(names))
     np.savez_compressed(local/'test_X.npz',X=X[~dev],eid=ids[~dev],group=groups[~dev],feature_names=np.asarray(names))
@@ -58,9 +63,10 @@ def main():
     json_write(out/'config.json',asdict(cfg))
     json_write(out/'input_provenance.json',dict(cohort_sha256=sha256(x.cohort_file),omics_sha256=sha256(x.omics_file),
                time_column=x.time_col,event_column=x.event_col,prevalent_column=x.prevalent_col,
-               group_assumption=x.group_col or 'declared_unrelated',
+               group_assumption=x.group_col or ('declared_unrelated' if x.assume_unrelated else 'individual_ID_only_unverified'),
+               **support,
                outcome_definition='unchanged supplied host survival fields; death handled according to supplied event/censoring encoding'))
     counts=pd.DataFrame({'role':role}).groupby('role').size().reset_index(name='N')
-    write_tables(out/'aggregate',{'cohort_roles':counts},'ABM twin',cfg.layer,cfg.trait,'prepared')
+    write_tables(out/'aggregate',{'cohort_roles':counts,'support_status':pd.DataFrame([support])},'ABM twin',cfg.layer,cfg.trait,'prepared')
     print(json.dumps(dict(output=str(out),eligible_N=len(X),development_N=int(dev.sum()),test_N=int((~dev).sum()),input_features=X.shape[1],molecular_panel_budget=cfg.panel_size)))
 if __name__=='__main__':main()

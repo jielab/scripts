@@ -291,7 +291,7 @@ def csx_combined_main():
 			raise RuntimeError(f"Command exit={rc}; see {logs / (name + '.log')}")
 
 	def posterior(c):
-		found = list((run / "raw" / f"chr{c}").glob("*META*pst_eff*.txt"))
+		found = list((run / "raw" / f"chr{c}").glob(f"{a.trait}_META_pst_eff*_chr{c}.txt"))
 		return found[0] if len(found) == 1 and found[0].stat().st_size else None
 
 	def validate_chromosome(c):

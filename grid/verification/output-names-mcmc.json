@@ -1,0 +1,14 @@
+[
+  {
+    "mode": "fixed",
+    "generated_name": "t2dm_META_pst_eff_chr15.txt",
+    "identical_META_weights": true,
+    "posterior_validation": "passed"
+  },
+  {
+    "mode": "auto",
+    "generated_name": "t2dm_META_pst_eff_chr15.txt",
+    "identical_META_weights": true,
+    "posterior_validation": "passed"
+  }
+]

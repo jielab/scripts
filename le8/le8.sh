@@ -21,8 +21,12 @@ Run final,shiny separately to combine completed outcomes and omic layers.
 Completed results are checked and skipped, preserving original methods/scope.
 Input timestamps or code changes do not refit completed modules; use --replace TRUE.
 ABM molecular-QC repair requires an explicit new fit; existing fits are not upgraded in place.
+ABM uses Rdata/prot.rds and Rdata/met.rds, with no automatic plate/well/center adjustment.
+Named RDS values keep their supplied scale; input/adjustment changes require a new ABM fit.
 For an integrated refit use c1_abm --replace TRUE; successful replacements retain _history snapshots.
 Keep the original --outer-roster. Previously inspected tests remain exploratory.
+Family data are optional, including standalone prepare; absent: individual ID groups with kinship unverified.
+Objective coronary endpoints are optional for reference calibration; missing endpoints disable diagnostic evaluation.
 C1 and ABM publish each outcome/omic layer separately so completed layers survive later failures.
 Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
@@ -104,7 +108,7 @@ Main options (defaults are set below in this script):
   --no-plots            C5 only: skip annotation plots
   --max-table-mb N        128
   --abm-config FILE       Twin model configuration (default config/abm.json)
-  --abm-host-args STRING  Original phenotype/omics input options; parsed without shell evaluation
+  --abm-host-args STRING  Explicit phenotype/omics input overrides; parsed without shell evaluation
   --deviation-config FILE  Deviation configuration; defaults per omic layer
                            Explicit known_cad_state / coronary_calcium tasks use separate result directories
   --objective-file FILE    Optional eid-keyed objective coronary endpoint table

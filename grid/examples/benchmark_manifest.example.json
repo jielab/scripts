@@ -1,0 +1,17 @@
+{
+  "methods": [
+    {
+      "name": "PRS-CSx-original",
+      "path": "original_heldout_predictions.tsv.gz",
+      "trait": "height",
+      "endpoint_definition": "height",
+      "value_type": "outcome_scale_prediction",
+      "prediction_column": "PRS-CSx",
+      "outcome_column": "outcome",
+      "test_roster_sha256": "GENERATE_FROM_THE_EXACT_FROZEN_TEST_IDS",
+      "sha256": "GENERATE_FROM_THE_ORIGINAL_PREDICTION_FILE",
+      "predictions_frozen_without_test_labels": true,
+      "training_budget": "Document the original common-development fitting budget"
+    }
+  ]
+}

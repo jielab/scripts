@@ -14,6 +14,10 @@ cd /mnt/d/scripts/le8
 
 默认完整流程包含 C1–C5；需要分析 RA 时设 `--Y cvd_cad,ra`。当前完成结果仍支持断点续跑，`--replace TRUE` 明确重拟合。家系与客观冠脉终点缺失时明确标记。
 
+ABM 与 C1 统一默认读取 `<ukb-phe>/Rdata/prot.rds` 和 `met.rds`，表型来自同目录的 `all.rds`。已处理矩阵沿用原分子名和数值尺度，不重复做原始字段映射或 `log1p`。默认协变量为 `age,sex,tdi,PC1,PC2`，分类变量为 `sex`；`plate`、`well`、`center`（含 `met.plate`、`prot.well` 等带前缀形式）从协变量、额外调整和分子输入中排除，共享配置带入时会记录排除项。显式原始代谢物输入需同时指定 `--omics-file` 和 `--met-input raw`，才执行原始字段映射与相应默认变换。
+
+已有 ABM 若使用原始输入或旧调整变量，不能直接当作新输入的完成结果跳过。执行 `./le8.sh c1_abm --Y cvd_cad --biom prot,met --replace TRUE` 会按新配置拟合并在成功发布时保留旧结果快照；此命令只运行 ABM，不重做 C1 关联分析。日志会显示实际输入路径、变换和调整变量。
+
 ## 2026-10-14 最小质控修复
 
 此次仅修复分子缺失质控、偏离效应回归的冗余协变量，以及展示/下载口径。默认10分子预算、twin 距离、profile_concordance 筛选、Full/Clean/Soft/Random 和三类效应分解保持原设置。
@@ -27,16 +31,18 @@ cd /mnt/d/scripts/le8
 
 宿主显式配置 `task=known_cad_state` 或 `coronary_calcium` 时，分别存入 `c1_abm/<task>/molecular_deviation/`；默认客观病变仍使用原 `c1_abm/molecular_deviation/`。这些独立任务可在证据浏览器中查看，不混入默认客观病变汇总。
 
-没有家系信息的宿主运行继续按个人 ID 分组并标记 `individual_unverified`，不添加 `assume_unrelated=true`；无客观检查仍可校准，诊断评价为 unavailable。原测试名单保持不变，已查看/未核实的测试结果继续标记 exploratory。
+没有家系信息时，宿主流程及独立 `abm prepare` / `deviation prepare` 均按个人 ID 分组并标记 `individual_unverified`，不自动添加 `assume_unrelated=true`。输出明确记录 `family_status=unavailable_individual_ID_groups_only`、`independent_family_support_verified=false`；无客观检查仍可校准，诊断评价为 unavailable。原测试名单保持不变，已查看/未核实的测试结果继续标记 exploratory。
 
 回归检查（在本目录运行）：
 
 ```bash
-python -m pytest -q tests/test_qc_repairs.py -p no:cacheprovider
+python -m pytest -q tests/test_qc_repairs.py tests/test_prepare_optional_inputs.py -p no:cacheprovider
 Rscript --vanilla tests/test_shiny_filters.R
 ```
 
 R 检查需要 Shiny、DT、DBI、RSQLite、ggplot2、plotly、testthat；使用 SQLite 合成表和 `shiny::testServer` 实际验证过滤、分页、下载、切换范围、零行与 task 绘图。合成验收覆盖20名全缺失 query、30名全缺失 donor、dummy数量不变性、同人单独/批量投影、家系排除、原 outer roster、共线状态不可估计等。此次修复前后合成完整样本的 ABM 预测/选择/confidence 一致，参考校准和七模型预测也一致；有缺失样本的模型会因排除不合格训练者、重新冻结预处理/半径等发生必要数值变化。这里不声称完成真实 UKB 重跑或整个仓库的历史测试。
+
+同日使用 `le8_audit_evidence_20261014` 中未经改写的 `reproduce_codex.py` 再验收：20名全缺失 query 的QC通过数、支持数、入选数与最大confidence均为0，30名全缺失训练者无一保留；三个分子的完整one-hot状态效应与参考水平编码一致。另补齐两个独立prepare入口的可选家系处理。26项当前Python测试及R `testServer` 检查通过；原附件的22项旧测试仅提供日志，未冒充本轮已重跑。原证据文件未覆盖，当前源码哈希、复现前后数字和检查范围保存在 [核查记录](tests/audit_recheck_20261014.json)。
 
 ## 1. 本版落实的研究目标
 
@@ -86,7 +92,7 @@ R 检查需要 Shiny、DT、DBI、RSQLite、ggplot2、plotly、testthat；使用
 
 ## 3. ABM 使用
 
-数据准备：`cohort.rds` / TSV / Parquet 必须含 `eid`、原宿主已推导好的随访time/event、基线CAD状态、家系编号。不要为使用本包重新定义原CAD结局。可通过 `--time-col`、`--event-col`、`--prevalent-col` 指向原列名。
+数据准备：`cohort.rds` / TSV / Parquet 必须含 `eid`、原宿主已推导好的随访time/event、基线CAD状态；家系编号可选。不要为使用本包重新定义原CAD结局。可通过 `--time-col`、`--event-col`、`--prevalent-col` 指向原列名。
 
 ```bash
 cd /mnt/d/scripts/le8
@@ -95,11 +101,11 @@ cd /mnt/d/scripts/le8
   --omics-file /path/to/prot.rds \
   --config config/abm.json \
   --time-col time --event-col event --prevalent-col known_cad_at_index \
-  --group-col family_group --clinical age,sex,PC1,PC2 \
+  --clinical age,sex,PC1,PC2 \
   --output /mnt/d/analysis/le8/cvd_cad/prot/abm_twin_prepared
 ```
 
-`/path/to/...` 是需要替换的实际数据文件，程序不假装能访问或自动推导尚未确认的临床字段。临床分类变量必须沿用宿主固定编码；稀有类别的编码不能用test结局决定。无家系字段时，仅在已经排除亲属后显式 `--assume-unrelated`。
+`/path/to/...` 是需要替换的实际数据文件，程序不假装能访问或自动推导尚未确认的临床字段。临床分类变量必须沿用宿主固定编码；稀有类别的编码不能用test结局决定。有家系资料时可加 `--group-col family_group`；没有时直接运行，按个人 ID 分组并明确亲缘未核实。`--assume-unrelated` 仅兼容显式用户声明，运行不需要此选项，声明也不等于家系支持已核实。已有角色名单应通过 `--role-col` 保留，或在宿主入口继续使用原 `--outer-roster`。
 
 ```bash
 P=/mnt/d/analysis/le8/cvd_cad/prot/abm_twin_prepared
@@ -148,18 +154,17 @@ PGS总分和trait级ALLELE_CT不能验证每个人的SNP组合、等位基因方
 
 ```bash
 ./le8.sh deviation prepare \
-  --cohort-file /path/to/cad_objective_cohort.rds \
+  --cohort-file /path/to/cad_cohort.rds \
   --omics-file /path/to/met.rds \
   --pgs-root /mnt/f/gwas/met/pgs/met.pgs.fullprecision.gz \
   --clinical age,sex,PC1,PC2 \
-  --group-col family_group \
   --config config/deviation_met.json \
   --output /mnt/d/analysis/le8/cvd_cad/met/deviation_prepared
 ```
 
 对名称不一致的指标传 `--pgs-mapping`，格式见示例。PGS目录有多个候选时必须给确切文件；绝不猜用哪个。
 
-必要主终点字段见 `config/objective_endpoint_schema.tsv`。`objective_cad` 是研究者事先定义并独立判读的0/1病变终点，程序不擅自把ICD未来诊断当影像病变。默认采血与冠脉检查相差不超过90天；日期不同需确认间隔内没有相关疾病事件或新治疗。90天是预声明默认，需按研究方案确定，不是通用诊断标准。
+仅做客观病变诊断评价时，所需终点字段见 `config/objective_endpoint_schema.tsv`；这些字段不是参考校准与偏离计算的前置条件，家系列同样可选。`objective_cad` 是研究者事先定义并独立判读的0/1病变终点，程序不擅自把ICD未来诊断当影像病变。默认采血与冠脉检查相差不超过90天；日期不同需确认间隔内没有相关疾病事件或新治疗。90天是预声明默认，需按研究方案确定，不是通用诊断标准。
 
 ```bash
 P=/mnt/d/analysis/le8/cvd_cad/met/deviation_prepared
@@ -173,7 +178,7 @@ O=/mnt/d/analysis/le8/cvd_cad/met/molecular_deviation
   --anchors L_VLDL_TG.pct,Total_TG,ApoB --output "$O/results"
 ```
 
-主要输出：遗传校准OOF R²、同人群七模型比较、四组配对增量对比、ROC、概率校准、固定特异度阈值下表现、探索性decision curve、所有分子的偏离分布及校正均值差。`feature_state_association` 的β是调整后的Z均值差，不是疾病OR；标准误按家系聚类，FDR按全指标族。
+主要输出：遗传校准OOF R²，以及有可用终点时的同人群七模型比较、四组配对增量对比、ROC、概率校准、固定特异度阈值下表现、探索性decision curve、所有分子的状态分布及校正均值差。`feature_state_association` 的β是调整后的Z均值差，不是疾病OR；标准误按提供的家系或未核实亲缘的个人 ID 分组计算，FDR按全指标族。
 
 共享图不使用“最显著feature”自动选主角。默认只画预声明锚点；全指标在Shiny下拉查询。检测样本是被选择去做冠脉检查者时，PPV和net benefit只对应该样本，不自动代表一般人群筛查。
 
