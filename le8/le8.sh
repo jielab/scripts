@@ -19,6 +19,8 @@ Usage: ./le8.sh [module[,module...]] [options]
 
 No module list: c1_correlate -> c1_abm (Twin/deviation) -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
+Each analysis module writes cumulative performance tables/figures in its performance/ directory.
+C1 refreshes comparisons with existing ABM fits; unavailable prediction models are marked not evaluated.
 Completed results are checked and skipped, preserving original methods/scope.
 Input timestamps or code changes do not refit completed modules; use --replace TRUE.
 ABM molecular-QC repair requires an explicit new fit; existing fits are not upgraded in place.
@@ -52,8 +54,8 @@ Continue from C3; completed C1/C2 dependencies are checked and skipped:
   ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
 
 Modules:
-  c1_correlate   C1 associations: measured/PGS, temporal analyses and enrichment
-  c1_abm         Twin confidence + genetic deviation
+  c1_correlate   C1 associations + basic clinical/biomarker prediction benchmark
+  c1_abm         Twin confidence + genetic deviation + comparison with C1 benchmark
   c2_cause       MR and genetic decomposition
   c3_coloc       Colocalization and locus evidence
   c4_connect     LE8 connections, interactions, nonlinearity, panel validation

@@ -162,12 +162,12 @@ ROLES = {
 	"focus_diagnostics": ("c4_connect", "c4.focus.fit_diagnostics.csv"),
 	"focus_calibration": ("c4_connect", "c4.focus.calibration.csv"),
 	"focus_heterogeneity": ("c4_connect", "c4.focus.heterogeneity.csv"),
-	"performance": ("final_prediction", "prediction_summary.csv"),
-	"budget": ("final_prediction", "review_budget_metrics.csv"),
-	"paired_delta": ("final_prediction", "review_paired_delta_CI.csv"),
-	"prediction_design": ("final_prediction", "review_design.csv"),
-	"calibration": ("final_prediction", "review_calibration.csv"),
-	"leadtime": ("final_prediction", "leadtime_discrimination.csv"),
+	"performance": ("c1_prediction", "prediction_summary.csv"),
+	"budget": ("c1_prediction", "review_budget_metrics.csv"),
+	"paired_delta": ("c1_prediction", "review_paired_delta_CI.csv"),
+	"prediction_design": ("c1_prediction", "review_design.csv"),
+	"calibration": ("c1_prediction", "review_calibration.csv"),
+	"leadtime": ("c1_prediction", "leadtime_discrimination.csv"),
 	"cell_status": ("c5_cellulation", "c5.cellulation_status.csv"),
 	"cell_enrichment": ("c5_cellulation", "c5.cell.enrichment.csv"),
 	"cell_coverage": ("c5_cellulation", "c5.cell.coverage.csv"),
@@ -1816,11 +1816,11 @@ def aggregate(root):
 			"c2_cause",
 			"c3_coloc",
 			"c4_connect",
-			"final_prediction",
+			"c1_prediction",
 		):
 			directory = (
-				final_dir(root.parent, root.name, layer, "prediction")
-				if module == "final_prediction"
+				root / layer / "c1_correlate" / "prediction"
+				if module == "c1_prediction"
 				else root / layer / module
 			)
 			files = sorted(directory.glob("*.csv"))

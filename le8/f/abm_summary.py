@@ -24,6 +24,8 @@ def table_paths(root, trait, layer):
         'abm_confidence': twin / 'test_report/confidence_validation.tsv.gz',
         'abm_support': twin / 'aggregate/support_status.tsv.gz',
         'abm_training': twin / 'fit/aggregate/training_summary.tsv.gz',
+        'abm_c1_comparison': base / 'baseline_comparison/metrics.tsv.gz',
+        'abm_c1_comparison_status': base / 'baseline_comparison/status.tsv.gz',
         'deviation_metrics': deviation / 'results/model_metrics.tsv.gz',
         'deviation_status': deviation / 'results/status.tsv.gz',
         'deviation_support': deviation / 'aggregate/support_status.tsv.gz',

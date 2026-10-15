@@ -1,6 +1,12 @@
 # LE8：Twin confidence、遗传校正分子偏离与汇总证据浏览器
 
-当前目录只保留一套实现，统一入口为 `le8.sh`。`c1_correlate` 运行 PWAS/MWAS、PGS、时间分析及富集；`c1_abm` 运行 twin confidence 与 molecular deviation；`final` 汇总当前分析；`shiny` 浏览汇总证据。代码位于 `f/`，配置位于 `config/`，页面位于 `shiny/`。不提供历史模型入口、迁移分支或旧结果对比。
+当前目录只保留一套实现，统一入口为 `le8.sh`。`c1_correlate` 运行 PWAS/MWAS、PGS、时间分析、富集及常规临床/biomarker预测基准；`c1_abm` 运行 twin confidence、molecular deviation 及与C1基准的比较；`final` 汇总当前分析；`shiny` 浏览汇总证据。代码位于 `f/`，配置位于 `config/`，页面位于 `shiny/`。不提供历史模型入口、迁移分支或旧结果对比。
+
+常规预测现在随 `c1_correlate` 自动运行，输出到 `<analysis-root>/<Y>/<biom>/c1_correlate/prediction/`，包括 clinical、biomarker-only、clinical+biomarker 的性能、增量及固定面板评估。特征筛选仅使用训练集；C2–C4结果不进入这个基础基准。关联分析与预测分别提交，已有C1关联结果会复用，只补缺失的预测阶段。`final --fit-reference` 已移除；原有预测配置的 `FINAL_*` 环境变量名暂时保留，`final --fit-joint` / `--fit-genetic` 仍用于另外的跨组学联合分析。
+
+`c1_abm` 自动读取C1冻结的测试集预测，在两者测试集交集内、同一人群子集上重新计算 IPCW AUC 与 Uno C，输出到 `c1_abm/baseline_comparison/C1_ABM_comparison.xlsx`。比较使用同一个训练期删失模型，报告实际人数及覆盖率；时间窗或结局定义不一致时输出不可比较状态。C1的风险排序分数不当作概率，因此不据此比较Brier/LogLoss。差值为探索性点估计，不表示统计显著优于基准。两次运行传入相同的 `--outer-roster` 可保留相同的外部测试名单；未传入时使用各自原名单的交集，不改变已有划分。已有ABM拟合会复用，重跑 `c1_abm` 可刷新比较而无需 `--replace TRUE`。缺少客观终点的deviation仍不作诊断性能比较。
+
+每个阶段完成（或复用已完成结果）后都会输出累计性能表和图，目录为 `<analysis-root>/<Y>/<biom>/<模块>/performance/`；`final` 的累计报告位于 `<analysis-root>/final/<Y>/<biom>/performance/`。主要文件是 `performance_summary.xlsx`、`performance_comparison*.png` 和同一测试人群的 `C1_ABM_comparison_*.png`。重跑 `c1_correlate` 也会读取已完成的ABM并刷新这些图，无需等到final，也不会重拟合ABM；如果ABM尚未运行则标记未评估。C2、C3、C5当前没有独立预测模型，其阶段报告保留先前已完成模型的比较，并将本阶段标为未评估；C4已有的验证模型加入累计报告。各图保留各自的终点、时间窗、样本量和验证口径，不把Harrell C和Uno C混为一个指标。累计报告只读取已有模型，不根据阶段证据另建模型。
 
 从空结果目录重新运行：
 

@@ -131,8 +131,8 @@ def final_dir(root, trait, layer=None, kind=None):
 
 
 def result_file(root, trait, layer, module, filename):
-	if module == "final_prediction":
-		return final_dir(root, trait, layer, "prediction") / re.sub(
+	if module == "c1_prediction":
+		return Path(root) / trait / layer / "c1_correlate" / "prediction" / re.sub(
 			r"^final[._]", "", filename
 		)
 	if module == "c4_panel_validation":
@@ -391,7 +391,7 @@ class Index:
 
 	def paths(self, Y, layer, module, name):
 		b = self.root / Y / layer
-		if module == "final_prediction":
+		if module == "c1_prediction":
 			return [result_file(self.root, Y, layer, module, name)]
 		return [result_file(self.root, Y, layer, module, name)]
 
@@ -1409,7 +1409,9 @@ def dispatch_main(argv=None):
 	if a.run_abm is False:
 		requested = [x for x in requested if x != "c1_abm"]
 	modules = [x for x in ORDER if x in requested]
-	fitted = a.fit_reference or a.fit_joint or a.fit_genetic or a.details
+	if a.fit_reference:
+		p.error("--fit-reference moved to c1_correlate; its basic prediction benchmark now runs automatically")
+	fitted = a.fit_joint or a.fit_genetic or a.details
 	if fitted and "final" not in modules:
 		p.error("--fit-* and --details require final")
 	if extra and not (set(modules) & NATIVE or fitted or modules == ["c1_abm"]):
@@ -1500,6 +1502,11 @@ def dispatch_main(argv=None):
 			'--memory-gib',str(claim),*(['--gpu'] if gpu else []),'--',*command]
 		call(wrapped,env,a.dry_run)
 
+	def performance(stage):
+		if not a.preflight and not a.index_only:
+			call([sys.executable, HERE / 'performance.py',
+				*(report_base() if stage == 'final' else base), '--stage', stage], env, a.dry_run)
+
 	for module in modules:
 		if module == "share":
 			if modules != ["share"]:
@@ -1539,10 +1546,9 @@ def dispatch_main(argv=None):
 					k: v for k, v in os.environ.items() if k.startswith("FINAL_")
 				},
 			)
-			if a.fit_reference or a.fit_joint or a.fit_genetic:
+			if a.fit_joint or a.fit_genetic:
 				ev = dict(
 					env,
-					FINAL_RUN_REFERENCE=str(a.fit_reference).upper(),
 					FINAL_RUN_JOINT=str(a.fit_joint or a.fit_genetic).upper(),
 					LE8_FINAL_REQUEST=json.dumps(fit_options, sort_keys=True),
 				)
@@ -1561,6 +1567,7 @@ def dispatch_main(argv=None):
 				if a.strict:
 					cmd += ["--strict"]
 				call(cmd, env, a.dry_run)
+			performance('final')
 			if not a.preflight:
 				index()
 		elif module == "shiny":
@@ -1592,6 +1599,11 @@ def dispatch_main(argv=None):
 				env,
 				a.dry_run,
 			)
+		if module in NATIVE | {'c5_cellulation'} and module != 'pgs_focus':
+			ready = (module != 'c1_correlate' or os.getenv('LE8_C1_STAGE', 'c1_prediction') == 'c1_prediction')
+			ready &= (module != 'c4_connect' or os.getenv('LE8_C4_STAGE', 'c4_explain') == 'c4_explain')
+			if ready:
+				performance(module)
 
 
 # 🚩 Temporary execution and consolidated publication
@@ -1687,6 +1699,17 @@ def _table_runtime(argv):
 				print(f"[LE8] {module_arg} transaction: Y={y} biom={b}; publish before the next scope", flush=True)
 				_table_runtime([*argv, "--Y", y, "--biom", b])
 		return True
+	if modules == {"c1_correlate"} and not os.getenv("LE8_C1_STAGE"):
+		# Commit association results before prediction, so an interrupted benchmark
+		# resumes without discarding a successful PWAS/MWAS run.
+		try:
+			for stage in ("c1_correlate", "c1_prediction"):
+				print(f"[LE8] C1 stage: {stage}; publish before the next stage", flush=True)
+				os.environ["LE8_C1_STAGE"] = stage
+				_table_runtime(argv)
+		finally:
+			os.environ.pop("LE8_C1_STAGE", None)
+		return True
 	launch_shiny = "shiny" in module_arg.split(",") and "--prepare-only" not in argv
 	if module_arg == "shiny" and "--no-reindex" in argv:
 		return False
@@ -1739,7 +1762,7 @@ def _run_table_workspace(argv, root, r_bin, module_arg, launch_shiny, train_abm,
 				parts = relative.parts
 				# twin publishes its own transactional directories and LOCAL_ONLY files.
 				# The native workbook exporter must never repack these artifacts.
-				if any(x in {"abm_twin", "molecular_deviation", "evidence", "_pgs_fullprecision"} or x.startswith('_abm_staging_') for x in parts):
+				if any(x in {"c1_abm", "abm_twin", "molecular_deviation", "baseline_comparison", "evidence", "_pgs_fullprecision"} or x.startswith('_abm_staging_') for x in parts):
 					continue
 				if not owns_scope(relative, scopes):
 					continue

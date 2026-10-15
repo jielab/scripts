@@ -84,7 +84,7 @@ class Indexer:
             if any(isinstance(v,(dict,list,tuple,set)) for v in d[c].head(500)):
                 d[c]=d[c].map(lambda v:json.dumps(v,default=str) if isinstance(v,(dict,list,tuple,set)) else v)
         md={**context(source),**(meta or {})}
-        md['module']={'deviation':'Molecular deviation','c1_correlate':'C1 association','c2_cause':'C2 genetic evidence','c3_coloc':'C3 colocalization','c4_connect':'C4 connection','c5_cellulation':'C5 cellular context'}.get(md['module'],md['module'])
+        md['module']={'deviation':'Molecular deviation','c1_correlate':'C1 association and prediction','c2_cause':'C2 genetic evidence','c3_coloc':'C3 colocalization','c4_connect':'C4 connection','c5_cellulation':'C5 cellular context'}.get(md['module'],md['module'])
         # A content hash is exact to this exported table. Never min-P/max-H4 merge.
         content=hashlib.sha256(d.to_csv(index=False).encode()).hexdigest()
         # Different runs retain independent provenance even for identical tables.

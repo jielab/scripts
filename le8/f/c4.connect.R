@@ -2771,14 +2771,14 @@ run_c4_nonlin <- function(layer) {
 			empty_score <- function() tibble::tibble(eid = dat$eid[0])
 			od <- if (layer == "prot")
 				out.prot else out.met
-			f <- file.path(le8_job_dir(od, "final_prediction"), "res.rds")
+			f <- file.path(le8_job_dir(od, "c1_prediction"), "res.rds")
 			if (!file.exists(f))
 				return(empty_score())
 			z <- readRDS(f)
 			pr <- z$scores$rows %||% tibble()
 			if (!all(c("method", "eid", "score_z", "split") %in% names(pr)))
 				return(empty_score())
-			preferred <- c("C4 YSplus", "Parsimonious", "Pradeep / glmnet")
+			preferred <- c("C4 YSplus", "Parsimonious", "Pradeep-style / glmnet", "All-metabolite / glmnet")
 			best <- preferred[preferred %in% unique(pr$method)][1]
 			if (!length(best) || is.na(best))
 				return(empty_score())

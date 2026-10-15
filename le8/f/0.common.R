@@ -339,6 +339,7 @@ le8_table_figure_pattern <- function(file) {
 }
 le8_table_result_groups <- function(names, directory) {
 	if (!length(names)) return(character())
+	if (basename(directory) == 'performance') return(rep('performance_summary', length(names)))
 	module <- if (grepl('^c[1-5]_', basename(directory))) sub('_.*$', '', basename(directory)) else basename(directory)
 	# Rules are ordered by scientific specificity, not input order or table count.
 	rules <- switch(module,
@@ -802,11 +803,11 @@ le8_evidence_policy <- function() {
 
 le8_module_policy <- function(module) {
 	prefix <- switch(module,c1_correlate="^C1_",c2_cause="^(C2_|DANDELION_|MRLINK2_)",c3_coloc="^(C3_|COLOC_|LE8_REFERENCE_|LE8_GWAS_MANIFEST)",
-		c4_connect="^C4_",c4_panel_validation="^C4_",c4_explain="^C4_",final_prediction="^FINAL_","^$")
+		c4_connect="^C4_",c4_panel_validation="^C4_",c4_explain="^C4_",c1_prediction="^FINAL_","^$")
 	env <- Sys.getenv(); settings <- env[grepl(prefix,names(env))]
 	paths <- unname(settings[file.exists(settings)])
 	list(settings=settings,files=if(length(paths)) tools::md5sum(paths) else character(),
-		evidence=if(module %in% c("c2_cause","c3_coloc","c4_connect","c4_panel_validation","final_prediction")) le8_evidence_policy() else NULL)
+		evidence=if(module %in% c("c2_cause","c3_coloc","c4_connect","c4_panel_validation","c1_prediction")) le8_evidence_policy() else NULL)
 }
 
 le8_completed_results <- function(root, traits, layers, modules, validate_settings = FALSE) {
@@ -824,12 +825,14 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 	}
 	required <- list(
 		c1_correlate = c("association", "prevalent"),
+		c1_prediction = c("scores", "prediction", "summary", "score_vs_topN"),
 		c2_cause = c("MR", "MR_reverse", "MR_best"), c3_coloc = c("summary", "variants"),
 		c4_connect = c("scan", "membership", "mediation"), c4_panel_validation = "tables",
 		c4_explain = "tables"
 	)
 	exported <- list(
 		c1_correlate = c("c1.cohort.csv", "c1.directionality_triage.csv"),
+		c1_prediction = c("prediction_summary.csv", "_LOCAL_ONLY/benchmark.json.gz"),
 		c2_cause = c("c2.MR_all.csv", "c2.evidence_grades.csv"),
 		c3_coloc = c("c3.coloc_summary.csv", "c3.credible_set_audit.csv"),
 		c4_connect = c("c4.LE8_feature_associations.csv", "c4.proxy_membership_YS_YSP_NS.csv", "c4.sex_interaction.csv"),
@@ -838,8 +841,8 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 	)
 	rows <- list()
 	for (y in traits) for (b in layers) for (m in intersect(modules, names(required))) {
-		d <- file.path(root, y, b, if (m %in% c('c4_panel_validation', 'c4_explain')) 'c4_connect' else m)
-		f <- file.path(d, switch(m, c4_panel_validation = 'c4.validation.rds', c4_explain = 'c4.explain.rds', paste0(substr(m, 1, 2), '.res.rds')))
+		d <- file.path(root, y, b, if (m == 'c1_prediction') 'c1_correlate/prediction' else if (m %in% c('c4_panel_validation', 'c4_explain')) 'c4_connect' else m)
+		f <- file.path(d, switch(m, c1_prediction = 'res.rds', c4_panel_validation = 'c4.validation.rds', c4_explain = 'c4.explain.rds', paste0(substr(m, 1, 2), '.res.rds')))
 		status <- "missing" ; detail <- "No completed result" ; generated <- version <- ""
 		if (file.exists(f) && file.info(f)$size > 0) {
 			x <- tryCatch(readRDS(f), error = function(e) stop("Unreadable completed cache: ", f, ": ", conditionMessage(e)))
@@ -1273,7 +1276,7 @@ le8_final_additions <- function(dat, biom_vars, ranked, training_screen, distals
 			budget = length(full), paradigm = "Overall-selected", ablation = nm
 		)
 	}
-	rd <- le8_job_dir(outdir, "final_prediction") ; dir.create(file.path(rd, "review_models"), showWarnings = FALSE)
+	rd <- le8_job_dir(outdir, "c1_prediction") ; dir.create(file.path(rd, "review_models"), showWarnings = FALSE)
 	metrics <- cal <- dca <- boot <- members <- prep <- coefs <- list() ; pred_cache <- list()
 	for (i in seq_along(designs)) {
 		ds <- designs[[i]] ; obj <- le8_fit_budget_model(train, test, cv, ds$features, tvar, evar)
@@ -1599,14 +1602,14 @@ le8_final_layer <- function(outdir) {
 }
 le8_job_dir <- function(outdir = getwd(), job = LE8_JOB) {
 	if (is.null(job) || !nzchar(job)) job <- "raw"
-	if (job == "final_prediction") return(le8_final_dir(le8_final_layer(outdir), "prediction"))
+	if (job == "c1_prediction") return(file.path(analysis_root, Y, le8_final_layer(outdir), "c1_correlate", "prediction"))
 	if (job %in% c('c4_panel_validation', 'c4_explain')) job <- 'c4_connect'
 	bn <- basename(normalizePath(outdir, winslash = "/", mustWork = FALSE))
 	if (bn %in% c("prot", "met")) file.path(outdir, job) else outdir
 }
 # Module artifacts stay beside their numerical results; root is publication-only.
 le8_artifact_path <- function(file, outdir = getwd(), module = LE8_JOB) {
-	if (module == "final_prediction") outdir <- le8_job_dir(outdir, module)
+	if (module == "c1_prediction") outdir <- le8_job_dir(outdir, module)
 	if (module %in% c('c4_panel_validation', 'c4_explain')) module <- 'c4_connect'
 	target <- if (grepl("^(/|[A-Za-z]:)", file)) file else file.path(outdir, file)
 	parent <- dirname(target)
@@ -1879,7 +1882,7 @@ finalize_outputs <- function(module, outdir = getwd()) {
 		png = paste(png, collapse = "; "), workbook = paste(xlsx, collapse = "; "),
 		generated = format(Sys.time(), "%F %T %z")
 	)
-	write_raw_csv(index, if (module == "final_prediction") "output_index.csv" else paste0(module, ".output_index.csv"), rawdir)
+	write_raw_csv(index, if (module == "c1_prediction") "output_index.csv" else paste0(module, ".output_index.csv"), rawdir)
 	message("Completed ", module, ": ", outdir)
 	invisible(index)
 }
@@ -2922,7 +2925,7 @@ le8_cache_dir <- function(stage, layer, ...) {
 le8_guard_stage_options <- function(layer, module) {
 	outdir <- if (layer == 'protein') out.prot else out.met
 	d <- le8_job_dir(outdir, module) ; dir.create(d, recursive = TRUE, showWarnings = FALSE)
-	name <- if (module == 'final_prediction') 'res.rds' else if (module == 'c4_panel_validation') 'c4.validation.rds' else paste0(substr(module, 1, 2), '.res.rds')
+	name <- if (module == 'c1_prediction') 'res.rds' else if (module == 'c4_panel_validation') 'c4.validation.rds' else paste0(substr(module, 1, 2), '.res.rds')
 	path <- file.path(d, name)
 	if (file.exists(path) && !LE8_REPLACE) le8_check_options(readRDS(path))
 	invisible(d)
@@ -3326,7 +3329,7 @@ le8_mock_final <- function(obj, outdir) {
 		'Fig14.heldout_ROC.png', 20, 11.5,
 		outdir = outdir
 	)
-	rawdir <- le8_job_dir(outdir, 'final_prediction')
+	rawdir <- le8_job_dir(outdir, 'c1_prediction')
 	write_raw_csv(imp, 'mock_importance.csv', rawdir) ; write_raw_csv(bind_rows(metrics), 'mock_auc.csv', rawdir)
 	write_raw_csv(bind_rows(curves), 'mock_roc.csv', rawdir)
 	write_xlsx2(list(importance = imp, selection = seq, auc = bind_rows(metrics), ROC = bind_rows(curves)), le8_artifact_path('Fig14.heldout_ROC.xlsx', outdir))
@@ -3781,14 +3784,14 @@ le8_finish_analysis <- function(layer, module, env) {
 		},
 		c3_coloc = le8_c3_additions(get0local("res", obj$summary), get0local("mr", tibble()), layer, outdir, obj$susie %||% list()),
 		c4_connect = le8_c4_additions(obj, outdir),
-		final_prediction = le8_final_additions(
+		c1_prediction = le8_final_additions(
 			get0local("dat"), get0local("biom_vars"), get0local("ranked"),
 			get0local("training_screen"), get0local("distalset", character()), get0local("geneticset", character()),
 			get0local("clinical"), get0local("tvar"), get0local("evar"), get0local("split"), layer, outdir
 		),
 		list()
 	))
-	workbook <- file.path(le8_job_dir(outdir, module), if (module == "final_prediction") "prediction_panels.xlsx" else paste0(sub("_.*$", "", module), ".out.xlsx"))
+	workbook <- file.path(le8_job_dir(outdir, module), if (module == "c1_prediction") "prediction_panels.xlsx" else paste0(sub("_.*$", "", module), ".out.xlsx"))
 	le8_optional(paste0(module, "_review_workbook"), le8_append_workbook(workbook, tables))
 	# Attach aggregate additions to the same result RDS so they are not orphaned
 	# from C1-C5. Do not overwrite unknown files or serialized individual data.
@@ -4115,14 +4118,14 @@ le8_figure_workbook <- function(tables, file, review = list()) {
 le8_restore_outputs <- function(layer, module) {
 	outdir <- if (layer == "protein") out.prot else out.met
 	rawdir <- le8_job_dir(outdir, module)
-	oldwd <- getwd() ; on.exit(setwd(oldwd), add = TRUE) ; setwd2(if (module == "final_prediction") rawdir else outdir)
-	cache <- file.path(rawdir, if (module == "final_prediction") "res.rds" else paste0(sub("_.*$", "", module), ".res.rds"))
+	oldwd <- getwd() ; on.exit(setwd(oldwd), add = TRUE) ; setwd2(if (module == "c1_prediction") rawdir else outdir)
+	cache <- file.path(rawdir, if (module == "c1_prediction") "res.rds" else paste0(sub("_.*$", "", module), ".res.rds"))
 	fields <- switch(module,
 		c1_correlate = c("association", "clusters", "cluster_selection", "enrichment"),
 		c2_cause = c("MR", "MR_reverse", "MR_best", "observational"),
 		c3_coloc = c("summary", "regional", "variants"),
 		c4_connect = c("scan", "membership", "modules", "mediation"),
-		final_prediction = c("scores", "prediction", "summary", "score_vs_topN")
+		c1_prediction = c("scores", "prediction", "summary", "score_vs_topN")
 	)
 	message("Rebuilding ", module, "/", layer, " PNG/XLSX; reading cached result: ", cache)
 	obj <- le8_figure_result(cache, c("meta", fields))
@@ -4131,7 +4134,7 @@ le8_restore_outputs <- function(layer, module) {
 		stop("Result trait does not match --trait: ", cache, call. = FALSE)
 	if (!is.null(obj$meta$layer) && !identical(obj$meta$layer, layer))
 		stop("Result layer does not match --biom: ", cache, call. = FALSE)
-	renderer <- get(paste0("le8_render_", sub("_.*$", "", module)), mode = "function")
+	renderer <- if (module == "c1_prediction") le8_render_final else get(paste0("le8_render_", sub("_.*$", "", module)), mode = "function")
 	renderer(obj, layer, outdir, rawdir)
 	finalize_outputs(module, outdir)
 	invisible(obj)
@@ -4466,8 +4469,10 @@ le8_render_final <- function(obj, layer, outdir, rawdir) {
 	lightgbm_label <- if (layer == "protein") "Yu-style / LightGBM" else "MWAS-ranked / LightGBM"
 	# The final model cache can predate prevalent-row augmentation. The exported
 	# person_scores table is the input actually used for the completed figures.
-	score_rows <- le8_figure_csv(rawdir, "person_scores.csv")
+	score_rows <- if (file.exists(file.path(rawdir, "person_scores.csv"))) le8_figure_csv(rawdir, "person_scores.csv") else obj$scores$rows
 	pred <- obj$prediction ; psum <- obj$summary
+	write_raw_csv(psum, "prediction_summary.csv", rawdir)
+	c1_export_benchmark(pred, layer, rawdir, if (nrow(psum)) unique(psum$AUC_horizon_years)[1] else HORIZON)
 	pairs_native <- obj$preclinical_pairs %||% list() ; boot_by_method <- obj$yy_auc_bootstrap %||% list()
 	orders <- list(
 		c(all_glmnet_label, lightgbm_label, "User specified"),
@@ -4526,6 +4531,7 @@ le8_figure_rule <- function(file) {
 	key <- sub("[.]png$", "", sub("^[^.]+[.]Fig[0-9]+[.]", "", basename(file)))
 	module <- if (grepl("^Fig", basename(file))) "final" else sub("[.].*$", "", basename(file))
 	if (module == "final") key <- sub("^Fig[0-9]+[.]", "", sub("[.]png$", "", basename(file)))
+	if (module == "final" && identical(get0("LE8_JOB"), "c1_prediction")) module <- "c1_prediction"
 	omit <- character()
 	group <- key
 	groups <- switch(module,
@@ -4533,7 +4539,7 @@ le8_figure_rule <- function(file) {
 		c2 = list(instrument_diagnostics = c("pQTL_R2"), dandelion_sensitivity = c("dandelion", "dandelion_evidence")),
 		c3 = list(posterior_evidence = c("evidence_triage", "posterior_diagnostics", "prior_sensitivity")),
 		c4 = list(supervised_connections = c("group_pillar_flow", "supervised_atlas"), mediation = c("mediation_forest", "mediation_diagnostics"), state_remodeling = c("state_network_remodeling", "state_network_edges"), imaging_context = c("imaging_associations", "imaging_overview")),
-		final = list(prediction_benchmark = c("performance_benchmark", "incremental_performance", "parsimony_performance"), prediction_sensitivity = c("subgroup_discrimination", "attained_age_sensitivity")),
+		c1_prediction = list(prediction_benchmark = c("performance_benchmark", "incremental_performance", "parsimony_performance"), prediction_sensitivity = c("subgroup_discrimination", "attained_age_sensitivity")),
 		list()
 	)
 	for (nm in names(groups)) if (key %in% groups[[nm]]) group <- nm
@@ -4576,7 +4582,7 @@ le8_figure_order <- function(module, groups) {
 		),
 		c3 = c('posterior_evidence', 'regional_top_loci', 'credible_sets', 'gpu_coloc_validation', 'pgs_coloc_triangulation'),
 		c4 = c('supervised_connections', 'mediation', 'imaging_context', 'lifestyle_omics_risk', 'state_remodeling', 'sex_interaction', 'LE8_component_interactions', 'spline_patterns', 'pass_fail_penalty'),
-		final = c(
+		c1_prediction = c(
 			'prediction_benchmark', 'score_concordance', 'prediction_sensitivity',
 			'budget_ablation_calibration', 'heldout_ROC', 'leadtime_prediction'
 		),
@@ -4655,10 +4661,12 @@ le8_layer_figure_correspondence <- function(traitdir) {
 			d <- as.data.frame(data.table::fread(f)) ; if (!nrow(d)) return(NULL)
 			if (!'group' %in% names(d)) d$group <- sub('[.]png$', '', d$file)
 			d$group[is.na(d$group)] <- sub('[.]png$', '', d$file[is.na(d$group)])
-			d$module <- basename(dirname(f)) ; d$page <- ave(seq_len(nrow(d)), d$group, FUN = seq_along)
+			relative <- substring(dirname(f), nchar(file.path(traitdir, layer)) + 2L)
+			d$module <- if (relative == 'c1_correlate/prediction') 'c1_prediction' else basename(dirname(f))
+			d$page <- ave(seq_len(nrow(d)), d$group, FUN = seq_along)
 			# Genomic protein order and metabolite biochemical order share one theme.
 			d$group[d$group %in% c('mh', 'circular')] <- 'association_overview'
-			d$file <- file.path(d$module, d$file) ; d[, c('module', 'group', 'page', 'file', 'panels')]
+			d$file <- file.path(relative, d$file) ; d[, c('module', 'group', 'page', 'file', 'panels')]
 		})
 		ans <- do.call(rbind, ans)
 		if (is.null(ans)) ans <- data.frame(module = character(), group = character(), page = integer(), file = character(), panels = integer())

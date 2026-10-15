@@ -20,6 +20,7 @@ from host_inputs import ROOT,host_config,prepare_host
 from run_abm_twin import load_config
 from research_io import write_tables,load_pgs,merge_native_scores
 import run_deviation as deviation
+from c1_abm_compare import run_comparison
 
 
 def parser():
@@ -186,7 +187,10 @@ def main(args):
             for name in set(targets)-todo:
                 check_input_reuse(targets[name],current)
         if not todo:
-            print('[LE8 twin] SKIP: both twin modules completed; --replace TRUE creates an archived replacement',flush=True)
+            print('[LE8 twin] SKIP: both twin fits completed; refreshing C1 comparison if needed',flush=True)
+            with tempfile.TemporaryDirectory(prefix='_abm_staging_',dir=scope) as work:
+                run_comparison(args,scope,Path(work),publish,completed,finish)
+                refresh_performance(args,scope,Path(work))
             return
         work=Path(tempfile.mkdtemp(prefix='_abm_staging_',dir=scope))
         try:
@@ -217,6 +221,8 @@ def main(args):
                 deviation_target.parent.mkdir(parents=True,exist_ok=True)
                 publish(stage,deviation_target)
                 print('[LE8 twin] DONE deviation',flush=True)
+            run_comparison(args,scope,work,publish,completed,finish)
+            refresh_performance(args,scope,work)
         except BaseException as exc:
             # The public console recognizes this prefix before the outer
             # CalledProcessError hides the actual cause behind a long command.
@@ -227,6 +233,14 @@ def main(args):
             raise
         else:
             shutil.rmtree(work)
+
+
+def refresh_performance(args,scope,work):
+    from performance import collect, write_snapshot
+    stage=work/'performance'
+    tables=collect(args.analysis_root,args.analysis_root,args.Y,args.biom,'c1_abm')
+    write_snapshot(tables,stage,f'{args.Y} / {args.biom} | through c1_abm')
+    publish(stage,scope/'performance')
 
 
 if __name__=='__main__':

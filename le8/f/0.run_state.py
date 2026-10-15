@@ -14,6 +14,7 @@ from pathlib import Path
 
 RESULTS = {
     "c1_correlate": ["c1_correlate/c1.res.rds"],
+    "c1_prediction": ["c1_correlate/prediction/res.rds", "c1_correlate/prediction/_LOCAL_ONLY/benchmark.json.gz"],
     "c2_cause": ["c2_cause/c2.res.rds"],
     "c3_coloc": ["c3_coloc/c3.res.rds"],
     "c4_connect": ["c4_connect/" + name for name in

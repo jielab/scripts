@@ -27,7 +27,7 @@ usage() {
 Usage: ./le8.sh [module[,module...]] --Y disease[,disease...] --biom prot,met [options]
 
 Modules (executed in pipeline order):
-  c1_correlate   Omic/PGS associations, temporal sensitivity, enrichment
+  c1_correlate   Associations, temporal sensitivity, enrichment + basic prediction
   c2_cause       cis/trans MR, MR-link-2 and DANDELION
   c3_coloc       Coloc and optional fine-mapping/GPU-coloc
   c4_connect    LE8 connections, interactions, nonlinearity, panel validation and reconstruction bootstrap
@@ -625,8 +625,8 @@ export BIOM="$(
 	echo "${biom_layers[*]}"
 )"
 
-jobs=(c1_correlate c2_cause c3_coloc pgs_focus c4_connect c4_panel_validation c4_explain final_prediction final)
-files=(c1.correlate.R c2.cause.R c3.coloc.R c1.correlate.R c4.connect.R c4.connect.R c4.connect.R final.R final.R)
+jobs=(c1_correlate c1_prediction c2_cause c3_coloc pgs_focus c4_connect c4_panel_validation c4_explain final_prediction final)
+files=(c1.correlate.R c1.prediction.R c2.cause.R c3.coloc.R c1.correlate.R c4.connect.R c4.connect.R c4.connect.R final.R final.R)
 
 job_index() {
 	local q="$1" i
@@ -657,8 +657,17 @@ if [[ -n "$module_csv" ]]; then
 				*) echo 'ERROR: invalid internal C4 stage.' >&2; exit 2 ;;
 			esac
 		fi
+		if [[ "$j" == c1_correlate && -n "${LE8_C1_STAGE:-}" ]]; then
+            case "$LE8_C1_STAGE" in
+                c1_correlate | c1_prediction) j=$LE8_C1_STAGE ;;
+                *) echo 'ERROR: invalid internal C1 stage.' >&2; exit 2 ;;
+            esac
+        fi
 		job_index "$j" >/dev/null || exit 2
 		[[ " ${selected[*]} " == *" $j "* ]] || selected+=("$j")
+        if [[ "$j" == c1_correlate && -z "${LE8_C1_STAGE:-}" ]]; then
+            [[ " ${selected[*]} " == *" c1_prediction "* ]] || selected+=(c1_prediction)
+        fi
 		if [[ "$j" == c4_connect && -z "${LE8_C4_STAGE:-}" ]]; then
 			for c4_stage in c4_panel_validation c4_explain; do
 				[[ " ${selected[*]} " == *" $c4_stage "* ]] || selected+=("$c4_stage")
@@ -729,7 +738,7 @@ fi
 	for job in "${requested[@]}"; do
 		case "$job" in
 			c3_coloc) check_jobs+=(c2_cause c1_correlate) ;;
-			c2_cause | c4_connect) check_jobs+=(c1_correlate) ;;
+			c1_prediction | c2_cause | c4_connect) check_jobs+=(c1_correlate) ;;
 			c4_explain) check_jobs+=(c4_panel_validation) ;;
 		esac
 	done
@@ -790,7 +799,7 @@ plan_job() {
 	local -a deps=()
 	case "$job" in
 		c3_coloc) deps=(c2_cause) ;;
-		c2_cause | c4_connect) deps=(c1_correlate) ;;
+		c1_prediction | c2_cause | c4_connect) deps=(c1_correlate) ;;
 		c4_explain) deps=(c4_panel_validation) ;;
 		final_prediction)
 			deps=()
@@ -913,13 +922,13 @@ preflight() {
 	echo "  1KG reference root: $LE8_REFGEN_ROOT"
 	[[ -z "$FINAL_INC_PROT" ]] || echo "  Final protein include list: $FINAL_INC_PROT"
 	[[ -z "$FINAL_INC_MET" ]] || echo "  Final metabolite include list: $FINAL_INC_MET"
-	if job_pending final_prediction prot; then
+	if job_pending c1_prediction prot; then
 		[[ -z "$FINAL_INC_PROT" || -s "$FINAL_INC_PROT" ]] || {
 			echo "  MISSING: --inc_prot file ($FINAL_INC_PROT)"
 			bad=1
 		}
 	fi
-	if job_pending final_prediction met; then
+	if job_pending c1_prediction met; then
 		[[ -z "$FINAL_INC_MET" || -s "$FINAL_INC_MET" ]] || {
 			echo "  MISSING: --inc_met file ($FINAL_INC_MET)"
 			bad=1
@@ -949,7 +958,7 @@ preflight() {
 		echo "  MISSING: Rscript ($R_BIN)"
 		bad=1
 	}
-	if [[ " ${pending_jobs[*]} " == *" c4_panel_validation "* || " ${pending_jobs[*]} " == *" c4_explain "* || " ${pending_jobs[*]} " == *" final_prediction "* ]]; then
+	if [[ " ${pending_jobs[*]} " == *" c1_prediction "* || " ${pending_jobs[*]} " == *" c4_panel_validation "* || " ${pending_jobs[*]} " == *" c4_explain "* || " ${pending_jobs[*]} " == *" final_prediction "* ]]; then
 		if command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("glmnet",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
 			echo "  MISSING: R package glmnet (training-only ridge CV)."
 			bad=1
@@ -960,7 +969,7 @@ preflight() {
 			echo "  MISSING: supplied FINAL_PRS_MANIFEST."
 			bad=1
 		}
-		[[ " ${biom_layers[*]} " == *" prot "* && " ${biom_layers[*]} " == *" met "* ]] || echo "  Joint Final unavailable for a single layer; per-layer/reference and evidence atlas remain available."
+		[[ " ${biom_layers[*]} " == *" prot "* && " ${biom_layers[*]} " == *" met "* ]] || echo "  Joint Final requires both layers; basic per-layer prediction runs in c1_correlate."
 	fi
 	if [[ "$need_dandelion" == TRUE ]] && command -v "$R_BIN" >/dev/null 2>&1 && ! "$R_BIN" -e 'quit(status=if(requireNamespace("DANDELION",quietly=TRUE))0 else 1)' >/dev/null 2>&1; then
 		echo "  MISSING: R package DANDELION."
