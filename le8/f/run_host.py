@@ -217,8 +217,13 @@ def main(args):
                 deviation_target.parent.mkdir(parents=True,exist_ok=True)
                 publish(stage,deviation_target)
                 print('[LE8 twin] DONE deviation',flush=True)
-        except BaseException:
-            print('[LE8 twin] Failed; earlier published results retained. Local diagnostics: '+str(work),file=sys.stderr)
+        except BaseException as exc:
+            # The public console recognizes this prefix before the outer
+            # CalledProcessError hides the actual cause behind a long command.
+            print(f'[LE8] FAIL c1_abm Y={args.Y} biom={args.biom}: {type(exc).__name__}: {exc}',
+                  file=sys.stderr, flush=True)
+            print('[LE8 twin] Failed; earlier published results retained. Local diagnostics: '+str(work),
+                  file=sys.stderr, flush=True)
             raise
         else:
             shutil.rmtree(work)

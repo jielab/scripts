@@ -54,6 +54,7 @@ class Config:
     c_grid: tuple[float, ...] = (0.01, 0.1, 1.0)
     pilot_c: float = 0.1
     max_iter: int = 2000
+    max_iter_retries: int = 2
     lightgbm: bool = False
     tree_iterations: int = 150
     cores: int = 4
@@ -97,6 +98,10 @@ class Config:
             raise ValueError("Invalid fitting/quality thresholds")
         if self.audit_min_cases < 2 or self.audit_min_controls < 2 or self.bootstrap < 1:
             raise ValueError("Invalid audit information requirements")
+        if (isinstance(self.max_iter, bool) or not isinstance(self.max_iter, int) or self.max_iter < 1
+            or isinstance(self.max_iter_retries, bool) or not isinstance(self.max_iter_retries, int)
+            or not 0 <= self.max_iter_retries <= 5):
+            raise ValueError("max_iter must be a positive integer; max_iter_retries must be an integer from 0 to 5")
 
 
 def tie_hash(value: str, seed: int) -> int:
@@ -261,9 +266,42 @@ def fit_classifier(X, y, w, config: Config, kind="elasticnet", parameter=0.1):
                     random_state=config.seed, verbosity=-1, deterministic=True, force_col_wise=True)
     else:
         raise ValueError(kind)
+    x_fit, y_fit = np.asarray(X)[ok], np.asarray(y)[ok]
+    weight = np.asarray(w)[ok] / np.mean(np.asarray(w)[ok])
+    if kind == "elasticnet":
+        # Let fit finish so coefficients are available to warm-start a retry.
+        # Escalating the warning to an exception inside sklearn loses that state.
+        attempts = []
+        for attempt in range(config.max_iter_retries + 1):
+            budget = config.max_iter * 2**attempt
+            model.set_params(max_iter=budget, warm_start=attempt > 0)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ConvergenceWarning)
+                model.fit(x_fit, y_fit, sample_weight=weight)
+            convergence = [v for v in caught if issubclass(v.category, ConvergenceWarning)]
+            for warning in caught:
+                if not issubclass(warning.category, ConvergenceWarning):
+                    warnings.warn_explicit(warning.message, warning.category, warning.filename, warning.lineno)
+            attempts.append(dict(max_iter=budget, n_iter=int(np.max(model.n_iter_)),
+                                 converged=not convergence))
+            total = sum(v['n_iter'] for v in attempts)
+            if not convergence:
+                model.convergence_audit_ = attempts
+                if attempt:
+                    print(f'[LE8] DONE ABM elastic-net converged: C={parameter:g}; '
+                          f'attempts={len(attempts)}; total_iterations={total}', flush=True)
+                return model
+            if attempt < config.max_iter_retries:
+                print(f'[LE8] PROGRESS ABM elastic-net convergence retry {attempt+1}/{config.max_iter_retries}: '
+                      f'C={parameter:g}; rows={len(x_fit)}; features={x_fit.shape[1]}; '
+                      f'total_iterations={total}; next_max_iter={budget*2}; solver=saga; tol={model.tol:g}', flush=True)
+        raise RuntimeError(f'ABM elastic-net did not converge: solver=saga, C={parameter:g}, tol={model.tol:g}, '
+                           f'iterations={total}, attempts={len(attempts)}. '
+                           'Review training scales or increase max_iter/max_iter_retries in --abm-config; '
+                           'no unconverged fit was accepted.')
     with warnings.catch_warnings():
         warnings.simplefilter("error", ConvergenceWarning)
-        model.fit(np.asarray(X)[ok], np.asarray(y)[ok], sample_weight=np.asarray(w)[ok] / np.mean(np.asarray(w)[ok]))
+        model.fit(x_fit, y_fit, sample_weight=weight)
     return model
 
 
@@ -296,6 +334,7 @@ def choose_model_panel(prep, X, y, w, config):
     prep.panel_source = "this fit's training data only"
     prep.panel_pilot_coefficients = fit.coef_[0][chosen].copy()
     prep.panel_pilot_zero_count = int(np.sum(np.abs(prep.panel_pilot_coefficients)<1e-10))
+    prep.panel_pilot_convergence = fit.convergence_audit_
     prep.fit_statistics(np.asarray(X)[prep.technical_qc(X)])
     return original
 
@@ -352,6 +391,10 @@ def crossfit_quality(X, time, event, ids, groups, config: Config):
                              molecular_qc_input_indices=prep.molecular_qc_columns.tolist(),
                              molecular_panel_input_indices=prep.molecular_columns.tolist(),
                              recipient_hash=fingerprint(ids[va]), family_disjoint=True, panel_input_indices=panel.tolist(),
+                             pilot_iterations=sum(v['n_iter'] for v in prep.panel_pilot_convergence),
+                             pilot_fit_attempts=len(prep.panel_pilot_convergence),
+                             model_iterations=sum(v['n_iter'] for v in model.convergence_audit_),
+                             model_fit_attempts=len(model.convergence_audit_),
                              selection_in_teacher_only=True))
     if not np.isfinite(prob).all(): raise AssertionError("Incomplete OOF predictions")
     with warnings.catch_warnings():
@@ -599,7 +642,10 @@ class TwinABM:
                     model = fit_classifier(z[b], y[b], w[b]*mult, a, kind, par)
                     p = model.predict_proba(z[t])[:, 1]
                     score = float(np.average(logloss_rows(y[t], p), weights=w[t]))
-                    self.model_tuning.append(dict(model=kind+"_"+arm, parameter=par, logloss=score))
+                    fit_audit = getattr(model, 'convergence_audit_', [])
+                    self.model_tuning.append(dict(model=kind+"_"+arm, parameter=par, logloss=score,
+                        iterations=sum(v['n_iter'] for v in fit_audit) if fit_audit else None,
+                        fit_attempts=len(fit_audit) if fit_audit else None))
                     if best is None or score < best[0]: best = score, model
                 self.models[kind+"_"+arm] = best[1]
         self.banks = {}
@@ -649,6 +695,8 @@ class TwinABM:
             sample_missing_threshold=a.sample_missing,
             selected_panel=self.panel_names, panel_budget=a.panel_size,
             selected_zero_pilot_coefficients=self.prep.panel_pilot_zero_count,
+            panel_pilot_iterations=sum(v['n_iter'] for v in self.prep.panel_pilot_convergence),
+            panel_pilot_fit_attempts=len(self.prep.panel_pilot_convergence),
             final_nonzero_coefficients={n:int(np.sum(np.abs(m.coef_[0])>1e-10)) for n,m in self.models.items() if hasattr(m,"coef_")},
             matching_space="selected predictor vector; coefficient-weighted distances",
             confidence_definition="100*geometric_mean(proximity,independent_support,donor_concordance,profile_radius); zero without support",

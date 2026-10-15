@@ -48,17 +48,19 @@ def send_remaining(pids, sig):
 
 @contextmanager
 def managed_process(command, env):
-	proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+	foreground = env.get("SCRIPT_FOREGROUND") == "1"
+	proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=not foreground)
 	try:
 		yield proc
 	finally:
 		if proc.poll() is None or sys.exc_info()[0] is not None:
 			# A logging/console failure must not orphan the computation.
 			pids = descendants(proc.pid)
-			try:
-				os.killpg(proc.pid, signal.SIGKILL)
-			except ProcessLookupError:
-				pass
+			if not foreground:
+				try:
+					os.killpg(proc.pid, signal.SIGKILL)
+				except ProcessLookupError:
+					pass
 			send_remaining(pids, signal.SIGKILL)
 			proc.wait()
 		proc.stdout.close()
@@ -253,16 +255,18 @@ def run(script, args):
 	directory.mkdir(parents=True, exist_ok=True)
 	log = directory / f"{label}.{datetime.datetime.now():%Y%m%d-%H%M%S}.{os.getpid()}.log"
 	env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1")
+	foreground = env.get("SCRIPT_FOREGROUND") == "1"
 	with managed_process(["bash", str(script), *args], env) as proc:
 		cancelled = []
 
 		def cancel(sig, frame):
 			if not cancelled:
 				cancelled.append((sig, time.monotonic(), descendants(proc.pid)))
-				try:
-					os.killpg(proc.pid, signal.SIGTERM)
-				except ProcessLookupError:
-					pass
+				if not foreground:
+					try:
+						os.killpg(proc.pid, signal.SIGTERM)
+					except ProcessLookupError:
+						pass
 				send_remaining(cancelled[0][2], signal.SIGTERM)
 
 		for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
@@ -432,10 +436,11 @@ def run(script, args):
 				now = time.monotonic()
 				if cancelled and now - cancelled[0][1] >= 10:
 					send_remaining(cancelled[0][2], signal.SIGKILL)
-					try:
-						os.killpg(proc.pid, signal.SIGKILL)
-					except ProcessLookupError:
-						pass
+					if not foreground:
+						try:
+							os.killpg(proc.pid, signal.SIGKILL)
+						except ProcessLookupError:
+							pass
 			if pending:
 				show_line(pending)
 			rc = proc.wait()

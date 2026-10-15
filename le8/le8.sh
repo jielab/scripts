@@ -6,6 +6,7 @@ export PYTHONDONTWRITEBYTECODE=1
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
 LE8_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # One logger covers the public dispatcher and all of its children.
+export SCRIPT_FOREGROUND=1
 export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/tmp/le8-logs/runs}
 if [[ $# == 0 && ${SCRIPT_CONSOLE_ACTIVE:-0} != 1 && ${SCRIPT_VERBOSE:-0} != 1 ]]; then
 	exec python3 "$LE8_ROOT/../0f/console_run.py" --script "$LE8_ROOT/le8.sh" --
@@ -68,7 +69,7 @@ Main options (defaults are set below in this script):
   --biom CSV             prot,met
   --analysis-root DIR    /mnt/d/analysis/le8
   --ukb-phe DIR          External phenotype/omics input root (analysis only)
-  --cores N              Phase CPU budget; default min(16, available CPUs)
+  --cores N              Phase CPU budget; default 8
   --pwas-workers N|auto Dynamic blocks of 4 features; auto up to 8, RAM may reduce to serial
   --pgs-workers N|auto  Six-model checkpoints; auto up to 4, RAM may reduce to serial
   --mrlink2-workers N   Concurrent MR tasks; default 4
@@ -81,7 +82,7 @@ Main options (defaults are set below in this script):
   --r-bin FILE           Rscript
   --port N               3839
   --host ADDRESS         127.0.0.1
-  --memory-limit-gb N    Process-tree RAM cap; default 32 GiB; 0 disables it
+  --memory-limit-gb N    Process-tree RAM cap; default 24 GiB; 0 disables it
   --memory-swap-gb N     Explicit swap cap
   --run-abm              Include ABM with an explicit module list
   --skip-abm             Skip ABM in the default C1-C5 sequence
@@ -127,8 +128,11 @@ summary report: final/; aggregate database: evidence/; execution logs and caches
 Question-led C1 → C2 → C4 overview and figures: final/; Shiny opens the aggregate evidence browser.
 LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
-Shared RAM budget: LE8_RESOURCE_MEMORY_GIB=32 by default (GiB).
+Per-run defaults: 8 CPU cores and 24 GiB RAM.
+Shared pool across LE8 runs: LE8_TOTAL_CORES=16 and LE8_RESOURCE_MEMORY_GIB=32 (GiB).
+All concurrent runs must use the same pool settings; per-run requests may be smaller.
 Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
+Runs stay in the terminal foreground: Ctrl+C stops the job; Ctrl+Z suspends the whole job.
 SCRIPT_VERBOSE=1 streams all diagnostics to the terminal.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
@@ -205,7 +209,7 @@ le8_main() {
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
 	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
-	local cores="" ukb_phe="" memory_limit="" memory_swap="" dry_run=FALSE
+	local cores=8 ukb_phe="" memory_limit=${LE8_MEMORY_LIMIT_GB:-24} memory_swap="" dry_run=FALSE
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
@@ -215,6 +219,8 @@ le8_main() {
 	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-/mnt/f/gwas/met}
 	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-/mnt/f/gen/1kg}
 	export LE8_GRCH=${LE8_GRCH:-auto}
+	# Pool capacity coordinates concurrent runs; each phase requests only its own budget.
+	export LE8_TOTAL_CORES=${LE8_TOTAL_CORES:-16}
 	export LE8_RESOURCE_MEMORY_GIB=${LE8_RESOURCE_MEMORY_GIB:-32}
 	export RUN_MRlink2=${RUN_MRlink2:-Top} RUN_Dandelion=${RUN_Dandelion:-Top}
 	export MRLINK2_EIGH_BACKEND=${MRLINK2_EIGH_BACKEND:-auto}

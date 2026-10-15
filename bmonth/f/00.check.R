@@ -1,0 +1,10 @@
+required<-c('dplyr','tidyr','tibble','survival','PheWAS','ggplot2','ggrepel','digest','patchwork')
+missing<-required[!vapply(required,requireNamespace,logical(1),quietly=TRUE)]
+if(length(missing))stop('Missing R packages: ',paste(missing,collapse=', '))
+source(file.path(Sys.getenv('BMONTH_FDIR'),'0.common.R'))
+files<-file.path(indir,'Rdata',c('all.rds','PheWAS.rds','prot.rds','met.rds'))
+if(any(!file.exists(files)))stop('Missing input files: ',paste(files[!file.exists(files)],collapse=', '))
+dat<-read_all()%>%prep_covars()%>%make_birth_month()
+cat('Input cohort:',nrow(dat),'\n')
+for(x in ALL_EXPOSURES)cat(x,sum(!is.na(dat[[x]])),'nonmissing\n')
+cat('Birth north available:',sum(!is.na(dat$birth_north)),'; east:',sum(!is.na(dat$birth_east)),'\n')

@@ -5,6 +5,7 @@ Keep the installed package untouched. Refuse unfamiliar source rather than
 silently applying a partial patch. Original assembly summaries remain intact.
 """
 import shutil
+import textwrap
 from pathlib import Path
 
 
@@ -23,6 +24,33 @@ def patched_source(path):
          '(done, not_done) = concurrent.futures.wait(futures)\n            for completed in done:\n                completed.result()\n            if len(not_done) != 0:'),
         ('elif response.status == 404:\n                    LOG.warning(',
          'elif response.status in (408, 429, 500, 502, 503, 504):\n                    response.read()\n                    raise http.client.HTTPException("Temporary HTTP status " + str(response.status))\n                elif response.status == 404:\n                    response.read()\n                    raise RuntimeError("NCBI file not found; refusing empty reference: " + url)\n                    LOG.warning('),
+        ('''                    for checksum in checksums:
+                        (md5sum, remote_filename) = checksum.split()
+                        remote_filename = os.path.basename(
+                            remote_filename.decode()
+                        )
+                        md5[remote_filename] = md5sum.decode()''',
+         '''                    checked_md5 = {}
+                    for checksum in checksums:
+                        if not checksum.strip():
+                            continue
+                        # md5sum filenames may contain spaces; error pages are not checksums.
+                        fields = checksum.split(maxsplit=1)
+                        if len(fields) != 2 or not re.fullmatch(rb"[0-9a-fA-F]{32}", fields[0]):
+                            raise http.client.HTTPException("Malformed NCBI checksum response for " + url)
+                        try:
+                            remote_filename = fields[1].rstrip(b"\\r\\n").removeprefix(b"*").decode()
+                        except UnicodeError as e:
+                            raise http.client.HTTPException("Invalid NCBI checksum filename for " + url) from e
+                        remote_filename = os.path.basename(remote_filename)
+                        if not remote_filename:
+                            raise http.client.HTTPException("Empty NCBI checksum filename for " + url)
+                        md5sum = fields[0].decode().lower()
+                        if remote_filename in checked_md5 and checked_md5[remote_filename] != md5sum:
+                            raise http.client.HTTPException("Conflicting NCBI checksums for " + url)
+                        checked_md5[remote_filename] = md5sum
+                    # Publish only after the whole response has passed validation.
+                    md5.update(checked_md5)'''),
         ('            if not skip_md5_check and os.path.exists(local_name)\\',
          '            if filename.endswith("_genomic.fna.gz") and filename not in md5:\n                raise http.client.HTTPException("NCBI genome checksum unavailable: " + url)\n            if not skip_md5_check and os.path.exists(local_name)\\'),
         ('skip_md5_check = False\n    while i < num_urls:',
@@ -40,6 +68,19 @@ def patched_source(path):
         if source.count(before) != 1:
             raise RuntimeError('Unexpected k2 source; download compatibility patch was not applied')
         source = source.replace(before, after)
+    # A frozen selection supplies the assembly summary before the upstream downloader
+    # creates its manifest. The same checked genome-download/masking code is reused.
+    before = 'def download_genomic_library(args):\n'
+    if source.count(before) != 1:
+        raise RuntimeError('Unexpected k2 source; selection hook was not applied')
+    source = source.replace(before, before + '    from reference_selection import summary_for_k2\n'
+                            '    _metag_summary = summary_for_k2(args)\n')
+    start = source.index('        remote_dir_name = args.library\n')
+    end = source.index('        if args.library == "human":\n            with open(', start)
+    download_summary = source[start:end]
+    source = (source[:start] + '        if _metag_summary is not None:\n'
+              '            shutil.copyfile(_metag_summary, "assembly_summary.txt")\n'
+              '        else:\n' + textwrap.indent(download_summary, '    ') + source[end:])
     return source
 
 

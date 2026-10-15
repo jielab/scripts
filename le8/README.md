@@ -14,6 +14,8 @@ cd /mnt/d/scripts/le8
 
 默认完整流程包含 C1–C5；需要分析 RA 时设 `--Y cvd_cad,ra`。当前完成结果仍支持断点续跑，`--replace TRUE` 明确重拟合。家系与客观冠脉终点缺失时明确标记。
 
+ABM twin 的 elastic-net 遇到迭代上限时，会保留当前系数续算，默认每次预算为 2000、4000、8000 次（`max_iter=2000`、`max_iter_retries=2`）；最多累计 14000 次，不放宽原收敛容差，也不改变 solver、惩罚、样本权重或数据划分。日志显示重试和收敛状态，训练审计记录实际迭代数与尝试次数。仍未收敛则明确失败，不发布未收敛模型；可通过 `--abm-config` 调整预算，`max_iter_retries=0` 禁用续算。失败输入保留在结果目录的 `_abm_staging_*` 中；重跑会重新准备未完成模块，已完成模块继续跳过，无需 `--replace TRUE`。终端失败摘要会显示 ABM 原始异常，而不是仅显示外层命令失败。
+
 ABM 与 C1 统一默认读取 `<ukb-phe>/Rdata/prot.rds` 和 `met.rds`，表型来自同目录的 `all.rds`。已处理矩阵沿用原分子名和数值尺度，不重复做原始字段映射或 `log1p`。默认协变量为 `age,sex,tdi,PC1,PC2`，分类变量为 `sex`；`plate`、`well`、`center`（含 `met.plate`、`prot.well` 等带前缀形式）从协变量、额外调整和分子输入中排除，共享配置带入时会记录排除项。显式原始代谢物输入需同时指定 `--omics-file` 和 `--met-input raw`，才执行原始字段映射与相应默认变换。
 
 已有 ABM 若使用原始输入或旧调整变量，不能直接当作新输入的完成结果跳过。执行 `./le8.sh c1_abm --Y cvd_cad --biom prot,met --replace TRUE` 会按新配置拟合并在成功发布时保留旧结果快照；此命令只运行 ABM，不重做 C1 关联分析。日志会显示实际输入路径、变换和调整变量。

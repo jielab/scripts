@@ -1,0 +1,198 @@
+{
+  "retrieved": "2026-10-15",
+  "source": "https://storage.googleapis.com/storage/v1/b/gcp-public-data--gnomad/o",
+  "files": {
+    "gnomad.genomes.v4.1.sites.chr1.vcf.bgz": {
+      "bytes": 44078103205,
+      "md5": "328b4578212afec2cde394a1b02d544f"
+    },
+    "gnomad.genomes.v4.1.sites.chr1.vcf.bgz.tbi": {
+      "bytes": 220042,
+      "md5": "02c67bb77109f1638650c0cfa389efd3"
+    },
+    "gnomad.genomes.v4.1.sites.chr10.vcf.bgz": {
+      "bytes": 26841421792,
+      "md5": "c2cd760130d2339f7135fc70700db1e1"
+    },
+    "gnomad.genomes.v4.1.sites.chr10.vcf.bgz.tbi": {
+      "bytes": 127291,
+      "md5": "8e1b974d66d41a2105c8aeb6c2b30bab"
+    },
+    "gnomad.genomes.v4.1.sites.chr11.vcf.bgz": {
+      "bytes": 26393279310,
+      "md5": "d1e7a4dcf3ff62eeffca57afefc5a33a"
+    },
+    "gnomad.genomes.v4.1.sites.chr11.vcf.bgz.tbi": {
+      "bytes": 127058,
+      "md5": "cfcc3e35ebba2aba1fa01d5511f1677c"
+    },
+    "gnomad.genomes.v4.1.sites.chr12.vcf.bgz": {
+      "bytes": 25950974228,
+      "md5": "644bdbc5c53d9112edbacad401a28d1a"
+    },
+    "gnomad.genomes.v4.1.sites.chr12.vcf.bgz.tbi": {
+      "bytes": 126421,
+      "md5": "bfac8b89bfebb82c155875ca28bff2e8"
+    },
+    "gnomad.genomes.v4.1.sites.chr13.vcf.bgz": {
+      "bytes": 17100492651,
+      "md5": "84b12f299210d2a7e390c56a234b7b68"
+    },
+    "gnomad.genomes.v4.1.sites.chr13.vcf.bgz.tbi": {
+      "bytes": 92856,
+      "md5": "fba3906439434b68c0e48c14d8a2d548"
+    },
+    "gnomad.genomes.v4.1.sites.chr14.vcf.bgz": {
+      "bytes": 17860683682,
+      "md5": "0e524b414faf5a51b74d153939b3ddcd"
+    },
+    "gnomad.genomes.v4.1.sites.chr14.vcf.bgz.tbi": {
+      "bytes": 85574,
+      "md5": "12f370988f353e643133c516bd7f00c4"
+    },
+    "gnomad.genomes.v4.1.sites.chr15.vcf.bgz": {
+      "bytes": 16904431253,
+      "md5": "00d1386eadbfcb653eb810a6c08ed250"
+    },
+    "gnomad.genomes.v4.1.sites.chr15.vcf.bgz.tbi": {
+      "bytes": 79598,
+      "md5": "c7c41dcc9e053954af7562ea0200a040"
+    },
+    "gnomad.genomes.v4.1.sites.chr16.vcf.bgz": {
+      "bytes": 18918703003,
+      "md5": "2b106c12ca8cca9bd58e98d2c248ef4d"
+    },
+    "gnomad.genomes.v4.1.sites.chr16.vcf.bgz.tbi": {
+      "bytes": 78008,
+      "md5": "94c1a5a500f088eef4670ebff98b0f41"
+    },
+    "gnomad.genomes.v4.1.sites.chr17.vcf.bgz": {
+      "bytes": 17412317144,
+      "md5": "9d58b459e75312b487c660666ea540c4"
+    },
+    "gnomad.genomes.v4.1.sites.chr17.vcf.bgz.tbi": {
+      "bytes": 77219,
+      "md5": "1cd1d1ba0e320cb609f033b7b6e5da47"
+    },
+    "gnomad.genomes.v4.1.sites.chr18.vcf.bgz": {
+      "bytes": 14430177524,
+      "md5": "b95d30a6f5a45242d834fc7351afd760"
+    },
+    "gnomad.genomes.v4.1.sites.chr18.vcf.bgz.tbi": {
+      "bytes": 72358,
+      "md5": "565b78fa172f1e20617ec9c66bdabc45"
+    },
+    "gnomad.genomes.v4.1.sites.chr19.vcf.bgz": {
+      "bytes": 13679473477,
+      "md5": "73fa1c7c09072e8ca5e26a1443f0af2a"
+    },
+    "gnomad.genomes.v4.1.sites.chr19.vcf.bgz.tbi": {
+      "bytes": 53702,
+      "md5": "b8af5ad748507cc4291165f705b4056b"
+    },
+    "gnomad.genomes.v4.1.sites.chr2.vcf.bgz": {
+      "bytes": 46559034968,
+      "md5": "518ca01e6757a68bc0abe76f85af644d"
+    },
+    "gnomad.genomes.v4.1.sites.chr2.vcf.bgz.tbi": {
+      "bytes": 230708,
+      "md5": "495c2e6b578719dc77c6fdca2e799875"
+    },
+    "gnomad.genomes.v4.1.sites.chr20.vcf.bgz": {
+      "bytes": 11838569571,
+      "md5": "6c6f326c67b288ec99932905da72c1e6"
+    },
+    "gnomad.genomes.v4.1.sites.chr20.vcf.bgz.tbi": {
+      "bytes": 58550,
+      "md5": "c6d3ce76c55d9bd41d849b7dd5ccad05"
+    },
+    "gnomad.genomes.v4.1.sites.chr21.vcf.bgz": {
+      "bytes": 7758981978,
+      "md5": "9b6584cfe62f6e8bd0c3cea90a4ce56a"
+    },
+    "gnomad.genomes.v4.1.sites.chr21.vcf.bgz.tbi": {
+      "bytes": 36783,
+      "md5": "83cf6b974c7e13c12279c0f195d4ce48"
+    },
+    "gnomad.genomes.v4.1.sites.chr22.vcf.bgz": {
+      "bytes": 8731339280,
+      "md5": "a7bcf712a6b8d29e690468bf1dd8913d"
+    },
+    "gnomad.genomes.v4.1.sites.chr22.vcf.bgz.tbi": {
+      "bytes": 36654,
+      "md5": "44f5ef4f99bfed0ec833686c8ba3abb0"
+    },
+    "gnomad.genomes.v4.1.sites.chr3.vcf.bgz": {
+      "bytes": 39251922328,
+      "md5": "716c181431a3c11a2eb18c5f50a3542d"
+    },
+    "gnomad.genomes.v4.1.sites.chr3.vcf.bgz.tbi": {
+      "bytes": 188994,
+      "md5": "7c1561073864f92ce76682f5a8049d17"
+    },
+    "gnomad.genomes.v4.1.sites.chr4.vcf.bgz": {
+      "bytes": 36033143211,
+      "md5": "d9b913f3e30c8f410f9ce7dee5dee6d4"
+    },
+    "gnomad.genomes.v4.1.sites.chr4.vcf.bgz.tbi": {
+      "bytes": 181551,
+      "md5": "2ae3b1436d71057eb513a233c73b6278"
+    },
+    "gnomad.genomes.v4.1.sites.chr5.vcf.bgz": {
+      "bytes": 32707176660,
+      "md5": "a2a3b9014af5c8f9bbaaf743968e48f8"
+    },
+    "gnomad.genomes.v4.1.sites.chr5.vcf.bgz.tbi": {
+      "bytes": 171322,
+      "md5": "4cb33aebe76d6daecf97f61e52da80dc"
+    },
+    "gnomad.genomes.v4.1.sites.chr6.vcf.bgz": {
+      "bytes": 31788224183,
+      "md5": "e65c2aa321c5e272548fb3d901bae382"
+    },
+    "gnomad.genomes.v4.1.sites.chr6.vcf.bgz.tbi": {
+      "bytes": 163217,
+      "md5": "59132364c566098d6c9640fda7374b9c"
+    },
+    "gnomad.genomes.v4.1.sites.chr7.vcf.bgz": {
+      "bytes": 31250828580,
+      "md5": "58ee22cf3dcc8cb8b493d218e19432cc"
+    },
+    "gnomad.genomes.v4.1.sites.chr7.vcf.bgz.tbi": {
+      "bytes": 150953,
+      "md5": "7a73677be3fe16da3bdd051602c1f3de"
+    },
+    "gnomad.genomes.v4.1.sites.chr8.vcf.bgz": {
+      "bytes": 29291764214,
+      "md5": "9854d9df22977cf5bac0f9fc05f4e8f5"
+    },
+    "gnomad.genomes.v4.1.sites.chr8.vcf.bgz.tbi": {
+      "bytes": 138638,
+      "md5": "dd27f62d7160200e4b30b939f45b69c0"
+    },
+    "gnomad.genomes.v4.1.sites.chr9.vcf.bgz": {
+      "bytes": 24761070444,
+      "md5": "6adfc9c47000cf66d1305392051b391d"
+    },
+    "gnomad.genomes.v4.1.sites.chr9.vcf.bgz.tbi": {
+      "bytes": 116388,
+      "md5": "c8db53ed8db04a0b5a95ff485e602e14"
+    },
+    "gnomad.genomes.v4.1.sites.chrX.vcf.bgz": {
+      "bytes": 22908335319,
+      "md5": "8b91766906865b0795c653af51cb73b8"
+    },
+    "gnomad.genomes.v4.1.sites.chrX.vcf.bgz.tbi": {
+      "bytes": 145081,
+      "md5": "4895e179e13fe52ff411e52b7fd695ca"
+    },
+    "gnomad.genomes.v4.1.sites.chrY.vcf.bgz": {
+      "bytes": 599108494,
+      "md5": "1ffb9c683674f41ff7cf524e5bb56bb8"
+    },
+    "gnomad.genomes.v4.1.sites.chrY.vcf.bgz.tbi": {
+      "bytes": 13725,
+      "md5": "3e156c7a8d7c3c8c4e9e14cacd7e6556"
+    }
+  }
+}

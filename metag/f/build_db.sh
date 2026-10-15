@@ -84,6 +84,8 @@ if [[ -f "$DB/metag_build_state/all.complete" ]]; then
 fi
 # Record the configuration and refuse to resume a partial build with different settings.
 CONFIG=$(printf 'libraries=%s\nmax_db_gb=%s\n' "${LIBRARIES[*]}" "$MAX_GB")
+SELECTION_CONFIG=$("${METAG_PYTHON:-python3}" "$HERE/reference_selection.py" signature --db "$DB")
+if [[ -n "$SELECTION_CONFIG" ]]; then CONFIG+=$'\n'"$SELECTION_CONFIG"; fi
 if [[ -f "$DB/metag_build_state/config.txt" ]] && [[ "$(cat "$DB/metag_build_state/config.txt")" != "$CONFIG" ]]; then
   echo 'Build configuration changed; use a NEW database directory.' >&2; exit 1
 fi

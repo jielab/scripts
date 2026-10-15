@@ -17,7 +17,7 @@ from metag import FASTQ_NAME, parse_ena_report, read_tsv
 
 HERE = Path(__file__).resolve().parent
 DATA_ROOT = Path('/mnt/f/metag')
-REFERENCE = DATA_ROOT / 'reference'
+REFERENCE = DATA_ROOT / 'ref_kraken2_ictv'
 
 
 def registry():
@@ -69,7 +69,7 @@ def show_datasets(args, known):
         files, markers, other = local_files(root)
         exists = 'yes' if (root / 'metadata/samples.tsv').is_file() else 'no'
         print(f'{name}\t{len(files)}\t{len(markers)}\t{len(other)}\t{exists}\t{root}')
-    print('仅列出登记的数据集；0metadata、url、reference 不作为数据集。')
+    print('仅列出登记的数据集；0metadata、url、ref_kraken2_ictv 不作为数据集。')
     print('文件计数含 raw/ 链接路径，不代表独立样本数或 MD5 校验通过。')
 
 
@@ -133,7 +133,8 @@ def prepare(args, name, root, record):
 
 def pilot(args, root):
     if not args.execute and not (root / 'metadata/samples.tsv').exists():
-        print(f'计划：先 prepare；再选择最多 {args.limit} 个有效 run，完整 MD5 校验、'
+        verification = '重新执行 FASTQ MD5 校验' if args.check_md5 else '跳过已外部完成的 FASTQ MD5 校验'
+        print(f'计划：先 prepare；再选择最多 {args.limit} 个有效 run，{verification}，'
               f'每输入流最多 {args.max_records} records 试跑，结果写入 {root / "pilot_virus_v2"}。')
         return
     rows = read_tsv(root / 'metadata/samples.tsv')
@@ -146,7 +147,10 @@ def pilot(args, root):
     out = root / 'pilot_virus_v2'
     command(pipeline('db-audit', '--db', args.db, '--virus-map', args.virus_map,
                      '--threads', args.threads), args.execute)
-    command(pipeline('verify', '--root', root, '--runs', runs, '--md5'), args.execute)
+    if args.check_md5:
+        command(pipeline('verify', '--root', root, '--runs', runs, '--md5'), args.execute)
+    else:
+        print('跳过原始 FASTQ 的重复 MD5 检查（由用户在流程外完成）；需要重查时加 --check-md5。', flush=True)
     command(pipeline('run', '--root', root, '--db', args.db, '--virus-map', args.virus_map,
                      '--runs', runs, '--max-records', args.max_records, '--out', out,
                      '--threads', args.threads), args.execute)
@@ -158,6 +162,8 @@ def full(args, root):
             '--virus-map', args.virus_map, '--threads', args.threads]
     if args.execute:
         argv.append('--execute')
+    if args.check_md5:
+        argv.append('--check-md5')
     command(argv, args.execute)
 
 
@@ -173,7 +179,7 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     for name, desc in [('datasets', '只读查看目录与下载标记'),
                        ('prepare', '建立/复用清单并整理 raw 软链接'),
-                       ('pilot', '选择少量 run，MD5 校验并试跑'),
+                       ('pilot', '选择少量 run 试跑；默认不重复检查 FASTQ MD5'),
                        ('full', '依次全量处理显式选择的数据集')]:
         a = sub.add_parser(name, help=desc, description=desc)
         a.add_argument('datasets', **({'nargs': '?'} if name == 'datasets' else {}),
@@ -187,10 +193,12 @@ def parser():
                            help='先备份再重建清单；会重置人工注释，不用于已人工整理的清单')
         else:
             a.add_argument('--db', type=Path, default=REFERENCE / 'kraken2_broad_v1',
-                           help='默认 /mnt/f/metag/reference/kraken2_broad_v1')
+                           help='默认 /mnt/f/metag/ref_kraken2_ictv/kraken2_broad_v1')
             a.add_argument('--virus-map', type=Path, default=REFERENCE / 'virus_map_v1/virus_genome_types.sqlite',
-                           help='默认 /mnt/f/metag/reference/virus_map_v1/virus_genome_types.sqlite')
+                           help='默认 /mnt/f/metag/ref_kraken2_ictv/virus_map_v1/virus_genome_types.sqlite')
             a.add_argument('--threads', type=positive, default=16)
+            a.add_argument('--check-md5', action='store_true',
+                           help='重新完整检查原始 FASTQ 的 ENA MD5；默认依赖用户已有的外部校验，不重复读取')
         if name == 'pilot':
             a.add_argument('--limit', type=positive, default=2, help='每数据集最多选择的 run 数，默认 2')
             a.add_argument('--max-records', type=positive, default=100000, help='每输入流上限，默认 100000')

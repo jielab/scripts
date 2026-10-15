@@ -419,7 +419,7 @@ check_run_provenance() {
 			echo "ERROR: X sensitivity calling cohort differs from MAC1 baseline" >&2; return 1;
 		}
 	fi
-	if [[ -s $comparison ]] && ! python3 "$F/ibdmix.py" provenance "$comparison" "$candidate"; then
+	if [[ -s $comparison ]] && ! python3 "$F/ibdmix_resume.py" provenance "$comparison" "$candidate" --run "$dirout"; then
 		if [[ $IBDMIX_REPLACE != 1 ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f ! -name '*.part*' -print -quit) ]]; then
 			echo "ERROR: IBDmix inputs, profile or implementation changed; old results cannot be reused. Rerun with --replace-ibdmix TRUE." >&2
 			return 1

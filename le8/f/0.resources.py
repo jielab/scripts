@@ -38,6 +38,40 @@ def process_identity(pid):
     except (OSError,IndexError):return None
 
 
+def process_tree(pid):
+    """Snapshot descendants by PID and birth time before stopping their parent."""
+    entries={}
+    for path in Path('/proc').glob('[0-9]*/stat'):
+        try:
+            raw=path.read_text();fields=raw[raw.rfind(')')+2:].split()
+            entries[int(path.parent.name)]=(int(fields[1]),fields[19])
+        except (OSError,ValueError,IndexError):pass
+    selected={pid}
+    while True:
+        children={child for child,(parent,_) in entries.items() if parent in selected}
+        if children<=selected:break
+        selected|=children
+    return {child:entries[child][1] for child in selected if child in entries}
+
+
+def signal_tree(snapshot,signum):
+    for pid,birth in snapshot.items():
+        if process_identity(pid)==birth:
+            try:os.kill(pid,signum)
+            except ProcessLookupError:pass
+
+
+def stop_worker(proc):
+    # Workers share the terminal's process group: never signal that whole group
+    # here, since it also contains the waiting supervisor and console logger.
+    snapshot=process_tree(proc.pid)
+    signal_tree(snapshot,signal.SIGTERM)
+    try:proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:pass
+    signal_tree(snapshot,signal.SIGKILL)
+    proc.wait()
+
+
 def memory_available_gib():
     try:
         fields=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
@@ -176,7 +210,7 @@ def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,rese
                     if hasattr(os,'sched_setaffinity'):os.sched_setaffinity(0,cpus)
                 try:
                     proc=subprocess.Popen(task['argv'],cwd=task.get('cwd'),env=env,stdout=handle,stderr=subprocess.STDOUT,
-                                          start_new_session=True,preexec_fn=affinity)
+                                          preexec_fn=affinity)
                     pool.transfer(token,proc.pid)
                 except BaseException:
                     handle.close();pool.release(token);raise
@@ -197,15 +231,11 @@ def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,rese
                 atomic_json(outdir/'progress.json',{'finished':len(result),'total':len(tasks),'failed':sum(v['status']!='completed' for v in result.values())})
             if pending or running:time.sleep(.03 if launched else .1)
     finally:
+        # Ctrl+C reaches both supervisors and workers. Ignore a second signal
+        # from the console's cancellation handler until leases are released.
+        for sig in old_handlers:signal.signal(sig,signal.SIG_IGN)
         for proc,task,token,handle,start,cpus in running.values():
-            try:os.killpg(proc.pid,signal.SIGTERM)
-            except ProcessLookupError:pass
-        for proc,task,token,handle,start,cpus in running.values():
-            try:proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:os.killpg(proc.pid,signal.SIGKILL)
-                except ProcessLookupError:pass
-                proc.wait()
+            stop_worker(proc)
             handle.close();pool.release(token)
         for sig,old in old_handlers.items():signal.signal(sig,old)
     ordered=[result[i] for i in range(len(tasks))]
@@ -339,14 +369,13 @@ def phase_main(argv):
     try:
         for sig in (signal.SIGTERM,signal.SIGINT):old[sig]=signal.signal(sig,stop)
         def affinity():os.sched_setaffinity(0,cpus)
-        proc=subprocess.Popen(command,env=env,start_new_session=True,preexec_fn=affinity)
-        # Keep ownership in this supervisor, which cleans the complete child group.
+        proc=subprocess.Popen(command,env=env,preexec_fn=affinity)
+        # Share terminal job control; this supervisor cleans its own descendants.
         return proc.wait()
     finally:
+        for sig in old:signal.signal(sig,signal.SIG_IGN)
         if proc is not None and proc.poll() is None:
-            os.killpg(proc.pid,signal.SIGTERM)
-            try:proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+            stop_worker(proc)
         pool.release(token)
         for sig,handler in old.items():signal.signal(sig,handler)
 

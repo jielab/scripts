@@ -13,6 +13,7 @@
 | `arg.sh` / `arg.py` | ARG 内部工作流及数据转换、缓存工具；入口为上一级 `arg.sh` |
 | `arg.singer.py` / `arg.threads.py` | SINGER、Threads 各自的 ARG 后端 |
 | `ibdmix.sh` / `ibdmix.py` | IBDmix 调度、掩膜、群体样本、质控和片段汇总 |
+| `ibdmix_resume.py` | UKB 整染色体续跑：预处理前核验原始输入、样本内容、调用参数与结果完整性；临时样本文件重建不使已完成结果失效 |
 | `ibdmix_prepare/` | 一次读取现代基因型，为多个古人类参考生成压缩输入 |
 | `ibdmix_gpu/` | IBDmix CUDA 片段调用器 |
 | `phyml.py` / `phyml.R` | PhyML 分析、结果检查及绘图 |
@@ -21,3 +22,5 @@
 | `0.common.py` / `0.common.sh` / `0.common.R` | 跨方法共享的坐标、样本、路径、缓存和结果归档工具 |
 
 UKB 的 Shell 和 Python 模块分别承担原始 BGEN/芯片与 PGEN 准备，保持独立以避免把两套输入流程混在一起。独立的位点准备、证据复核和结果整合也保留各自入口；重复的空命令分发层和模块加载已去除。
+
+IBDmix 默认 `--replace-ibdmix FALSE` 时，UKB 整染色体任务先检查历史结果。完整且兼容的结果打印 `[GU CMD] SKIP`；部分完成的结果继续补跑。历史归档中的原始输入记录会保存为结果目录内的 `.ibdmix.resume.json`，用于避免重新预处理覆盖旧质控记录后丢失续跑依据。样本选择按实际队列及顺序校验，原始 PGEN、参考基因组、古人类 VCF、掩膜和计算参数仍参与检查；不兼容时在预处理前报明原因。该检查不改写旧调用或最终片段。

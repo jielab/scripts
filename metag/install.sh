@@ -13,7 +13,7 @@ usage() {
   --prepare            另行下载/建立共享参考、ICTV 映射并审计
   --datasets CSV       与 --prepare 配合，整理指定已下载数据集的 metadata/raw
   --data-root DIR      数据集父目录，默认 /mnt/f/metag
-  --reference-root DIR 共享参考目录，默认 DATA_ROOT/reference
+  --reference-root DIR 共享参考目录，默认 DATA_ROOT/ref_kraken2_ictv
   --refresh-metadata   路径迁移后备份并重建清单；人工注释需从备份合并
   --threads N          建库/审计线程，默认 16
   --download-threads N 参考下载线程，默认 4
@@ -65,7 +65,7 @@ if ((CHECK && PREPARE)); then fail '--check 不能和 --prepare 一起使用。'
 if [[ -n "$DATASETS" ]] && (( ! PREPARE )); then fail '--datasets 需要 --prepare。'; fi
 if ((REFRESH)) && [[ -z "$DATASETS" ]]; then fail '--refresh-metadata 需要 --prepare --datasets。'; fi
 DATA_ROOT="$(realpath -m -- "$DATA_ROOT")"
-REF_ROOT="$(realpath -m -- "${REF_ROOT:-$DATA_ROOT/reference}")"
+REF_ROOT="$(realpath -m -- "${REF_ROOT:-$DATA_ROOT/ref_kraken2_ictv}")"
 DB="$REF_ROOT/kraken2_broad_v1"
 MAP="$REF_ROOT/virus_map_v1/virus_genome_types.sqlite"
 LOCKFILE="$HERE/f/conda-linux-64.lock"
@@ -122,6 +122,7 @@ if (( ! CHECK )); then
     check_installer() { [[ -f "$INSTALLER" && "$(sha256sum "$INSTALLER" | cut -d' ' -f1)" == "$INSTALLER_SHA" ]]; }
     if ! check_installer; then
       curl --fail --location --show-error --retry 5 --retry-all-errors --connect-timeout 30 \
+        --speed-limit 1024 --speed-time 60 \
         'https://github.com/conda-forge/miniforge/releases/download/26.7.2-0/Miniforge3-26.7.2-0-Linux-x86_64.sh' \
         --output "$INSTALLER.partial"
       [[ "$(sha256sum "$INSTALLER.partial" | cut -d' ' -f1)" == "$INSTALLER_SHA" ]] || fail 'Miniforge SHA256 校验失败，未执行安装包。'
@@ -227,5 +228,13 @@ if [[ ! -e "$REF_ROOT/virus_map_v1" ]]; then
     --accession-taxid "$REF_ROOT/ictv_accessions_v1/accession_taxid.tsv" --out "$REF_ROOT/virus_map_v1"
 fi
 "$HERE/metag.sh" db-audit --db "$DB" --virus-map "$MAP" --threads "$THREADS"
+"$CONDA_PREFIX/bin/python3" - "$DB/metag.audit.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    audit = json.load(stream)
+if (audit.get('schema') != 'v2' or audit.get('missing_groups') != []
+        or audit.get('missing_virus_classes') != [] or not audit.get('virus_types_tested')):
+    raise SystemExit('参考覆盖未通过：要求七大基础类以及病毒 DNA/RNA 均有实际索引支持。')
+PY
 echo 'PASS：参考准备和覆盖审计完成。请先运行 pilot，成功后再 full。'
 printf 'DB=%s\nMAP=%s\n' "$DB" "$MAP"

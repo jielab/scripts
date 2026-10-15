@@ -1,0 +1,36 @@
+{
+  "verified_date": "2026-10-15",
+  "input": {
+    "files": [
+      {
+        "path": "/mnt/f/gen/1kg/38/vcf/chr22.vcf.gz",
+        "bytes": 445701977,
+        "sample_count": 3202
+      }
+    ],
+    "region": "chr22:20000001-21000000",
+    "counts_source": "VCF INFO AC/AN/AF; genotypes not recalculated"
+  },
+  "output_directory": "/mnt/d/analysis/allele_1kg_chr22_pilot",
+  "completed_stages": [
+    "prepare",
+    "select",
+    "stage1"
+  ],
+  "site_count": 25698,
+  "candidate_count": 77094,
+  "biallelic_sites": 25354,
+  "triallelic_sites": 343,
+  "tetra_allelic_sites": 1,
+  "selected_sites": 1032,
+  "stage1_metrics": {
+    "cv_auc": 0.8242990974117296,
+    "cv_status": "ok",
+    "cv_group": "site_id",
+    "n_train": 77091,
+    "n_sites": 25697,
+    "interpretation": "relative alternative-specific mutation opportunity conditional on variable loci; O<3 uses held-out scores; class-weighted scores are not calibrated probabilities"
+  },
+  "atlas_api_called": false,
+  "limitation": "Regional workflow validation using all 3202 samples, including relatives; not a completed AlphaGenome or population-inference analysis."
+}

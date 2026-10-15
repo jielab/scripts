@@ -1577,9 +1577,11 @@ PYKEY
 				printf '%s\n' "$out/final/gwas_loci.tsv"
 				;;
 			ibdmix)
-				# The module validates its complete input/parameter provenance. File
-				# presence alone previously bypassed every correction to the caller.
-				return 1
+				[[ $REPLACE_IBDMIX_INPUT == FALSE ]] || return 1
+				# Validate original inputs and content-based cohort identity before
+				# rebuilding disposable UKB exports. Exit 2 refuses incompatible
+				# historical calls before spending hours on preparation.
+				python3 "$F/ibdmix_resume.py" check "$cmd"
 				;;
 			*) return 1 ;;
 		esac
@@ -1592,8 +1594,16 @@ PYKEY
 		log=$out/$base.log
 		err=$out/$base.err
 		if completed_output=$(gu_completed_analysis_cmd_output "$out" "$cmd"); then
+			rm -f "$err"
 			printf '[GU CMD] SKIP unit=%s reason=output_complete final=%s\n' "$base" "$completed_output" >&2
 			return 0
+		else
+			rc=$?
+			if ((rc > 1)); then
+				printf 'ERROR: %s resume validation failed; see console for the changed input or parameter\n' "$base" >"$err"
+				printf '[GU CMD] FAIL unit=%s exit=%s reason=resume_validation detail=%s\n' "$base" "$rc" "$err" >&2
+				return "$rc"
+			fi
 		fi
 		rm -f "$err"
 		[[ $METHOD != phyml ]] || rm -f "$out/.phyml.locus.complete.json"
@@ -1815,6 +1825,18 @@ exit "$rc"'
 	if gu_command_orchestration_enabled && [[ ${GU_CMD_WORKER:-0} != 1 ]]; then
 		gu_orchestrate_analysis_cmds
 		exit $?
+	fi
+	# Saved .cmd files and scheduler workers must share the same early check.
+	# Rebuild the request from this invocation, never trust a stale command's flags.
+	if [[ $METHOD == ibdmix && ${ACTION:-run} == run && ${GU_CMD_WORKER:-0} == 1 && ${GU_UKB_DIRECT:-0} == 1 && -z $GU_LOCI_FILE && $GU_CHRS =~ ^([1-9]|1[0-9]|2[0-2]|X)$ ]]; then
+		worker_resume_cmd=$(gu_write_analysis_unit_cmd 1 "chr$GU_CHRS" chromosome "$GU_CHRS")
+		if completed_output=$(gu_completed_analysis_cmd_output "$(dirname -- "$worker_resume_cmd")" "$worker_resume_cmd"); then
+			printf '[GU CMD] SKIP unit=chr%s reason=output_complete final=%s\n' "$GU_CHRS" "$completed_output"
+			exit 0
+		else
+			resume_status=$?
+			((resume_status == 1)) || exit "$resume_status"
+		fi
 	fi
 
 	USES_TARGET=0
