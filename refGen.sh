@@ -10,7 +10,6 @@ refgen_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # 🚩 Reference-genome builder
 usage() {
 	cat <<'HELP'
-cd /mnt/d/scripts/0data
 
 # 1KG: phased VCF -> PGEN/BED; also split non-PAR X by sex for GU.
 ./refGen.sh make-pfile --dir-input /mnt/f/gen/1kg/37/vcf \

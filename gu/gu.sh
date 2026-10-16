@@ -55,7 +55,7 @@ gu_run_ukb_preparation() (
 	stderr_file=$(mktemp "${TMPDIR:-/tmp}/gu-ukb-prepare.XXXXXX") || return $?
 	trap 'rm -f -- "$stderr_file"' EXIT
 	while true; do
-		if python3 "$F/ukb_progress.py" -- python3 "$F/ukb_prepare.py" "$@" 2>"$stderr_file"; then
+		if python3 "$F/0.common.py" progress -- python3 "$F/ukb_prepare.py" "$@" 2>"$stderr_file"; then
 			cat "$stderr_file" >&2
 			return 0
 		else
@@ -939,7 +939,7 @@ HELP
 	if [[ $METHOD == ibdmix && $IBDMIX_BACKEND == cuda ]]; then
 		IBDMIX_GPU_BIN=${IBDMIX_GPU_BIN:-${GU_SOFT:-/mnt/d/software/gu}/ibdmix-gpu/ibdmix-gpu}
 		export IBDMIX_GPU_BIN
-		[[ -x $IBDMIX_GPU_BIN ]] || { echo "ERROR: build the CUDA caller with bash $F/ibdmix_gpu/build.sh" >&2; return 2; }
+		[[ -x $IBDMIX_GPU_BIN ]] || { echo "ERROR: build the CUDA caller with bash $F/ibdmix.sh build-gpu" >&2; return 2; }
 		"$IBDMIX_GPU_BIN" --gpu-check --gpu-device "${IBDMIX_GPU_DEVICE:-0}" || return $?
 		echo "[GU GPU] experimental CUDA segment caller; requested chromosome workers=$GU_UNIT_JOBS; GPU calls serialized per device; CPU genotype preparation and frequency/LOD calculation"
 	fi
@@ -1581,7 +1581,7 @@ PYKEY
 				# Validate original inputs and content-based cohort identity before
 				# rebuilding disposable UKB exports. Exit 2 refuses incompatible
 				# historical calls before spending hours on preparation.
-				python3 "$F/ibdmix_resume.py" check "$cmd"
+				python3 "$F/ibdmix.py" resume check "$cmd"
 				;;
 			*) return 1 ;;
 		esac

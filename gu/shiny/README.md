@@ -31,7 +31,7 @@ IBDmix 密度图上方的 Supported loci 表按群体窗口支持定义候选区
 它沿用 final 中保留的原生片段过滤、科学参考范围及已完成运行的 `evidence_eligible` 资格。
 实验性 chrX、2013 对照参考及只能证明局部分析范围的运行不计入。
 
-默认规则由 `f/ibdmix_loci.py` 实现：
+默认规则由 `f/ibdmix.py loci` 实现：
 
 1. 按谱系、染色体和个体合并科学参考的重叠片段；每个人在同一碱基最多贡献一个支持拷贝。
    分母使用该谱系至少一个科学参考的完整常染色体运行中实际检测的个体并集，包括零片段个体。
@@ -63,8 +63,7 @@ IBDmix 密度图上方的 Supported loci 表按群体窗口支持定义候选区
 页面坐标为 1-based inclusive，下载 TSV 为 0-based half-open；支持下载当前 Top 50 和全部通过规则的区间。
 首次聚合缓存到 `/tmp/gu-shiny-evidence/`，包括 `loci.json`、`candidates.tsv`、`windows.tsv`，
 数据库、调用名单、运行记录、参数或汇总代码变化后重算，不需要重跑 final 或 IBDmix。
-回归检查：`python -m unittest discover -s tests -p 'test_ibdmix_loci.py'`。
-Shiny 筛选、空结果、曲线和点击回归检查：`Rscript --vanilla tests/test_shiny_ibdmix_loci.R`（均在项目根目录、gu 环境运行）。
+独立回归检查脚本不保存在正式代码目录；临时检查使用 `/tmp` 和 GU 环境。
 
 文献中的计数口径不能直接互换。Chen et al. (Cell 2020, 上述 IBDmix 原论文) 在 2,504 人中
 检出累计 110.98 Gb 的 Neanderthal 匹配序列，跨个体合并重叠区间后为 1.29 Gb；

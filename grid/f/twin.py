@@ -1,0 +1,834 @@
+#!/usr/bin/env python3
+"""GRID entry point, twin workflow, evaluation, and aggregate publication.
+
+Model classes stay in twin_core so saved joblib models and their frozen hashes
+remain compatible. This module also supplies the browser's numeric IO helpers.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import math
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import uuid
+import zipfile
+import xml.etree.ElementTree as ET
+from dataclasses import asdict, replace
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.metrics import roc_auc_score, average_precision_score
+from threadpoolctl import threadpool_limits
+
+from twin_core import (
+    Config, TwinModel, assert_roles, assign_roles, hash_number, id_hash,
+    state_hash, validate_ids,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG = ROOT / 'config/twin.json'
+
+
+# Numeric input and aggregate publication
+
+PRIVATE_NAMES={'eid','iid','fid','participantid','individualid','subjectid','patientid','queryid','targetid','donorid','familyid','group','id','id1','id2','sampleid','ukbid','ukbeid'}
+
+
+def sha256(path):
+    h=hashlib.sha256()
+    with open(path,'rb') as f:
+        for b in iter(lambda:f.read(4*1024**2),b''):h.update(b)
+    return h.hexdigest()
+
+
+def json_write(path,value):
+    def safe(v):
+        if isinstance(v,pd.DataFrame):return {'type':'dataframe_metadata','rows':len(v),'columns':list(map(str,v.columns)),'contents_omitted':True}
+        if isinstance(v,pd.Series):return {'type':'series_metadata','rows':len(v),'name':str(v.name),'contents_omitted':True}
+        if isinstance(v,pd.Timestamp):return v.isoformat()
+        if v is pd.NA or v is pd.NaT:return None
+        if isinstance(v,dict):return {str(k):safe(x) for k,x in v.items()}
+        if isinstance(v,(list,tuple)):return [safe(x) for x in v]
+        if isinstance(v,np.ndarray):return safe(v.tolist())
+        if isinstance(v,np.generic):return safe(v.item())
+        if isinstance(v,Path):return str(v)
+        if isinstance(v,float) and not np.isfinite(v):return None
+        return v
+    p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_name(p.name+'.tmp.'+uuid.uuid4().hex)
+    tmp.write_text(json.dumps(safe(value),ensure_ascii=False,indent=2,allow_nan=False)+'\n',encoding='utf-8');os.replace(tmp,p)
+
+
+def read_table(path):
+    p=Path(path)
+    if p.suffix=='.rds':
+        try:import rdata
+        except ImportError as e:raise RuntimeError('RDS input needs rdata>=1.1; use the existing grid environment or supply a TSV') from e
+        d=rdata.read_rds(p)
+        if isinstance(d,dict):
+            candidates=[x for x in d.values() if isinstance(x,pd.DataFrame)]
+            if len(candidates)!=1:raise ValueError('Expected exactly one data.frame in RDS')
+            d=candidates[0]
+        if not isinstance(d,pd.DataFrame):raise ValueError('Expected a data.frame in RDS')
+        return d
+    if p.suffix=='.parquet':return pd.read_parquet(p)
+    sep=',' if '.csv' in p.name else '\t'
+    # Explicit string IDs preserve values such as 00012; pandas otherwise infers integers.
+    head=pd.read_csv(p,sep=sep,header=None,nrows=1).iloc[0].astype(str)
+    if head.duplicated().any():raise ValueError('Duplicate source columns')
+    dtype={c:str for c in head if re.sub(r'[^a-z0-9]','',c.lower()) in PRIVATE_NAMES or c=='ancestry'}
+    return pd.read_csv(p,sep=sep,dtype=dtype,low_memory=False)
+
+
+def identified(d):
+    d=pd.DataFrame(d).copy()
+    if 'eid' not in d:
+        c=next((c for c in ('IID','#IID','ID') if c in d),None)
+        if c is None:raise ValueError('Participant table needs eid or IID')
+        d=d.rename(columns={c:'eid'})
+    if d.eid.isna().any():raise ValueError('Missing IDs')
+    if pd.api.types.is_numeric_dtype(d.eid):
+        v=d.eid.to_numpy(float)
+        if not np.isfinite(v).all() or np.any(v!=np.floor(v)):raise ValueError('Noninteger numeric IDs')
+        d['eid']=d.eid.astype('int64').astype(str)
+    else:d['eid']=d.eid.astype(str).str.strip()
+    if d.eid.duplicated().any() or d.eid.eq('').any():raise ValueError('Duplicate/blank IDs')
+    return d
+
+
+def public_table(d):
+    for c in d:
+        v=re.sub(r'[^a-z0-9]','',str(c).lower())
+        if v in PRIVATE_NAMES or re.search(r'(^|[_. #])(eid|iid|fid)($|[_. ])',str(c),re.I):
+            raise ValueError('Participant identifiers must remain in _LOCAL_ONLY: '+str(c))
+    return d
+
+
+def write_aggregate(directory,tables,metadata):
+    out=Path(directory);out.mkdir(parents=True,exist_ok=True);manifest=[]
+    for name,value in tables.items():
+        if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*',name):raise ValueError('Unsafe table name')
+        d=public_table(pd.DataFrame(value).copy())
+        if not len(d.columns):d=pd.DataFrame(columns=['status'])
+        for c in d.select_dtypes(include='object'):
+            d[c]=d[c].map(lambda v:json.dumps(v,ensure_ascii=False,default=str) if isinstance(v,(dict,list,tuple)) else v)
+        path=out/(name+'.tsv.gz');tmp=out/(name+'.tmp.gz')
+        d.to_csv(tmp,sep='\t',index=False,float_format='%.17g',compression='gzip');os.replace(tmp,path)
+        manifest.append(dict(name=name,path=path.name,sha256=sha256(path),rows=len(d),columns=list(map(str,d.columns)),**metadata))
+    json_write(out/'table_manifest.json',manifest)
+    return manifest
+
+
+def xlsx_values(path,max_bytes=256*1024**2):
+    """Read cached Excel *values* only. Never evaluate formula text or execute macros.
+    Supports the current GRID ordinary XLSX aggregates. Empty/status sheets retained.
+    This parser is for importing legacy evidence, not editing spreadsheets.
+    """
+    ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    def text(e):return ''.join(t.text or '' for t in e.findall('.//s:t',ns))
+    with zipfile.ZipFile(path) as z:
+        if sum(i.file_size for i in z.infolist())>max_bytes:raise ValueError('Expanded workbook exceeds configured limit')
+        strings=[]
+        if 'xl/sharedStrings.xml' in z.namelist():strings=[text(si) for si in ET.fromstring(z.read('xl/sharedStrings.xml')).findall('s:si',ns)]
+        relationships={e.attrib['Id']:e.attrib['Target'] for e in ET.fromstring(z.read('xl/_rels/workbook.xml.rels'))}
+        w=ET.fromstring(z.read('xl/workbook.xml'));out={}
+        for sheet in w.findall('s:sheets/s:sheet',ns):
+            rid=sheet.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'];target=relationships[rid]
+            target=target.lstrip('/') if target.startswith('/') else 'xl/'+target
+            if '..' in Path(target).parts:raise ValueError('Unsafe XLSX relationship')
+            rows=[]
+            for row in ET.fromstring(z.read(target)).findall('s:sheetData/s:row',ns):
+                vals=[]
+                for cell in row.findall('s:c',ns):
+                    letters=re.sub('[0-9]','',cell.get('r','A1'));col=0
+                    for char in letters:col=26*col+ord(char)-64
+                    while len(vals)<col:vals.append(None)
+                    v=cell.find('s:v',ns);v=v.text if v is not None else None;typ=cell.get('t')
+                    if typ=='s' and v is not None:v=strings[int(v)]
+                    elif typ=='inlineStr':v=text(cell)
+                    elif typ=='b' and v is not None:v=v=='1'
+                    elif v is not None and typ not in ('str','e'):
+                        try:v=float(v)
+                        except ValueError:pass
+                    vals[col-1]=v
+                rows.append(vals)
+            if not rows:out[sheet.attrib['name']]=pd.DataFrame();continue
+            width=max(map(len,rows));header=rows[0]+[None]*(width-len(rows[0]));names=[str(v) if v is not None else f'column_{j+1}' for j,v in enumerate(header)]
+            if len(set(names))!=len(names):raise ValueError('Duplicate worksheet columns')
+            out[sheet.attrib['name']]=pd.DataFrame([r+[None]*(width-len(r)) for r in rows[1:]],columns=names)
+        return out
+
+# Prepared cohorts and benchmark adapters
+
+def load_source(prepared_path,trait,data_file=None,schema_file=None):
+    if data_file:
+        if not schema_file:raise ValueError('Explicit external features require --schema JSON')
+        spec=json.loads(Path(schema_file).read_text());d=identified(read_table(data_file))
+        groups=spec['feature_groups'];metadata=spec.get('metadata',{})
+        metadata.update(input_source=str(data_file),input_sha256=sha256(data_file),matrix_provenance='provider_declared')
+    else:
+        path=Path(prepared_path)
+        if not path.is_file():raise FileNotFoundError(str(path)+'; reuse an existing prepared.joblib, or supply --data-file and --schema')
+        # Only a trusted local file produced by the user's GRID pipeline. Never load
+        # arbitrary downloaded pickle/joblib files through the public viewer.
+        prepared=joblib.load(path)
+        if not {'tables','feature_groups','cohort'}<=set(prepared):raise ValueError('Unrecognized GRID prepared cache')
+        if prepared.get('state') not in (None,'features_ready'):raise ValueError('Prepared cache has not completed genetic feature preparation')
+        if trait not in prepared['tables']:raise ValueError('Trait absent from prepared GRID cache')
+        d=identified(prepared['tables'][trait]);groups=prepared['feature_groups'][trait];cohort=identified(prepared['cohort'])
+        if 'split' not in d or 'split' not in cohort:raise ValueError('Missing frozen outer split')
+        c=cohort.set_index('eid');v=d.set_index('eid')
+        if set(v.index)!=set(c.index):raise ValueError('Trait input must cover the entire frozen original cohort')
+        canon=lambda s:s.astype(str).replace({'training':'train','testing':'test'})
+        if not np.array_equal(canon(v['split']),canon(c.loc[v.index,'split'])):raise ValueError('Trait split differs from stored original cohort')
+        if 'family_id' in c and ('family_id' not in v or not np.array_equal(v.family_id.astype(str),c.loc[v.index,'family_id'].astype(str))):
+            raise ValueError('Trait reference groups differ from stored original cohort')
+        metadata=dict(prepared.get('metadata',{}));metadata.update(input_source=str(path),input_sha256=sha256(path),matrix_provenance='existing_GRID_prepared_cache',outer_cohort_N=len(c),prepared_settings=prepared.get('settings',{}))
+        for src in metadata.get('sources',[]):
+            if not isinstance(src,dict) or 'path' not in src:continue
+            source=Path(src['path'])
+            if not source.is_file():raise FileNotFoundError('Prepared source missing: '+str(source))
+            stat=source.stat()
+            if ('size' in src and stat.st_size!=src['size']) or ('mtime_ns' in src and stat.st_mtime_ns!=src['mtime_ns']):
+                raise ValueError('Prepared source changed; explicitly verify/rebuild features, preserving the outer roster: '+str(source))
+    return d,groups,metadata
+
+
+def numeric_cohort(d,groups,config,roles_file=None):
+    d=identified(d)
+    # Genetic roles are explicit, not inferred from names or from test associations.
+    allowed={'covariates','csx','ancestry','frequency','evolution','permuted_evolution','disco','genetic_profile'}
+    if set(groups)-allowed:raise ValueError('Unknown feature groups: '+str(set(groups)-allowed))
+    def union(keys):return list(dict.fromkeys(str(c) for k in keys for c in groups.get(k,[])))
+    # Disco remains an explicit comparator; do not leak its fitted output into the
+    # primary profile merely because it was available in the source matrix.
+    genetic=union(['csx','ancestry','frequency','evolution','genetic_profile']);clinical=union(['covariates']);declared_clinical=clinical.copy()
+    # Distances exclude covariates; a PC used as both adjustment and genetic input
+    # is one numeric column with its explicit genetic identity, not a duplicate.
+    clinical=[c for c in clinical if c not in genetic]
+    comparator_extra=[c for c in union(['disco']) if c not in genetic and c not in clinical]
+    if not genetic:raise ValueError('No genetic profile features supplied')
+    features=genetic+clinical
+    forbidden={'y','outcome','event','time','target','eid','family_id','split','role','ancestry'}
+    if set(features)&forbidden:raise ValueError('Identity/outcome columns may not be predictors')
+    if not set(features+comparator_extra)<=set(d):raise ValueError('Declared predictor missing from prepared table')
+    # Extra Disco score(s) are outside primary model/QC; add as separate calibrated
+    # comparators later rather than distort genetic missingness or twin geometry.
+    X=d[features].apply(pd.to_numeric,errors='raise').to_numpy(dtype=float,na_value=np.nan)
+    if 'split' not in d or 'y' not in d:raise ValueError('Source requires frozen split and observed phenotype column y')
+    split=d.split.astype(str).replace({'training':'train','testing':'test'})
+    if not set(split)<= {'train','test'} or set(split)!= {'train','test'}:raise ValueError('Keep the existing train/test outer roster')
+    ids,group=validate_ids(d.eid,d.family_id if 'family_id' in d else None)
+    if set(group[split=='train'])&set(group[split=='test']):raise ValueError('Supplied reference groups cross outer split')
+    # Test outcomes are split off here and will not be passed to the fit API.
+    dev=(split=='train').to_numpy();test=~dev;y=pd.to_numeric(d.y,errors='raise').to_numpy(dtype=float,na_value=np.nan)
+    observed=np.isfinite(y);fit=dev&observed
+    config=replace(config,grouping_status=config.grouping_status if 'family_id' in d else 'individual_unverified')
+    if roles_file:
+        r=identified(read_table(roles_file)).set_index('eid')
+        if 'role' not in r or not set(ids[fit])<=set(r.index):raise ValueError('Roles file does not cover the development roster')
+        roles=r.loc[ids[fit],'role'].astype(str).to_numpy()
+        aliases={'calibration_audit':'audit'};roles=np.asarray([aliases.get(v,v) for v in roles])
+    else:roles=assign_roles(group[fit],config)
+    assert_roles(group[fit],roles)
+    raw=dict(X=X[fit],y=y[fit],ids=ids[fit],groups=group[fit],roles=roles,features=features,
+             genetic_indices=list(range(len(genetic))),covariate_indices=[features.index(c) for c in declared_clinical],
+             csx_indices=[features.index(c) for c in groups.get('csx',[]) if c in features],disco_indices=[])
+    query=dict(X=X[test],ids=ids[test],groups=group[test],features=features)
+    ancestry=d['ancestry'].fillna('UNASSIGNED').astype(str).to_numpy() if 'ancestry' in d else np.full(len(d),'UNASSIGNED')
+    truth=pd.DataFrame(dict(eid=ids[test],y=y[test],ancestry=ancestry[test]))
+    flow=dict(original_N=len(d),outer_train_N=int(dev.sum()),outer_test_N=int(test.sum()),development_missing_y_N=int(np.sum(dev&~observed)),test_missing_y_N=int(np.sum(test&~observed)),test_roster_hash=id_hash(ids[test]),grouping_status=config.grouping_status,
+              raw_SNP_QC='only for explicit variant_dosage input; summaries cannot reconstruct unseen SNP combinations',genetic_columns=genetic,clinical_columns=declared_clinical)
+    extra=dict(d=d,fit=fit,test=test,role=roles,disco_columns=comparator_extra)
+    return raw,query,truth,flow,config,extra
+
+
+def calibrate_disco(extra,model):
+    """Same-budget local calibration of supplied DiscoDivas scores, not a rerun of Disco."""
+    from twin_core import Predictor,Calibration,loss
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import StandardScaler
+    cfg=model.config;columns=extra['disco_columns']
+    if not columns:return None,None,dict(method='Disco_reference',status='source_scores_unavailable')
+    d=extra['d'];fit=extra['fit'];test=extra['test'];r=extra['role']
+    # Preserve covariates and original score values. Explicitly separate from raw
+    # published DiscoDivas-untuned versus locally calibrated outcome predictions.
+    cov=[model.features[i] for i in model.prep.clinical]
+    names=cov+columns;x=d[names].apply(pd.to_numeric,errors='raise').to_numpy(dtype=float,na_value=np.nan)
+    yy=pd.to_numeric(d.y,errors='raise').to_numpy(dtype=float,na_value=np.nan)[fit];xd=x[fit];xt=x[test]
+    b=(r=='build');t=(r=='tune_model');c=(r=='calibration_fit')
+    qc=model.prep.qc(d.loc[fit,model.features].to_numpy(dtype=float,na_value=np.nan))
+    usable=qc&np.isfinite(xd[:,len(cov):]).all(1)
+    if not (usable[b].all() and usable[t].all() and usable[c].all()):
+        # A different training/calibration eligibility changes comparability;
+        # report unavailability rather than quietly dropping rows for Disco.
+        # QC failures in the primary do not count as missing benchmark scores.
+        missing=qc&~np.isfinite(xd[:,len(cov):]).all(1)
+        if np.any(missing&(b|t|c)):return None,None,dict(method='Disco_reference',status='incomplete_development_scores')
+    if not np.isfinite(xt[:,len(cov):]).all():return None,None,dict(method='Disco_reference',status='incomplete_test_scores')
+    imputer=SimpleImputer(strategy='median',keep_empty_features=True).fit(xd[b&qc]);scale=StandardScaler().fit(imputer.transform(xd[b&qc]));z=scale.transform(imputer.transform(xd));best=None
+    for parameter in (cfg.logistic_c_grid if cfg.trait_type=='binary' else cfg.ridge_grid):
+        m=Predictor().fit(z[b],yy[b],qc[b].astype(float),cfg,parameter);p=m.predict(z[t]);sc=float(np.mean(loss(yy[t][qc[t]],p[qc[t]],cfg.trait_type=='binary')))
+        if best is None or sc<best[0]:best=(sc,m)
+    m=best[1];cal=Calibration().fit(m.predict(z[c][qc[c]]),yy[c][qc[c]],cfg.trait_type=='binary')
+    p=cal.predict(m.predict(scale.transform(imputer.transform(xt))))
+    bundle=dict(columns=names,imputer=imputer,scale=scale,model=m,calibration=cal)
+    return p,bundle,dict(method='Disco_reference',status='local_train_only_calibration',scope='same build/tune/cal roles; not a new run of upstream DiscoDivas')
+
+
+def verified_prsformer(root,trait,full_cohort,truth,config,covariates,endpoint_definition):
+    """Use existing PRSformer outcome-scale predictions only with strict lineage.
+    Called during evaluation, never to choose ABM roles/thresholds/parameters.
+    """
+    root=Path(root);roster=root/'prsformer/split.rds';path=root/'prsformer/scores'/trait/'predictions.rds'
+    if not roster.is_file() or not path.is_file():return None,dict(method='PRSformer',status='saved_prediction_or_roster_unavailable')
+    r=identified(read_table(roster));c=identified(full_cohort);v=identified(read_table(path))
+    if not {'eid','split'}<=set(r) or set(r.eid)!=set(c.eid):raise ValueError('PRSformer outer cohort differs')
+    a=r.set_index('eid').loc[c.eid,'split'].eq('test').to_numpy();b=c.split.astype(str).replace({'testing':'test'}).eq('test').to_numpy()
+    if not np.array_equal(a,b):raise ValueError('PRSformer test split differs')
+    if not {'prediction','outcome','split','covariate_names','endpoint_definition'}<=set(v):raise ValueError('PRSformer lacks required prediction/endpoint/covariate provenance')
+    if not v.split.eq('test').all() or set(v.eid)!=set(c.loc[b,'eid']):raise ValueError('PRSformer scores do not cover the full original test roster')
+    if v.endpoint_definition.isna().any() or set(v.endpoint_definition.astype(str))!={endpoint_definition}:raise ValueError('PRSformer endpoint definition differs')
+    if v.covariate_names.isna().any() or set(v.covariate_names.astype(str))!={','.join(covariates)}:raise ValueError('PRSformer covariate names differ')
+    z=v.set_index('eid').loc[truth.eid];cd=c.set_index('eid').loc[truth.eid]
+    if not np.allclose(pd.to_numeric(z.outcome).to_numpy(),truth.y.to_numpy(),equal_nan=True,atol=1e-7,rtol=1e-7):raise ValueError('PRSformer outcome/units differ')
+    for name in covariates:
+        col='covariate.'+name
+        if col not in z or name not in cd or not np.allclose(pd.to_numeric(z[col]),pd.to_numeric(cd[name]),equal_nan=True,atol=1e-8,rtol=1e-7):
+            raise ValueError('PRSformer covariate values differ: '+name)
+    p=pd.to_numeric(z.prediction,errors='raise').to_numpy()
+    return p,dict(method='PRSformer',status='same_roster_endpoint_and_covariates_verified',source_sha256=sha256(path),scope='upstream model may have a larger training-label budget; audit comparison is not claimed')
+
+# Frozen-model evaluation
+
+METRIC_DIRECTIONS={"MSE":"lower","RMSE":"lower","MAE":"lower","prediction_R2":"higher","MSE_over_train_variance":"lower","AUC":"higher","AUPRC":"higher","Brier":"lower","LogLoss":"lower"}
+
+
+def metrics(y,p,binary,training_variance,weights=None):
+    y=np.asarray(y,float);p=np.asarray(p,float);w=np.ones(len(y)) if weights is None else np.asarray(weights,float)
+    good=w>0;y,p,w=y[good],p[good],w[good];n=float(w.sum())
+    if not n:return {k:np.nan for k in (('AUC','AUPRC','Brier','LogLoss') if binary else ('MSE','RMSE','MAE','prediction_R2','MSE_over_train_variance'))}
+    if not np.isfinite(y).all() or not np.isfinite(p).all():raise ValueError('Nonfinite prediction inside a locked common evaluation mask')
+    error=y-p;mse=float(np.average(error**2,weights=w))
+    if binary:
+        if np.any((p<0)|(p>1)):raise ValueError('Binary benchmarks require probabilities, not PRS values/logits')
+        pp=np.clip(p,1e-7,1-1e-7);two=len(np.unique(y))==2
+        return dict(AUC=float(roc_auc_score(y,p,sample_weight=w)) if two else np.nan,
+                    AUPRC=float(average_precision_score(y,p,sample_weight=w)) if two else np.nan,
+                    Brier=mse,LogLoss=float(np.average(-(y*np.log(pp)+(1-y)*np.log1p(-pp)),weights=w)))
+    var=float(np.average((y-np.average(y,weights=w))**2,weights=w))
+    return dict(MSE=mse,RMSE=math.sqrt(mse),MAE=float(np.average(np.abs(error),weights=w)),
+                prediction_R2=1-mse/var if var>0 else np.nan,
+                MSE_over_train_variance=mse/training_variance if training_variance>0 else np.nan)
+
+
+class FixedMetricCache:
+    """Pre-sort frozen prediction ties once; bootstrap changes weights, not scores.
+    Weighted AUC/AP then use O(n) cumulative sums instead of O(n log n) sorting
+    in every bootstrap draw. Losses and outcome moments are also precomputed.
+    """
+    def __init__(self,y,p,binary,training_variance):
+        self.y=np.asarray(y,float);self.p=np.asarray(p,float);self.binary=binary;self.tv=training_variance
+        if not np.isfinite(self.y).all() or not np.isfinite(self.p).all():raise ValueError('Invalid common-mask metric input')
+        self.err2=(self.y-self.p)**2;self.abserr=np.abs(self.y-self.p)
+        if binary:
+            if not np.isin(self.y,[0,1]).all() or np.any((self.p<0)|(self.p>1)):raise ValueError('Invalid binary probability metric')
+            values,self.bin=np.unique(self.p,return_inverse=True);self.nb=len(values)
+            pp=np.clip(self.p,1e-7,1-1e-7);self.logloss=-(self.y*np.log(pp)+(1-self.y)*np.log1p(-pp))
+    def __call__(self,w):
+        w=np.asarray(w,float);total=w.sum()
+        keys=('AUC','AUPRC','Brier','LogLoss') if self.binary else ('MSE','RMSE','MAE','prediction_R2','MSE_over_train_variance')
+        if not total:return {k:np.nan for k in keys}
+        mse=float(w@self.err2/total)
+        if self.binary:
+            pos=np.bincount(self.bin,weights=w*self.y,minlength=self.nb)
+            neg=np.bincount(self.bin,weights=w*(1-self.y),minlength=self.nb)
+            np_,nn=pos.sum(),neg.sum();auc=ap=np.nan
+            if np_>0 and nn>0:
+                auc=float(pos@(np.cumsum(neg)-.5*neg)/(np_*nn))
+                tp=np.cumsum(pos[::-1]);fp=np.cumsum(neg[::-1]);den=tp+fp
+                precision=np.divide(tp,den,out=np.zeros_like(tp),where=den>0)
+                ap=float(pos[::-1]@precision/np_)
+            return dict(AUC=auc,AUPRC=ap,Brier=mse,LogLoss=float(w@self.logloss/total))
+        mean=float(w@self.y/total);var=float(w@((self.y-mean)**2)/total)
+        return dict(MSE=mse,RMSE=math.sqrt(mse),MAE=float(w@self.abserr/total),prediction_R2=1-mse/var if var>0 else np.nan,MSE_over_train_variance=mse/self.tv if self.tv>0 else np.nan)
+
+
+def composition_control(selected,eligible,risk,ancestry,ids,edges,seed):
+    """Outcome-blind descriptive control; batch-composition dependent, NOT deployment."""
+    bins=np.searchsorted(edges,risk);mask=np.zeros(len(ids),bool)
+    for pop in np.unique(ancestry):
+        for b in np.unique(bins[ancestry==pop]):
+            scope=(ancestry==pop)&(bins==b);ix=np.flatnonzero(eligible&scope)
+            order=sorted(ix,key=lambda i:hash_number(ids[i],seed));count=int(np.sum(selected&scope))
+            mask[np.array(order[:count],int)]=True
+    return mask
+
+
+def evaluate(model,prediction,truth,*,external=None,bootstrap=None):
+    """truth: eid,y and optionally ancestry. All test subjects remain in the flow."""
+    cfg=model.config
+    if prediction['frozen_hash']!=state_hash(model):raise ValueError('Frozen model identity changed')
+    truth=pd.DataFrame(truth).copy();truth['eid']=truth.eid.astype(str)
+    ids=prediction['eid'];groups=prediction['group'];n=len(ids)
+    if truth.eid.duplicated().any() or set(truth.eid)!=set(ids):raise ValueError('Truth must cover exactly the frozen query roster')
+    truth=truth.set_index('eid').loc[ids]
+    y=pd.to_numeric(truth.y,errors='raise').to_numpy(float);known=np.isfinite(y)
+    if cfg.trait_type=='binary' and not np.isin(y[known],[0,1]).all():raise ValueError('Binary endpoint must be coded 0/1')
+    pop=truth.ancestry.fillna('UNASSIGNED').astype(str).to_numpy() if 'ancestry' in truth else np.full(n,'UNASSIGNED')
+    qc=prediction['diagnostics']['technical_qc'];base_scope=known&qc
+    if base_scope.sum()<2:raise ValueError('Insufficient evaluable technical-QC passing outcomes')
+    p={k:np.asarray(v,float) for k,v in prediction['predictions'].items()};availability=[]
+    for name,values in (external or {}).items():
+        if name in p:raise ValueError('External method collides with an internal method name')
+        values=np.asarray(values,float)
+        if len(values)!=n or not np.isfinite(values[base_scope]).all():
+            availability.append(dict(method=name,status='unavailable_incomplete_frozen_roster'));continue
+        if cfg.trait_type=='binary' and np.any((values[base_scope]<0)|(values[base_scope]>1)):
+            raise ValueError(f'{name}: expected probabilities, not uncalibrated scores')
+        p[name]=values;availability.append(dict(method=name,status='same_roster_prediction_available'))
+    for name,v in p.items():
+        if not np.isfinite(v[base_scope]).all():raise ValueError(f'{name}: incomplete common-mask predictions; do not silently use pairwise intersections')
+    selected=prediction['selected'];masks={'all':base_scope,'selected':base_scope&selected,'rejected':base_scope&~selected}
+    for name,v in prediction['masks'].items():masks[name]=base_scope&v
+    # Count matching uses predictor values only, before looking at y. Missing-y
+    # proportions are then reported rather than balancing using test outcomes.
+    mask_random=composition_control(selected,qc,np.nan_to_num(p[model.fallback]),pop,ids,model.risk_edges,cfg.seed+471)
+    masks['risk_ancestry_matched_random']=base_scope&mask_random
+    pool=np.flatnonzero(qc);risk=np.nan_to_num(p[model.fallback]);center=.5 if cfg.trait_type=='binary' else model.prediction_center
+    order=sorted(pool,key=lambda i:(-abs(risk[i]-center),hash_number(ids[i],cfg.seed+472)))
+    cc=np.zeros(n,bool);cc[np.asarray(order[:int(selected.sum())],int)]=True
+    masks['confidence_count_matched']=base_scope&cc
+    scopes=['ALL',*sorted(set(pop))];rows=[];lookup={};binary=cfg.trait_type=='binary'
+    for ancestry in scopes:
+        am=np.ones(n,bool) if ancestry=='ALL' else pop==ancestry
+        total=int(am.sum());cases=int(np.sum(am&known&(y==1))) if binary else None
+        for subset,mask in masks.items():
+            use=mask&am;count=int(use.sum())
+            for name,values in p.items():
+                met=metrics(y[use],values[use],binary,model.training_variance)
+                row=dict(trait=cfg.trait,ancestry=ancestry,subset=subset,method=name,N=count,original_N=total,
+                         actual_coverage=count/total if total else np.nan,selected_policy_coverage=float(np.sum(am&selected)/total) if total else np.nan,
+                         cases=int(np.sum(y[use]==1)) if binary else np.nan,controls=int(np.sum(y[use]==0)) if binary else np.nan,
+                         case_coverage=float(np.sum(y[use]==1)/cases) if binary and cases else np.nan,
+                         outcome_variance=float(np.var(y[use])) if count else np.nan,
+                         status='estimated' if count else 'empty',evaluation_scope=prediction['evaluation_scope'],**met)
+                rows.append(row);lookup[(ancestry,subset,name)]=met
+    primary=cfg.primary;full='ABM_full';comparisons=[
+        ('selection_effect',full,'selected',full,'all'),
+        ('training_effect_same_subset',primary,'selected',full,'selected'),
+        ('combined_effect',primary,'selected',full,'all'),
+        ('training_effect_all',primary,'all',full,'all'),
+        ('pruning_specificity',primary,'selected','ABM_random','selected'),
+        ('beyond_baseline_confidence',full,'selected',full,'confidence_count_matched'),
+        ('beyond_risk_ancestry_composition',full,'selected',full,'risk_ancestry_matched_random'),
+        ('fallback_policy_all','ABM_policy','all',model.fallback,'all')]
+    benchmark_names=[name for name in p if name not in {primary,full,'ABM_soft','ABM_random','Clinical','ABM_policy'}]
+    for name in benchmark_names:
+        comparisons.extend([(f'benchmark_selection:{name}',name,'selected',name,'all'),
+                            (f'benchmark_same_subset:{name}',primary,'selected',name,'selected'),
+                            (f'benchmark_combined:{name}',primary,'selected',name,'all')])
+    B=int(cfg.bootstrap if bootstrap is None else bootstrap)
+    if B<0:raise ValueError('Bootstrap count must be nonnegative')
+    metric_names=list(next(iter(lookup.values())))
+    contrasts=[]
+    # Cluster resampling keeps each selected group nested inside each original draw.
+    for ancestry in scopes:
+        am=np.ones(n,bool) if ancestry=='ALL' else pop==ancestry
+        scope_indices=np.flatnonzero(am);ug,gi=np.unique(groups[am],return_inverse=True)
+        if not len(ug):continue
+        needed=set((method,subset) for _,a,b,c,d in comparisons for method,subset in [(a,b),(c,d)])
+        scoped_masks={subset:masks[subset][am] for _,subset in needed}
+        yy=y[am];vv={k:v[am] for k,v in p.items()}
+        cached={(method,subset):FixedMetricCache(yy[scoped_masks[subset]],vv[method][scoped_masks[subset]],binary,model.training_variance)
+                for method,subset in needed}
+        collected={(label,metric):[] for label,*_ in comparisons for metric in metric_names}
+        rng=np.random.default_rng(cfg.seed+702)
+        for _ in range(B):
+            gw=np.bincount(rng.integers(0,len(ug),len(ug)),minlength=len(ug));w=gw[gi]
+            bm={}
+            for method,subset in needed:
+                use=scoped_masks[subset];bm[(method,subset)]=cached[(method,subset)](w[use])
+            for label,a,s,b,t in comparisons:
+                for metric in metric_names:
+                    collected[(label,metric)].append(bm[(a,s)][metric]-bm[(b,t)][metric])
+        for label,a,s,b,t in comparisons:
+            for metric in metric_names:
+                samples=np.asarray(collected[(label,metric)]);samples=samples[np.isfinite(samples)]
+                enough=len(samples)>=max(20,math.ceil(.8*B));bounds=np.quantile(samples,[.025,.975]) if enough else [np.nan,np.nan]
+                contrasts.append(dict(trait=cfg.trait,ancestry=ancestry,contrast=label,method=a,subset=s,reference=b,reference_subset=t,metric=metric,
+                                      delta=lookup[(ancestry,s,a)][metric]-lookup[(ancestry,t,b)][metric],lower=bounds[0],upper=bounds[1],valid_boot=len(samples),requested_boot=B,
+                                      direction=METRIC_DIRECTIONS[metric],grouping_status=cfg.grouping_status,
+                                      inference='conditional_on_frozen_models_and_thresholds',multiplicity='primary contrast prespecified; others exploratory',
+                                      status='interval_estimated' if enough else 'point_only_or_insufficient_bootstrap'))
+    confidence_rows=[];confidence=prediction['diagnostics']['pre_prediction_confidence']
+    for ancestry in scopes:
+        am=np.ones(n,bool) if ancestry=='ALL' else pop==ancestry
+        for lo in range(0,100,10):
+            mask=base_scope&am&(confidence>=lo)&((confidence<lo+10) if lo<90 else confidence<=100)
+            if mask.sum()<10:continue
+            for name in (primary,full,model.fallback):
+                row=dict(trait=cfg.trait,ancestry=ancestry,method=name,confidence_lo=lo,confidence_hi=lo+10,N=int(mask.sum()),
+                         mean_confidence=float(confidence[mask].mean()),matching_supported_fraction=float(prediction['diagnostics']['matching_supported'][mask].mean()),
+                         **metrics(y[mask],p[name][mask],binary,model.training_variance))
+                confidence_rows.append(row)
+    state_metric='Brier' if binary else 'MSE'
+    tab=pd.DataFrame(contrasts);check=tab[(tab.ancestry=='ALL')&(tab.metric==state_metric)]
+    selected_known=masks['selected'];enough_info=selected_known.sum()>=30
+    if binary:enough_info &= min(np.sum(y[selected_known]==v) for v in (0,1))>=10
+    def supported(label):
+        d=check[check.contrast==label]
+        return bool(enough_info and len(d)==1 and d.iloc[0].valid_boot>=200 and d.iloc[0].upper<0)
+    status=dict(trait=cfg.trait,task=cfg.trait_type,evaluation_scope=prediction['evaluation_scope'],
+                original_N=n,known_outcome_N=int(known.sum()),technical_QC_excluded=int((~qc).sum()),
+                selected_N=int(selected.sum()),selected_with_observed_outcome_N=int(selected_known.sum()),actual_policy_coverage=float(selected.mean()),
+                selection_loss_supported=supported('selection_effect'),training_loss_supported=supported('training_effect_same_subset'),
+                beyond_confidence_loss_supported=supported('beyond_baseline_confidence'),primary_loss_metric=state_metric,
+                grouping_status=cfg.grouping_status,clinical_release=False,external_validation=False,
+                dataset_has_been_inspected=True,roster_hash=id_hash(ids),frozen_hash=prediction['frozen_hash'])
+    flow=pd.DataFrame(dict(reason=prediction['reason'],outcome_observed=known)).groupby(['reason','outcome_observed'],dropna=False).size().reset_index(name='N')
+    tables=dict(metrics=pd.DataFrame(rows),contrasts=tab,confidence_validation=pd.DataFrame(confidence_rows),
+                cohort_flow=flow,status=pd.DataFrame([status]),comparator_availability=pd.DataFrame(availability))
+    for d in tables.values():
+        d['run_id']=prediction['frozen_hash'];d['trait']=cfg.trait;d['grouping_status']=cfg.grouping_status
+    return tables,status
+
+# Aggregate figures
+
+def draw_report(tables,output):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    out=Path(output);out.mkdir(parents=True,exist_ok=True)
+    m=tables['metrics'];c=tables['confidence_validation'];d=tables['contrasts']
+    score='Brier' if 'Brier' in m else 'MSE'
+    # One chart per file, with no fixed palette.
+    allrows=m[(m.ancestry=='ALL')&m['subset'].isin(['all','selected','rejected'])]
+    fig,ax=plt.subplots(figsize=(10,6))
+    for name,z in allrows.groupby('method',sort=False):
+        z=z.set_index('subset').reindex(['all','selected','rejected']);ax.plot(z.index,z[score],marker='o',label=name)
+    ax.set(xlabel='Identical evaluation subsets',ylabel=score+' (lower is better)',title='Full / selected / rejected — same-person model comparison')
+    ax.legend(fontsize=8);fig.tight_layout();fig.savefig(out/'same_subset.png',dpi=170);plt.close(fig)
+    if len(c):
+        fig,ax=plt.subplots(figsize=(9,5))
+        for name,z in c[c.ancestry=='ALL'].groupby('method',sort=False):
+            z=z.sort_values('mean_confidence');ax.plot(z.mean_confidence,z[score],marker='o',label=name)
+        ax.set(xlabel='Pre-outcome confidence (reference support, 0–100)',ylabel=score,title='Confidence versus held-out error')
+        ax.legend(fontsize=8);fig.tight_layout();fig.savefig(out/'confidence_error.png',dpi=170);plt.close(fig)
+    selected=d[(d.ancestry=='ALL')&(d.metric==score)&d.contrast.isin(['selection_effect','training_effect_same_subset','combined_effect','beyond_baseline_confidence','beyond_risk_ancestry_composition'])]
+    fig,ax=plt.subplots(figsize=(10,5))
+    for i,row in enumerate(selected.itertuples()):
+        if np.isfinite(row.lower) and np.isfinite(row.upper) and row.lower<=row.delta<=row.upper:
+            ax.errorbar(row.delta,i,xerr=[[row.delta-row.lower],[row.upper-row.delta]],fmt='o',capsize=3)
+        else:
+            ax.plot(row.delta,i,marker='o')
+            if np.isfinite(row.lower) and np.isfinite(row.upper):ax.plot([row.lower,row.upper],[i,i])
+    ax.axvline(0,linestyle='--');ax.set_yticks(np.arange(len(selected)),selected.contrast)
+    ax.set(xlabel='Paired Δ'+score+' (negative favours the candidate)',title='Selection and training are different effects')
+    fig.tight_layout();fig.savefig(out/'effect_decomposition.png',dpi=170);plt.close(fig)
+    q=m[(m.ancestry=='ALL')&m['subset'].str.startswith('support_quality:')]
+    fig,ax=plt.subplots(figsize=(9,5))
+    for name,z in q.groupby('method',sort=False):
+        z=z.sort_values('actual_coverage');ax.plot(z.actual_coverage,z[score],marker='o',label=name)
+    ax.set(xlabel='Actual coverage of the original test roster',ylabel=score,title='Frozen twin-confidence coverage')
+    ax.legend(fontsize=8);fig.tight_layout();fig.savefig(out/'coverage.png',dpi=170);plt.close(fig)
+
+# Analysis commands
+
+def config_file(path,trait=None):
+    d=json.loads(Path(path).read_text()) if path else {}
+    for name in ('role_fractions','coverages','ridge_grid','logistic_c_grid'):
+        if name in d:d[name]=tuple(d[name])
+    cfg=Config(**d)
+    if trait:cfg=replace(cfg,trait=trait,trait_type='binary' if trait=='t2dm' else 'continuous')
+    cfg.validate();return cfg
+
+
+def npz(path):
+    with np.load(path,allow_pickle=False) as z:return {k:z[k] for k in z.files}
+
+
+def export_projection(p,path):
+    d=pd.DataFrame(dict(eid=p['eid'],group=p['group'],selected=p['selected'],reason=p['reason'],**p['diagnostics']))
+    for name,v in p['predictions'].items():d['prediction::'+name]=v
+    d['expected_squared_error']=p['expected_squared_error'];d['model_hash']=p['frozen_hash']
+    d.to_csv(path,sep='\t',index=False,float_format='%.17g',compression='gzip')
+
+
+def save_fit(model,out):
+    out=Path(out);out.mkdir(parents=True,exist_ok=True);private=out/'_LOCAL_ONLY';private.mkdir(mode=0o700,exist_ok=True)
+    joblib.dump(model,private/'model.joblib',compress=3)
+    digest=state_hash(model)
+    json_write(out/'MODEL_FROZEN.json',dict(model_hash=digest,config=asdict(model.config),test_outcomes_used=False,clinical_release=False))
+    pd.DataFrame(model.donors).to_csv(private/'donors.tsv.gz',sep='\t',index=False,float_format='%.17g')
+    feature_rows=[]
+    for pos,original in enumerate(model.prep.keep):
+        is_genetic=original in set(model.prep.profile_keep)
+        gp=list(model.prep.profile_keep).index(original) if is_genetic else None
+        feature_rows.append(dict(feature=model.features[original],role='genetic_profile' if is_genetic else 'clinical_covariate',training_mean=model.prep.mean[pos],training_sd=model.prep.scale[pos],imputation_median=model.prep.median[pos],distance_weight=model.geometry.weights[gp] if is_genetic else 0.,full_model_coefficient=model.predictors['ABM_full'].coefficients[pos]))
+    write_aggregate(out/'aggregate',dict(training_summary=pd.DataFrame([model.training_summary]),roles=pd.DataFrame(model.role_summary),tuning=pd.DataFrame(model.tuning),OOF_audit=pd.DataFrame(model.oof_audit),profile_features=pd.DataFrame(feature_rows)),dict(trait=model.config.trait,module='Twin training',run_id=digest))
+
+
+def fit_cmd(args):
+    d=npz(args.data);cfg=config_file(args.config)
+    needed={'X','y','ids','groups','roles','features','genetic_indices','covariate_indices','csx_indices'}
+    if not needed<=set(d) or 'test' in set(d['roles']):raise ValueError('Fit accepts development-only arrays')
+    out=Path(args.output)
+    if out.exists():raise FileExistsError('Choose a fresh fit directory; old models are never overwritten')
+    model=TwinModel(cfg).fit(**{k:d[k] for k in needed})
+    save_fit(model,out);print(json.dumps(dict(model=str(out/'_LOCAL_ONLY/model.joblib'),hash=state_hash(model))))
+
+
+def project_cmd(args):
+    model=joblib.load(args.model);d=npz(args.data)
+    if set(d)!= {'X','ids','groups','features'}:raise ValueError('Project accepts only predictors/identity, never query outcomes')
+    p=model.project(**d);out=Path(args.output)
+    if out.exists():raise FileExistsError(out)
+    out.parent.mkdir(parents=True,exist_ok=True);joblib.dump(p,out,compress=3)
+    export_projection(p,out.with_suffix('.confidence.tsv.gz'));print(json.dumps(dict(query_N=len(p['eid']),selected_N=int(p['selected'].sum()))))
+
+
+def benchmark_manifest(path,ids,truth,trait,endpoint):
+    if not path:return {},[]
+    path=Path(path);spec=json.loads(path.read_text());items=spec['methods'];external={};audit=[]
+    for item in items:
+        name=item['name'];source=path.parent/item['path']
+        if item.get('trait')!=trait or item.get('endpoint_definition')!=endpoint or item.get('value_type')!='outcome_scale_prediction':
+            raise ValueError('Comparator endpoint/units manifest mismatch: '+name)
+        if item.get('test_roster_sha256')!=id_hash(ids):raise ValueError('Comparator does not declare this exact frozen test roster: '+name)
+        if not item.get('predictions_frozen_without_test_labels',False):raise ValueError('Comparator must declare out-of-training prediction provenance')
+        if not source.exists():audit.append(dict(method=name,status='file_unavailable'));continue
+        if 'sha256' not in item or sha256(source)!=item['sha256']:raise ValueError('Comparator file checksum missing/mismatch: '+name)
+        d=identified(read_table(source))
+        if set(d.eid)!=set(ids):audit.append(dict(method=name,status='different_or_incomplete_test_roster'));continue
+        d=d.set_index('eid').loc[ids];p=pd.to_numeric(d[item['prediction_column']],errors='raise').to_numpy(dtype=float,na_value=np.nan)
+        if name in external:raise ValueError('Duplicate benchmark method')
+        if item.get('outcome_column'):
+            yy=pd.to_numeric(d[item['outcome_column']],errors='raise').to_numpy(dtype=float,na_value=np.nan)
+            if not np.allclose(yy,truth.set_index('eid').loc[ids,'y'],equal_nan=True):raise ValueError('Comparator outcome definitions/units differ')
+        external[name]=p;audit.append(dict(method=name,status='provider_declared_frozen_prediction_verified_file_and_roster',source_sha256=item['sha256'],training_budget=item.get('training_budget','not_recorded')))
+    return external,audit
+
+
+def evaluate_cmd(args):
+    model=joblib.load(args.model);p=joblib.load(args.predictions);truth=identified(read_table(args.truth))
+    external,availability=benchmark_manifest(args.comparators,p['eid'],truth,model.config.trait,args.endpoint)
+    tables,status=evaluate(model,p,truth,external=external,bootstrap=args.bootstrap)
+    if availability:tables['comparator_provenance']=pd.DataFrame(availability)
+    out=Path(args.output)
+    if out.exists():raise FileExistsError('Choose a new report directory')
+    write_aggregate(out,tables,dict(trait=model.config.trait,module='Twin evaluation',run_id=p['frozen_hash']))
+    json_write(out/'status.json',status)
+    draw_report(tables,out/'figures');print(json.dumps(status))
+
+
+def run(args):
+    traits=args.traits.split(',')
+    if not traits or len(set(traits))!=len(traits) or not set(traits)<= {'height','ldl','t2dm'}:raise ValueError('Use unique height,ldl,t2dm traits')
+    for trait in traits:
+        cfg=config_file(args.config,trait)
+        d,groups,meta=load_source(args.prepared or str(Path(args.cache_dir)/'prepared.joblib'),trait,
+                                   args.data_file.replace('{trait}',trait) if args.data_file else None,
+                                   args.schema.replace('{trait}',trait) if args.schema else None)
+        raw,query,truth,flow,cfg,extra=numeric_cohort(d,groups,cfg,args.roles_file)
+        endpoint=meta.get('endpoint_definition') or meta.get('prepared_settings',{}).get(trait+'_col',trait)
+        if trait=='t2dm' and endpoint=='auto':endpoint='baseline_t2dm_from_Yr2e_Yt2e'
+        endpoint=args.endpoint or endpoint
+        if args.check:
+            print(json.dumps(dict(trait=trait,input='validated',endpoint=endpoint,**flow)));continue
+        root=Path(args.out_root)/'twin'/trait;root.mkdir(parents=True,exist_ok=True)
+        runid=args.run_id or datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'_'+uuid.uuid4().hex[:8]
+        import re
+        if not re.fullmatch(r'[A-Za-z0-9_-]+',runid):raise ValueError('Unsafe run name')
+        dest=root/runid
+        if dest.exists():raise FileExistsError('Existing run is immutable: '+str(dest))
+        dest.mkdir();local=dest/'_LOCAL_ONLY';local.mkdir(mode=0o700)
+        json_write(dest/'protocol.json',dict(config=asdict(cfg),input=meta,flow=flow,endpoint_definition=endpoint,test_roster_changed=False,validation_scope='exploratory_previously_inspected_test'))
+        np.savez_compressed(local/'development.npz',**raw)
+        np.savez_compressed(local/'test_X.npz',**query)
+        truth.to_csv(local/'test_truth.tsv.gz',sep='\t',index=False,float_format='%.17g')
+        pd.DataFrame(dict(eid=raw['ids'],group=raw['groups'],role=raw['roles'])).to_csv(local/'development_roles.tsv.gz',sep='\t',index=False)
+        try:
+            print(f'[GRID twin] FIT {trait}: {len(raw["ids"])} development; {len(query["ids"])} frozen test rows',flush=True)
+            model=TwinModel(cfg).fit(**raw);save_fit(model,dest/'fit')
+            audit=raw['roles']=='audit';pa=model.project(raw['X'][audit],raw['ids'][audit],raw['groups'][audit],raw['features'],audit=True)
+            ta=pd.DataFrame(dict(eid=raw['ids'][audit],y=raw['y'][audit]))
+            at,ast=evaluate(model,pa,ta,bootstrap=args.bootstrap)
+            write_aggregate(dest/'audit',at,dict(trait=trait,module='Twin audit',run_id=pa['frozen_hash']))
+            p=model.project(**query);joblib.dump(p,local/'predictions.joblib',compress=3)
+            export_projection(p,local/'confidence.tsv.gz')
+            # The predictor/membership was frozen and saved BEFORE test truth is used below.
+            ext,availability=benchmark_manifest(args.comparators,p['eid'],truth,trait,endpoint)
+            disco,disco_model,da=calibrate_disco(extra,model)
+            availability.append(da)
+            if disco is not None:
+                ext['Disco_reference']=disco;joblib.dump(disco_model,local/'disco_calibration.joblib',compress=3)
+            if args.analysis_root:
+                cov=meta.get('prepared_settings',{}).get('covariates','')
+                cov=cov.split(',') if isinstance(cov,str) and cov else list(groups.get('covariates',[]))
+                try:
+                    pp,ppstat=verified_prsformer(args.analysis_root,trait,d,truth,cfg,cov,endpoint)
+                    availability.append(ppstat)
+                    if pp is not None:ext['PRSformer']=pp
+                except (ValueError,FileNotFoundError,RuntimeError,ImportError) as exc:
+                    availability.append(dict(method='PRSformer',status='comparison_not_verified',reason=str(exc)))
+            tables,status=evaluate(model,p,truth,external=ext,bootstrap=args.bootstrap)
+            if ext:joblib.dump(ext,local/'comparator_predictions.joblib',compress=3)
+            tables['comparator_provenance']=pd.DataFrame(availability)
+            write_aggregate(dest/'test',tables,dict(trait=trait,module='Twin test',run_id=p['frozen_hash']))
+            json_write(dest/'test/status.json',status)
+            draw_report(tables,dest/'test/figures')
+            json_write(dest/'COMPLETE.json',dict(status='completed',model_hash=p['frozen_hash'],test_roster_hash=id_hash(query['ids']),clinical_release=False))
+            json_write(root/'CURRENT.json',dict(run=runid,model_hash=p['frozen_hash']))
+            print(f'[GRID twin] COMPLETE {trait}: {dest}',flush=True)
+        except BaseException:
+            json_write(dest/'FAILED.json',dict(status='failed_partial_run_not_promoted',previous_CURRENT_unchanged=True))
+            raise
+
+
+def demo(args):
+    root=Path(args.output)
+    if root.exists():raise FileExistsError(root)
+    root.mkdir(parents=True);rng=np.random.default_rng(219)
+    n=2400;ids=np.asarray([f'SYNTHETIC_{i}' for i in range(n)]);pop=np.where(np.arange(n)%4,'EUR','OTHER')
+    g=rng.normal(size=(n,6));age=rng.normal(size=n);sex=rng.integers(0,2,n)
+    # Heteroscedasticity exercises confidence evaluation; no tests require an ABM win.
+    y=170+4*g[:,0]+.5*g[:,1]+2*sex+rng.normal(size=n)*(3+np.abs(g[:,2]))
+    if args.binary:y=rng.binomial(1,1/(1+np.exp(-(-1+.6*g[:,0]+.2*age))))
+    d=pd.DataFrame(g,columns=[f'csx_{i}' for i in range(6)]);d['age']=age;d['sex']=sex
+    d['eid']=ids;d['family_id']=np.asarray([f'F_{i//2}' for i in range(n)]);d['ancestry']=pop;d['y']=y
+    d['split']=np.where(np.arange(n)<n//2,'train','test');d.loc[n//2:n//2+4,[f'csx_{i}' for i in range(6)]]=np.nan
+    data=root/'synthetic.tsv.gz';d.to_csv(data,sep='\t',index=False)
+    schema=root/'schema.json';json_write(schema,dict(feature_groups=dict(csx=[f'csx_{i}' for i in range(6)],covariates=['age','sex']),metadata=dict(synthetic_only=True)))
+    cfg=replace(Config(),folds=3,repeats=1,min_role_n=12,min_class_n=3,k=12,min_twins=3,min_group_ess=2,gate_iterations=8,bootstrap=25,ridge_grid=(10.,100.),logistic_c_grid=(.1,))
+    config=root/'config.json';json_write(config,asdict(cfg))
+    trait='t2dm' if args.binary else 'height'
+    run(argparse.Namespace(traits=trait,prepared=None,cache_dir='unused',data_file=str(data),schema=str(schema),roles_file=None,config=str(config),check=False,out_root=str(root/'abm'),analysis_root=None,run_id='synthetic',endpoint='SIMULATED_ONLY',comparators=None,bootstrap=25))
+    (root/'SYNTHETIC_ONLY.txt').write_text('Synthetic execution check, not UK Biobank evidence or performance validation.\n')
+
+
+def analysis_main(argv=None):
+    a=argparse.ArgumentParser(description='GRID twin: run/fit/project/evaluate/demo with separated outcome access.');sp=a.add_subparsers(dest='command',required=True)
+    r=sp.add_parser('abm');r.add_argument('--traits',default='height,ldl,t2dm');r.add_argument('--cache-dir',default='/tmp/grid-cache/grid');r.add_argument('--prepared');r.add_argument('--data-file');r.add_argument('--schema');r.add_argument('--roles-file')
+    r.add_argument('--config',default=str(DEFAULT_CONFIG),help='Configuration JSON (default: config/twin.json beside grid.sh)');r.add_argument('--out-root',default='/mnt/d/analysis/grid/abm');r.add_argument('--analysis-root',default='/mnt/d/analysis/grid');r.add_argument('--run-id');r.add_argument('--check',action='store_true');r.add_argument('--endpoint');r.add_argument('--comparators');r.add_argument('--bootstrap',type=int);r.add_argument('--threads',type=int,default=4,help='Numeric worker threads (default: 4)')
+    f=sp.add_parser('fit');f.add_argument('--data',required=True);f.add_argument('--config',required=True);f.add_argument('--output',required=True);f.add_argument('--threads',type=int,default=4)
+    p=sp.add_parser('project');p.add_argument('--model',required=True);p.add_argument('--data',required=True);p.add_argument('--output',required=True);p.add_argument('--threads',type=int,default=4)
+    e=sp.add_parser('evaluate');e.add_argument('--model',required=True);e.add_argument('--predictions',required=True);e.add_argument('--truth',required=True);e.add_argument('--output',required=True);e.add_argument('--comparators');e.add_argument('--endpoint',required=True);e.add_argument('--bootstrap',type=int);e.add_argument('--threads',type=int,default=4)
+    d=sp.add_parser('demo');d.add_argument('--output',required=True);d.add_argument('--binary',action='store_true');d.add_argument('--threads',type=int,default=2)
+    args=a.parse_args(argv)
+    if args.threads<1:a.error('--threads must be positive')
+    action=dict(abm=run,fit=fit_cmd,project=project_cmd,evaluate=evaluate_cmd,demo=demo)[args.command]
+    os.umask(0o077)
+    with threadpool_limits(args.threads):action(args)
+
+# Public command dispatch
+
+HELP='''GRID — genetic-profile twin confidence
+
+  ./grid.sh abm --check
+  ./grid.sh abm --traits height,ldl,t2dm
+  ./grid.sh final --analysis-root /mnt/d/analysis/grid
+  ./grid.sh shiny --analysis-root /mnt/d/analysis/grid
+  ./grid.sh demo --output /tmp/grid-smoke
+  ./grid.sh project --model MODEL --data test_X.npz --output local_prediction.joblib
+  ./grid.sh evaluate --help
+
+ABM consumes the EXISTING prepared.joblib and preserves its outer test roster.
+ABM defaults: 4 threads; config/twin.json beside grid.sh; /tmp/grid-cache/grid/prepared.joblib.
+--data-file plus --schema can provide an explicit equivalent numeric dataset.
+New results: <out-root>/twin/<trait>/<run>. Old results are not overwritten.
+The direct fit/project/evaluate entry points keep test labels out of projection.
+
+Upstream preparation: ./0.pca.sh, ./1.csx.sh, ./2.disco.sh.
+PRSformer uses the shared GRID cohort by default.
+  ./grid.sh prsformer [original options]
+
+final indexes saved results only; no model is re-fitted by opening Shiny.
+Sequences of prsformer,abm,final,shiny accept only --traits and --dry-run.
+Use separate commands for custom paths or benchmark-specific flags.
+Shiny is foreground.
+'''
+
+
+def r_runtime(explicit=None):
+    """Find an R with the viewer dependencies, keeping system/Conda libs separate."""
+    override=explicit or os.getenv('GRID_RSCRIPT') or os.getenv('R_BIN')
+    candidates=[override] if override else [shutil.which('Rscript'),'/usr/bin/Rscript']
+    probe="p<-c('shiny','DT','DBI','RSQLite','ggplot2','jsonlite');quit(status=if(all(vapply(p,requireNamespace,logical(1),quietly=TRUE)))0L else 1L)"
+    for candidate in dict.fromkeys(x for x in candidates if x):
+        command=[candidate]
+        resolved=shutil.which(candidate)
+        if resolved and Path(resolved).resolve()==Path('/usr/bin/Rscript').resolve():
+            command=['env','-u','R_ENVIRON_USER','-u','R_LIBS_USER',candidate]
+        try:
+            if subprocess.run([*command,'--vanilla','-e',probe],capture_output=True).returncode==0:return command
+        except OSError:
+            pass
+    raise RuntimeError('No usable Shiny R runtime. Install R_PACKAGES.txt dependencies or set GRID_RSCRIPT.')
+
+
+def main(argv=None):
+    args=list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ('-h','--help','help'):print(HELP);return
+    command=args.pop(0)
+    if ',' in command:
+        commands=command.split(',')
+        if len(set(commands))!=len(commands) or not set(commands)<={'abm','final','shiny','prsformer'}:raise ValueError('Invalid/repeated sequence module')
+        if 'shiny' in commands and commands[-1]!='shiny':raise ValueError('Shiny must be the last module')
+        shared=[];dry=False;i=0
+        while i<len(args):
+            if args[i]=='--traits' and i+1<len(args):shared+=args[i:i+2];i+=2
+            elif args[i]=='--dry-run':dry=True;i+=1
+            else:raise ValueError('Only --traits and --dry-run are shared sequence options')
+        for cmd in commands:main([cmd,*shared,*(['--dry-run'] if dry else [])])
+        return
+    dry='--dry-run' in args;args=[x for x in args if x!='--dry-run'];env=None
+    if command=='prsformer':
+        entry=ROOT/'f/prsformer.entry.sh'
+        if not entry.is_file():raise FileNotFoundError('Missing PRSformer dispatcher: '+str(entry))
+        cmd=['bash',str(entry),*args]
+        # Route the foreground logger through the PRSformer dispatcher once.
+        logger=ROOT.parent/'0f/console_run.py'
+        quiet=any(x in ('--help','-h','help','--python-help') for x in args)
+        if not dry and not quiet and os.getenv('SCRIPT_CONSOLE_ACTIVE')!='1' and os.getenv('SCRIPT_VERBOSE')!='1' and logger.is_file():
+            cmd=[sys.executable,str(logger),'--script',str(entry),'--',*args]
+            env=dict(os.environ,SCRIPT_LOG_DIR=os.getenv('SCRIPT_LOG_DIR','/tmp/grid-logs/runs'))
+        else:
+            env=dict(os.environ,SCRIPT_CONSOLE_ACTIVE='1')
+    elif command in ('abm','fit','project','evaluate','demo'):
+        cmd=[sys.executable,str(Path(__file__).resolve()),command,*args]
+        print('[GRID] '+shlex.join(cmd),flush=True)
+        if not dry:analysis_main([command,*args])
+        return
+    elif command=='final':cmd=[sys.executable,str(ROOT/'f/browser_index.py'),*args]
+    elif command=='shiny':
+        import argparse
+        p=argparse.ArgumentParser();p.add_argument('--analysis-root',default='/mnt/d/analysis/grid');p.add_argument('--db');p.add_argument('--traits',default='height,ldl,t2dm');p.add_argument('--port',type=int,default=3839);p.add_argument('--host',default='127.0.0.1');p.add_argument('--r-bin');p.add_argument('--review',action='store_true');p.add_argument('--reindex',action='store_true')
+        a=p.parse_args(args);db=Path(a.db or str(Path(a.analysis_root)/'evidence/evidence.sqlite'))
+        if not 1024<=a.port<=65535:raise ValueError('Invalid port')
+        if a.host not in ('127.0.0.1','::1','localhost') and os.getenv('GRID_SHINY_ALLOW_NETWORK')!='TRUE':raise ValueError('Network binding requires GRID_SHINY_ALLOW_NETWORK=TRUE and your own authentication')
+        if a.reindex or not db.is_file():
+            ix=[sys.executable,str(ROOT/'f/browser_index.py'),'--analysis-root',a.analysis_root,'--out',str(db.parent),'--traits',a.traits]
+            print(shlex.join(ix),flush=True)
+            if not dry:subprocess.run(ix,check=True)
+        runtime=[a.r_bin or os.getenv('GRID_RSCRIPT') or os.getenv('R_BIN','Rscript')] if dry else r_runtime(a.r_bin)
+        cmd=[*runtime,str(ROOT/'shiny/app.R'),'--db',str(db),'--port',str(a.port),'--host',a.host,*(['--review'] if a.review else [])]
+    else:raise ValueError('Unknown command: '+command)
+    print('[GRID] '+shlex.join(cmd),flush=True)
+    if not dry:subprocess.run(cmd,check=True,env=env)
+
+if __name__=='__main__':
+    try:main()
+    except subprocess.CalledProcessError as exc:
+        print('ERROR: '+str(exc),file=sys.stderr);sys.exit(exc.returncode if exc.returncode>0 else 128-exc.returncode)
+    except (ValueError,OSError,RuntimeError) as exc:
+        print('ERROR: '+str(exc),file=sys.stderr);sys.exit(2)
+

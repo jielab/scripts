@@ -12,9 +12,9 @@ cat <<'HELP'
 用法：./allele.sh COMMAND [options]
 
 命令
+  check_ac   按染色体分别统计 SNP 和 indel 的 singleton、双等位和多等位比例
   check-input 检查待分析 VCF 是否齐全、下载是否完成（不扫描全文件）
   inspect    检查环境、依赖和数据路径
-  test       离线回归测试，不下载数据、不调用 API
   prepare    从群体 VCF 的频率/计数和 GRCh38 FASTA 构建候选变异
   select     选择多等位位点及匹配的双等位对照
   atlas      获取 AlphaGenome 效应向量，需要 API key
@@ -28,23 +28,28 @@ cat <<'HELP'
   以下命令在 /mnt/d/scripts/allele 目录运行。
   当前机器已安装环境，不需重跑 install.sh，也不需 conda activate。
 
-  # 1. 等下载完成后检查 chr1–22 的 VCF 和索引；成功后才继续
+  # 1. 分别统计已下载 chr18、19、21 的 SNP 和 indel；显示结果并保存 TSV
+  ./allele.sh check_ac --dir /mnt/f/annot/gnomad --prefix gnomad.genomes.v4.1.sites.chr --chr 18,19,21 \
+    --out /mnt/f/annot/gnomad/check_ac.chr18_19_21.tsv
+  # 每条染色体完成后显示分类计数；全部成功后保存到上面的 --out 文件
+
+  # 2. 等下载完成后检查 chr1–22 的 VCF 和索引；成功后才继续
   ./allele.sh check-input --vcf-dir /mnt/f/annot/gnomad --chr autosomes
 
-  # 2. 构建候选表；完整读取 chr1–22，不限制区间。首次使用一个新输出目录
+  # 3. 构建候选表；完整读取 chr1–22，不限制区间。首次使用一个新输出目录
   ./allele.sh prepare --vcf-dir /mnt/f/annot/gnomad --chr autosomes \
     --fasta /mnt/f/gen/1hgp/38/GRCH38.fasta.gz --out /mnt/d/analysis/allele_gnomad_v4.1
 
-  # 3. 选择全部多等位位点和匹配对照；打印需要查询的 Atlas 规模
+  # 4. 选择全部多等位位点和匹配对照；打印需要查询的 Atlas 规模
   ./allele.sh select --out /mnt/d/analysis/allele_gnomad_v4.1
 
-  # 4. 突变机会模型；这一步不需要 API key
+  # 5. 突变机会模型；这一步不需要 API key
   ./allele.sh stage1 --out /mnt/d/analysis/allele_gnomad_v4.1
 
-  # 5. 自动从 /mnt/d/files/alphaG.api 读取 key；不需要再输入或 export
+  # 6. 自动从 /mnt/d/files/alphaG.api 读取 key；不需要再输入或 export
   ./allele.sh atlas --out /mnt/d/analysis/allele_gnomad_v4.1
 
-  # 6. Atlas 完成后计算几何、保留关联并出图
+  # 7. Atlas 完成后计算几何、保留关联并出图
   ./allele.sh geometry --out /mnt/d/analysis/allele_gnomad_v4.1
   ./allele.sh stage2 --out /mnt/d/analysis/allele_gnomad_v4.1
   ./allele.sh final --out /mnt/d/analysis/allele_gnomad_v4.1
@@ -57,9 +62,11 @@ cat <<'HELP'
     --region chr22:20000001-21000000 --out /mnt/d/analysis/allele_1kg_try
   ./allele.sh select --out /mnt/d/analysis/allele_1kg_try
   ./allele.sh stage1 --out /mnt/d/analysis/allele_1kg_try
-  ./allele.sh test
 
 常用选项
+  check_ac --dir DIR --prefix TEXT     自动查找以 TEXT+染色体 开头的 VCF
+           [--chr 18,19,21 / all]      默认全部匹配文件，含 X/Y；输出 TSV 到终端
+           [--out FILE.tsv]           同时保存完整统计表；此处 --out 是文件路径
   --vcf FILE / --vcf-dir DIR            单个 VCF / 目录内所有 VCF，二选一
   --region CHR:START-END                只读取指定区间（1-based，需 VCF 索引）
   --chr autosomes / all / 1,2,3         目录输入的染色体；gnomAD 默认 1–22
@@ -68,13 +75,19 @@ cat <<'HELP'
   --scorers A,B,... --chunk N           Atlas 模态及批量大小，默认 128
 
 数据和 key 已齐备时，可用 all 加相同输入参数从头运行。
-默认正式输入匹配 gnomad.genomes.v4.1.sites.chr*.vcf.bgz；检查失败会停止。
-X/Y 不在常染色体分析中，显式 --chr all 才加入；需另行考虑倍性。
+check_ac 分别统计 SNP 和 indel：PASS、AC>0，同一 CHROM+POS 按类型分别合并。
+每类均显示 singleton（ALT AC=1）、non_singleton_biallelic（ALT AC>1）、
+tri_allelic（REF+2 ALT）、four_plus_allelic（REF+至少3 ALT）的数量和百分比。
+百分比分母为该染色体、该类型的位点总数；同坐标的 SNP 和 indel 分别计数。
+check_ac 拒绝未完成下载；仅需 python3、bcftools、awk。省略 --out 时不保存文件。
+--out 的父目录须已存在，全部成功后替换已有统计文件；每条染色体的进度写到 stderr。
+prepare 默认正式输入匹配 gnomad.genomes.v4.1.sites.chr*.vcf.bgz；检查失败会停止。
+prepare 的 X/Y 不在默认常染色体分析中，显式 --chr all 才加入；需另行考虑倍性。
 prepare 已有结果时不会覆盖，请使用新的 --out。后续步骤必须使用同一个 --out。
 全基因组 Atlas 的时间和空间取决于 select 的位点数，离线测试不验证 API 授权。
 更多说明见 README.md；自定义路径可复制 config.example.env 为 allele.env。
 HELP
-printf '\n当前路径\n  VCF 目录: %s\n  FASTA:    %s\n  输出:     %s\n' \
+printf '\n当前路径\n  VCF 目录: %s\n  FASTA:    %s\n  分析输出（prepare 等）: %s\n  check_ac 输出: 由 --out FILE.tsv 指定；省略时仅终端\n' \
   "$ALLELE_VCF_DIR" "$ALLELE_FASTA" "$ALLELE_OUT"
 }
 
@@ -92,9 +105,14 @@ BIRATIO=$ALLELE_BIALLELIC_RATIO
 METHOD=${1:-help}; shift || true
 case "$METHOD" in
   help|-h|--help) usage; exit 0;;
-  inspect|check-input|prepare|select|atlas|geometry|stage1|stage2|final|all|test) ;;
+  check_ac|inspect|check-input|prepare|select|atlas|geometry|stage1|stage2|final|all) ;;
   *) allele_die "unknown command: $METHOD";;
 esac
+# This summary command needs neither the analysis conda environment nor a FASTA.
+if [[ "$METHOD" == check_ac ]]; then
+  allele_require_cmd python3
+  exec python3 "$F/check_ac.py" "$@"
+fi
 while (($#)); do
   case "$1" in
     --out|--vcf|--vcf-dir|--region|--chr|--fasta|--scorers|--chunk|--biallelic-ratio)
@@ -121,7 +139,7 @@ done
 [[ -z "$CHROMS" || -z "$VCF_FILE" ]] || allele_die '--chr is for directory input; use --region with --vcf'
 export ALLELE_OUT="$OUT" ALLELE_VCF_DIR="$VCF_DIR" ALLELE_FASTA="$FASTA"
 allele_require_env
-if [[ "$METHOD" != inspect && "$METHOD" != test && "$METHOD" != check-input ]]; then
+if [[ "$METHOD" != inspect && "$METHOD" != check-input ]]; then
   mkdir -p "$OUT"/{work,atlas,results,final,logs}
 fi
 
@@ -175,7 +193,6 @@ run_final() {
 case "$METHOD" in
   help|-h|--help) usage;;
   inspect) allele_python "$F/validate.py" --root "$ROOT" --out "$OUT";;
-  test) allele_python -m unittest discover -s "$ROOT/tests" -v;;
   check-input) run_prepare;;
   prepare) run_prepare;;
   select) run_select;;

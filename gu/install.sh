@@ -571,7 +571,7 @@ else
 	cmake --build "$IBDMIX_DIR/build" --parallel "${GU_BUILD_JOBS:-4}"
 fi
 
-IBDMIX_PREPARE_BIN="${IBDMIX_PREPARE_BIN:-$SOFT/ibdmix-prepare/prepare}" bash "$ROOT/f/ibdmix_prepare/build.sh" --if-needed
+IBDMIX_PREPARE_BIN="${IBDMIX_PREPARE_BIN:-$SOFT/ibdmix-prepare/prepare}" bash "$ROOT/f/ibdmix.sh" build-prepare --if-needed
 
 # AS3 inference source is vendored under f/as3; checkpoints live with
 # the GRCh38 Ref1028 data.  No external AS3 checkout is read or updated.

@@ -9,6 +9,10 @@
 在 `/mnt/d/scripts/allele` 目录下，先检查下载是否完成，再按顺序继续。某一步报错先停止，不要继续后续步骤：
 
 ```bash
+# 分别统计已下载 chr18、19、21 的 SNP 和 indel；显示结果并保存 TSV
+./allele.sh check_ac --dir /mnt/f/annot/gnomad --prefix gnomad.genomes.v4.1.sites.chr --chr 18,19,21 \
+  --out /mnt/f/annot/gnomad/check_ac.chr18_19_21.tsv
+
 # 检查常染色体 chr1–22 的 VCF 和索引；检查成功后才继续
 ./allele.sh check-input --vcf-dir /mnt/f/annot/gnomad --chr autosomes
 
@@ -31,11 +35,11 @@
 ./allele.sh final --out /mnt/d/analysis/allele_gnomad_v4.1
 ```
 
-结果位于 `/mnt/d/analysis/allele_gnomad_v4.1/final/`。每一步显式写出相同的 `--out`，因此换终端后也不会误用其他输出目录。`atlas` 中断后再运行同一条 `atlas` 命令会续传；其他步骤成功后直接从下一步继续。`prepare` 拒绝覆盖已有候选表，更换输入或重复完整分析时用新的输出目录。
+`check_ac` 的统计文件位于 `/mnt/f/annot/gnomad/check_ac.chr18_19_21.tsv`，其 `--out` 指定的是文件。后续分析步骤的 `--out` 指定目录，最终结果位于 `/mnt/d/analysis/allele_gnomad_v4.1/final/`；这些步骤显式写出相同的输出目录，因此换终端后也不会误用其他输出目录。`atlas` 中断后再运行同一条 `atlas` 命令会续传；其他步骤成功后直接从下一步继续。`prepare` 拒绝覆盖已有候选表，更换输入或重复完整分析时用新的输出目录。
 
 `check-input` 与 `prepare` 都会检查所选染色体是否齐全、是否还有 `.aria2` 标记、文件大小是否符合固定版本的官方记录、VCF 是否具有 BGZF 结束标记及配套索引。它们不会把已下载的少数染色体默认为全套数据。MD5 由下载脚本完成，这个快速检查不重新扫描数百 GB 文件。默认 gnomAD 分析为 chr1–22；`--chr 1,2,22` 可显式选子集，`--chr all` 才包括 X/Y。性染色体倍性需单独考虑。
 
-完整 gnomAD 的 Atlas 查询可能很大，取决于 `select` 打印的位点数；处理使用全部多等位位点，不会静默抽掉病例。真实 API 已通过单个位点、3 个替换的连接与向量测试；全基因组吞吐和资源消耗尚未验证。具体测试范围见 [tests/README.md](tests/README.md)。
+完整 gnomAD 的 Atlas 查询可能很大，取决于 `select` 打印的位点数；处理使用全部多等位位点，不会静默抽掉病例。真实 API 已通过单个位点、3 个替换的连接与向量测试；全基因组吞吐和资源消耗尚未验证。
 
 ## 可选的本地 1KG 测试
 
@@ -47,18 +51,17 @@ cd /mnt/d/scripts/allele
   --region chr22:20000001-21000000 --out /mnt/d/analysis/allele_1kg_try
 ./allele.sh select --out /mnt/d/analysis/allele_1kg_try
 ./allele.sh stage1 --out /mnt/d/analysis/allele_1kg_try
-./allele.sh test
 ```
 
 `--region` 为 1-based、两端包含，须与索引齐全的 `--vcf` 一起使用。不带区间时读取整个文件。`--vcf` 与 `--vcf-dir` 互斥；普通队列目录读取其中的 VCF，gnomAD 目录只选择指定版本和染色体的标准文件名。流程只使用 VCF INFO 中的 AC/AN/AF，不解码个体 GT，也不需要 BAM/FASTQ。
 
-## 配置与测试
+## 配置与环境检查
 
-修改分析路径时，先执行 `cp -n config.example.env allele.env`，再编辑 `allele.env`。输入目录变量为 `ALLELE_VCF_DIR`；未配置新变量时仍兼容显式设置的旧 `ALLELE_GNOMAD` 输入路径。安装脚本与分析入口读取同一配置，`allele.env` 中的赋值优先于同名环境变量；分析命令的 `--vcf`、`--vcf-dir`、`--fasta`、`--out` 参数可覆盖配置。若配置文件固定了 `ALLELE_OUT`，请将示例输出路径写进配置，或在每一步传入相同的 `--out DIR`。`./allele.sh --help` 会显示当前配置的路径。独立下载脚本 `gnomad_download.sh` 不读取此配置，用自己的 `--out`、`--proxy` 参数。
+修改分析路径时，先执行 `cp -n config.example.env allele.env`，再编辑 `allele.env`。输入目录变量为 `ALLELE_VCF_DIR`；未配置新变量时仍兼容显式设置的旧 `ALLELE_GNOMAD` 输入路径。安装脚本与分析入口读取同一配置，`allele.env` 中的赋值优先于同名环境变量；分析命令的 `--vcf`、`--vcf-dir`、`--fasta`、`--out` 参数可覆盖配置。若配置文件固定了 `ALLELE_OUT`，请将示例输出路径写进配置，或在每一步传入相同的 `--out DIR`。`./allele.sh --help` 会显示当前配置的路径。独立下载脚本 `/mnt/f/annot/gnomad/gnomad_download.sh` 不读取此配置，用自己的 `--out`、`--proxy` 参数。
 
 自定义 conda 可通过 `ALLELE_CONDA_EXE=/path/to/conda` 指定，配置文件可通过 `ALLELE_CONFIG=/path/to/file.env` 指定。环境缺失时会提示先安装；依赖导入失败时检查命令返回非零状态。数据路径和 API key 不影响依赖检查是否通过，但必须在对应分析阶段配置。
 
-`./allele.sh test` 使用人工 VCF/FASTA 和仅在测试进程内替换的 Atlas 客户端，覆盖整个 `all` 命令、断点恢复、向量对应、几何数值和两阶段模型，不调用真实 API，不下载 gnomAD，不把模拟结果写进默认分析目录。**离线测试通过不代表真实 Atlas 授权或真实数据已验证。**
+`./allele.sh inspect` 检查环境、依赖和配置路径，不调用 Atlas API。独立回归测试及验证记录不保存在正式代码目录；临时检查使用 `/tmp`。**环境检查通过不代表真实 Atlas 授权或真实数据已验证。**
 
 本次修复还包括混合 indel/SNV 记录中 AF/AC 的索引错位、AC/AF 为零的 ALT 被错误计入 occupancy、REF 不一致被静默丢弃、REF 放宽匹配失效、Stage 1 训练内分数泄漏、主 ALT 几何特征直接泄漏 observed 标签，以及未完成 Atlas 缓存被当作完整结果使用。
 
@@ -97,11 +100,11 @@ AlphaGenome outputs are research predictions, not clinical pathogenicity calls. 
 allele/
 ├── allele.sh
 ├── install.sh
-├── gnomad_download.sh
 ├── environment.yml
 ├── config.example.env
 └── f/
     ├── common.sh
+    ├── check_ac.py
     ├── vcf_inputs.py
     ├── gnomad_v4.1_genomes.json
     ├── parquet_io.py
@@ -129,7 +132,7 @@ Occupancy means **observed within the chosen cohort**, not present or absent thr
 
 ### gnomAD 独立下载与多机分工
 
-[`gnomad_download.sh`](gnomad_download.sh) 是单文件脚本，内置 chr1–22、X、Y 的 Google Cloud/AWS 地址和官方 MD5（2026-10-15 核对）。下载的是 gnomAD v4.1 genomes **sites summary** 及 `.tbi` 索引，没有个体 genotype；全量 48 个文件约 563 GB。原 aria2 清单仍可单独使用，但新脚本不依赖它。
+下载入口统一使用 [`/mnt/f/annot/gnomad/gnomad_download.sh`](/mnt/f/annot/gnomad/gnomad_download.sh)（Windows：`F:\annot\gnomad\gnomad_download.sh`）。它是单文件脚本，内置 chr1–22、X、Y 的 Google Cloud/AWS 地址和官方 MD5（2026-10-15 核对）。下载的是 gnomAD v4.1 genomes **sites summary** 及 `.tbi` 索引，没有个体 genotype；全量 48 个文件约 563 GB。代码目录不再保留下载脚本副本或静态 aria2 清单。
 
 其他电脑只需复制 `gnomad_download.sh`，安装 `aria2c`，在 Bash/WSL 中运行；不需要 conda、Hail、Google 登录、项目配置或其他代码文件。Ubuntu/WSL 可用 `sudo apt install aria2` 安装下载工具。`install.sh` 现在仅负责环境安装和检查。
 
@@ -137,7 +140,7 @@ Occupancy means **observed within the chosen cohort**, not present or absent thr
 
 ```bash
 # 电脑 A
-bash gnomad_download.sh --proxy http://127.0.0.1:7897 --chr 1,2,3,4,5 --out /mnt/f/annot/gnomad
+bash /mnt/f/annot/gnomad/gnomad_download.sh --proxy http://127.0.0.1:7897 --chr 1,2,3,4,5 --out /mnt/f/annot/gnomad
 
 # 电脑 B；用 --out 改成本机保存目录
 bash gnomad_download.sh --proxy http://127.0.0.1:7897 --chr 6,7,8,9,10 \
@@ -149,8 +152,8 @@ bash gnomad_download.sh --proxy http://127.0.0.1:7897 --chr 6,7,8,9,10 \
 单染色体续传或全量下载：
 
 ```bash
-./gnomad_download.sh --chr 22 --out /mnt/f/annot/gnomad
-./gnomad_download.sh --chr all --proxy none --out /mnt/f/annot/gnomad
+bash /mnt/f/annot/gnomad/gnomad_download.sh --chr 22 --out /mnt/f/annot/gnomad
+bash /mnt/f/annot/gnomad/gnomad_download.sh --chr all --proxy none --out /mnt/f/annot/gnomad
 ```
 
 每文件最多 16 个连接、每服务器最多 8 个，完成后自动校验 MD5。Ctrl+C 退出后重跑同一命令可续传，包括先前 curl 下载的 chr22 部分文件。若旧命令仍在下载同一文件，先等它退出；保留中断下载旁边的 `.aria2` 控制文件。文件显示完整大小不代表下载已完成。网络速度仍受线路和代理节点影响。
@@ -181,6 +184,40 @@ Set `ALLELE_FASTA=/path/GRCh38.fa` in `allele.env`. BGZF-compressed FASTA is als
 The API key is stored as one plain-text line in `/mnt/d/files/alphaG.api`, outside the scripts directory. `allele.sh` reads it automatically. Use `ALLELE_API_KEY_FILE` to change this path; an explicitly exported `ALPHA_GENOME_API_KEY` takes precedence. The file is read as data, never executed. `./allele.sh inspect` prints only whether the key is set. Keep the key itself out of source/config files.
 
 ## Analysis stages
+
+### `check_ac`
+
+按染色体**分别统计 SNP 和 indel** 的位点类别，不启动 `prepare` 或 Atlas，不需要 FASTA、API key 或 conda 环境。依赖 `python3`、`bcftools`、`awk`。使用 `--dir` 指定目录，`--prefix` 指定染色体编号之前的文件名前缀；支持 `.vcf`、`.vcf.gz`、`.vcf.bgz`，也支持染色体编号与扩展名之间的注释后缀（例如 1KG 的 `.recalibrated_variants.annotated.vcf.gz`）。前缀按字面匹配，不是通配符。
+
+```bash
+# 显示分类结果，并在所有染色体成功后保存完整 TSV
+./allele.sh check_ac --dir /mnt/f/annot/gnomad --prefix gnomad.genomes.v4.1.sites.chr --chr 18,19,21 \
+  --out /mnt/f/annot/gnomad/check_ac.chr18_19_21.tsv
+
+# 不指定 --chr：读取目录内全部匹配染色体，包括 X/Y，不要求它们恰好为 1–22
+./allele.sh check_ac --dir /mnt/f/annot/gnomad --prefix gnomad.genomes.v4.1.sites.chr
+
+# 也可使用标准输出重定向保存统计表（进度和错误写到 stderr）
+./allele.sh check_ac --dir /mnt/f/annot/gnomad --prefix gnomad.genomes.v4.1.sites.chr \
+  --chr 18,19,21 > /mnt/f/annot/gnomad/check_ac.tsv
+```
+
+`--chr all` 与省略 `--chr` 等价；显式列表支持 `18,19,21` 或 `chr18,chr19,chr21`，去重后按染色体自然顺序扫描。所选染色体缺失、同一染色体匹配多个 VCF、未完成下载（`.aria2`）或压缩文件截断时会报错，不会静默跳过。顺序全文件统计不需要普通 VCF 的索引；官方 gnomAD 文件仍复用原有大小、BGZF 结束标记和索引检查。
+
+每条染色体完成后，立即在 stderr 显示 SNP、INDEL 各自的类别计数和比例；所有选中文件成功后，才向 stdout 输出完整 TSV 并保存 `--out` 文件。省略 `--out` 时只显示到终端，不自动生成文件，也不使用 `ALLELE_OUT` 分析目录。`--out` 的父目录须已存在；已有统计文件仅在全部成功后替换，扫描失败保留原文件。启动和完成时会打印输出路径。
+
+只保留 `FILTER=PASS`，拆分 ALT 后保留 `AC>0` 的 SNP/indel，再用 `bcftools norm -m +both` 将同一 `CHROM+POS` 的 SNP 和 indel **分别合并**。同一坐标可以贡献一个 SNP 位点和一个 indel 位点，例如 `REF=A, ALT=G,AT` 会在两类中各计一个双等位位点，不再合并为一个三等位位点。每个输入文件只扫描一次。不额外用 FASTA 做 indel 左对齐，不跨坐标重建原始复杂事件，不使用 gnomAD 过滤前的 `n_alt_alleles` 直接计数。输入须含 `INFO/AC`（`Number=A, Type=Integer`），无需样本 GT。
+
+输出列为 `CHR, TYPE, CATEGORY, COUNT, TOTAL_SITES, PERCENT`；`TYPE` 为 `SNP` 或 `INDEL`，每条染色体各输出四行。百分比分母为该染色体、该类型保留下来的合并位点数；每种类型内类别互斥：
+
+- `singleton`：REF + 一个 ALT，且 ALT AC=1。
+- `non_singleton_biallelic`：REF + 一个 ALT，且 ALT AC>1。
+- `tri_allelic`：REF + 两个 ALT；即使其中有 AC=1 的 ALT，仍归入本类。
+- `four_plus_allelic`：REF + 至少三个 ALT。
+
+空的有效位点集合输出计数 0、百分比 `NA`。这里的 singleton 是双等位位点的 ALT singleton，并非所有多等位记录中的 singleton ALT 数量。此模块与后续 `prepare` 的 SNV 几何分析独立，不会改变其分析口径；`all` 仍从 `prepare` 开始。
+
+1KG 的现有 2022 phased panel 在发布前经过 MAC≥2 过滤，不能据此估计完整 singleton 比例。应使用 [20201028 原始 callset 的 `*.recalibrated_variants.annotated.vcf.gz`](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/)，其中保留 AC、去除了样本 GT；前缀可指定为 `20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr`。跨库比较须考虑样本量、亲缘关系和 QC 差异。
 
 ### `prepare`
 

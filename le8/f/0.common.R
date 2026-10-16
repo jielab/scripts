@@ -603,6 +603,9 @@ le8_tables_pack <- function(root, clean = TRUE) {
 	internal <- grepl('^c5[.].*[.]json$',basename(paths))
 	paths <- paths[!grepl('[.]json$', paths) | internal]
 	paths <- le8_table_result_paths(paths, root)
+	# FINAL publishes this named review workbook with its own sheet index.
+	# Keep it intact so the documented path and sheet_map survive packaging.
+	paths <- paths[!(basename(paths) == 'FINAL_multiroute_catalog.xlsx' & basename(dirname(paths)) == 'multiroute')]
 	directories <- sort(unique(c(dirname(paths), dirname(le8_table_stores(root)))))
 	for (directory in directories) {
 		old_workbooks <- le8_table_archive_files(directory)

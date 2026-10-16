@@ -1,7 +1,0 @@
-{'run': 'csx/height/auto', 'chromosomes_validated': 22}
-{'run': 'csx/height/phi-1e-2', 'chromosomes_validated': 22}
-{'run': 'csx/ldl/auto', 'chromosomes_validated': 22}
-{'run': 'csx/ldl/phi-1e-2', 'chromosomes_validated': 22}
-{'run': 'csx/t2dm/auto', 'chromosomes_validated': 22}
-{'run': 'csx/t2dm/phi-1e-2', 'chromosomes_validated': 22}
-All migrated runs validated.

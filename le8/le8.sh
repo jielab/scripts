@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 🚩 le8
-# Public LE8 interface. Default sequence: integrated twin C1, C2, C3, C4, C5.
+# LE8 FINAL interface. Default sequence: integrated multiroute C1, C2, C3, C4, C5.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
@@ -15,13 +15,14 @@ source "$LE8_ROOT/../0f/console.sh"
 
 le8_usage() {
 	cat <<'HELP'
-Usage: ./le8.sh [module[,module...]] [options]
+LE8 FINAL — Usage: ./le8.sh [module[,module...]] [options]
 
 No module list: c1_correlate -> c1_abm (Twin/deviation) -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
 Each analysis module writes cumulative performance tables/figures in its performance/ directory.
 C1 refreshes comparisons with existing ABM fits; unavailable prediction models are marked not evaluated.
 Completed results are checked and skipped, preserving original methods/scope.
+C1 validation receipts in /tmp avoid table expansion while result files remain unchanged.
 Input timestamps or code changes do not refit completed modules; use --replace TRUE.
 ABM molecular-QC repair requires an explicit new fit; existing fits are not upgraded in place.
 ABM uses Rdata/prot.rds and Rdata/met.rds, with no automatic plate/well/center adjustment.
@@ -103,7 +104,7 @@ Main options (defaults are set below in this script):
   --Y-date COLUMN       Outcome diagnosis date, shared with ABM
   --outer-roster FILE    Shared eid,role table (training/test), for paired comparisons
   --atlas, --universe, --panels, --contrasts FILE
-  --matched-draws N      C5 matched draws: 0 or >=100
+  --matched-draws N      C5 matched draws: default 500 (C5_MATCHED_DRAWS); 0 or >=100
   --cigma-manifest, --cigma-results, --cigma-cells FILE
                          Downloaded Chen 2026 summaries are used when installed;
                          C5_CIGMA_RESULTS overrides the published-summary path.
@@ -165,11 +166,11 @@ le8_utility() {
 		abm)
 			if [[ ${1:-} == prepare ]]; then
 				shift
-				"$python_bin" "$LE8_ROOT/f/prepare_abm.py" "$@"
-			else "$python_bin" "$LE8_ROOT/f/run_abm_twin.py" "$@"; fi ;;
-		deviation) "$python_bin" "$LE8_ROOT/f/run_deviation.py" "$@" ;;
-		pgs-merge) "$python_bin" "$LE8_ROOT/f/run_deviation.py" merge-pgs "$@" ;;
-		evidence) "$python_bin" "$LE8_ROOT/f/evidence_index.py" "$@" ;;
+				"$python_bin" "$LE8_ROOT/f/abm.py" prepare "$@"
+			else "$python_bin" "$LE8_ROOT/f/abm.py" "$@"; fi ;;
+		deviation) "$python_bin" "$LE8_ROOT/f/deviation.py" "$@" ;;
+		pgs-merge) "$python_bin" "$LE8_ROOT/f/deviation.py" merge-pgs "$@" ;;
+		evidence) "$python_bin" "$LE8_ROOT/f/final.py" evidence "$@" ;;
 		viewer) "${R_BIN:-Rscript}" "$LE8_ROOT/shiny/app.R" "$@" ;;
 	esac
 }
@@ -345,7 +346,7 @@ le8_main() {
 	[[ -z $ukb_phe ]] || args+=(--ukb-phe "$ukb_phe")
 	[[ -z $memory_limit ]] || args+=(--memory-limit-gb "$memory_limit")
 	[[ -z $memory_swap ]] || args+=(--memory-swap-gb "$memory_swap")
-	"$python_bin" "$LE8_ROOT/f/pipeline.py" "${args[@]}" "${extra[@]}"
+	"$python_bin" "$LE8_ROOT/f/0.common.py" pipeline "${args[@]}" "${extra[@]}"
 }
 # Parse invocation and exit together before any long-running child starts.
 {

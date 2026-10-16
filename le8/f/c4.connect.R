@@ -1010,6 +1010,7 @@ if (.c4_mode == "reconstruct") {
 suppressPackageStartupMessages({
 	fdir <- Sys.getenv("LE8_FDIR", unset = file.path(Sys.getenv("DIRSCRIPT"), "f"))
 	source(file.path(fdir, "0.common.R"))
+	source(file.path(fdir, "c4.final_extensions.R")) # LE8_FINAL::2026-10-15.final-multiroute-v1
 
 	# c4 helpers
 	# c4.connect.R
@@ -3031,11 +3032,13 @@ run_c4_nonlin <- function(layer) {
 
 if (prot_DO) {
 	invisible(le8_stage("C4/connect/protein", run_c4_layer("protein")))
+	invisible(le8_stage("C4/final-extensions/protein", run_c4_final_extensions("protein")))
 	invisible(le8_stage("C4/sex-interactions/protein", run_c4_sex_interactions("protein")))
 	gc(full = TRUE)
 }
 if (met_DO) {
 	invisible(le8_stage("C4/connect/metabolite", run_c4_layer("metabolite")))
+	invisible(le8_stage("C4/final-extensions/metabolite", run_c4_final_extensions("metabolite")))
 	invisible(le8_stage("C4/sex-interactions/metabolite", run_c4_sex_interactions("metabolite")))
 	gc(full = TRUE)
 }

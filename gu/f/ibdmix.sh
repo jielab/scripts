@@ -7,6 +7,65 @@ set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 F=$ROOT/f
+
+# 🚩 Native IBDmix builds
+case "${1:-}" in
+	build-prepare)
+		shift
+		here=$F
+		prefix=${IBDMIX_HTSLIB_PREFIX:-${CONDA_PREFIX:-/home/huangj/anaconda3/envs/gu}}
+		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-/mnt/d/software/gu}/ibdmix-prepare/prepare}
+		compiler=${CXX:-g++}
+		[[ -s $prefix/include/htslib/vcf.h ]] || { echo "ERROR: HTSlib headers missing under $prefix" >&2; exit 2; }
+		mkdir -p "$(dirname -- "$out")"
+		exec 8>"$out.build.lock"
+		flock 8
+		if [[ ${1:-} == --if-needed && -x $out && $out -nt $here/ibdmix.prepare.cc && $out -nt $here/ibdmix.sh ]]; then exit 0; fi
+		tmp=$out.build.$$
+		trap 'rm -f "$tmp"' EXIT
+		"$compiler" -O3 -std=c++17 -Wall -Wextra -Werror -I"$prefix/include" \
+		  "$here/ibdmix.prepare.cc" -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lhts -o "$tmp"
+		"$tmp" --version
+		mv -f "$tmp" "$out"
+
+		exit 0 ;;
+	build-gpu)
+		shift
+		here=$F
+		upstream=${IBDMIX_RUNTIME:-/mnt/d/software/gu/ibdmix}
+		nvcc=${IBDMIX_NVCC:-/home/huangj/anaconda3/envs/as3_mamba/bin/nvcc}
+		out=${IBDMIX_GPU_BIN:-/mnt/d/software/gu/ibdmix-gpu/ibdmix-gpu}
+		[[ -x $nvcc ]] || { echo "ERROR: set IBDMIX_NVCC to a CUDA compiler" >&2; exit 2; }
+		mkdir -p "$(dirname -- "$out")"
+		tmp=$out.build.$$
+		trap 'rm -f "$tmp"' EXIT
+		"$nvcc" -O3 -std=c++17 --fmad=false -arch=native \
+		  -I"$upstream/include" -I"$upstream/build/_deps/cli11-src/include" \
+		  "$here/ibdmix.gpu.cu" "$upstream/src/lod_calculator.cc" \
+		  "$upstream/src/Mask_Reader.cc" "$upstream/src/Sample_Mapper.cc" -o "$tmp"
+		"$tmp" --gpu-check
+		mv -f "$tmp" "$out"
+		python3 - "$here" "$upstream" "$nvcc" "$out" <<'PY'
+import hashlib,json,subprocess,sys
+from pathlib import Path
+source,upstream,compiler,binary=map(Path,sys.argv[1:])
+files=[source/'ibdmix.gpu.cu',source/'ibdmix.sh',upstream/'src/lod_calculator.cc',upstream/'src/Mask_Reader.cc',upstream/'src/Sample_Mapper.cc']
+manifest={'backend':'cuda-segment-v1',
+ 'upstream_commit':subprocess.check_output(['git','-C',str(upstream),'rev-parse','HEAD'],text=True).strip(),
+ 'compiler':subprocess.check_output([str(compiler),'--version'],text=True).strip(),
+ 'flags':['-O3','-std=c++17','--fmad=false','-arch=native'],
+ 'files':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
+ 'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest()}
+(binary.parent/'build-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+PY
+		printf 'Built %s\n' "$out"
+
+		exit 0 ;;
+esac
+
+
+# 🚩 IBDmix analysis
+
 PHE_F=${PHE_F:-$ROOT/../0f/phenotype.sh}
 [[ -s $PHE_F ]] || {
 	echo "ERROR: missing $PHE_F" >&2
@@ -166,7 +225,7 @@ for file in "$ibdmix_bin" "$helper" "$F/0.common.py" "$sample_file"; do [[ -s $f
 	echo "ERROR: missing required file: $file" >&2
 	exit 1
 }; done
-IBDMIX_PREPARE_BIN="$prepare_bin" bash "$F/ibdmix_prepare/build.sh" --if-needed
+IBDMIX_PREPARE_BIN="$prepare_bin" bash "$F/ibdmix.sh" build-prepare --if-needed
 [[ -d $target_vcf_dir ]] || {
 	echo "ERROR: missing target VCF directory: $target_vcf_dir" >&2
 	exit 1
@@ -419,7 +478,7 @@ check_run_provenance() {
 			echo "ERROR: X sensitivity calling cohort differs from MAC1 baseline" >&2; return 1;
 		}
 	fi
-	if [[ -s $comparison ]] && ! python3 "$F/ibdmix_resume.py" provenance "$comparison" "$candidate" --run "$dirout"; then
+	if [[ -s $comparison ]] && ! python3 "$F/ibdmix.py" resume provenance "$comparison" "$candidate" --run "$dirout"; then
 		if [[ $IBDMIX_REPLACE != 1 ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f ! -name '*.part*' -print -quit) ]]; then
 			echo "ERROR: IBDmix inputs, profile or implementation changed; old results cannot be reused. Rerun with --replace-ibdmix TRUE." >&2
 			return 1

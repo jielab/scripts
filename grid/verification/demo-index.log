@@ -1,2 +1,0 @@
-[GRID] /home/huangj/miniforge3/envs/grid/bin/python3 /mnt/d/scripts/grid/f/browser_index.py --analysis-root /tmp/grid-twin-integration-20261014-height
-{"tables": 18, "audit_items": 1, "db": "/tmp/grid-twin-integration-20261014-height/evidence/evidence.sqlite"}

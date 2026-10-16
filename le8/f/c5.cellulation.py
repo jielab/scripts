@@ -33,6 +33,8 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.stats import fisher_exact, hypergeom
+from c5_robustness import final_consensus
+# LE8_FINAL::2026-10-15.final-multiroute-v1
 
 VERSION = "2026-10-04.cell-context-v2"
 HERE = Path(__file__).resolve().parent
@@ -893,17 +895,34 @@ def default_resources(root,atlas):
     scratch=Path(tempfile.gettempdir())/"le8-c5-inputs"/hashlib.sha256(provenance_path(root).encode()).hexdigest()[:16]
     scratch.mkdir(parents=True,exist_ok=True)
     messages=[]
+    def ready(paths):
+        universe,panels=map(Path,paths)
+        if Path(atlas).is_file():
+            u=read_table(universe)
+            if 'match_stratum' not in u and 'gene' in u:
+                # The native universe has no assay-technical strata. Use fixed,
+                # outcome-blind annotation-degree bins for the matched null.
+                a=read_table(atlas)
+                require(a,['gene','cell_type'],'atlas')
+                counts=a.assign(gene=a.gene.map(gene_name)).groupby('gene').cell_type.nunique()
+                degree=u.gene.map(gene_name).map(counts).fillna(0).astype(int)
+                u['match_stratum']=np.select([degree.eq(0),degree.eq(1),degree.le(3)],
+                    ['annotation_0','annotation_1','annotation_2_3'],default='annotation_4plus')
+                universe=scratch/'c5.annotation_matched_universe.csv'
+                write_csv(u,universe)
+                messages.append('Matched null: fixed atlas-label-count bins 0/1/2-3/4+; outcome-blind annotation matching; assay-technical matching unavailable')
+        return [atlas,universe,panels],messages
     try:
         from final import cell_annotation_inputs
         paths=cell_annotation_inputs(root,scratch)
-        if paths is not None and all(Path(x).is_file() for x in paths): return [atlas,*map(Path,paths)],messages
+        if paths is not None and all(Path(x).is_file() for x in paths): return ready(paths)
     except Exception as exc: messages.append("Native input resolver: "+str(exc))
     for directory,universe,panels in [
         (root.parent/"final"/root.name/"systematic","c5.systematic.cell_universe.csv","c5.systematic.cell_panels.csv"),
         (root.parent/"final"/root.name/"joint","c5.cell_assay_universe.csv","c5.cell_panels.csv")]:
         if (directory/universe).is_file() and (directory/panels).is_file():
             messages.append("Using existing Final export; inspect provenance to ensure it matches the desired frozen run")
-            return [atlas,directory/universe,directory/panels],messages
+            return ready((directory/universe,directory/panels))
     return [atlas,None,None],messages
 
 
@@ -952,7 +971,7 @@ def main_driver(argv):
     for name in ["atlas","universe","panels","contrasts","cigma-manifest","cigma-results","cigma-cells"]:
         ap.add_argument("--"+name,type=Path)
     ap.add_argument("--replace",action="store_true"); ap.add_argument("--no-plots",action="store_true")
-    ap.add_argument("--matched-draws",type=int,default=0); ap.add_argument("--seed",type=int,default=int(os.getenv("SEED","2026")))
+    ap.add_argument("--matched-draws",type=int,default=int(os.getenv("C5_MATCHED_DRAWS","500"))); ap.add_argument("--seed",type=int,default=int(os.getenv("SEED","2026")))
     ap.add_argument("--python",default=os.getenv("C5_CIGMA_PYTHON",sys.executable))
     ap.add_argument("--allow-untested-cigma",action="store_true")
     ap.add_argument("--preflight",action="store_true")
@@ -1054,6 +1073,11 @@ def main_driver(argv):
                 elif not native_failed:
                     status.append(dict(analysis="CIGMA",status="unavailable" if layer=="prot" else "not_applicable",
                         detail="Needs published CIGMA summaries or real paired-donor single-cell/genotype inputs; no inference from UKB plasma alone"))
+                try:
+                    final_consensus(stage,trait,layer)
+                    status.append(dict(analysis="FINAL_consensus",status="completed",detail="Independent cell-context robustness synthesis"))
+                except Exception as exc:
+                    status.append(dict(analysis="FINAL_consensus",status="warning",detail=f"{type(exc).__name__}: {exc}"))
                 write_csv(pd.DataFrame(status),stage/"c5.cellulation_status.csv")
                 write_csv(pd.DataFrame([dict(role=r,**stamp(p)) for r,p in zip(["atlas","universe","panels"],resources) if p is not None]),stage/"c5.cellulation_inputs.csv")
                 write_json(dict(version=VERSION,notes=notes,interpretation=NOTE),stage/"c5.run_notes.json")

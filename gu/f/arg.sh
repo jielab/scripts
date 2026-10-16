@@ -129,7 +129,7 @@ arg_cli() (
 			exit 2
 		}
 		export PYTHONNOUSERSITE=1
-		exec "$runtime/bin/python" -u "$HERE/arg.singer.py" "${singer_args[@]}"
+		exec "$runtime/bin/python" -u "$HERE/arg.py" singer "${singer_args[@]}"
 	fi
 	HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 
@@ -566,7 +566,7 @@ arg_threads() (
 	}
 	export PATH="$runtime/bin:$HOME/miniforge3/envs/grid/bin:$HOME/anaconda3/envs/gu/bin:$PATH"
 	export PYTHONNOUSERSITE=1
-	exec "$runtime/bin/python" -u "$HERE/arg.threads.py"
+	exec "$runtime/bin/python" -u "$HERE/arg.py" threads
 )
 
 arg_needle() (

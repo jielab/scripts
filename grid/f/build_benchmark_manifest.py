@@ -2,7 +2,7 @@
 """Describe existing frozen outcome-scale benchmark predictions; no model fitting."""
 import argparse
 from pathlib import Path
-from twin_io import identified,read_table,sha256,json_write
+from twin import identified,read_table,sha256,json_write
 from twin_core import id_hash
 
 def main():

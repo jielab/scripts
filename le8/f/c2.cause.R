@@ -4,6 +4,7 @@ suppressPackageStartupMessages({
 	.c2_fdir <- Sys.getenv("LE8_FDIR", unset = file.path(Sys.getenv("DIRSCRIPT"), "f"))
 	source(file.path(.c2_fdir, "0.common.R"))
 	source(file.path(.c2_fdir, "c1.correlate.R"))
+	source(file.path(.c2_fdir, "c2.robustness.R")) # LE8_FINAL::2026-10-15.final-multiroute-v1
 
 	# c2 helpers
 	# c2.cause.R
@@ -2675,6 +2676,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		write_raw_csv(jobs_audit, "c2.mrlink2_job_audit.csv", rawdir)
 	}
 	evidence_grades <- grade_c2_evidence(mr, layer, mrlink2)
+	robustness_final <- le8_c2_final_robustness(mr, reverse_mr, mrlink2, assoc, layer, rawdir, outdir)
 	write_raw_csv(evidence_grades, "c2.evidence_grades.csv", rawdir)
 	save_plot(plot_c2_evidence_grades(evidence_grades, layer),
 		"c2.Fig14.evidence_grades.png", 17, 9,
@@ -2688,14 +2690,14 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 			RUN_MRlink2 = RUN_MRlink2, RUN_Dandelion = RUN_Dandelion
 		)), MR = mr, MR_reverse = reverse_mr, MR_reverse_audit = reverse_audit, genetic_score_manifest = genetic_score_manifest, individual_decomposition = individual_decomposition, MR_best = best, observational = assoc, instrument_availability = availability,
 		Fig1_summary = fig1$bars, Fig1_forest = fig1$forest, Fig3 = fig3$wide, R2_QTL = top_r2,
-		architecture = arch, top_candidates = top_candidates, evidence_grades = evidence_grades,
+		architecture = arch, robustness_final = robustness_final, top_candidates = top_candidates, evidence_grades = evidence_grades,
 		DANDELION = dandelion, directionality_integration = directionality_integration,
 		MRLink2_job_audit = jobs_audit, MRLink2_jobs = jobs, MRLink2 = mrlink2, method_scope = method_scope
 	)
 	saveRDS(out, cache, compress = "xz")
 	write_xlsx2(list(
 		MR_all = mr, MR_reverse = reverse_mr, MR_reverse_audit = reverse_audit,
-		method_scope = method_scope, evidence_grades = evidence_grades, top_candidates = top_candidates,
+		method_scope = method_scope, evidence_grades = evidence_grades, robustness_consensus = robustness_final, top_candidates = top_candidates,
 		genetic_score_manifest = genetic_score_manifest,
 		genetic_decomp_status = individual_decomposition$status %||% tibble(),
 		heritability_status = individual_decomposition$heritability_status %||% tibble(),

@@ -1,3 +1,0 @@
-[GRID] /home/huangj/miniforge3/envs/grid/bin/python3 /mnt/d/scripts/grid/f/twin_cli.py demo --output /tmp/grid-twin-integration-20261014-height
-[GRID twin] FIT height: 1200 development; 1200 frozen test rows
-[GRID twin] COMPLETE height: /tmp/grid-twin-integration-20261014-height/abm/twin/height/synthetic

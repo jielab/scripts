@@ -41,7 +41,10 @@ dependencies:
   - r-forcats
   - r-broom
   - r-coloc
+  - r-susier
+  - r-mgcv
   - r-glmnet
+  # LE8_FINAL::2026-10-15.final-multiroute-v1
   - r-lightgbm
   - r-ggalluvial
   - r-gprofiler2

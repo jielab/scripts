@@ -4,6 +4,7 @@ suppressPackageStartupMessages({
 	fdir <- Sys.getenv("LE8_FDIR", unset = file.path(Sys.getenv("DIRSCRIPT"), "f"))
 	source(file.path(fdir, "0.common.R"))
 	source(file.path(fdir, "c1.correlate.R"))
+	source(file.path(fdir, "c3.robustness.R")) # LE8_FINAL::2026-10-15.final-multiroute-v1
 
 	# Cell-specific analyses are executed only by c5_cellulation.
 })
@@ -99,7 +100,7 @@ c3_read_mr_qtl <- function(mr, qfile, cache_root) {
 }
 c3_locus_settings <- function() list(policy=le8_evidence_policy(),window = WINDOW_BP, min_snps = MIN_SNPS, p12 = C3_P12, susie = Sys.getenv(
 	"C3_RUN_SUSIE",
-	"FALSE"
+	"TRUE"
 ), susie_max = Sys.getenv("C3_SUSIE_MAX_SNPS", "5000"), ld = c3_file_stamp(Sys.getenv(
 	"LE8_LD_MANIFEST",
 	""
@@ -657,7 +658,7 @@ c3_susie_fit <- function(dataset, ld, trait, locus) {
 
 le8_run_susie <- function(dx, dy, d, feature, chr, start, end, locus, expected_build=NULL, expected_ancestry=NULL) {
 	no <- list(status = "disabled", summary = tibble(), pip = tibble())
-	if (!truthy(Sys.getenv("C3_RUN_SUSIE", unset = "FALSE")))
+	if (!truthy(Sys.getenv("C3_RUN_SUSIE", unset = "TRUE")))
 		return(no)
 	if (!requireNamespace("susieR", quietly = TRUE))
 		return(modifyList(no, list(status = "susieR missing")))
@@ -1118,6 +1119,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 			tier = character()
 		)
 		aud <- credible_set_audit(res, variants)
+		robustness_final <- le8_c3_final_robustness(res, variants, susie_results, layer, rawdir, outdir)
 		write_raw_csv(res, "c3.coloc_summary.csv", rawdir)
 		write_raw_csv(variants, "c3.variant_posteriors.csv", rawdir)
 		write_raw_csv(regional, "c3.regional_rows.csv", rawdir)
@@ -1138,11 +1140,11 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 				selection_signature = selection_signature, status = "no QTL locus constructed"
 			)), summary = res, variants = variants,
 			regional = regional, susie = susie_results, manifest = mani, GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud,
-			pgs_triangulation = tri
+			pgs_triangulation = tri, robustness_final = robustness_final
 		)
 		saveRDS(out, cache, compress = "xz")
 		write_xlsx2(list(
-			coloc_summary = res, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
+			coloc_summary = res, robustness_consensus = robustness_final, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
 			GPU_results = gpu$results, GPU_status = gpu$status,
 			GPU_manifest = mani, causal_sets = stack(lists), pgs_observed_coloc = tri
 		), "c3.out.xlsx")
@@ -1156,6 +1158,7 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 		) / sum(status == "ok"), NA_real_), tier = case_when(status != "ok" ~ "Not tested", le8_coloc_pass(pick(everything())) ~ "Policy-supported region", TRUE ~ "Below/incomplete evidence policy"),
 		policy_coloc_pass=le8_coloc_pass(pick(everything())),policy_h4=le8_evidence_policy()$posterior,policy_fdr=le8_evidence_policy()$mr_fdr,policy_hash=le8_evidence_policy()$hash,policy_level=le8_evidence_policy()$level)
 	aud <- credible_set_audit(res, variants)
+	robustness_final <- le8_c3_final_robustness(res, variants, susie_results, layer, rawdir, outdir)
 	write_raw_csv(res, "c3.coloc_summary.csv", rawdir)
 	write_raw_csv(variants, "c3.variant_posteriors.csv", rawdir)
 	write_raw_csv(regional, "c3.regional_rows.csv", rawdir)
@@ -1181,11 +1184,11 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 			outcome_type = outtype, case_fraction = sfrac, code_version = C3_CODE_VERSION,
 			selection_signature = selection_signature
 		)), summary = res, variants = variants, regional = regional, susie = susie_results, manifest = mani,
-		GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud, pgs_triangulation = tri
+		GPU_coloc = gpu, causal_lists = lists, credible_set_audit = aud, pgs_triangulation = tri, robustness_final = robustness_final
 	)
 	saveRDS(out, cache, compress = "xz")
 	write_xlsx2(list(
-		coloc_summary = res, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
+		coloc_summary = res, robustness_consensus = robustness_final, credible_set_audit = aud$overall, credible_set_by_locus = aud$by_locus,
 		GPU_results = gpu$results, GPU_status = gpu$status,
 		GPU_manifest = mani, causal_sets = stack(lists), pgs_observed_coloc = tri
 	), "c3.out.xlsx")

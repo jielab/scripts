@@ -37,7 +37,6 @@ bm_panel <- function(input, directory) {
       if (!is.numeric(y)) y <- suppressWarnings(as.numeric(as.character(y)))
       y <- y==1
     }
-    # Column-major bytes: 0=control, 1=case, 2=missing (never turn NA into control).
     packed <- as.integer(y); packed[is.na(packed)] <- 2L
     writeBin(as.raw(packed),con)
     if (i %% 200L==0L || i==length(ys))
@@ -61,16 +60,20 @@ bm_context <- function(prepared, names, panel, kind=c('scalar','joint')) {
   kind <- match.arg(kind); dat <- prepared$dat; specs <- list()
   for (name in names) {
     extra <- if (kind=='scalar') name else switch(name,
-      month11df='birth_month', cycle2df=c('bmonth_cos','bmonth_sin'),
+      month11df='birth_month',
+      cycle2df=c('bmonth_cos','bmonth_sin'),
       north_interaction2df=c('birth_north_100km','bmonth_cos','bmonth_sin',
                             'bmonth_cos_x_north','bmonth_sin_x_north'),
       east_interaction2df=c('birth_east_100km','bmonth_cos','bmonth_sin',
                            'bmonth_cos_x_east','bmonth_sin_x_east'),
+      move_interaction2df=c('move_log1p','bmonth_cos','bmonth_sin',
+                           'bmonth_cos_x_move','bmonth_sin_x_move'),
       stop('Unknown joint test: ',name))
     keep <- complete.cases(dat[,extra,drop=FALSE])
     for (v in extra) keep <- keep & is.finite(dat[[v]])
     base <- prepared$covariates[keep,,drop=FALSE]
     if (kind=='scalar') {
+      base <- base[,setdiff(colnames(base),name),drop=FALSE]
       x <- cbind(base[,1,drop=FALSE],dat[[name]][keep],base[,-1,drop=FALSE])
       colnames(x)[2] <- name; null_cols <- integer()
     } else {
@@ -78,13 +81,16 @@ bm_context <- function(prepared, names, panel, kind=c('scalar','joint')) {
         m <- factor(dat$birth_month[keep],levels=1:12)
         extra_x <- model.matrix(~m)[,-1,drop=FALSE]
       } else extra_x <- as.matrix(dat[keep,extra,drop=FALSE])
+      # Birth coordinates already occur in the primary adjustment matrix.
+      # Add each main effect only once, then append the tested interactions.
+      extra_x <- extra_x[,setdiff(colnames(extra_x),colnames(base)),drop=FALSE]
       x <- cbind(base,extra_x)
-      null_cols <- seq_len(ncol(base)+if (grepl('interaction',name)) 3L else 0L)
+      null_cols <- if (grepl('interaction',name))
+        which(!colnames(x) %in% tail(extra,2L)) else seq_len(ncol(base))
     }
     rownames(x) <- NULL
     specs[[name]] <- list(name=name,kind=kind,rows=prepared$rows[keep],x=x,null_cols=null_cols)
   }
-  # Reuse a null fit only when participants and covariate matrices are identical.
   for (i in seq_along(specs)) {
     specs[[i]]$null_key <- as.character(i)
     if (kind=='joint' && i>1L) for (j in seq_len(i-1L)) {
@@ -97,8 +103,6 @@ bm_context <- function(prepared, names, panel, kind=c('scalar','joint')) {
   }
   list(specs=specs,panel=panel[c('n','path','phenotypes')])
 }
-# Same IRLS/QR solver and defaults as stats::glm(), without rebuilding formulas
-# and model matrices. Retain only summaries, not two large QR objects for an LRT.
 bm_fit <- function(x, y, coefficient=NULL, strict=FALSE) {
   notes <- character()
   fit <- tryCatch(withCallingHandlers(glm.fit(x=x,y=y,family=binomial()),
@@ -202,7 +206,6 @@ bm_worker_count <- function(context, requested='auto') {
   if (!is.finite(target) || target<1) stop('Invalid PheWAS worker count')
   sizes <- vapply(context$specs,function(s) as.double(object.size(s$x)),numeric(1))
   n <- max(vapply(context$specs,function(s) nrow(s$x),integer(1)))
-  # Conservative allowance for glm.fit work arrays and the worker runtime.
   per_worker <- sum(sizes)+10*max(sizes)+n*8*50+256*1024^2
   memory_workers <- floor(bm_memory_available()/per_worker)
   if (memory_workers<1L) stop('Insufficient free memory for one PheWAS model; retry after other jobs finish')
@@ -230,8 +233,6 @@ bm_run_group <- function(context, directory, requested='auto', replace=FALSE,
     message('[PheWAS] START ',label,': ',workers,' workers; ',batch_size,' phenotypes/checkpoint')
     if (workers>1L && .Platform$OS.type=='windows')
       stop('Parallel PheWAS requires Linux/WSL; use one worker on Windows')
-    # Fork only after the full phenotype table has been released. Read-only
-    # matrices share physical pages, and local pipes avoid TCP/WSL idle stalls.
     assign('bm_worker_context',context,envir=.GlobalEnv)
     on.exit({if (exists('bm_worker_context',envir=.GlobalEnv,inherits=FALSE))
       rm('bm_worker_context',envir=.GlobalEnv)},add=TRUE)

@@ -1,39 +1,0 @@
-test_all_selects_48_files_with_checksums_and_resume (test_download.DownloadTests.test_all_selects_48_files_with_checksums_and_resume) ... ok
-test_chromosome_selection_includes_only_requested_pairs (test_download.DownloadTests.test_chromosome_selection_includes_only_requested_pairs) ... ok
-test_copied_script_runs_without_project_or_manifest (test_download.DownloadTests.test_copied_script_runs_without_project_or_manifest) ... ok
-test_direct_mode_overrides_inherited_proxies (test_download.DownloadTests.test_direct_mode_overrides_inherited_proxies) ... ok
-test_downloader_failure_is_preserved_and_manifest_removed (test_download.DownloadTests.test_downloader_failure_is_preserved_and_manifest_removed) ... ok
-test_installer_no_longer_accepts_download_command (test_download.DownloadTests.test_installer_no_longer_accepts_download_command) ... ok
-test_invalid_input_never_starts_downloader (test_download.DownloadTests.test_invalid_input_never_starts_downloader) ... ok
-test_alignment_checks_chromosome_and_duplicates (test_pipeline.AtlasTests.test_alignment_checks_chromosome_and_duplicates) ... ok
-test_checkpoint_resume_and_changed_request_rejection (test_pipeline.AtlasTests.test_checkpoint_resume_and_changed_request_rejection) ... Atlas chunks:   0%|          | 0/2 [00:00<?, ?it/s]Atlas chunks:  50%|█████     | 1/2 [00:00<00:00, 17.85it/s]
-Atlas chunks:   0%|          | 0/1 [00:00<?, ?it/s]Atlas chunks: 100%|██████████| 1/1 [00:00<00:00, 386.71it/s]
-ok
-test_geometry_known_vectors_and_zero_vectors (test_pipeline.AtlasTests.test_geometry_known_vectors_and_zero_vectors) ... ok
-test_check_returns_failure_for_broken_import (test_pipeline.InputTests.test_check_returns_failure_for_broken_import) ... ok
-test_controls_remain_ref_matched_when_context_is_sparse (test_pipeline.InputTests.test_controls_remain_ref_matched_when_context_is_sparse) ... ok
-test_empty_filtered_input_fails_clearly (test_pipeline.InputTests.test_empty_filtered_input_fails_clearly) ... ok
-test_fixed_alt_is_not_mislabeled_as_biallelic (test_pipeline.InputTests.test_fixed_alt_is_not_mislabeled_as_biallelic) ... ok
-test_indexed_cohort_region_retains_counts_and_split_alternatives (test_pipeline.InputTests.test_indexed_cohort_region_retains_counts_and_split_alternatives) ... ok
-test_mixed_indel_snv_counts_and_zero_count_alt (test_pipeline.InputTests.test_mixed_indel_snv_counts_and_zero_count_alt) ... ok
-test_shell_validation_and_missing_environment (test_pipeline.InputTests.test_shell_validation_and_missing_environment) ... ok
-test_wrong_reference_fails_clearly (test_pipeline.InputTests.test_wrong_reference_fails_clearly) ... ok
-test_all_stages_complete_and_exact_occupancy (test_pipeline.PipelineTests.test_all_stages_complete_and_exact_occupancy) ... ok
-test_geometry_rejects_nonfinite_vectors (test_pipeline.PipelineTests.test_geometry_rejects_nonfinite_vectors) ... ok
-test_no_primary_label_leakage_and_cross_fitted_scores (test_pipeline.PipelineTests.test_no_primary_label_leakage_and_cross_fitted_scores) ... ok
-test_single_chromosome_site_cv_is_explicitly_unavailable (test_pipeline.PipelineTests.test_single_chromosome_site_cv_is_explicitly_unavailable) ... ok
-test_single_chromosome_stage1_uses_locus_folds (test_pipeline.PipelineTests.test_single_chromosome_stage1_uses_locus_folds) ... ok
-test_vectors_are_aligned_after_shuffled_responses (test_pipeline.PipelineTests.test_vectors_are_aligned_after_shuffled_responses) ... ok
-test_aria2_and_truncated_bgzf_are_rejected (test_streaming.StreamingTests.test_aria2_and_truncated_bgzf_are_rejected) ... ok
-test_check_input_does_not_create_analysis_output (test_streaming.StreamingTests.test_check_input_does_not_create_analysis_output) ... ok
-test_gnomad_requires_requested_set_and_excludes_unrelated_files (test_streaming.StreamingTests.test_gnomad_requires_requested_set_and_excludes_unrelated_files) ... ok
-test_streamed_batch_boundaries_merge_files_and_refuse_overwrite (test_streaming.StreamingTests.test_streamed_batch_boundaries_merge_files_and_refuse_overwrite) ... ok
-test_unsorted_vcf_does_not_publish_partial_results (test_streaming.StreamingTests.test_unsorted_vcf_does_not_publish_partial_results) ... ok
-test_weighted_feature_counts_match_expanded_logistic_model (test_streaming.StreamingTests.test_weighted_feature_counts_match_expanded_logistic_model) ... ok
-
-----------------------------------------------------------------------
-Ran 30 tests in 57.008s
-
-OK
-Atlas rows=6; features=6; zarr=/tmp/tmp44xh8tjw/vectors.zarr
-Atlas cache complete: 6 rows; no API calls needed

@@ -24,4 +24,4 @@ GWAS 格式化及 BGZF/tabix 索引实现位于 `../gwas/f/format.f.sh`，LE8 �
 结果格式按用途决定：查看和交付的表格使用 XLSX，含 ID 的表也可以写入工作表；RDS 用于后续代码需要复用的大型原始数据或拟合对象。XLSX 保留精确表格源数据，按 Excel 容量拆分工作表，长文本拆分到附加工作表；转换校验成功后才能删除旧 RDS。日志和临时交换文件放在 `/tmp`。
 
 GRID 的检索/注意力数值核心维护在 `abm.py`，由 `f/attention.py` 加载。
-LE8 当前使用 `../le8/f/abm_twin_core.py` 的 twin confidence 实现和 `molecular_deviation.py` 的遗传校正分子偏离实现。两项目各自维护输入、结局定义和训练/验证策略。
+LE8 当前使用 `../le8/f/abm.py` 的 twin confidence 实现和 `../le8/f/deviation.py` 的遗传校正分子偏离实现。两项目各自维护输入、结局定义和训练/验证策略。

@@ -1,30 +1,43 @@
 #!/usr/bin/env python3
+"""final utilities and command entry points."""
+from __future__ import annotations
+import sys
+
+sys.dont_write_bytecode = True
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+if "le8_common" not in sys.modules:
+	_io_spec = spec_from_file_location("le8_common", Path(__file__).with_name("0.common.py"))
+	_io_module = module_from_spec(_io_spec)
+	sys.modules[_io_spec.name] = _io_module
+	try:
+		_io_spec.loader.exec_module(_io_module)
+	except BaseException:
+		sys.modules.pop(_io_spec.name, None)
+		raise
 
 
 # 🚩 final
-"""Assemble LE8 final reports, systematic tables and question-led summaries.
+# Assemble LE8 final reports, systematic tables and question-led summaries.
+#
+# Read existing aggregate results only; retain missing evidence and provenance.
+# Use ``report`` for publication figures and ``tables`` for a trait evidence atlas.
+# The shared index calls ``build_questions`` and ``question_figures`` directly.
+# 🚩 final
 
-Read existing aggregate results only; retain missing evidence and provenance.
-Use ``report`` for publication figures and ``tables`` for a trait evidence atlas.
-The shared index calls ``build_questions`` and ``question_figures`` directly.
-"""
-
-from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import html
-from importlib.util import module_from_spec, spec_from_file_location
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import tempfile
-import sys
 import textwrap
 from typing import Callable
 
@@ -35,7 +48,7 @@ import pandas as pd
 def load_module(filename):
 	"""Load a dotted script filename under a stable Python module identifier."""
 	path = Path(__file__).with_name(filename)
-	name = path.stem.replace(".", "_")
+	name = "le8_common" if filename == "0.common.py" else path.stem.replace(".", "_")
 	if name not in sys.modules:
 		spec = spec_from_file_location(name, path)
 		module = module_from_spec(spec)
@@ -51,15 +64,19 @@ def load_module(filename):
 _index = load_module("0.common.py")
 final_dir = _index.final_dir
 result_file = _index.result_file
-from abm_summary import table_paths as abm_table_paths, source_root as abm_source_root, summarize as twin_summary, BOUNDARY as ABM_BOUNDARY
 atomic_csv = _index.atomic_csv
 digest = _index.digest
 safe_path = _index.safe_path
 PRIVATE_COLUMNS = _index.PRIVATE_COLUMNS
 
 MODULE_ORDER = ("C1", "C2", "C4", "C3", "C5")
-MODULE_TITLES = dict(C1="Individual predictability", C2="Genetic vs acquired/state",
-	C4="LE8-supervised explainability", C3="Locus / colocalization support", C5="Cell-level context")
+MODULE_TITLES = dict(
+	C1="Individual predictability",
+	C2="Genetic vs acquired/state",
+	C4="LE8-supervised explainability",
+	C3="Locus / colocalization support",
+	C5="Cell-level context",
+)
 MET_TABLES = {
 	"met_pgs_pairs": "c1.pgs_actual_concordance.csv",
 	"met_anchor": "c1.L_VLDL_TG_pct_deep_dive.csv",
@@ -83,9 +100,9 @@ ANCHOR_BOUNDARY = (
 
 
 def finite_column(d, name):
-	return pd.to_numeric(d.get(name, pd.Series(np.nan, index=d.index)), errors="coerce").replace([np.inf, -np.inf], np.nan)
-
-
+	return pd.to_numeric(d.get(name, pd.Series(np.nan, index=d.index)), errors="coerce").replace(
+		[np.inf, -np.inf], np.nan
+	)
 
 
 def metabolite_concordance(pairs):
@@ -99,9 +116,15 @@ def metabolite_concordance(pairs):
 		valid = x.notna() & y.notna()
 		x, y = x[valid], y[valid]
 		rho = x.rank().corr(y.rank()) if len(x) > 1 and x.nunique() > 1 and y.nunique() > 1 else np.nan
-		row = dict(analysis=analysis, N_pairs=len(x), spearman_rho=rho,
+		row = dict(
+			analysis=analysis,
+			N_pairs=len(x),
+			spearman_rho=rho,
 			same_direction_fraction=float((np.sign(x) == np.sign(y)).mean()) if len(x) else np.nan,
-			status="exploratory" if np.isfinite(rho) else "insufficient evidence" if len(x) else "unavailable")
+			status=(
+				"exploratory" if np.isfinite(rho) else "insufficient evidence" if len(x) else "unavailable"
+			),
+		)
 		for c in ("Y", "layer", "source_file", "source_sha256"):
 			if c in z:
 				row[c] = ";".join(z[c].dropna().astype(str).unique())
@@ -118,11 +141,27 @@ def c4_endpoint_summary(contrasts, proxy):
 	ct = ct.loc[ct.comparison_valid.eq(True)] if "comparison_valid" in ct else ct.iloc[:0]
 	ct = ct.loc[finite_column(ct, "delta_AUC").notna()]
 	pos = int((finite_column(ct, "delta_lo") > 0).sum())
-	prediction = "insufficient evidence" if ct.empty else "supported" if pos == len(ct) else "no universal superiority"
+	prediction = (
+		"insufficient evidence" if ct.empty else "supported" if pos == len(ct) else "no universal superiority"
+	)
 	pr = proxy.loc[finite_column(proxy, "delta_R2_vs_NS").notna()]
-	confirmed = int(((finite_column(pr, "lo") > 0) & (finite_column(pr, "FDR_all_proxy_contrasts") < .05)).sum())
-	explain = "insufficient evidence" if pr.empty else "supported" if confirmed else "exploratory" if (finite_column(pr, "delta_R2_vs_NS") > 0).any() else "not supported"
-	result = ("No universal prediction superiority was observed. " if prediction == "no universal superiority" else "")
+	confirmed = int(
+		((finite_column(pr, "lo") > 0) & (finite_column(pr, "FDR_all_proxy_contrasts") < 0.05)).sum()
+	)
+	explain = (
+		"insufficient evidence"
+		if pr.empty
+		else (
+			"supported"
+			if confirmed
+			else "exploratory" if (finite_column(pr, "delta_R2_vs_NS") > 0).any() else "not supported"
+		)
+	)
+	result = (
+		"No universal prediction superiority was observed. "
+		if prediction == "no universal superiority"
+		else ""
+	)
 	result += f"Prediction: {prediction}; {pos}/{len(ct)} same-budget paired ΔAUC intervals above zero. "
 	result += f"Explainability: {explain}; {int((finite_column(pr, 'delta_R2_vs_NS') > 0).sum())}/{len(pr)} held-out ΔR²>0, {confirmed} with interval>0 and FDR<0.05."
 	return dict(prediction_status=prediction, explainability_status=explain, key_result=result)
@@ -197,7 +236,7 @@ def display_budget(d: pd.DataFrame) -> int:
 	values = sorted(set(pd.to_numeric(d.get("budget", pd.Series(dtype=float)), errors="coerce").dropna()))
 	values = [int(v) for v in values if v > 0]
 	# Choose using configured assay budgets only, never observed performance.
-	return min(values, key=lambda v: (abs(v-requested), v)) if values else requested
+	return min(values, key=lambda v: (abs(v - requested), v)) if values else requested
 
 
 def clean_name(name: str) -> str:
@@ -270,9 +309,7 @@ class Report:
 			)
 		)
 
-	def read(
-		self, trait: str, layer: str, role: str, paths: list[Path]
-	) -> pd.DataFrame:
+	def read(self, trait: str, layer: str, role: str, paths: list[Path]) -> pd.DataFrame:
 		key = f"{trait}.{layer}.{role}"
 		available = [p for p in paths if p.is_file()]
 		chosen = available[0] if available else paths[0]
@@ -348,10 +385,7 @@ class Report:
 						trait,
 						layer,
 						"pgs_" + role,
-						[
-							final_dir(self.root, trait)
-							/ f"Fig1.PGS_integrated.{layer}_{role}.csv"
-						],
+						[final_dir(self.root, trait) / f"Fig1.PGS_integrated.{layer}_{role}.csv"],
 					)
 				for role, path in abm_table_paths(self.root, trait, layer).items():
 					self.read(trait, layer, role, [path])
@@ -370,13 +404,10 @@ class Report:
 										layer,
 										"CELL_RESULT_NOT_CURRENT",
 										"blocking",
-										role
-										+ ": suppressed because the current status is not completed.",
+										role + ": suppressed because the current status is not completed.",
 										role,
 									)
-									self.tables[f"{trait}.{layer}.{role}"] = (
-										pd.DataFrame()
-									)
+									self.tables[f"{trait}.{layer}.{role}"] = pd.DataFrame()
 				self.audit(trait, layer)
 		# Explicit completion status: code and cohort inventories are not completed validation.
 		for trait in self.arg.Y.split(","):
@@ -415,9 +446,19 @@ class Report:
 			pairs = self.get(trait, layer, "met_pgs_pairs")
 			if len(pairs):
 				rows = metabolite_concordance(pairs)
-				self.flag(trait, layer, "METABOLITE_INHERITED_MEASURED_CONCORDANCE", "finding",
-					"; ".join(f"{r.analysis}: N={r.N_pairs}, Spearman rho={r.spearman_rho:.4g}, same-direction fraction={r.same_direction_fraction:.4g}" for r in rows.itertuples()) + ". " + MET_BOUNDARY,
-					"met_pgs_pairs")
+				self.flag(
+					trait,
+					layer,
+					"METABOLITE_INHERITED_MEASURED_CONCORDANCE",
+					"finding",
+					"; ".join(
+						f"{r.analysis}: N={r.N_pairs}, Spearman rho={r.spearman_rho:.4g}, same-direction fraction={r.same_direction_fraction:.4g}"
+						for r in rows.itertuples()
+					)
+					+ ". "
+					+ MET_BOUNDARY,
+					"met_pgs_pairs",
+				)
 		d = self.get(trait, layer, "performance")
 		if has(d, "N", "events", "C_index"):
 			if d.N.nunique() > 1 or d.events.nunique() > 1:
@@ -451,25 +492,32 @@ class Report:
 					cb = cc[cc.variable.astype(str).str.startswith("concept_")]
 					dg = self.get(trait, layer, "focus_diagnostics")
 					dg = dg[dg.model.eq(model)] if "model" in dg else pd.DataFrame()
-					effective.append(dict(model=model, nominal=len(fs), effective=np.nan,
-						effective_concepts=int((num(cb,"beta").abs()>self.arg.coefficient_epsilon).sum()),
-						molecular_lp_sd_test=float(dg.molecular_lp_sd_test.iloc[0]) if len(dg) and "molecular_lp_sd_test" in dg else np.nan,
-						interpretation="Concept risk coefficients and assay loadings are distinct; use saved LP contributions to assess molecular contribution"))
+					effective.append(
+						dict(
+							model=model,
+							nominal=len(fs),
+							effective=np.nan,
+							effective_concepts=int(
+								(num(cb, "beta").abs() > self.arg.coefficient_epsilon).sum()
+							),
+							molecular_lp_sd_test=(
+								float(dg.molecular_lp_sd_test.iloc[0])
+								if len(dg) and "molecular_lp_sd_test" in dg
+								else np.nan
+							),
+							interpretation="Concept risk coefficients and assay loadings are distinct; use saved LP contributions to assess molecular contribution",
+						)
+					)
 					continue
 				# Includes dummy columns for categorical features; ordinary omics are numeric.
-				use = cc.variable.astype(str).map(
-					lambda x: any(x == f or x.startswith(f + "__") for f in fs)
-				)
+				use = cc.variable.astype(str).map(lambda x: any(x == f or x.startswith(f + "__") for f in fs))
 				bc = cc[use]
 				beta = num(bc, "beta")
 				effective_features = {
 					f
 					for f in fs
 					if any(
-						(
-							bc.variable.astype(str).eq(f)
-							| bc.variable.astype(str).str.startswith(f + "__")
-						)
+						(bc.variable.astype(str).eq(f) | bc.variable.astype(str).str.startswith(f + "__"))
 						& (beta.abs() > self.arg.coefficient_epsilon)
 					)
 				}
@@ -479,9 +527,7 @@ class Report:
 					effective=len(effective_features) if len(bc) else np.nan,
 					max_abs_beta=beta.abs().max() if len(beta) else np.nan,
 					coefficient_threshold=self.arg.coefficient_epsilon,
-					panel_hash=hashlib.sha256(
-						"\n".join(sorted(fs)).encode()
-					).hexdigest(),
+					panel_hash=hashlib.sha256("\n".join(sorted(fs)).encode()).hexdigest(),
 					coefficient_rows=len(bc),
 				)
 				effective.append(row)
@@ -505,9 +551,7 @@ class Report:
 					)
 			eff = pd.DataFrame(effective)
 			self.tables[f"{trait}.{layer}.effective_assays"] = eff
-			eff.to_csv(
-				self.table_dir / f"{trait}.{layer}.effective_assays.csv", index=False
-			)
+			eff.to_csv(self.table_dir / f"{trait}.{layer}.effective_assays.csv", index=False)
 		loc = self.get(trait, layer, "coloc_by_locus")
 		if has(loc, "feature", "locus", "PP.H4_robust_min"):
 			parsed = []
@@ -528,11 +572,7 @@ class Report:
 			for chrom in sorted({v[0] for v in parsed}):
 				group = sorted((v for v in parsed if v[0] == chrom), key=lambda v: v[1])
 				for ch, lo, hi, feat, pp in group:
-					if (
-						windows
-						and windows[-1]["chrom"] == ch
-						and lo <= windows[-1]["end"]
-					):
+					if windows and windows[-1]["chrom"] == ch and lo <= windows[-1]["end"]:
 						windows[-1]["end"] = max(windows[-1]["end"], hi)
 						windows[-1]["features"].add(feat)
 						windows[-1]["entries"] += 1
@@ -551,9 +591,7 @@ class Report:
 			for win in windows:
 				win["n_features"] = len(win["features"])
 				win["features"] = ";".join(sorted(win["features"]))
-				win["scope"] = (
-					"Overlap-merged tested intervals, not LD-defined independent causal loci"
-				)
+				win["scope"] = "Overlap-merged tested intervals, not LD-defined independent causal loci"
 			ww = pd.DataFrame(windows)
 			if len(ww):
 				self.tables[f"{trait}.{layer}.coloc_merged_windows"] = ww
@@ -679,10 +717,7 @@ class Report:
 				"pgs_components",
 			)
 		ss = self.get(trait, layer, "pgs_source_status")
-		if (
-			has(ss, "status")
-			and ss.status.astype(str).str.contains("unavailable", case=False).any()
-		):
+		if has(ss, "status") and ss.status.astype(str).str.contains("unavailable", case=False).any():
 			self.flag(
 				trait,
 				layer,
@@ -691,9 +726,15 @@ class Report:
 				"Source-specific score analysis is marked unavailable; no cis/trans/MHC-exclusion null finding can be claimed from these placeholders.",
 				"pgs_source_status",
 			)
-		state = twin_summary(self.get(trait, layer, 'abm_metrics'))
-		self.flag(trait, layer, 'ABM_TWIN_' + state['status'].upper(), 'finding',
-			state['key_result'] + ' ' + ABM_BOUNDARY, 'abm_metrics;abm_paired;abm_support')
+		state = twin_summary(self.get(trait, layer, "abm_metrics"))
+		self.flag(
+			trait,
+			layer,
+			"ABM_TWIN_" + state["status"].upper(),
+			"finding",
+			state["key_result"] + " " + ABM_BOUNDARY,
+			"abm_metrics;abm_paired;abm_support",
+		)
 
 	def panel(
 		self,
@@ -779,9 +820,7 @@ class Report:
 		z["trait"], z["layer"] = trait, layer
 
 		def labels(d):
-			return d.model.str.replace(rf"_{budget}$", "", regex=True).str.replace(
-				"_", " ", regex=False
-			)
+			return d.model.str.replace(rf"_{budget}$", "", regex=True).str.replace("_", " ", regex=False)
 
 		def intervals(ax, data, estimate, lower, upper):
 			y = np.arange(len(data))
@@ -896,12 +935,8 @@ class Report:
 		factor = 2
 		image = Image.new("RGB", (width * factor, int(height * factor)), "white")
 		draw = ImageDraw.Draw(image)
-		regular = font_manager.findfont(
-			font_manager.FontProperties(family="DejaVu Sans")
-		)
-		bold = font_manager.findfont(
-			font_manager.FontProperties(family="DejaVu Sans", weight="bold")
-		)
+		regular = font_manager.findfont(font_manager.FontProperties(family="DejaVu Sans"))
+		bold = font_manager.findfont(font_manager.FontProperties(family="DejaVu Sans", weight="bold"))
 		draw.text(
 			(60, 16),
 			name + " | " + title,
@@ -982,9 +1017,7 @@ class Report:
 								alpha=0.55,
 								label="Bonferroni" if label else "Other",
 							)
-						ax.axhline(
-							-np.log10(0.05 / len(z)), linestyle="--", linewidth=0.7
-						)
+						ax.axhline(-np.log10(0.05 / len(z)), linestyle="--", linewidth=0.7)
 						ax.set_xlabel("Log hazard ratio per SD")
 						ax.set_ylabel("-log10(P)")
 						ax.legend(fontsize=7)
@@ -1016,10 +1049,7 @@ class Report:
 
 			z = self.get(first, "prot", "pgs_components")
 			if has(z, "model", "feature", "beta", "lo", "hi"):
-				z = z[
-					z.model.eq("measured")
-					& z.feature.isin(["PCSK9", "LPA", "GDF15", "MMP12", "CCL19"])
-				]
+				z = z[z.model.eq("measured") & z.feature.isin(["PCSK9", "LPA", "GDF15", "MMP12", "CCL19"])]
 				f1.append(
 					self.panel(
 						"Fig1_anchor_excerpt",
@@ -1032,9 +1062,7 @@ class Report:
 				)
 			z = self.get("ra", "prot", "paired")
 			if has(z, "model", "component", "feature", "beta", "std.error"):
-				z = z[
-					z.model.str.startswith("separate") & z.component.eq("Measured")
-				].copy()
+				z = z[z.model.str.startswith("separate") & z.component.eq("Measured")].copy()
 				z["lo"] = z.beta - 1.96 * z["std.error"]
 				z["hi"] = z.beta + 1.96 * z["std.error"]
 				f1.append(
@@ -1055,9 +1083,7 @@ class Report:
 				for la in layers:
 					d = self.get(tr, la, "mr_support")
 					if has(d, "endpoint", "direction", "status", "n", "denominator"):
-						q = d[
-							d.endpoint.eq("incident") & d.direction.eq(direction)
-						].copy()
+						q = d[d.endpoint.eq("incident") & d.direction.eq(direction)].copy()
 						q["cohort"] = tr + " / " + la
 						parts.append(q)
 			if parts:
@@ -1076,9 +1102,7 @@ class Report:
 						if c in grid
 					]
 					grid[cols].plot.barh(stacked=True, ax=ax)
-					ax.set_xlabel(
-						"Reported aggregate entries (not independent mechanisms)"
-					)
+					ax.set_xlabel("Reported aggregate entries (not independent mechanisms)")
 					ax.set_ylabel("")
 					ax.legend(fontsize=7)
 
@@ -1093,9 +1117,7 @@ class Report:
 					)
 				)
 		if counts:
-			pd.DataFrame(counts).to_csv(
-				self.table_dir / "association_counts.csv", index=False
-			)
+			pd.DataFrame(counts).to_csv(self.table_dir / "association_counts.csv", index=False)
 		self.compose(
 			"Fig1",
 			"Incident molecular associations",
@@ -1125,11 +1147,7 @@ class Report:
 							xerr=[g.beta - g.lo, g.hi - g.beta],
 							fmt="o",
 							capsize=2,
-							label=(
-								"Calibrated genetic component"
-								if term == ".G"
-								else "Remaining component"
-							),
+							label=("Calibrated genetic component" if term == ".G" else "Remaining component"),
 						)
 					ax.set_yticks(range(len(order)), order)
 					ax.axvline(0, linestyle="--", linewidth=0.7)
@@ -1252,9 +1270,7 @@ class Report:
 			)
 		z = self.get(first, "prot", "effective_assays")
 		if has(z, "model", "nominal", "effective"):
-			z = z[
-				z.model.str.endswith(("_5", "_10", "_50")) & z.coefficient_rows.gt(0)
-			].copy()
+			z = z[z.model.str.endswith(("_5", "_10", "_50")) & z.coefficient_rows.gt(0)].copy()
 
 			def effective(ax, z):
 				z = z.set_index("model")[["nominal", "effective"]]
@@ -1294,9 +1310,7 @@ class Report:
 					aggfunc="first",
 				)
 				im = ax.imshow(np.ma.masked_invalid(grid.to_numpy()), aspect="auto")
-				ax.set_xticks(
-					range(len(grid.columns)), grid.columns, rotation=35, ha="right"
-				)
+				ax.set_xticks(range(len(grid.columns)), grid.columns, rotation=35, ha="right")
 				ax.set_yticks(range(len(grid.index)), grid.index)
 				ax.figure.colorbar(im, ax=ax, label="Held-out incremental R2")
 
@@ -1314,9 +1328,7 @@ class Report:
 		if has(z, "model", "component", "N", "R2_basic_omics"):
 			ns = z[z.model.eq("NS_10")][["component", "N", "R2_basic_omics"]]
 			ys = z[z.model.eq("YS_YinYang_10")][["component", "N", "R2_basic_omics"]]
-			zz = ys.merge(
-				ns, on="component", suffixes=("_YS", "_NS"), validate="one_to_one"
-			)
+			zz = ys.merge(ns, on="component", suffixes=("_YS", "_NS"), validate="one_to_one")
 			zz = zz[zz.N_YS.eq(zz.N_NS)].copy()
 			zz["delta_R2"] = zz.R2_basic_omics_YS - zz.R2_basic_omics_NS
 			if len(zz):
@@ -1341,15 +1353,26 @@ class Report:
 		if has(z, "component", "model", "metric", "estimate", "status"):
 			z = z[z.metric.eq("R2") & z.status.eq("ok")].copy()
 			if len(z):
+
 				def fidelity(ax, z):
-					grid = z.pivot_table(index="component", columns="model", values="estimate", aggfunc="first")
+					grid = z.pivot_table(
+						index="component", columns="model", values="estimate", aggfunc="first"
+					)
 					im = ax.imshow(np.ma.masked_invalid(grid.to_numpy()), aspect="auto")
 					ax.set_xticks(range(len(grid.columns)), grid.columns, rotation=35, ha="right")
 					ax.set_yticks(range(len(grid.index)), grid.index)
 					ax.figure.colorbar(im, ax=ax, label="Deployed concept R²")
-				f3.append(self.panel("Fig3_deployed_fidelity", "Do the deployed concepts predict measured LE8 domains?",
-					z, fidelity, "Exact frozen concepts used by the risk models; R² uses the Yin training mean. RMSE, calibration and family-bootstrap intervals are in the fidelity table.",
-					[f"{first}.prot.deployed_concept_fidelity"]))
+
+				f3.append(
+					self.panel(
+						"Fig3_deployed_fidelity",
+						"Do the deployed concepts predict measured LE8 domains?",
+						z,
+						fidelity,
+						"Exact frozen concepts used by the risk models; R² uses the Yin training mean. RMSE, calibration and family-bootstrap intervals are in the fidelity table.",
+						[f"{first}.prot.deployed_concept_fidelity"],
+					)
+				)
 		self.compose(
 			"Fig3",
 			"LE8 supervision, coverage and effective panel size",
@@ -1451,23 +1474,31 @@ class Report:
 		f5 = []
 		for tr in traits:
 			for la in layers:
-				z = self.get(tr, la, 'abm_metrics')
-				if not has(z, 'model', 'subset', 'AUC_IPCW'):
+				z = self.get(tr, la, "abm_metrics")
+				if not has(z, "model", "subset", "AUC_IPCW"):
 					continue
-				z = z[z['subset'].eq('all')].copy()
+				z = z[z["subset"].eq("all")].copy()
+
 				def plot_twin(ax, data):
 					ax.barh(data.model, data.AUC_IPCW)
-					ax.set(xlim=(0,1), xlabel='IPCW AUC, all eligible test participants')
-				f5.append(self.panel('Fig5_' + tr + '_' + la, tr + ' / ' + la + ': twin models',
-					z, plot_twin, ABM_BOUNDARY, [f'{tr}.{la}.abm_metrics']))
-		self.compose('Fig5', 'Twin confidence and model controls', f5, ABM_BOUNDARY)
+					ax.set(xlim=(0, 1), xlabel="IPCW AUC, all eligible test participants")
+
+				f5.append(
+					self.panel(
+						"Fig5_" + tr + "_" + la,
+						tr + " / " + la + ": twin models",
+						z,
+						plot_twin,
+						ABM_BOUNDARY,
+						[f"{tr}.{la}.abm_metrics"],
+					)
+				)
+		self.compose("Fig5", "Twin confidence and model controls", f5, ABM_BOUNDARY)
 		# Additional C4 panels use the current completed results.
 		s2 = []
 		for tr in traits:
 			z = self.get(tr, "prot", "focus_contrasts")
-			if has(
-				z, "stratum", "landmark", "model", "delta_AUC", "delta_lo", "delta_hi"
-			):
+			if has(z, "stratum", "landmark", "model", "delta_AUC", "delta_lo", "delta_hi"):
 				z = z[z.stratum.eq("All") & num(z, "landmark").eq(0)].copy()
 				if "contrast" in z:
 					z = z[z.contrast.eq("Added Yang for proxy learning")]
@@ -1506,9 +1537,7 @@ class Report:
 			z = self.get(tr, "prot", "cell_enrichment")
 			if has(z, "model", "cell_type", "FDR_all_panel_cell_tests", "hits"):
 				z = z.copy()
-				z["logq"] = -np.log10(
-					num(z, "FDR_all_panel_cell_tests").clip(lower=1e-300)
-				)
+				z["logq"] = -np.log10(num(z, "FDR_all_panel_cell_tests").clip(lower=1e-300))
 				cells = z.groupby("cell_type").hits.sum().nlargest(16).index
 				z = z[z.cell_type.isin(cells)]
 
@@ -1520,9 +1549,7 @@ class Report:
 						aggfunc="mean",
 					)
 					im = ax.imshow(np.ma.masked_invalid(grid), aspect="auto")
-					ax.set_xticks(
-						range(len(grid.columns)), grid.columns, rotation=40, ha="right"
-					)
+					ax.set_xticks(range(len(grid.columns)), grid.columns, rotation=40, ha="right")
 					ax.set_yticks(range(len(grid.index)), grid.index)
 					ax.figure.colorbar(im, ax=ax, label="-log10(global adjusted P)")
 
@@ -1564,9 +1591,7 @@ class Report:
 			z = pd.concat(parts, ignore_index=True)
 
 			def coloc_counts(ax, z):
-				z.pivot(index="cohort", columns="metric", values="value").plot.barh(
-					ax=ax
-				)
+				z.pivot(index="cohort", columns="metric", values="value").plot.barh(ax=ax)
 				ax.set_xlabel("Feature-locus entries")
 				ax.set_ylabel("")
 				ax.legend(fontsize=7)
@@ -1648,8 +1673,7 @@ class Report:
 					caption=p.caption,
 					source_roles=";".join(p.source_roles),
 					source_paths=";".join(
-						self.source_files.get(k, "derived audit table")
-						for k in p.source_roles
+						self.source_files.get(k, "derived audit table") for k in p.source_roles
 					),
 				)
 			)
@@ -1666,8 +1690,7 @@ class Report:
 						path.is_file()
 						and path.suffix.lower() in {".pdf", ".png", ".svg"}
 						and not any(
-							x.startswith("_") or x.startswith(".")
-							for x in path.relative_to(folder).parts
+							x.startswith("_") or x.startswith(".") for x in path.relative_to(folder).parts
 						)
 					):
 						if self.out == path:
@@ -1731,8 +1754,7 @@ class Report:
 			self.out / "claim_register.csv", index=False
 		)
 		captions = "\n\n".join(
-			"## " + f["figure"] + " — " + f["status"] + "\n" + f["caption"]
-			for f in self.figures
+			"## " + f["figure"] + " — " + f["status"] + "\n" + f["caption"] for f in self.figures
 		)
 		(self.out / "CAPTIONS.md").write_text(captions)
 		nblock = int(findings.severity.eq("blocking").sum()) if len(findings) else 0
@@ -1771,9 +1793,7 @@ class Report:
 		)
 		print(f"Final report: {self.out}; blocking interpretation flags={nblock}")
 		if self.arg.strict and nblock:
-			raise ValueError(
-				"Strict audit failed; outputs retained for inspection. See audit_findings.csv."
-			)
+			raise ValueError("Strict audit failed; outputs retained for inspection. See audit_findings.csv.")
 
 
 # Systematic evidence tables and cell-annotation inputs.
@@ -1866,9 +1886,7 @@ def aggregate(root):
 				)
 		if len(incident) and len(pgs):
 			cols = ["term", "beta", "std.error", "FDR", "N_total", "N_event"]
-			z = incident[cols].merge(
-				pgs[cols], on="term", how="outer", suffixes=("_measured", "_PGS")
-			)
+			z = incident[cols].merge(pgs[cols], on="term", how="outer", suffixes=("_measured", "_PGS"))
 			z["layer"] = layer
 			z["both_supported"] = (z.FDR_measured < 0.05) & (z.FDR_PGS < 0.05)
 			z["same_direction"] = np.sign(z.beta_measured) == np.sign(z.beta_PGS)
@@ -1880,9 +1898,7 @@ def aggregate(root):
 		if len(lm) and len(incident):
 			# Legacy scans selected about 500 proteins using the same outcomes.
 			# Retain original FDR and add the full assay x landmark family.
-			lm["FDR_assay_landmark_family"] = bh(
-				lm["p.value"], len(incident) * lm.landmark_years.nunique()
-			)
+			lm["FDR_assay_landmark_family"] = bh(lm["p.value"], len(incident) * lm.landmark_years.nunique())
 			lm["subset_selected_before_landmark"] = lm.term.nunique() < len(incident)
 			lm["layer"] = layer
 			trajectories.append(lm)
@@ -1935,29 +1951,19 @@ def cell_annotation_inputs(root, output):
 	d = read(c1 / "pwas_incident_adj2.csv")
 	if d.empty or not {"term", "FDR"} <= set(d):
 		return None
-	universe = pd.DataFrame(
-		{"assay": d.term, "gene": d.term.str.upper().replace({"NTPROBNP": "NPPB"})}
-	)
-	panels = [
-		pd.DataFrame(
-			{"feature": d.loc[d.FDR < 0.05, "term"], "model": "C1_incident_FDR05"}
-		)
-	]
+	universe = pd.DataFrame({"assay": d.term, "gene": d.term.str.upper().replace({"NTPROBNP": "NPPB"})})
+	panels = [pd.DataFrame({"feature": d.loc[d.FDR < 0.05, "term"], "model": "C1_incident_FDR05"})]
 	lm = read(c1 / "pwas_incident_landmark_adj2.csv")
 	if len(lm):
 		lm["q_full_family"] = bh(lm["p.value"], len(d) * lm.landmark_years.nunique())
 		z = lm[(lm.landmark_years == 5) & (lm.q_full_family < 0.05)]
-		panels.append(
-			pd.DataFrame({"feature": z.term, "model": "C1_landmark5_full_family_FDR05"})
-		)
+		panels.append(pd.DataFrame({"feature": z.term, "model": "C1_landmark5_full_family_FDR05"}))
 	f = read(root / "prot/c4_connect/c4.focus.panel_members.csv")
 	if {"feature", "model"} <= set(f):
 		panels.append(f[["feature", "model"]].dropna())
 	output.mkdir(parents=True, exist_ok=True)
 	universe.to_csv(output / "c5.systematic.cell_universe.csv", index=False)
-	pd.concat(panels, ignore_index=True).to_csv(
-		output / "c5.systematic.cell_panels.csv", index=False
-	)
+	pd.concat(panels, ignore_index=True).to_csv(output / "c5.systematic.cell_panels.csv", index=False)
 	return (
 		output / "c5.systematic.cell_universe.csv",
 		output / "c5.systematic.cell_panels.csv",
@@ -2022,9 +2028,7 @@ def plots(t, root, trait=None):
 	if len(d):
 		for layer, color in (("prot", "#8d64ab"), ("met", "#df8d35")):
 			z = d[d.layer == layer]
-			axs[0, 1].scatter(
-				z.beta_measured, z.beta_PGS, s=9, alpha=0.4, color=color, label=layer
-			)
+			axs[0, 1].scatter(z.beta_measured, z.beta_PGS, s=9, alpha=0.4, color=color, label=layer)
 		z = d[d.both_supported].sort_values("FDR_PGS").head(3)
 		if trait == "amr":
 			z = pd.concat([z, d[d.term == "GlycA"]]).drop_duplicates("term")
@@ -2038,24 +2042,20 @@ def plots(t, root, trait=None):
 			)
 		axs[0, 1].axhline(0, color="grey", lw=0.7)
 		axs[0, 1].axvline(0, color="grey", lw=0.7)
-		axs[0, 1].set(
-			xlabel="Measured log HR / measured SD", ylabel="PGS log HR / PGS SD"
-		)
+		axs[0, 1].set(xlabel="Measured log HR / measured SD", ylabel="PGS log HR / PGS SD")
 		axs[0, 1].legend(frameon=False)
 	d = t["event_windows"]
 	if len(d):
 		for layer in d.layer.unique():
 			z = d[(d.layer == layer) & (d.side == "Post-baseline incident")]
 			axs[0, 2].plot(z.window_hi, z.events_max, "o-", label=layer)
-		axs[0, 2].set(
-			xlabel="Window upper bound (years)", ylabel="Events in window (feature max)"
-		)
+		axs[0, 2].set(xlabel="Window upper bound (years)", ylabel="Events in window (feature max)")
 		axs[0, 2].legend(frameon=False)
 	d = t["pillar_support"]
 	if len(d):
-		z = d.pivot_table(
-			index="component", columns=["layer", "cohort"], values="n", aggfunc="first"
-		).fillna(0)
+		z = d.pivot_table(index="component", columns=["layer", "cohort"], values="n", aggfunc="first").fillna(
+			0
+		)
 		im = axs[1, 0].imshow(np.log1p(z), aspect="auto", cmap="Blues")
 		axs[1, 0].set_yticks(range(len(z)), z.index)
 		axs[1, 0].set_xticks(
@@ -2077,16 +2077,8 @@ def plots(t, root, trait=None):
 				)
 	d = t["all_c4_contrasts"]
 	if len(d):
-		z = d[
-			(d.layer == "prot")
-			& (d.model == "YSplus_YinYang_50")
-			& (d.reference == "NS_50")
-		]
-		labels = (
-			z.stratum.str.replace(" baseline inflammation", "")
-			+ " / L"
-			+ z.landmark.astype(str)
-		)
+		z = d[(d.layer == "prot") & (d.model == "YSplus_YinYang_50") & (d.reference == "NS_50")]
+		labels = z.stratum.str.replace(" baseline inflammation", "") + " / L" + z.landmark.astype(str)
 		axs[1, 1].errorbar(
 			z.delta_AUC,
 			range(len(z)),
@@ -2109,9 +2101,7 @@ def plots(t, root, trait=None):
 				.apply(lambda x: (x < 0.05).sum())
 			)
 			axs[1, 2].plot(z.index, z.values, "o-", label=layer)
-		axs[1, 2].set(
-			xlabel="Landmark (years)", ylabel="FDR < .05, full assay × landmark family"
-		)
+		axs[1, 2].set(xlabel="Landmark (years)", ylabel="FDR < .05, full assay × landmark family")
 		axs[1, 2].legend(frameon=False)
 	# A C1-only trait gets meaningful C1 panels in the available space.
 	if t["pillar_support"].empty and len(t["measured_PGS"]):
@@ -2137,9 +2127,7 @@ def plots(t, root, trait=None):
 			ax.set_yticks(pos, z.term, fontsize=8)
 			ax.axvline(0, color="grey", lw=0.7)
 			ax.set_title(
-				("D  " if layer == "prot" else "E  ")
-				+ layer
-				+ " leading measured signals",
+				("D  " if layer == "prot" else "E  ") + layer + " leading measured signals",
 				loc="left",
 				fontweight="bold",
 			)
@@ -2193,7 +2181,8 @@ def write_question_html(out, overview):
 	if modules.exists():
 		content += pd.read_csv(modules).to_html(index=False, escape=True, border=0)
 	content += "<h2>Result-driven claims</h2>" + page
-	for name, title in [("abm_summary", "C1 · Twin full-cohort comparison and confidence"),
+	for name, title in [
+		("abm_summary", "C1 · Twin full-cohort comparison and confidence"),
 		("deviation_status", "C1 · Molecular deviation availability"),
 		("met_pgs_concordance", "C1 · Metabolite inherited–measured concordance"),
 		("met_temporal_counts", "C1 · Metabolite temporal classes"),
@@ -2202,18 +2191,40 @@ def write_question_html(out, overview):
 		("met_measured_conditional", "C1 · Measured sensitivity"),
 		("met_trajectory", "C1 · Risk-set trajectory"),
 		("decomposition", "C2 · Genetic and remaining components"),
-		("c4_endpoints", "C4 · Prediction and explainability are separate endpoints")]:
+		("c4_endpoints", "C4 · Prediction and explainability are separate endpoints"),
+	]:
 		path = out / f"final.questions.{name}.csv"
 		if path.exists():
 			d = pd.read_csv(path)
-			content += f'<h2>{html.escape(title)}</h2><p>Complete aggregate tables are retained in the Final workbooks and Shiny downloads.</p>'
+			content += f"<h2>{html.escape(title)}</h2><p>Complete aggregate tables are retained in the Final workbooks and Shiny downloads.</p>"
 			if name.startswith("met_"):
 				content += "<p>" + html.escape(MET_BOUNDARY + " " + ANCHOR_BOUNDARY) + "</p>"
 			if name == "decomposition":
 				content += f"<p>{len(d)} rows in the complete table; the first 50 rows are previewed below in source order.</p>"
-				cols = [c for c in ("Y", "layer", "feature", "status", "incident_beta_observed", "incident_beta_genetic", "incident_beta_residual", "incident_beta_difference", "incident_difference_lo", "incident_difference_hi", "FDR_incident_p_difference", "prevalent_beta_difference", "FDR_prevalent_p_difference", "causal_fraction_identifiable") if c in d]
+				cols = [
+					c
+					for c in (
+						"Y",
+						"layer",
+						"feature",
+						"status",
+						"incident_beta_observed",
+						"incident_beta_genetic",
+						"incident_beta_residual",
+						"incident_beta_difference",
+						"incident_difference_lo",
+						"incident_difference_hi",
+						"FDR_incident_p_difference",
+						"prevalent_beta_difference",
+						"FDR_prevalent_p_difference",
+						"causal_fraction_identifiable",
+					)
+					if c in d
+				]
 				d = d.loc[:, cols].head(50)
-			content += d.drop(columns=[c for c in d if c.startswith("source_")], errors="ignore").to_html(index=False, escape=True, border=0)
+			content += d.drop(columns=[c for c in d if c.startswith("source_")], errors="ignore").to_html(
+				index=False, escape=True, border=0
+			)
 	manifest = out / "final.questions.figure_manifest.csv"
 	if manifest.exists():
 		for _, r in pd.read_csv(manifest).iterrows():
@@ -2260,9 +2271,7 @@ def interval_status(estimate, lo, hi):
 def panel_diagnostics(members, coefficients):
 	"""Count measured assays and numerical coefficient use separately."""
 	if not {"model", "feature"} <= set(members):
-		return pd.DataFrame(
-			columns=["model", "panel_assays", "effective_assays", "panel_hash"]
-		)
+		return pd.DataFrame(columns=["model", "panel_assays", "effective_assays", "panel_hash"])
 	rows = []
 	import hashlib
 
@@ -2301,11 +2310,7 @@ def attach_panel_contrasts(contrasts, metrics, diagnostics):
 		return pd.DataFrame()
 	d = contrasts.copy()
 	keys = ["model", "stratum", "landmark", "horizon"]
-	fields = [
-		c
-		for c in ["budget", "actual_assays", "N", "events_by_horizon", "status"]
-		if c in metrics
-	]
+	fields = [c for c in ["budget", "actual_assays", "N", "events_by_horizon", "status"] if c in metrics]
 	if not set(keys) <= set(metrics) or metrics.duplicated(keys).any():
 		d["comparison_valid"] = False
 		d["interpretation"] = "Missing/duplicate model metrics; comparison unverified"
@@ -2322,13 +2327,10 @@ def attach_panel_contrasts(contrasts, metrics, diagnostics):
 		)
 		dg = diagnostics.rename(
 			columns={
-				c: ("reference" if ref else "model") if c == "model" else c + suffix
-				for c in diagnostics
+				c: ("reference" if ref else "model") if c == "model" else c + suffix for c in diagnostics
 			}
 		)
-		d = d.merge(
-			dg, on="reference" if ref else "model", how="left", validate="many_to_one"
-		)
+		d = d.merge(dg, on="reference" if ref else "model", how="left", validate="many_to_one")
 	d["comparison_valid"] = True
 	for c in ["budget", "actual_assays", "N", "events_by_horizon"]:
 		if c not in d or c + "_reference" not in d:
@@ -2339,20 +2341,14 @@ def attach_panel_contrasts(contrasts, metrics, diagnostics):
 		d["comparison_valid"] &= d.status.eq("ok") & d.status_reference.eq("ok")
 	else:
 		d["comparison_valid"] = False
-	d["identical_panel"] = d.panel_hash.notna() & d.panel_hash.eq(
-		d.panel_hash_reference
-	)
+	d["identical_panel"] = d.panel_hash.notna() & d.panel_hash.eq(d.panel_hash_reference)
 	d["clinical_only"] = d.effective_assays.eq(0) | d.effective_assays_reference.eq(0)
-	d["interval_status"] = [
-		interval_status(*r) for r in d[["delta_AUC", "delta_lo", "delta_hi"]].to_numpy()
-	]
+	d["interval_status"] = [interval_status(*r) for r in d[["delta_AUC", "delta_lo", "delta_hi"]].to_numpy()]
 	d.loc[~d.comparison_valid, "interval_status"] = "比较条件未核实"
 	d["interpretation"] = (
 		"Same native validation protocol; paired conditional bootstrap; nominal intervals across all budgets/strata, not multiplicity-adjusted confirmation"
 	)
 	return d
-
-
 
 
 class Questions:
@@ -2415,9 +2411,18 @@ class Questions:
 		return d
 
 	def claim(self, Y, layer, question, status, result, limitation, evidence):
-		module = ("C1" if question in {"ABM 分层", "Twin confidence",
-					"Molecular deviation", "Metabolite inherited–measured concordance", "L_VLDL_TG.pct illustrative anchor"}
-			else "C2" if question == "遗传与实测差异" else "C5" if question == "Cellulation" else "C4")
+		module = (
+			"C1"
+			if question
+			in {
+				"ABM 分层",
+				"Twin confidence",
+				"Molecular deviation",
+				"Metabolite inherited–measured concordance",
+				"L_VLDL_TG.pct illustrative anchor",
+			}
+			else "C2" if question == "遗传与实测差异" else "C5" if question == "Cellulation" else "C4"
+		)
 		self.overview.append(
 			dict(
 				Y=Y,
@@ -2433,9 +2438,7 @@ class Questions:
 
 	def layer(self, Y, layer, candidates, proxies):
 		root = self.root / Y / layer
-		read = lambda module, name, role: self.read(
-			root / module / name, Y, layer, role
-		)
+		read = lambda module, name, role: self.read(root / module / name, Y, layer, role)
 		c4 = lambda name: read("c4_connect", "c4.focus." + name + ".csv", name)
 		metrics, members, coef = (
 			c4("metrics"),
@@ -2445,9 +2448,7 @@ class Questions:
 		diagnostics = panel_diagnostics(members, coef)
 		ct = attach_panel_contrasts(c4("contrasts"), metrics, diagnostics)
 		if len(metrics) and "model" in metrics:
-			metrics = metrics.merge(
-				diagnostics, on="model", how="left", validate="many_to_one"
-			)
+			metrics = metrics.merge(diagnostics, on="model", how="left", validate="many_to_one")
 		heterogeneity = c4("heterogeneity")
 		for name, d in [
 			("prediction", metrics),
@@ -2463,9 +2464,7 @@ class Questions:
 			("concept_fold_panels", c4("concept_fold_panels")),
 		]:
 			self.add(name, d)
-		if len(heterogeneity) and {"landmark", "p_heterogeneity", "FDR"} <= set(
-			heterogeneity
-		):
+		if len(heterogeneity) and {"landmark", "p_heterogeneity", "FDR"} <= set(heterogeneity):
 			h = heterogeneity[heterogeneity.landmark.eq(0)]
 			self.claim(
 				Y,
@@ -2487,11 +2486,7 @@ class Questions:
 				"heterogeneity",
 			)
 		primary = (
-			ct[
-				ct.stratum.eq("All")
-				& ct.landmark.eq(0)
-				& ct.reference.str.match(r"^NS_\d+$")
-			]
+			ct[ct.stratum.eq("All") & ct.landmark.eq(0) & ct.reference.str.match(r"^NS_\d+$")]
 			if len(ct)
 			else pd.DataFrame()
 		)
@@ -2507,7 +2502,8 @@ class Questions:
 				layer,
 				"LE8 预测增益",
 				"supported" if pos == len(primary) else "no universal superiority",
-				("No universal prediction superiority was observed. " if pos < len(primary) else "") + f"基线至10年、全验证人群：{len(primary)} 个同预算配对 ΔAUC 比较，{pos} 个名义区间完全大于0，{neg} 个完全小于0。",
+				("No universal prediction superiority was observed. " if pos < len(primary) else "")
+				+ f"基线至10年、全验证人群：{len(primary)} 个同预算配对 ΔAUC 比较，{pos} 个名义区间完全大于0，{neg} 个完全小于0。",
 				f"{int(primary.clinical_only.sum())} 个比较至少一方分子系数趋近零；全部预算/方法均展示，未据测试表现选最佳。",
 				"contrasts",
 			)
@@ -2522,9 +2518,7 @@ class Questions:
 				"contrasts",
 			)
 		proxy = (
-			proxies[(proxies.Y == Y) & (proxies.layer == layer)].copy()
-			if len(proxies)
-			else pd.DataFrame()
+			proxies[(proxies.Y == Y) & (proxies.layer == layer)].copy() if len(proxies) else pd.DataFrame()
 		)
 		proxy = self.inherited_sources(proxy, Y, layer, "proxy_point_source")
 		if len(proxy) and "lo" in proxy and proxy.lo.notna().any():
@@ -2562,11 +2556,7 @@ class Questions:
 			)
 		self.add("proxy", proxy)
 		yy = (
-			ct[
-				ct.stratum.eq("All")
-				& ct.landmark.eq(0)
-				& ct.reference.str.contains("_Yin_")
-			]
+			ct[ct.stratum.eq("All") & ct.landmark.eq(0) & ct.reference.str.contains("_Yin_")]
 			if len(ct)
 			else pd.DataFrame()
 		)
@@ -2583,7 +2573,7 @@ class Questions:
 		for name, path in abm_table_paths(self.root, Y, layer).items():
 			d = self.read(path, Y, layer, name)
 			if len(d):
-				d['backend'] = 'twin' if name.startswith('abm_') else 'molecular_deviation'
+				d["backend"] = "twin" if name.startswith("abm_") else "molecular_deviation"
 				self.add(name, d)
 		genetic = (
 			candidates[(candidates.Y == Y) & (candidates.layer == layer)].copy()
@@ -2599,9 +2589,7 @@ class Questions:
 				Y,
 				layer,
 				"遗传与实测差异",
-				"存在不同关联信息"
-				if nullsig.any() or diffs.any()
-				else "尚无充分差异证据",
+				"存在不同关联信息" if nullsig.any() or diffs.any() else "尚无充分差异证据",
 				f"同人群 {len(matched)} 个 assay/scope 记录：{int(nullsig.sum())} 个实测 P≥0.05、PGS FDR<0.05；{matched.GR_difference_FDR.notna().sum()} 个有匹配 G−R 检验，其中 {int(diffs.sum())} 个 FDR<0.05。C2 完整分解见独立结果表。",
 				"PGS 是遗传倾向，不是出生时浓度；R包含未捕获遗传、环境、疾病、治疗和误差。差异不是因果证明。",
 				"genetic",
@@ -2662,63 +2650,173 @@ class Questions:
 
 	def scientific_summaries(self, Y, layer, contrasts, proxy):
 		get = lambda name: self.current(name, Y, layer)
-		s = twin_summary(get('abm_metrics'))
-		self.add('abm_summary', pd.DataFrame([dict(Y=Y, layer=layer, **s)]))
-		self.claim(Y, layer, 'Twin confidence', s['status'], s['key_result'], ABM_BOUNDARY,
-			'abm_metrics;abm_paired;abm_support;abm_confidence')
-		status = get('deviation_status')
-		text = '; '.join(str(v) for v in status.get('validation_status', pd.Series(dtype=str)).dropna().unique())
-		self.claim(Y, layer, 'Molecular deviation', text or 'unavailable',
-			text or 'Current molecular deviation results unavailable.', ABM_BOUNDARY, 'deviation_metrics;deviation_status')
+		s = twin_summary(get("abm_metrics"))
+		self.add("abm_summary", pd.DataFrame([dict(Y=Y, layer=layer, **s)]))
+		self.claim(
+			Y,
+			layer,
+			"Twin confidence",
+			s["status"],
+			s["key_result"],
+			ABM_BOUNDARY,
+			"abm_metrics;abm_paired;abm_support;abm_confidence",
+		)
+		status = get("deviation_status")
+		text = "; ".join(
+			str(v) for v in status.get("validation_status", pd.Series(dtype=str)).dropna().unique()
+		)
+		self.claim(
+			Y,
+			layer,
+			"Molecular deviation",
+			text or "unavailable",
+			text or "Current molecular deviation results unavailable.",
+			ABM_BOUNDARY,
+			"deviation_metrics;deviation_status",
+		)
 		if layer == "met":
 			concordance = metabolite_concordance(get("met_pgs_pairs")).assign(Y=Y, layer=layer)
 			self.add("met_pgs_concordance", concordance)
 			fmt = lambda v: f"{v:.3f}" if pd.notna(v) else "unavailable"
-			concordance_text = "; ".join(f"{r.analysis}: N={r.N_pairs}, Spearman rho={fmt(r.spearman_rho)}, same-direction fraction={fmt(r.same_direction_fraction)}" for r in concordance.itertuples())
-			self.claim(Y, layer, "Metabolite inherited–measured concordance",
-				"exploratory" if concordance.N_pairs.gt(0).any() else "unavailable", concordance_text, MET_BOUNDARY, "met_pgs_pairs;met_pgs_concordance")
+			concordance_text = "; ".join(
+				f"{r.analysis}: N={r.N_pairs}, Spearman rho={fmt(r.spearman_rho)}, same-direction fraction={fmt(r.same_direction_fraction)}"
+				for r in concordance.itertuples()
+			)
+			self.claim(
+				Y,
+				layer,
+				"Metabolite inherited–measured concordance",
+				"exploratory" if concordance.N_pairs.gt(0).any() else "unavailable",
+				concordance_text,
+				MET_BOUNDARY,
+				"met_pgs_pairs;met_pgs_concordance",
+			)
 			anchor = get("met_anchor")
 			anchor = anchor[anchor.feature.eq("L_VLDL_TG.pct")] if "feature" in anchor else pd.DataFrame()
-			anchor_text = "; ".join(f"{r.analysis} / {r.model}: beta={r.beta:.4g}" for r in anchor.itertuples() if np.isfinite(r.beta)) if {"analysis", "model", "beta"} <= set(anchor) else ""
-			self.claim(Y, layer, "L_VLDL_TG.pct illustrative anchor", "exploratory" if anchor_text else "unavailable",
-				anchor_text or "Anchor effects unavailable.", ANCHOR_BOUNDARY + " " + MET_BOUNDARY,
-				"met_anchor;met_pgs_conditional;met_measured_conditional;met_trajectory")
+			anchor_text = (
+				"; ".join(
+					f"{r.analysis} / {r.model}: beta={r.beta:.4g}"
+					for r in anchor.itertuples()
+					if np.isfinite(r.beta)
+				)
+				if {"analysis", "model", "beta"} <= set(anchor)
+				else ""
+			)
+			self.claim(
+				Y,
+				layer,
+				"L_VLDL_TG.pct illustrative anchor",
+				"exploratory" if anchor_text else "unavailable",
+				anchor_text or "Anchor effects unavailable.",
+				ANCHOR_BOUNDARY + " " + MET_BOUNDARY,
+				"met_anchor;met_pgs_conditional;met_measured_conditional;met_trajectory",
+			)
 			temporal = get("temporal")
 			if "direction_class" in temporal:
-				counts = temporal.groupby("direction_class", dropna=False).size().rename("N_features").reset_index()
+				counts = (
+					temporal.groupby("direction_class", dropna=False)
+					.size()
+					.rename("N_features")
+					.reset_index()
+				)
 				self.add("met_temporal_counts", counts.assign(Y=Y, layer=layer))
 			if concordance.N_pairs.gt(0).any():
 				s["key_result"] += " Metabolite inherited–measured concordance: " + concordance_text + "."
-				if s["status"] == "unavailable": s["status"] = "exploratory"
+				if s["status"] == "unavailable":
+					s["status"] = "exploratory"
 		c4 = c4_endpoint_summary(contrasts, proxy)
 		self.add("c4_endpoints", pd.DataFrame([dict(Y=Y, layer=layer, **c4)]))
 		gr, genetic = get("decomposition"), get("genetic")
 		gr_tests = finite_column(gr, "FDR_incident_p_difference")
 		if gr_tests.notna().sum() == 0:
 			gr_tests = finite_column(genetic, "GR_difference_FDR")
-		genetic_claims = [c["result"] for c in self.overview if c["Y"] == Y and c["layer"] == layer and c["module"] == "C2"]
+		genetic_claims = [
+			c["result"] for c in self.overview if c["Y"] == Y and c["layer"] == layer and c["module"] == "C2"
+		]
 		cell = get("cell_status")
-		cell_text = "; ".join(cell.analysis.astype(str) + ": " + cell.status.astype(str)) if {"analysis", "status"} <= set(cell) else "Cellulation status unavailable"
-		coloc_tables = ["same_locus", "coloc_robust", "coloc_prior", "susie_pairs", "susie_diagnostics", "mr_signal_evidence"]
-		coloc_text = "; ".join(f"{name}: {len(get(name))} rows" if len(get(name)) else f"{name}: unavailable" for name in coloc_tables)
+		cell_text = (
+			"; ".join(cell.analysis.astype(str) + ": " + cell.status.astype(str))
+			if {"analysis", "status"} <= set(cell)
+			else "Cellulation status unavailable"
+		)
+		coloc_tables = [
+			"same_locus",
+			"coloc_robust",
+			"coloc_prior",
+			"susie_pairs",
+			"susie_diagnostics",
+			"mr_signal_evidence",
+		]
+		coloc_text = "; ".join(
+			f"{name}: {len(get(name))} rows" if len(get(name)) else f"{name}: unavailable"
+			for name in coloc_tables
+		)
 		for module, status, result, boundary, sources in [
-			("C1", s["status"], s["key_result"], ABM_BOUNDARY + (" " + MET_BOUNDARY + " " + ANCHOR_BOUNDARY if layer == "met" else ""),
-				["abm_metrics", "abm_paired", "abm_support"] + (list(MET_TABLES) + ["temporal"] if layer == "met" else [])),
-			("C2", "exploratory" if len(gr) or len(genetic) else "unavailable",
-				" ".join(genetic_claims) + f" Decomposition: {len(gr)} rows; direct G−R tests: {gr_tests.notna().sum()}, FDR<0.05: {int((gr_tests < .05).sum())}. Discordant measured/PGS/MR evidence remains visible in the source tables.",
+			(
+				"C1",
+				s["status"],
+				s["key_result"],
+				ABM_BOUNDARY + (" " + MET_BOUNDARY + " " + ANCHOR_BOUNDARY if layer == "met" else ""),
+				["abm_metrics", "abm_paired", "abm_support"]
+				+ (list(MET_TABLES) + ["temporal"] if layer == "met" else []),
+			),
+			(
+				"C2",
+				"exploratory" if len(gr) or len(genetic) else "unavailable",
+				" ".join(genetic_claims)
+				+ f" Decomposition: {len(gr)} rows; direct G−R tests: {gr_tests.notna().sum()}, FDR<0.05: {int((gr_tests < .05).sum())}. Discordant measured/PGS/MR evidence remains visible in the source tables.",
 				"G and R share the training-fold measured-omic scale. R includes uncaptured genetics, environment, treatment, disease processes and assay error. Predictive biomarkers need not be causal antecedents; no causal/consequence percentage is identifiable. MR / reverse MR are separate evidence.",
-				["genetic", "decomposition", "temporal", "bidirectional_mr"]),
-			("C4", c4["prediction_status"], c4["key_result"],
-				"Prediction: paired ΔAUC versus same-budget NS. Explainability: held-out ΔR² for LE8 proxy reconstruction. LE8 supervision can impose modifiable/interpretable biological structure while preserving broadly similar prediction; proxy fidelity does not prove intervention response.", ["contrasts", "proxy"]),
-			("C3", "exploratory" if any(len(get(n)) for n in coloc_tables) else "unavailable", coloc_text,
-				"Colocalization supports a shared regional signal; it does not prove mediation, a unique causal variant or a causal protein.", coloc_tables),
-			("C5", "exploratory" if len(get("cell")) or len(get("cigma")) else "unavailable", cell_text + (f"; CIGMA: {len(get('cigma'))} rows" if len(get("cigma")) else "; CIGMA unavailable"),
-				"Cell-expression enrichment is cellular context, not automatically secretion origin, causal cell type or a cellular aging clock.", ["cell_status", "cell", "cell_contrasts", "cigma"]),
+				["genetic", "decomposition", "temporal", "bidirectional_mr"],
+			),
+			(
+				"C4",
+				c4["prediction_status"],
+				c4["key_result"],
+				"Prediction: paired ΔAUC versus same-budget NS. Explainability: held-out ΔR² for LE8 proxy reconstruction. LE8 supervision can impose modifiable/interpretable biological structure while preserving broadly similar prediction; proxy fidelity does not prove intervention response.",
+				["contrasts", "proxy"],
+			),
+			(
+				"C3",
+				"exploratory" if any(len(get(n)) for n in coloc_tables) else "unavailable",
+				coloc_text,
+				"Colocalization supports a shared regional signal; it does not prove mediation, a unique causal variant or a causal protein.",
+				coloc_tables,
+			),
+			(
+				"C5",
+				"exploratory" if len(get("cell")) or len(get("cigma")) else "unavailable",
+				cell_text
+				+ (f"; CIGMA: {len(get('cigma'))} rows" if len(get("cigma")) else "; CIGMA unavailable"),
+				"Cell-expression enrichment is cellular context, not automatically secretion origin, causal cell type or a cellular aging clock.",
+				["cell_status", "cell", "cell_contrasts", "cigma"],
+			),
 		]:
-			files = sorted({v for name in sources for v in get(name).get("source_file", pd.Series(dtype=str)).dropna().astype(str)})
-			self.add("module_summary", pd.DataFrame([dict(Y=Y, layer=layer, module=module,
-				priority="PRIMARY" if module in MODULE_ORDER[:3] else "SUPPORT", title=MODULE_TITLES[module], status=status,
-				key_result=result, interpretation_boundary=boundary, evidence=";".join(sources), source=";".join(files))]))
+			files = sorted(
+				{
+					v
+					for name in sources
+					for v in get(name).get("source_file", pd.Series(dtype=str)).dropna().astype(str)
+				}
+			)
+			self.add(
+				"module_summary",
+				pd.DataFrame(
+					[
+						dict(
+							Y=Y,
+							layer=layer,
+							module=module,
+							priority="PRIMARY" if module in MODULE_ORDER[:3] else "SUPPORT",
+							title=MODULE_TITLES[module],
+							status=status,
+							key_result=result,
+							interpretation_boundary=boundary,
+							evidence=";".join(sources),
+							source=";".join(files),
+						)
+					]
+				),
+			)
 
 	def finish(self, out, index_out):
 		order = {
@@ -2749,8 +2847,15 @@ class Questions:
 		self.tables["overview"] = [overview]
 		self.tables["sources"] = [pd.DataFrame(self.sources)]
 		names = [
-			"module_summary", "abm_summary", "c4_endpoints",
-			*MET_TABLES, "met_pgs_concordance", "met_temporal_counts", "coloc_robust", "coloc_prior", "cigma",
+			"module_summary",
+			"abm_summary",
+			"c4_endpoints",
+			*MET_TABLES,
+			"met_pgs_concordance",
+			"met_temporal_counts",
+			"coloc_robust",
+			"coloc_prior",
+			"cigma",
 			"prediction",
 			"contrasts",
 			"members",
@@ -2763,21 +2868,39 @@ class Questions:
 			"abm_metrics",
 			"abm_coverage",
 			"abm_paired",
-			"abm_support", "abm_training", "abm_confidence", "deviation_metrics", "deviation_status", "deviation_support",
+			"abm_support",
+			"abm_training",
+			"abm_confidence",
+			"deviation_metrics",
+			"deviation_status",
+			"deviation_support",
 			"genetic",
 			"temporal",
 			"cohort",
 			"mediation",
-			"modules", "deployed_concept_fidelity", "bidirectional_mr",
+			"modules",
+			"deployed_concept_fidelity",
+			"bidirectional_mr",
 			"nonlinear",
 			"nonlinear_curves",
 			"same_locus",
-			"susie_pairs", "susie_diagnostics", "mr_signal_evidence",
+			"susie_pairs",
+			"susie_diagnostics",
+			"mr_signal_evidence",
 			"cell",
 			"cell_status",
-			"cell_contrasts", "cell_evidence", "concept_coefficients", "concept_status", "concept_fold_panels",
+			"cell_contrasts",
+			"cell_evidence",
+			"concept_coefficients",
+			"concept_status",
+			"concept_fold_panels",
 			"mr_scope",
-			"dandelion", "dandelion_lolo", "dandelion_native", "state_projection", "decomposition", "age_models",
+			"dandelion",
+			"dandelion_lolo",
+			"dandelion_native",
+			"state_projection",
+			"decomposition",
+			"age_models",
 			"overview",
 			"sources",
 		]
@@ -2794,9 +2917,7 @@ class Questions:
 		return names
 
 
-def build_questions(
-	root, traits, layers, index_out, candidates, proxies, max_bytes=128 * 1024**2
-):
+def build_questions(root, traits, layers, index_out, candidates, proxies, max_bytes=128 * 1024**2):
 	q = Questions(root, traits, layers, max_bytes)
 	for Y in traits:
 		for layer in layers:
@@ -2933,27 +3054,29 @@ def question_figures(out, traits, layers):
 	for col, (y, l) in enumerate(pairs):
 		d = select(metrics, y, l)
 		ax = axs[0, col]
-		if has(d, 'model', 'subset', 'AUC_IPCW'):
+		if has(d, "model", "subset", "AUC_IPCW"):
 			for model in sorted(d.model.unique()):
-				z = d[d.model.eq(model)].set_index('subset').reindex(['all','selected','rejected'])
-				ax.plot(range(3), z.AUC_IPCW, 'o-', label=model)
-			ax.set_xticks(range(3), ['All','Selected','Rejected'])
-			ax.set_ylabel('IPCW AUC')
+				z = d[d.model.eq(model)].set_index("subset").reindex(["all", "selected", "rejected"])
+				ax.plot(range(3), z.AUC_IPCW, "o-", label=model)
+			ax.set_xticks(range(3), ["All", "Selected", "Rejected"])
+			ax.set_ylabel("IPCW AUC")
 			ax.legend(fontsize=6)
-		else: absent(ax, 'Twin metrics unavailable')
-		ax.set_title(f'{y} | {l}')
+		else:
+			absent(ax, "Twin metrics unavailable")
+		ax.set_title(f"{y} | {l}")
 		ax = axs[1, col]
-		contrasts = select(read('abm_paired'), y, l)
-		if has(contrasts, 'contrast', 'metric', 'delta', 'lower', 'upper'):
-			z = contrasts[contrasts.metric.eq('AUC_IPCW')]
+		contrasts = select(read("abm_paired"), y, l)
+		if has(contrasts, "contrast", "metric", "delta", "lower", "upper"):
+			z = contrasts[contrasts.metric.eq("AUC_IPCW")]
 			for j, (_, row) in enumerate(z.iterrows()):
-				ax.plot([row.lower,row.upper], [j,j], color='#247b83')
-				ax.plot(row.delta,j,'o',color='#247b83')
-			ax.set_yticks(range(len(z)),z.contrast)
-			ax.axvline(0,color='grey',ls='--')
-			ax.set_xlabel('Paired AUC contrast; predeclared comparison masks')
-		else: absent(ax, 'Paired twin contrasts unavailable')
-	save(fig, 'Fig7.question_ABM', ['abm_metrics','abm_paired','abm_support'], ABM_BOUNDARY)
+				ax.plot([row.lower, row.upper], [j, j], color="#247b83")
+				ax.plot(row.delta, j, "o", color="#247b83")
+			ax.set_yticks(range(len(z)), z.contrast)
+			ax.axvline(0, color="grey", ls="--")
+			ax.set_xlabel("Paired AUC contrast; predeclared comparison masks")
+		else:
+			absent(ax, "Paired twin contrasts unavailable")
+	save(fig, "Fig7.question_ABM", ["abm_metrics", "abm_paired", "abm_support"], ABM_BOUNDARY)
 
 	genetic = read("genetic")
 	fig, axs = plt.subplots(
@@ -2966,11 +3089,7 @@ def question_figures(out, traits, layers):
 	for col, (y, l) in enumerate(pairs):
 		d = select(genetic, y, l)
 		if len(d):
-			d = d[
-				truth(d.same_people)
-				& d.scope.eq("existing_full")
-				& d.adjustment.eq("basic")
-			]
+			d = d[truth(d.same_people) & d.scope.eq("existing_full") & d.adjustment.eq("basic")]
 		ax = axs[0, col]
 		if len(d):
 			flag = (d.measured_p >= 0.05) & (d.pgs_FDR < 0.05)
@@ -2981,9 +3100,7 @@ def question_figures(out, traits, layers):
 				alpha=0.4,
 				s=10,
 			)
-			for _, r in d[
-				d.feature.isin(["GDF15", "MMP12", "ApoB", "L_VLDL_TG.pct"])
-			].iterrows():
+			for _, r in d[d.feature.isin(["GDF15", "MMP12", "ApoB", "L_VLDL_TG.pct"])].iterrows():
 				offset = {
 					"GDF15": (-5, 12),
 					"MMP12": (-5, -16),
@@ -3020,7 +3137,9 @@ def question_figures(out, traits, layers):
 
 	met_pairs, met_summary = read("met_pgs_pairs"), read("met_pgs_concordance")
 	if len(met_pairs):
-		fig, axs = plt.subplots(len(traits), 3, figsize=(15, 4.5 * len(traits)), squeeze=False, constrained_layout=True)
+		fig, axs = plt.subplots(
+			len(traits), 3, figsize=(15, 4.5 * len(traits)), squeeze=False, constrained_layout=True
+		)
 		for row, y in enumerate(traits):
 			for col, analysis in enumerate(MET_ANALYSES):
 				ax = axs[row, col]
@@ -3029,20 +3148,31 @@ def question_figures(out, traits, layers):
 				x, measured = finite_column(d, "pgs_full_beta"), finite_column(d, "observed_beta")
 				valid = x.notna() & measured.notna()
 				if valid.any():
-					ax.scatter(x[valid], measured[valid], s=13, alpha=.6, color="#247b83")
-					ax.axhline(0, color="grey", lw=.5); ax.axvline(0, color="grey", lw=.5)
+					ax.scatter(x[valid], measured[valid], s=13, alpha=0.6, color="#247b83")
+					ax.axhline(0, color="grey", lw=0.5)
+					ax.axvline(0, color="grey", lw=0.5)
 					stats = select(met_summary, y, "met")
 					stats = stats[stats.analysis.eq(analysis)].iloc[0]
-					ax.text(.03, .97, f"N={stats.N_pairs}; Spearman rho={stats.spearman_rho:.3f}", transform=ax.transAxes, va="top")
+					ax.text(
+						0.03,
+						0.97,
+						f"N={stats.N_pairs}; Spearman rho={stats.spearman_rho:.3f}",
+						transform=ax.transAxes,
+						va="top",
+					)
 					ax.set(xlabel="Inherited omic PGS effect", ylabel="Measured adult omic effect")
-				else: absent(ax, "Concordance unavailable")
+				else:
+					absent(ax, "Concordance unavailable")
 				ax.set_title(f"{y} | {analysis}")
 		save(fig, "Fig10.question_metabolite", ["met_pgs_pairs", "met_pgs_concordance"], MET_BOUNDARY)
-	figure_order = {name: i for i, name in enumerate(["Fig7.question_ABM", "Fig10.question_metabolite", "Fig8.question_genetic", "Fig6.question_LE8"])}
+	figure_order = {
+		name: i
+		for i, name in enumerate(
+			["Fig7.question_ABM", "Fig10.question_metabolite", "Fig8.question_genetic", "Fig6.question_LE8"]
+		)
+	}
 	manifest.sort(key=lambda row: figure_order.get(row["figure"], len(figure_order)))
-	pd.DataFrame(manifest).to_csv(
-		out / "final.questions.figure_manifest.csv", index=False
-	)
+	pd.DataFrame(manifest).to_csv(out / "final.questions.figure_manifest.csv", index=False)
 	write_question_html(out, read("overview"))
 
 
@@ -3070,6 +3200,9 @@ def report_main(argv=None):
 	report.load()
 	report.make_figures()
 	report.finish()
+	build_catalog(
+		arg.analysis_root, arg.Y.split(","), arg.biom.split(",")
+	)  # LE8_FINAL::2026-10-15.final-multiroute-v1
 
 
 def tables_main(argv=None):
@@ -3087,9 +3220,7 @@ def tables_main(argv=None):
 	ap.add_argument("--cell-annotation", action="store_true")
 	args = ap.parse_args(argv)
 	root = args.root.resolve()
-	out = (
-		args.outdir or final_dir(root.parent, root.name, kind="systematic")
-	).resolve()
+	out = (args.outdir or final_dir(root.parent, root.name, kind="systematic")).resolve()
 	if not out.is_relative_to(root.parent / "final"):
 		raise ValueError("Final tables must be written inside <analysis-root>/final")
 	out.mkdir(parents=True, exist_ok=True)
@@ -3103,22 +3234,1011 @@ def tables_main(argv=None):
 		interpretation="Descriptive consolidation; no independent validation or causal voting",
 	)
 	if args.cell_annotation:
-		status["cell_annotation"] = cell_annotation(
-			root, Path(__file__).resolve().parent, out
-		)
+		status["cell_annotation"] = cell_annotation(root, Path(__file__).resolve().parent, out)
 	(out / "status.json").write_text(json.dumps(status, indent=2) + "\n")
 
 
 def main(argv=None):
 	argv = list(sys.argv[1:] if argv is None else argv)
-	commands = {"report": report_main, "tables": tables_main}
+	commands = {
+		"report": report_main,
+		"tables": tables_main,
+		"performance": performance_main,
+		"evidence": evidence_main,
+		"share": share_main,
+	}
 	if argv and argv[0] in commands:
 		return commands[argv[0]](argv[1:])
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument(
-		"command", choices=commands, help="Run COMMAND --help for its options"
-	)
+	parser.add_argument("command", choices=commands, help="Run COMMAND --help for its options")
 	parser.parse_args(argv)
+
+
+ABM_BOUNDARY = (
+	"Confidence describes reference support, not the probability that a prediction is correct. "
+	"Selection and training effects require their separate paired contrasts. "
+	"Missing family groups remain unverified; missing coronary endpoints do not establish diagnostic accuracy."
+)
+
+
+def abm_source_root(root):
+	# Native reports run in a temporary table workspace; ABM owns its publication.
+	return Path(os.getenv("LE8_PUBLISHED_ROOT", str(root)))
+
+
+def abm_table_paths(root, trait, layer):
+	base = abm_source_root(root) / trait / layer / "c1_abm"
+	twin = base / "abm_twin"
+	deviation = base / "molecular_deviation"
+	return {
+		"abm_metrics": twin / "test_report/metrics.tsv.gz",
+		"abm_coverage": twin / "test_report/metrics.tsv.gz",
+		"abm_paired": twin / "test_report/contrasts.tsv.gz",
+		"abm_confidence": twin / "test_report/confidence_validation.tsv.gz",
+		"abm_support": twin / "aggregate/support_status.tsv.gz",
+		"abm_training": twin / "fit/aggregate/training_summary.tsv.gz",
+		"abm_c1_comparison": base / "baseline_comparison/metrics.tsv.gz",
+		"abm_c1_comparison_status": base / "baseline_comparison/status.tsv.gz",
+		"deviation_metrics": deviation / "results/model_metrics.tsv.gz",
+		"deviation_status": deviation / "results/status.tsv.gz",
+		"deviation_support": deviation / "aggregate/support_status.tsv.gz",
+	}
+
+
+def twin_summary(metrics):
+	full = metrics.loc[metrics["subset"].eq("all")] if "subset" in metrics else pd.DataFrame()
+	fields = [c for c in ["AUC_IPCW", "Uno_C_horizon", "Brier_IPCW"] if c in full]
+	rows = []
+	for _, row in full.iterrows():
+		values = ", ".join(f"{c}={row[c]:.4f}" for c in fields if pd.notna(row[c]))
+		rows.append(str(row.get("model", "model")) + ": " + values)
+	return dict(
+		status="exploratory" if rows else "unavailable",
+		key_result="; ".join(rows) or "Current twin model results unavailable.",
+		full_cohort_models=len(full),
+	)
+
+
+def _read_csv(path):
+	return performance_read_export(Path(path))
+
+
+def _read_excel(path, sheet):
+	path = Path(path)
+	if not path.is_file():
+		return pd.DataFrame()
+	try:
+		return pd.read_excel(path, sheet_name=sheet)
+	except Exception:
+		return pd.DataFrame()
+
+
+def build_catalog(analysis_root, traits, layers):
+	root = Path(analysis_root).resolve()
+	out = root / "final" / "multiroute"
+	out.mkdir(parents=True, exist_ok=True)
+	published = abm_source_root(root).resolve()
+	inventory = []
+	tables = {}
+	for trait in traits:
+		for layer in layers:
+			base = root / trait / layer
+			key = f"{trait}_{layer}"
+			specs = [
+				("C2_robustness", base / "c2_cause" / "c2.robustness_consensus.csv", None),
+				("C3_robustness", base / "c3_coloc" / "c3.robustness_consensus.csv", None),
+				("C4_proxy_routes", base / "c4_connect" / "c4.final_proxy_route_metrics.csv", None),
+				("C4_proxy_winners", base / "c4_connect" / "c4.final_proxy_route_winners.csv", None),
+				("C4_clocks", base / "c4_connect" / "c4.clock_performance.csv", None),
+				("C4_clock_connections", base / "c4_connect" / "c4.clock_pillar_tests.csv", None),
+				("C5_cell_robustness", base / "c5_cellulation" / "c5.cell_robustness_consensus.csv", None),
+				("C5_cell_5C", base / "c5_cellulation" / "c5.cell_by_5C_evidence.csv", None),
+			]
+			for name, path, _ in specs:
+				d = _read_csv(path)
+				status = "available" if len(d) or path.is_file() else "unavailable"
+				inventory.append(
+					dict(
+						trait=trait,
+						layer=layer,
+						module=name,
+						path=str(published / path.relative_to(root)),
+						status=status,
+						rows=len(d),
+						columns=len(d.columns),
+					)
+				)
+				if len(d):
+					tables[f"{key}_{name}"] = d
+			# ABM publishes separately and is intentionally absent from native
+			# temporary table workspaces. Read its committed aggregate workbook.
+			wb = published / trait / layer / "c1_abm" / "baseline_comparison" / "C1_ABM_comparison.xlsx"
+			for sheet in [
+				"selector_summary",
+				"coverage_curve",
+				"same_subset_comparison",
+				"metrics",
+				"status",
+			]:
+				d = _read_excel(wb, sheet)
+				if len(d):
+					tables[f"{key}_C1_{sheet}"] = d
+			inventory.append(
+				dict(
+					trait=trait,
+					layer=layer,
+					module="C1_ABM_comparison",
+					path=str(wb),
+					status="available" if wb.is_file() else "unavailable",
+					rows=None,
+					columns=None,
+				)
+			)
+	inv = pd.DataFrame(inventory)
+	inv.to_csv(out / "inventory.csv", index=False)
+	# Sheet names are limited to 31 chars; keep an index mapping.
+	mapping = []
+	xlsx = out / "FINAL_multiroute_catalog.xlsx"
+	with pd.ExcelWriter(xlsx, engine="openpyxl") as w:
+		inv.to_excel(w, sheet_name="inventory", index=False)
+		used = set(["inventory"])
+		for i, (name, d) in enumerate(tables.items(), 1):
+			stem = ("T%03d_" % i) + name
+			sheet = stem[:31]
+			while sheet in used:
+				sheet = (stem[:27] + str(i))[:31]
+			used.add(sheet)
+			d.to_excel(w, sheet_name=sheet, index=False)
+			mapping.append(dict(sheet=sheet, source=name, rows=len(d)))
+		pd.DataFrame(mapping).to_excel(w, sheet_name="sheet_map", index=False)
+	status = dict(
+		release="2026-10-15.final-multiroute-v1",
+		tables=len(tables),
+		inventory_rows=len(inv),
+		workbook=str(published / xlsx.relative_to(root)),
+		interpretation="Descriptive multi-route catalogue; no refitting, no best-P voting",
+	)
+	(out / "status.json").write_text(json.dumps(status, indent=2) + "\n")
+	return status
+
+
+import gzip
+import io
+import zipfile
+
+from le8_common import write_xlsx
+from c1_abm_compare import comparison_from_paths
+
+performance_STAGES = [
+	"c1_correlate",
+	"c1_abm",
+	"c2_cause",
+	"c3_coloc",
+	"c4_connect",
+	"c5_cellulation",
+	"final",
+]
+
+
+def performance_read_export(path):
+	"""Read the exact aggregate export, including the native workbook archive."""
+	if path.is_file():
+		return pd.read_csv(path, sep="\t" if ".tsv" in path.name else ",")
+	if not path.parent.is_dir():
+		return pd.DataFrame()
+	for book in sorted(path.parent.glob("*.xlsx")):
+		with zipfile.ZipFile(book) as archive:
+			if "le8/manifest.json" not in archive.namelist():
+				continue
+			entry = json.loads(archive.read("le8/manifest.json")).get("files", {}).get(path.name)
+			if not entry:
+				continue
+			data = archive.read(entry["part"])
+			if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+				raise ValueError("Corrupt performance export: " + str(path))
+			if path.name.endswith(".gz"):
+				data = gzip.decompress(data)
+			return pd.read_csv(io.BytesIO(data), sep="\t" if ".tsv" in path.name else ",")
+	return pd.DataFrame()
+
+
+def performance_collect(root, published, trait, layer, stage):
+	base = root / trait / layer
+	twin = published / trait / layer / "c1_abm/abm_twin"
+	max_stage = performance_STAGES.index(stage)
+	rows, availability = [], []
+
+	def add(module, path, family, metrics, filters=None, horizon=None):
+		d = performance_read_export(path)
+		for column, value in (filters or {}).items():
+			if column in d:
+				d = d.loc[d[column].isin(value) if isinstance(value, list) else d[column].eq(value)]
+		count = 0
+		for _, r in d.iterrows():
+			model = str(r.get("model", r.get("rule", "unspecified")))
+			panel = str(r.get("biom_set", ""))
+			context = ", ".join(
+				f"{k}={r[k]}"
+				for k in ["budget", "budget_per_layer", "ablation", "arm", "landmark", "horizon", "subset"]
+				if k in r and pd.notna(r[k])
+			)
+			for column, metric in metrics.items():
+				value = pd.to_numeric(r.get(column), errors="coerce")
+				if not np.isfinite(value):
+					continue
+				rows.append(
+					dict(
+						stage=module,
+						family=family,
+						model=model,
+						panel=panel,
+						context=context,
+						metric=metric,
+						value=value,
+						N=r.get("N", np.nan),
+						horizon=r.get("horizon", r.get("AUC_horizon_years", horizon)),
+						evaluation_scope=family,
+						source=(
+							str(published / path.relative_to(root))
+							if path.is_relative_to(root)
+							else str(path)
+						),
+					)
+				)
+				count += 1
+		availability.append(
+			dict(
+				stage=module,
+				source=family,
+				status="evaluated" if count else "not_evaluated",
+				metric_rows=count,
+				detail="Existing model estimates only",
+			)
+		)
+
+	add(
+		"c1_correlate",
+		base / "c1_correlate/prediction/prediction_summary.csv",
+		"C1 conventional holdout",
+		dict(AUC="IPCW AUC", C_index="Harrell C"),
+	)
+	add(
+		"c1_correlate",
+		base / "c1_correlate/prediction/review_budget_metrics.csv",
+		"C1 fixed-budget holdout",
+		dict(AUC="IPCW AUC", Brier="IPCW Brier"),
+	)
+	add(
+		"c1_correlate",
+		base / "c1_correlate/prediction/metrics_summary.csv",
+		"C1 optional nested cross-validation",
+		dict(
+			AUC10_mean="Mean CV IPCW AUC", Brier10_mean="Mean CV IPCW Brier", cindex_mean="Mean CV Harrell C"
+		),
+	)
+	# ABM is a C1 analysis. Include an already completed ABM even when refreshing C1.
+	add(
+		"c1_abm",
+		twin / "test_report/metrics.tsv.gz",
+		"ABM test (technical QC)",
+		dict(
+			AUC_IPCW="IPCW AUC", Uno_C_horizon="Uno C", Brier_IPCW="IPCW Brier", LogLoss_IPCW="IPCW LogLoss"
+		),
+		filters=dict(subset=["all", "selected", "rejected"]),
+	)
+	add(
+		"c1_abm",
+		published / trait / layer / "c1_abm/molecular_deviation/results/model_metrics.tsv.gz",
+		"Molecular deviation objective endpoint",
+		dict(AUC="Binary AUC", AUPRC="AUPRC", Brier="Binary Brier", LogLoss="Binary LogLoss"),
+	)
+	for module in ["c2_cause", "c3_coloc", "c5_cellulation"]:
+		if performance_STAGES.index(module) <= max_stage:
+			availability.append(
+				dict(
+					stage=module,
+					source=module,
+					status="not_evaluated",
+					metric_rows=0,
+					detail="This module currently produces evidence/annotation, not a prediction model",
+				)
+			)
+	if performance_STAGES.index("c4_connect") <= max_stage:
+		add(
+			"c4_connect",
+			base / "c4_connect/c4.focus.metrics.csv",
+			"C4 panel validation",
+			dict(AUC="IPCW AUC", Brier="IPCW Brier"),
+			filters=dict(stratum="All", landmark=0),
+			horizon=10,
+		)
+		add(
+			"c4_connect",
+			base / "c4_connect/c4.penalty_summary.csv",
+			"C4 penalty cross-validation",
+			dict(mean_cindex="Mean CV Harrell C"),
+		)
+	if stage == "final":
+		add(
+			"final",
+			root / "final" / trait / "joint/metrics.csv",
+			"Joint modality out-of-fold",
+			dict(AUC="IPCW AUC", Brier="IPCW Brier"),
+			filters=dict(stratum="All", landmark=0),
+		)
+		add(
+			"final",
+			root / "final" / trait / "joint/factorial_metrics.csv",
+			"Joint modality within-fold concordance",
+			dict(estimate="Horizon-restricted Harrell C"),
+			filters=dict(metric="C_index", landmark=0, arm="all_assays"),
+		)
+	benchmark = base / "c1_correlate/prediction/_LOCAL_ONLY/benchmark.json.gz"
+	comparison = comparison_from_paths(benchmark, twin)
+	availability.sort(key=lambda r: performance_STAGES.index(r["stage"]))
+	return dict(
+		performance=pd.DataFrame(rows),
+		stages=pd.DataFrame(availability),
+		c1_abm_comparison=comparison.get("metrics", pd.DataFrame()),
+		c1_abm_status=comparison["status"],
+	)
+
+
+def performance_plot_tables(tables, output, title):
+	import matplotlib
+
+	matplotlib.use("Agg")
+	import matplotlib.pyplot as plt
+
+	performance = tables["performance"]
+	panels = []
+	if len(performance):
+		for (family, metric), d in performance.groupby(["family", "metric"], sort=False):
+			# Preserve every model/metric; paginate long groups instead of ranking winners.
+			for start in range(0, len(d), 24):
+				panels.append((family, metric, d.iloc[start : start + 24]))
+	if not panels:
+		panels = [("No evaluated prediction models yet", "", pd.DataFrame())]
+	stages = tables["stages"].groupby("stage", sort=False).metric_rows.sum()
+	status = "; ".join(f"{k}: " + ("available" if v else "not evaluated") for k, v in stages.items())
+	for page in range(0, len(panels), 4):
+		selected = panels[page : page + 4]
+		suffix = "" if page == 0 else f"_{page//4+1:02d}"
+		stem = "performance_comparison" + suffix
+		nr = (len(selected) + 1) // 2
+		height = max(3.5, max(len(d) for _, _, d in selected) * 0.42 + 2.3)
+		fig, axes = plt.subplots(nr, 2, figsize=(18, nr * height), squeeze=False)
+		for i, (ax, (family, metric, d)) in enumerate(zip(axes.ravel(), selected)):
+			export = d.copy() if len(d) else tables["stages"].copy()
+			export["panel"] = chr(65 + i)
+			export.to_csv(output / f"{stem}.panel_{chr(65+i)}.csv", index=False)
+			if len(d):
+				labels = d.apply(
+					lambda r: textwrap.fill(" / ".join(filter(None, [r.panel, r.model, r.context])), 56),
+					axis=1,
+				)
+				ax.scatter(d.value, np.arange(len(d)), color="#247b83", s=30)
+				ax.set_yticks(np.arange(len(d)), labels, fontsize=8)
+				ax.invert_yaxis()
+				ax.grid(axis="x", alpha=0.2)
+				if "Harrell C" in metric or metric.endswith("AUC") or metric in {"Uno C", "AUPRC"}:
+					ax.set_xlim(0, 1)
+				ax.set_xlabel(metric)
+			else:
+				ax.text(0.5, 0.5, "Not evaluated", ha="center", transform=ax.transAxes)
+			ax.set_title(family + " | " + metric, fontsize=11)
+		for ax in axes.ravel()[len(selected) :]:
+			ax.set_visible(False)
+		fig.suptitle(title, fontsize=15)
+		fig.text(
+			0.02,
+			0.012,
+			textwrap.fill(status, 155)
+			+ "\nPanels retain their own cohorts/endpoints; cross-panel differences are descriptive.",
+			fontsize=9,
+		)
+		fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+		fig.savefig(output / f"{stem}.png", dpi=150)
+		plt.close(fig)
+	paired = tables["c1_abm_comparison"]
+	if not paired.empty:
+		for subset, d in paired.groupby("subset", sort=False):
+			d = d.loc[d.status.eq("evaluated")]
+			for page in range(0, len(d), 30):
+				z = d.iloc[page : page + 30]
+				fig, ax = plt.subplots(figsize=(14, max(4, len(z) * 0.45 + 2)))
+				labels = z.apply(
+					lambda r: textwrap.fill(
+						f"{r.model} vs {r.baseline_panel} / {r.baseline_model} (n={r.N})", 75
+					),
+					axis=1,
+				)
+				ax.scatter(z.delta_AUC, np.arange(len(z)), color="#386cb0")
+				ax.set_yticks(np.arange(len(z)), labels, fontsize=8)
+				ax.invert_yaxis()
+				ax.axvline(0, color="grey", linestyle="--")
+				ax.set_xlabel("ABM minus C1 IPCW AUC (same held-out participants and weights)")
+				ax.set_title(f"{title} | {subset} | exploratory point estimates")
+				fig.tight_layout()
+				stem = f"C1_ABM_comparison_{subset}_{page//30+1:02d}"
+				z.to_csv(output / f"{stem}.panel_A.csv", index=False)
+				fig.savefig(output / f"{stem}.png", dpi=150)
+				plt.close(fig)
+
+
+def performance_complete(output):
+	"""Check saved report tables and their expected PNG pages without loading fits."""
+	from le8_common import read_xlsx
+
+	try:
+		book = Path(output) / "performance_summary.xlsx"
+		with zipfile.ZipFile(book) as archive:
+			if archive.testzip() is not None:
+				return False
+		tables = read_xlsx(book)
+		if not {"performance", "stages"} <= tables.keys():
+			return False
+		performance = tables["performance"]
+		panels = (
+			sum((len(d) + 23) // 24 for _, d in performance.groupby(["family", "metric"], sort=False))
+			if len(performance)
+			else 1
+		)
+		names = [
+			"performance_comparison" + ("" if page == 0 else f"_{page + 1:02d}") + ".png"
+			for page in range((panels + 3) // 4)
+		]
+		paired = tables.get("c1_abm_comparison", pd.DataFrame())
+		if not paired.empty:
+			for subset, data in paired.groupby("subset", sort=False):
+				count = int(data.status.eq("evaluated").sum())
+				names.extend(
+					f"C1_ABM_comparison_{subset}_{page + 1:02d}.png" for page in range((count + 29) // 30)
+				)
+		for name in names:
+			with (Path(output) / name).open("rb") as handle:
+				if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+					return False
+				handle.seek(-12, 2)
+				if handle.read(12) != b"\x00\x00\x00\x00IEND\xaeB`\x82":
+					return False
+		return True
+	except (OSError, ValueError, KeyError, AttributeError, zipfile.BadZipFile):
+		return False
+
+
+def performance_generate(root, published, traits, layers, stage, skip_completed=False):
+	for trait in traits:
+		for layer in layers:
+			output = (
+				root / "final" / trait / layer if stage == "final" else root / trait / layer / stage
+			) / "performance"
+			if skip_completed and performance_complete(output):
+				print(
+					f"[LE8] SKIP performance Y={trait} biom={layer} stage={stage}: saved report files validated",
+					flush=True,
+				)
+				continue
+			tables = performance_collect(root, published, trait, layer, stage)
+			performance_write_snapshot(tables, output, f"{trait} / {layer} | through {stage}")
+
+
+def performance_write_snapshot(tables, output, title):
+	output.mkdir(parents=True, exist_ok=True)
+	# Only files owned by this report are refreshed.
+	for pattern in [
+		"performance_comparison*.png",
+		"C1_ABM_comparison_*.png",
+		"performance_comparison*.panel_*.csv",
+		"C1_ABM_comparison_*.panel_*.csv",
+	]:
+		for path in output.glob(pattern):
+			path.unlink()
+	safe = {name: d if len(d.columns) else pd.DataFrame(columns=["status"]) for name, d in tables.items()}
+	for name, d in safe.items():
+		d.to_csv(output / (name + ".csv"), index=False)
+	write_xlsx(output / "performance_summary.xlsx", safe)
+	performance_plot_tables(safe, output, title)
+	print("[LE8] DONE cumulative performance: " + str(output), flush=True)
+
+
+def performance_main(argv=None):
+	p = argparse.ArgumentParser(description=__doc__)
+	p.add_argument("--analysis-root", type=Path, required=True)
+	p.add_argument("--Y", required=True)
+	p.add_argument("--biom", required=True)
+	p.add_argument("--stage", choices=performance_STAGES, required=True)
+	p.add_argument(
+		"--skip-completed", action="store_true", help="Keep complete saved reports and their original scope"
+	)
+	a = p.parse_args(argv)
+	performance_generate(
+		a.analysis_root,
+		Path(os.getenv("LE8_PUBLISHED_ROOT", str(a.analysis_root))),
+		a.Y.split(","),
+		a.biom.split(","),
+		a.stage,
+		a.skip_completed,
+	)
+
+
+# 🚩 evidence index
+# Read-only result indexing for modular table/figure-first Shiny.
+#
+# Reads exact exports in existing le8-workbook-v1 XLSX archives and new manifests.
+# Never loads pickle/RDS/model/participant objects. Missing evidence is not zero.
+import sqlite3
+from le8_common import sha256, read_xlsx, read_table, PRIVATE
+
+evidence_FEATURES = (
+	"feature",
+	"assay",
+	"protein",
+	"Protein",
+	"metabolite",
+	"Metabolite",
+	"exposure",
+	"term",
+	"gene",
+)
+evidence_PRIVATE_PATH = re.compile(
+	r"(^|[/_.-])(private|LOCAL_ONLY|input|inputs|neural|checkpoint|outcomes|predictions|participant|individual|matches|roster|split)([/_.-]|$)",
+	re.I,
+)
+evidence_PRIVATE_EXACT = {
+	"eid",
+	"iid",
+	"fid",
+	"id",
+	"id1",
+	"id2",
+	"participantid",
+	"individualid",
+	"subjectid",
+	"patientid",
+	"queryid",
+	"targetid",
+	"referenceid",
+	"donorid",
+	"ukbid",
+	"ukbeid",
+	"sampleid",
+	"birthdate",
+	"datebirth",
+}
+
+
+def evidence_has_private(d):
+	names = {re.sub("[^a-z0-9]", "", str(c).lower()) for c in d.columns}
+	allowed = (
+		{"referenceid"}
+		if {"runid", "modelid", "primaryid", "referenceid", "n", "unochorizon"} <= names
+		else set()
+	)
+	return bool((names - allowed) & evidence_PRIVATE_EXACT) or any(PRIVATE.search(str(c)) for c in d.columns)
+
+
+def evidence_private_path(path):
+	return any(p.startswith(".") or p.startswith("_") for p in Path(path).parts) or bool(
+		evidence_PRIVATE_PATH.search(str(path))
+	)
+
+
+def evidence_context(path):
+	parts = Path(path).parts
+	layer = next((p for p in parts if p in ("prot", "met")), "all")
+	ix = parts.index(layer) if layer in parts else -1
+	trait = parts[ix - 1] if ix > 0 else "all"
+	module = next((p for p in parts if re.match(r"c[1-5]_", p)), "other")
+	if "abm_twin" in parts or "twin" in str(path).lower():
+		module = "ABM twin"
+	elif "deviation" in str(path).lower():
+		module = "Molecular deviation"
+	elif module == "other" and "final" in parts:
+		module = "Final"
+	return dict(module=module, layer=layer, trait=trait)
+
+
+def evidence_evidence_status(d):
+	if not len(d):
+		return "empty", "No numerical result rows; not a null hypothesis result"
+	if set(map(str.lower, d.columns)) <= {"status", "note", "message", "detail", "reason", "caption"}:
+		values = "; ".join(d.fillna("").astype(str).to_numpy().ravel())[:600]
+		return "status_only", values
+	return "available", "Source values; no causal or clinical claim inferred by the viewer"
+
+
+def evidence_plot_kind(d):
+	c = set(d)
+	if {"confidence_lo", "mean_confidence", "Brier_IPCW"} <= c:
+		return "confidence"
+	if "beta" in c and ("time" in c or "landmark_years" in c):
+		return "temporal"
+	if {"delta_R2_vs_NS", "component", "model"} <= c:
+		return "proxy_reconstruction"
+	if c & {"PP_H4", "PP.H4.abf", "PP.H4"}:
+		return "coloc"
+	if {"FPR", "TPR"} <= c:
+		return "roc"
+	if {"net_benefit", "threshold"} <= c:
+		return "decision"
+	if {"mean_deviation", "state"} <= c:
+		return "deviation_state"
+	if {"bin", "lower", "upper", "state", "N"} <= c:
+		return "deviation_histogram"
+	if {"own_PGS_partial_R2", "feature"} <= c:
+		return "pgs_capture"
+	if {"coverage", "AUC_IPCW", "model"} <= c:
+		return "coverage"
+	if {"delta", "lower", "upper", "metric"} <= c:
+		return "contrasts"
+	if {"predicted", "observed"} <= c:
+		return "calibration"
+	if {"beta", "p.value"} <= c or {"beta", "p"} <= c or {"beta", "se"} <= c or {"beta", "std.error"} <= c:
+		return "effect"
+	if {"pgs_full_beta", "observed_beta"} <= c:
+		return "concordance"
+	if {"AUC", "model"} <= c:
+		return "models"
+	return "generic"
+
+
+class evidence_Indexer:
+	def __init__(self, root, output, max_mb=128):
+		self.root = Path(root).resolve()
+		self.out = Path(output).resolve()
+		self.max_bytes = int(max_mb * 1024**2)
+		if not self.root.is_dir():
+			raise FileNotFoundError(self.root)
+		self.out.mkdir(parents=True, exist_ok=True)
+		fd, p = tempfile.mkstemp(prefix="evidence-", suffix=".sqlite.tmp", dir=self.out)
+		os.close(fd)
+		self.tmp = Path(p)
+		self.db = sqlite3.connect(p)
+		self.rows = []
+		self.audit = []
+		self.seen = {}
+		self.owned = set()
+
+	def warn(self, source, status, detail):
+		self.audit.append(dict(source=source, status=status, detail=str(detail)[:800]))
+
+	def add(self, d, name, source, source_hash, meta=None, kind="native"):
+		d = pd.DataFrame(d)
+		if not len(d.columns):
+			d = pd.DataFrame(columns=["status"])
+		if evidence_has_private(d):
+			self.warn(source, "blocked_private", "Participant-like columns; no rows imported")
+			return
+		if len(d) > 1000000:
+			self.warn(
+				source, "skipped_size", "Table exceeds one million rows; prepare a filtered aggregate view"
+			)
+			return
+		d.columns = list(map(str, d.columns))
+		if len(set(d.columns)) != len(d.columns):
+			self.warn(source, "skipped_schema", "Duplicate columns")
+			return
+		for c in d.select_dtypes(include="object").columns:
+			if any(isinstance(v, (dict, list, tuple, set)) for v in d[c].head(500)):
+				d[c] = d[c].map(
+					lambda v: json.dumps(v, default=str) if isinstance(v, (dict, list, tuple, set)) else v
+				)
+		md = {**evidence_context(source), **(meta or {})}
+		md["module"] = {
+			"deviation": "Molecular deviation",
+			"c1_correlate": "C1 association and prediction",
+			"c2_cause": "C2 genetic evidence",
+			"c3_coloc": "C3 colocalization",
+			"c4_connect": "C4 connection",
+			"c5_cellulation": "C5 cellular context",
+		}.get(md["module"], md["module"])
+		# A content hash is exact to this exported table. Never min-P/max-H4 merge.
+		content = hashlib.sha256(d.to_csv(index=False).encode()).hexdigest()
+		# Different runs retain independent provenance even for identical tables.
+		key = (
+			md["trait"],
+			md["layer"],
+			md["module"],
+			md.get("run_id") or str(Path(source.split("::")[0]).parent),
+			name,
+			content,
+		)
+		if key in self.seen:
+			self.warn(source, "duplicate_identical", self.seen[key])
+			return
+		self.seen[key] = source
+		tid = hashlib.sha256((source + "|" + name + "|" + content).encode()).hexdigest()[:20]
+		table = "data_" + tid
+		d.to_sql(table, self.db, index=False, if_exists="fail")
+		feature = next((c for c in evidence_FEATURES if c in d), "")
+		if feature:
+			self.db.execute(f'CREATE INDEX idx_{tid}_feature ON "{table}" ("{feature}")')
+			features = pd.DataFrame({"table_id": tid, "feature": d[feature].dropna().astype(str).unique()})
+			features.to_sql("feature_index", self.db, index=False, if_exists="append")
+		state, note = evidence_evidence_status(d)
+		self.rows.append(
+			dict(
+				table_id=tid,
+				sql_table=table,
+				name=name,
+				**{k: v for k, v in md.items() if k != "run_id"},
+				run_id=md.get("run_id") or source_hash[:12],
+				source=source,
+				source_sha256=source_hash,
+				content_sha256=content,
+				rows=len(d),
+				columns_json=json.dumps(list(d.columns)),
+				feature_column=feature,
+				status=state,
+				note=note,
+				source_kind=kind,
+				plot_kind=evidence_plot_kind(d),
+			)
+		)
+
+	def workbook(self, path):
+		rel = str(path.relative_to(self.root))
+		h = sha256(path)
+		try:
+			with zipfile.ZipFile(path) as z:
+				if "le8/manifest.json" in z.namelist():
+					mf = json.loads(z.read("le8/manifest.json"))
+					if mf.get("format") != "le8-workbook-v1":
+						raise ValueError("Unknown archive format")
+					for name, e in mf.get("files", {}).items():
+						source = rel + "::" + name
+						if Path(name).name != name or evidence_private_path(name):
+							self.warn(source, "blocked_private_path", "not imported")
+							continue
+						part = e.get("part", "")
+						if not re.fullmatch(r"le8/exports/[a-f0-9]{64}\.bin", part):
+							raise ValueError("Unsafe export part")
+						if e.get("kind") not in ("table", "workbook"):
+							self.warn(source, "skipped_non_table", e.get("kind", "unknown"))
+							continue
+						info = z.getinfo(part)
+						if info.file_size > self.max_bytes:
+							self.warn(source, "skipped_size", "Expanded export exceeds cap")
+							continue
+						raw = z.read(part)
+						if len(raw) != int(e["size"]) or hashlib.sha256(raw).hexdigest() != e["sha256"]:
+							raise ValueError("Stored export checksum mismatch")
+						if e["kind"] == "workbook":
+							for sh, d in read_xlsx(io.BytesIO(raw), max_bytes=self.max_bytes).items():
+								self.add(d, name + " / " + sh, source, e["sha256"], kind="embedded_workbook")
+						else:
+							import gzip
+
+							if name.endswith(".gz"):
+								raw = gzip.decompress(raw)
+							if len(raw) > self.max_bytes:
+								self.warn(source, "skipped_size", "Decompressed table exceeds cap")
+								continue
+							d = (
+								pd.read_csv(io.BytesIO(raw), sep="\t" if ".tsv" in name else ",")
+								if raw.strip()
+								else pd.DataFrame()
+							)
+							self.add(d, name, source, e["sha256"], kind="exact_embedded_export")
+					return
+			for sh, d in read_xlsx(path, max_bytes=self.max_bytes).items():
+				self.add(d, sh, rel + "::" + sh, h, kind="worksheet_values")
+		except Exception as exc:
+			self.warn(rel, "workbook_read_failed", exc)
+
+	def native(self, path):
+		meta = json.loads(path.read_text())
+		directory = path.parent
+		for e in meta:
+			rel = e["path"]
+			if Path(rel).name != rel:
+				raise ValueError("Native table manifest path must be a basename")
+			source = directory / rel
+			if not source.resolve().is_relative_to(self.root):
+				raise ValueError("Native source escapes result root")
+			if evidence_private_path(str(source.relative_to(self.root))):
+				self.warn(rel, "blocked_private_path", "not imported")
+				continue
+			if not source.exists():
+				self.warn(rel, "missing", "Manifest target missing")
+				continue
+			if source.stat().st_size > self.max_bytes:
+				self.warn(rel, "skipped_size", "File exceeds cap")
+				continue
+			if sha256(source) != e["sha256"]:
+				self.warn(rel, "checksum_mismatch", "Index not updated for changed source")
+				continue
+			d = read_table(source)
+			md = {k: e[k] for k in ("module", "layer", "trait", "run_id") if k in e}
+			self.add(d, e["name"], str(source.relative_to(self.root)), e["sha256"], md)
+			self.owned.add(source.resolve())
+		self.owned.update(p.resolve() for p in directory.glob("*.xlsx"))
+
+	def run(self, traits=None, layers=None):
+		def allowed(p):
+			rel = p.relative_to(self.root)
+			if any(
+				p.resolve().is_relative_to(out) for out in [self.out, self.root / "evidence"]
+			) or evidence_private_path(str(rel)):
+				return False
+			cx = evidence_context(rel)
+			return (not traits or cx["trait"] == "all" or cx["trait"] in traits) and (
+				not layers or cx["layer"] == "all" or cx["layer"] in layers
+			)
+
+		try:
+			for p in sorted(self.root.rglob("table_manifest.json")):
+				if allowed(p):
+					try:
+						self.native(p)
+					except Exception as exc:
+						self.warn(str(p.relative_to(self.root)), "manifest_failed", exc)
+			for p in sorted(self.root.rglob("*")):
+				if not p.is_file() or not allowed(p) or p.resolve() in self.owned:
+					continue
+				if p.suffix.lower() == ".xlsx":
+					self.workbook(p)
+				elif p.name.endswith((".csv", ".tsv", ".csv.gz", ".tsv.gz")):
+					rel = str(p.relative_to(self.root))
+					if p.stat().st_size > self.max_bytes:
+						self.warn(rel, "skipped_size", "File exceeds cap")
+						continue
+					try:
+						self.add(read_table(p), p.name, rel, sha256(p), kind="delimited")
+					except Exception as exc:
+						self.warn(rel, "read_failed", exc)
+			catalogue = pd.DataFrame(
+				self.rows,
+				columns=[
+					"table_id",
+					"sql_table",
+					"name",
+					"module",
+					"layer",
+					"trait",
+					"run_id",
+					"source",
+					"source_sha256",
+					"content_sha256",
+					"rows",
+					"columns_json",
+					"feature_column",
+					"status",
+					"note",
+					"source_kind",
+					"plot_kind",
+				],
+			)
+			catalogue.to_sql("catalogue", self.db, index=False, if_exists="replace")
+			audit = pd.DataFrame(self.audit, columns=["source", "status", "detail"])
+			audit.to_sql("audit", self.db, index=False, if_exists="replace")
+			if not self.db.execute(
+				"SELECT count(*) FROM sqlite_master WHERE name='feature_index'"
+			).fetchone()[0]:
+				self.db.execute("CREATE TABLE feature_index(table_id TEXT,feature TEXT)")
+			self.db.execute("CREATE INDEX IF NOT EXISTS feature_lookup ON feature_index(table_id,feature)")
+			# Scientific states are reported separately; no automatic claim from counts.
+			meta = pd.DataFrame(
+				[
+					dict(
+						format="le8-evidence",
+						source_root=str(self.root),
+						tables=len(catalogue),
+						audit_rows=len(audit),
+						completeness=(
+							"partial"
+							if audit.status.isin(
+								[
+									"skipped_size",
+									"workbook_read_failed",
+									"read_failed",
+									"manifest_failed",
+									"checksum_mismatch",
+								]
+							).any()
+							else "indexed_available_aggregate_sources"
+						),
+						models_refit=False,
+						private_records_imported=False,
+					)
+				]
+			)
+			meta.to_sql("metadata", self.db, index=False, if_exists="replace")
+			self.db.commit()
+			self.db.close()
+			os.replace(self.tmp, self.out / "evidence.sqlite")
+			write_xlsx(self.out / "catalogue.xlsx", {"tables": catalogue, "audit": audit, "metadata": meta})
+			document = '<!doctype html><meta charset="utf-8"><title>LE8 results</title><style>body{font:15px system-ui;margin:2rem}table{border-collapse:collapse;width:100%}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left}</style><h1>LE8 · Table and figure index</h1>'
+			document += "<p>Read-only aggregate index. Choose one table and one molecule in Shiny. No new model fitting.</p>"
+			document += meta.to_html(index=False, escape=True) + catalogue[
+				["trait", "layer", "module", "name", "rows", "status", "plot_kind"]
+			].to_html(index=False, escape=True)
+			document += (
+				"<details><summary>Import and provenance audit</summary>"
+				+ audit.to_html(index=False, escape=True)
+				+ "</details>"
+			)
+			(self.out / "index.html").write_text(document)
+			return {
+				"tables": len(catalogue),
+				"audit_rows": len(audit),
+				"database": str(self.out / "evidence.sqlite"),
+			}
+		except BaseException:
+			self.db.close()
+			self.tmp.unlink(missing_ok=True)
+			raise
+
+
+def evidence_main(argv=None):
+	a = argparse.ArgumentParser(description=__doc__)
+	a.add_argument("--analysis-root", required=True)
+	a.add_argument("--out")
+	a.add_argument("--Y")
+	a.add_argument("--biom")
+	a.add_argument("--max-table-mb", type=int, default=128)
+	x = a.parse_args(argv)
+	out = x.out or str(Path(x.analysis_root) / "evidence")
+	print(
+		json.dumps(
+			evidence_Indexer(x.analysis_root, out, x.max_table_mb).run(
+				x.Y.split(",") if x.Y else None, x.biom.split(",") if x.biom else None
+			)
+		)
+	)
+
+
+import subprocess
+
+SHARE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def share_viewer(root, output, r_bin="Rscript", max_table_mb=128):
+	root, output = Path(root).resolve(), Path(output).resolve()
+	if output.suffix.lower() != ".zip" or output.is_relative_to(root):
+		raise ValueError("Use a ZIP path outside the analysis result directory")
+	with tempfile.TemporaryDirectory(prefix="le8-share-", dir="/tmp") as scratch:
+		bundle = Path(scratch) / "le8-share"
+		shutil.copytree(SHARE_ROOT / "shiny", bundle / "shiny")
+		evidence_Indexer(root, bundle / "evidence", max_table_mb).run()
+		(bundle / "README.txt").write_text(
+			"LE8 aggregate evidence viewer\n\n"
+			"Contains the aggregate database, catalogue and Shiny code. "
+			"No participant arrays, model weights or raw input data are included.\n\n"
+			"Install R packages: install.packages(c('shiny','bslib','DT','DBI','RSQLite','ggplot2','plotly'))\n"
+			"From the extracted folder: Rscript shiny/app.R\n"
+			"Open http://127.0.0.1:3839. Keep shiny/ and evidence/ together.\n",
+			encoding="utf-8",
+		)
+		env = {k: v for k, v in os.environ.items() if k not in {"LE8_EVIDENCE_DB", "LE8_ANALYSIS_ROOT"}}
+		subprocess.run([r_bin, str(bundle / "shiny/app.R"), "--review"], env=env, check=True)
+		output.parent.mkdir(parents=True, exist_ok=True)
+		fd, name = tempfile.mkstemp(prefix=".le8-share-", suffix=".zip", dir=output.parent)
+		os.close(fd)
+		archive = Path(name)
+		try:
+			with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as stream:
+				for path in sorted(bundle.rglob("*")):
+					if path.is_file():
+						stream.write(path, path.relative_to(bundle.parent))
+			with zipfile.ZipFile(archive) as stream:
+				if stream.testzip() is not None:
+					raise ValueError("ZIP verification failed")
+			os.replace(archive, output)
+		finally:
+			archive.unlink(missing_ok=True)
+	print(f"[LE8] Share package: {output}")
+
+
+def share_main(argv=None):
+	p = argparse.ArgumentParser(description=__doc__)
+	p.add_argument("--analysis-root", required=True)
+	p.add_argument("--out", required=True)
+	p.add_argument("--r-bin", default="Rscript")
+	p.add_argument("--max-table-mb", type=int, default=128)
+	a = p.parse_args(argv)
+	share_viewer(a.analysis_root, a.out, a.r_bin, a.max_table_mb)
 
 
 if __name__ == "__main__":

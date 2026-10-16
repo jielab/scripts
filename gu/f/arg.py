@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""GU arg utilities. See --help for commands."""
-
+"""arg utilities and command entry points."""
 from __future__ import annotations
+import sys
+
+sys.dont_write_bytecode = True
+
+
+# 🚩 arg
+# GU arg utilities. See --help for commands.
 from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
 	import tskit
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
+
 sys.dont_write_bytecode = True
 
 if "gu_0_common" not in sys.modules:
@@ -27,7 +33,6 @@ from gu_0_common import load_module
 """Validate the shared male-only, one-haplotype-per-person ARG X contract."""
 import argparse
 import csv
-from pathlib import Path
 
 
 def pfile_prefix(directory, chrom):
@@ -75,8 +80,6 @@ def arg_input_cli():
 
 # 🚩 arg
 """ARG preparation, inference, validation and TRACE export utilities."""
-
-import sys
 import gzip
 
 # ---- x ----
@@ -108,9 +111,9 @@ def x_read_sexes(path):
 def x_haploid_zarr(source, destination):
 	"""Flatten only real GT copies, never infer the -2 padding as a sample.
 
-	Uniform haploid storage also works with tsinfer's partitioned matcher.
-	Scan every GT chunk to enforce constant per-individual ploidy.
-	"""
+    Uniform haploid storage also works with tsinfer's partitioned matcher.
+    Scan every GT chunk to enforce constant per-individual ploidy.
+    """
 	import numpy as np
 	import numcodecs
 	import zarr
@@ -124,7 +127,14 @@ def x_haploid_zarr(source, destination):
 		raise ValueError("Invalid per-sample X ploidy in VCF-Zarr")
 	identities = [(name, h + 1) for name, p in zip(names, ploidies) for h in range(int(p))]
 	dest = zarr.open_group(str(destination), mode="w")
-	for key in ("variant_position", "variant_allele", "variant_AA", "variant_contig", "contig_id", "contig_length"):
+	for key in (
+		"variant_position",
+		"variant_allele",
+		"variant_AA",
+		"variant_contig",
+		"contig_id",
+		"contig_length",
+	):
 		if key in src:
 			zarr.copy(src[key], dest, name=key)
 	ids = np.asarray([f"arg_hap_{i}" for i in range(len(identities))], dtype=object)
@@ -167,10 +177,7 @@ def x_restore_individuals(ts, identities):
 
 # ---- needle_x ----
 """Pack real non-PAR X copies into ASMC's two-column storage containers."""
-import argparse
-import csv
 import json
-from pathlib import Path
 
 
 def needle_x_panel(keep, psam, policy, qc):
@@ -215,7 +222,9 @@ def needle_x_pack(prefix, psam, build, keep):
 	sample = Path(prefix + ".sample")
 	names = [line.split()[1] for line in sample.read_text().splitlines()[2:] if line.strip()]
 	wanted = [
-		line.split()[-1] for line in Path(keep).read_text().splitlines() if line.strip() and not line.startswith("#")
+		line.split()[-1]
+		for line in Path(keep).read_text().splitlines()
+		if line.strip() and not line.startswith("#")
 	]
 	if names != wanted:
 		raise ValueError("X export sample order differs from selected panel")
@@ -223,7 +232,9 @@ def needle_x_pack(prefix, psam, build, keep):
 	if len(identities) % 2:
 		raise ValueError("Odd real X haplotype count: select an even-male panel before export")
 	male = np.array([sexes[name] == 1 for name in names])
-	columns = np.array([2 * i + h for i, name in enumerate(names) for h in range(1 if sexes[name] == 1 else 2)])
+	columns = np.array(
+		[2 * i + h for i, name in enumerate(names) for h in range(1 if sexes[name] == 1 else 2)]
+	)
 	haps = Path(prefix + ".haps.gz")
 	if not haps.exists():
 		haps = Path(prefix + ".haps")
@@ -323,8 +334,12 @@ def needle_x_check(tree, identities, output, psam, keep):
 		raise ValueError("X biological haplotype identities disagree with panel/sex")
 	ts = tskit.load(tree)
 	with open(output) as handle:
-		mapped = [(r["eid"], int(r["hap"]), int(r["sample_node"])) for r in csv.DictReader(handle, delimiter="\t")]
-	if len(expected) != ts.num_samples or mapped != [(n, h, int(node)) for (n, h), node in zip(expected, ts.samples())]:
+		mapped = [
+			(r["eid"], int(r["hap"]), int(r["sample_node"])) for r in csv.DictReader(handle, delimiter="\t")
+		]
+	if len(expected) != ts.num_samples or mapped != [
+		(n, h, int(node)) for (n, h), node in zip(expected, ts.samples())
+	]:
 		raise ValueError("X sample map does not match tree samples and real ploidy")
 	for name, hap, node in mapped:
 		individual = ts.node(node).individual
@@ -379,14 +394,9 @@ Large VCF-Zarr intermediates are created below a Linux temporary directory
 WSL because Zarr contains many small files and is extremely slow to create or
 remove on a Windows-mounted filesystem.
 """
-
-
-import argparse
 from collections import Counter
 import inspect
-import json
 import os
-from pathlib import Path
 import pickle
 import shutil
 import subprocess
@@ -633,7 +643,9 @@ def infer_parse_args() -> argparse.Namespace:
 	parser.add_argument("--phase-check-records", type=int, default=2000)
 	parser.add_argument("--no-progress", action="store_true")
 	parser.add_argument(
-		"--one-bit", action="store_true", help="use 1-bit biallelic genotype encoding; requires no missing genotypes"
+		"--one-bit",
+		action="store_true",
+		help="use 1-bit biallelic genotype encoding; requires no missing genotypes",
 	)
 	parser.add_argument(
 		"--sample-match-min-work",
@@ -716,7 +728,10 @@ def infer_main() -> None:
 			haploid_path = work / f"{args.out.stem}.haploid.vcz"
 			x_identities = x_haploid_zarr(vcz_path, haploid_path)
 			vcz_path = haploid_path
-			print(f"[ARG] Non-PAR X: {len(sample_ids)} individuals, {len(x_identities)} real haplotypes", flush=True)
+			print(
+				f"[ARG] Non-PAR X: {len(sample_ids)} individuals, {len(x_identities)} real haplotypes",
+				flush=True,
+			)
 		ancestral_array, n_input_variants = infer_build_ancestral_array(vcz_path)
 		print(f"[ARG] VCF ploidy: {input_ploidy}", flush=True)
 
@@ -909,12 +924,6 @@ def infer_main() -> None:
 """Fast structural validation for a completed tsinfer ARG and its sidecars."""
 
 
-import argparse
-import csv
-import json
-from pathlib import Path
-
-
 load_module("0.common.py")
 from gu_0_common import enable_wide_csv_fields
 
@@ -1022,13 +1031,6 @@ def check_main() -> None:
 """Export a native ARG tree and sample map to GU TRACE's input contract."""
 
 
-import argparse
-import csv
-import json
-import os
-from pathlib import Path
-
-
 def trace_atomic_text(path: Path, text: str) -> None:
 	import tskit
 
@@ -1100,7 +1102,9 @@ def trace_write_tree(source: Path, dest: Path, ts: tskit.TreeSequence, method: s
 	dest.parent.mkdir(parents=True, exist_ok=True)
 	tmp = dest.with_name(f".{dest.name}.tmp.{os.getpid()}")
 	tmp.unlink(missing_ok=True)
-	offset = float(ts.metadata.get("offset", 0)) if method == "needle" and isinstance(ts.metadata, dict) else 0
+	offset = (
+		float(ts.metadata.get("offset", 0)) if method == "needle" and isinstance(ts.metadata, dict) else 0
+	)
 	if offset:
 		# Native ARG-Needle coordinates are relative to the first input SNP.
 		# GU loci and TRACE maps are chromosome coordinates, so translate once.
@@ -1220,7 +1224,9 @@ def trace_main() -> None:
 	rows = trace_read_map(args.sample_map, args.method)
 	stats = trace_validate(ts, rows, args.chr)
 	storage = trace_write_tree(args.tree, out_tree, ts, args.method)
-	map_text = "tree_node_id\tsample\thaplotype\n" + "".join(f"{node}\t{sample}\t{hap}\n" for node, sample, hap in rows)
+	map_text = "tree_node_id\tsample\thaplotype\n" + "".join(
+		f"{node}\t{sample}\t{hap}\n" for node, sample, hap in rows
+	)
 	trace_atomic_text(out_map, map_text)
 	out_ts = tskit.load(out_tree)
 	stats = trace_validate(out_ts, trace_read_map(out_map, "tsinfer"), args.chr)
@@ -1250,10 +1256,6 @@ def trace_main() -> None:
 Keep only one pending row in memory. Do not select an arbitrary allele from
 split multiallelic sites. Replace the input only after a successful full scan.
 """
-import argparse
-import json
-import os
-from pathlib import Path
 
 
 def unique_clean(path, chromosome):
@@ -1267,7 +1269,11 @@ def unique_clean(path, chromosome):
 		compressed = path.suffix == ".gz"
 		with (
 			gzip.open(path, "rt") if compressed else path.open() as source,
-			gzip.open(temporary, "wt", compresslevel=1) if compressed else temporary.open("w", newline="\n") as output,
+			(
+				gzip.open(temporary, "wt", compresslevel=1)
+				if compressed
+				else temporary.open("w", newline="\n")
+			) as output,
 		):
 			for number, line in enumerate(source, 1):
 				if not line.strip():
@@ -1277,7 +1283,9 @@ def unique_clean(path, chromosome):
 					raise ValueError(f"HAPS line {number}: malformed row or wrong chromosome")
 				position = int(fields[2])
 				if position < 1 or (previous is not None and position < previous):
-					raise ValueError(f"HAPS line {number}: invalid/unsorted position {position} after {previous}")
+					raise ValueError(
+						f"HAPS line {number}: invalid/unsorted position {position} after {previous}"
+					)
 				total += 1
 				if position == previous:
 					if count == 1:
@@ -1376,7 +1384,11 @@ def validate_vcf_main():
 				if ploidies is None:
 					ploidies = {n: len(c["GT"]) for n, c in r.samples.items()}
 			aa = r.info.get("AA")
-			if len(r.alleles) != 2 or aa not in r.alleles or any(x not in ("A", "C", "G", "T") for x in r.alleles):
+			if (
+				len(r.alleles) != 2
+				or aa not in r.alleles
+				or any(x not in ("A", "C", "G", "T") for x in r.alleles)
+			):
 				raise SystemExit(f"Invalid alleles/AA: {r.contig}:{r.pos}")
 			for name, call in r.samples.items():
 				gt = call.get("GT")
@@ -1423,14 +1435,1698 @@ def arg_cli():
 arg_COMMANDS["input"] = arg_input_cli
 
 
-SUBCOMMANDS = {}
+BASE_SUBCOMMANDS = {}
 
 
-def main():
+def base_main():
 	import sys
 
 	return arg_cli()
 
 
+sys.dont_write_bytecode = True
+
+
+# 🚩 arg_singer
+"""Phased WGS -> SINGER posterior windows -> chromosome-coordinate ARG samples.
+
+SINGER is an ARG backend, not an independent introgression caller. Keep each
+retained posterior draw separate; never treat windows as posterior replicates.
+"""
+
+import fcntl, hashlib, math, random, re, runpy
+from itertools import groupby
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading, signal
+import io, tempfile
+from contextlib import contextmanager
+
+singer_HERE = Path(__file__).resolve().parent
+
+
+def singer_stamp(p):
+	p = Path(p).resolve(strict=True)
+	s = p.stat()
+	return [str(p), s.st_size, s.st_mtime_ns]
+
+
+def singer_save(p, data):
+	p = Path(p)
+	p.parent.mkdir(parents=True, exist_ok=True)
+	q = p.with_name(p.name + ".next")
+	q.write_text(json.dumps(data, indent=2) + "\n")
+	q.replace(p)
+
+
+def singer_valid(p, request=None):
+	try:
+		d = json.loads(Path(p).read_text())
+		return (request is None or d["request"] == request) and all(
+			singer_stamp(x[0]) == x for x in d["outputs"]
+		)
+	except (OSError, ValueError, KeyError):
+		return False
+
+
+def singer_record(p, request, files):
+	singer_save(p, dict(request=request, outputs=[singer_stamp(x) for x in files]))
+
+
+def singer_run(cmd, log, stop=None):
+	import shlex
+
+	print("[SINGER] " + shlex.join(map(str, cmd)), flush=True)
+	with Path(log).open("a") as f:
+		f.write("\n" + shlex.join(map(str, cmd)) + "\n")
+		f.flush()
+		if stop is not None and stop.is_set():
+			raise RuntimeError("SINGER cancelled")
+		proc = subprocess.Popen(list(map(str, cmd)), stdout=f, stderr=subprocess.STDOUT)
+		try:
+			while True:
+				if stop is not None and stop.is_set():
+					raise RuntimeError("SINGER cancelled")
+				try:
+					rc = proc.wait(timeout=1)
+					break
+				except subprocess.TimeoutExpired:
+					pass  # Keep cancellation responsive without periodic console output.
+			if rc:
+				raise RuntimeError(f"command failed ({rc}); see {log}")
+		finally:
+			if proc.poll() is None:
+				proc.terminate()
+				try:
+					proc.wait(timeout=10)
+				except subprocess.TimeoutExpired:
+					proc.kill()
+					proc.wait()
+
+
+def singer_parse():
+	p = argparse.ArgumentParser(description=__doc__)
+	p.add_argument("--method", choices=["singer"], default="singer")
+	p.add_argument("--action", choices=["all", "build", "prepare", "check"], default="build")
+	p.add_argument("--format", choices=["native", "trace"], default="native")
+	p.add_argument("--dir-gen", default="/mnt/f/gen/1kg/37")
+	p.add_argument("--dir-vcf", "--target-vcf-dir", dest="dir_vcf")
+	p.add_argument("--arg-dir")
+	p.add_argument("--gen4arg-dir")
+	p.add_argument("--sample-file", "--sample-panel", dest="sample_file")
+	p.add_argument("--keep")
+	p.add_argument("--chr", "--chrs", dest="chr", default="1-22,X")
+	p.add_argument("--grch", default="37")
+	p.add_argument("--replace", type=str.upper, choices=["TRUE", "FALSE"], default="FALSE")
+	p.add_argument("--threads", type=int, default=1, help="total CPU budget; each SINGER window uses one CPU")
+	p.add_argument(
+		"--jobs",
+		type=int,
+		default=1,
+		help="maximum simultaneous SINGER windows, also limited by CPU and memory budgets",
+	)
+	p.add_argument(
+		"--singer-worker-memory-gb",
+		type=float,
+		default=24,
+		help="reserved GiB per active window including conversion (default: 24 for 5 Mb / ~1000 haplotypes); raise for larger inputs",
+	)
+	p.add_argument("--features", type=str.upper, choices=["FALSE"], default="FALSE")
+	p.add_argument("--sample-match-min-work", type=int, default=50000000)
+	p.add_argument("--singer-populations", default="GBR,CHB,ITU,YRI,LWK")
+	p.add_argument("--singer-per-pop", type=int, default=100)
+	p.add_argument("--singer-samples", type=int, default=50)
+	p.add_argument(
+		"--singer-burnin",
+		type=int,
+		default=50,
+		help="discard this many saved draws, each after --singer-thin iterations",
+	)
+	p.add_argument("--singer-thin", type=int, default=20)
+	p.add_argument("--singer-window-bp", type=int, default=5000000)
+	p.add_argument("--singer-min-sites", type=int, default=20)
+	p.add_argument("--singer-ne", type=float, default=10000)
+	p.add_argument("--mutation-rate", type=float, default=1.25e-8)
+	p.add_argument("--singer-recombination-rate", type=float, default=1.25e-8)
+	p.add_argument("--singer-start", type=int, default=0)
+	p.add_argument("--singer-end", type=int)
+	p.add_argument("--seed", type=int, default=20260909)
+	p.add_argument("--mac-min", type=int, default=1)
+	p.add_argument("--missing-max", type=float, choices=[0.0], default=0)
+	a = p.parse_args()
+	if os.environ.get("REFGEN_GEN4ARG_ONLY") == "1":
+		a.action = "prepare"
+	for k in [
+		"threads",
+		"jobs",
+		"singer_samples",
+		"singer_thin",
+		"singer_window_bp",
+		"singer_min_sites",
+		"mac_min",
+	]:
+		if getattr(a, k) < 1:
+			p.error(k + " must be positive")
+	for k in ["singer_ne", "mutation_rate", "singer_recombination_rate", "singer_worker_memory_gb"]:
+		if not math.isfinite(getattr(a, k)) or getattr(a, k) <= 0:
+			p.error(k + " must be finite and positive")
+	if min(a.singer_burnin, a.singer_per_pop, a.singer_start, a.seed) < 0:
+		p.error("counts, coordinates and seed must be nonnegative")
+	if a.singer_end is not None and a.singer_end <= a.singer_start:
+		p.error("end must exceed start")
+	a.grch = {"b37": "37", "grch37": "37", "hg19": "37", "b38": "38", "grch38": "38", "hg38": "38"}.get(
+		a.grch.lower(), a.grch
+	)
+	if a.grch not in ("37", "38"):
+		p.error("invalid genome build")
+	chrs = []
+	for s in re.split("[,; ]+", a.chr):
+		s = re.sub("^chr", "", s, flags=re.I).upper()
+		if not s:
+			continue
+		(
+			chrs.extend(map(str, range(int(s.split("-")[0]), int(s.split("-")[1]) + 1)))
+			if "-" in s
+			else chrs.append("X" if s == "23" else s)
+		)
+	a.chrs = list(dict.fromkeys(chrs))
+	if not a.chrs or not set(a.chrs) <= set(map(str, range(1, 23))) | {"X"}:
+		p.error("invalid chromosome selection")
+	root = Path(a.dir_gen).resolve()
+	if root.name in ("vcf", "pfile", "hap"):
+		root = root.parent
+	a.root = root
+	a.vcf = Path(a.dir_vcf or root / "vcf").resolve()
+	a.prep = Path(a.gen4arg_dir or str(a.vcf) + ".4arg.singer").resolve()
+	a.output = Path(a.arg_dir or root / "arg.singer").resolve()
+	a.panel = Path(a.sample_file or root / "samples.txt").resolve()
+	if len({a.vcf, a.prep, a.output}) != 3:
+		p.error("source, prepared and ARG directories must differ")
+	return a
+
+
+def singer_sample_panel(a, vcf, chrom):
+	available = list(vcf.header.samples)
+	meta = {}
+	if a.panel.is_file():
+		with a.panel.open() as f:
+			for r in csv.DictReader(f, delimiter="\t"):
+				name = r.get("sample", r.get("IID", r.get("#IID", "")))
+				if name:
+					meta[name] = r
+	if a.keep:
+		wanted = [s.strip().split()[0] for s in Path(a.keep).read_text().splitlines() if s.strip()]
+		if len(set(wanted)) != len(wanted):
+			raise ValueError("duplicate --keep sample")
+		if set(wanted) - set(available):
+			raise ValueError("--keep contains samples absent from VCF")
+		keep = set(wanted)
+	else:
+		pops = a.singer_populations.split(",")
+		groups = {}
+		for name in available:
+			pop = meta.get(name, {}).get("pop", "UNKNOWN")
+			if pops == ["ALL"] or pop in pops:
+				groups.setdefault(pop, []).append(name)
+		keep = set()
+		for pop, names in sorted(groups.items()):
+			# Hash ranking is stable across chromosomes and independent of VCF order.
+			names.sort(key=lambda n: hashlib.sha256(f"{a.seed}:{n}".encode()).hexdigest())
+			keep.update(names[: a.singer_per_pop] if a.singer_per_pop else names)
+	selected = [s for s in available if s in keep]
+	if not selected:
+		raise ValueError("no selected samples; provide --sample-file / --keep / --singer-populations ALL")
+	if chrom == "X":
+		bad = [s for s in selected if str(meta.get(s, {}).get("sex", "")).lower() not in ("1", "m", "male")]
+		if bad:
+			raise ValueError("X requires male-only VCF/panel; nonmale or unknown sex: " + ",".join(bad[:5]))
+	if len(selected) * (1 if chrom == "X" else 2) < 4:
+		raise ValueError("SINGER requires at least four selected haplotypes in this workflow")
+	return selected, meta
+
+
+def singer_source_vcf(a, chrom):
+	return a.vcf / ("chrX.male.vcf.gz" if chrom == "X" else f"chr{chrom}.vcf.gz")
+
+
+def singer_unique_snps(records, start, end, dropped):
+	"""Exclude every PASS biallelic SNP at a repeated position, before GT filters."""
+
+	def candidates():
+		for r in records:
+			# Indexed fetch can include an earlier structural variant overlapping this window.
+			if not start < r.pos <= end:
+				continue
+			reason = None
+			if set(r.filter) not in (set(), {"PASS"}):
+				reason = "filter"
+			elif len(r.alleles) != 2 or any(x not in ("A", "C", "G", "T") for x in r.alleles):
+				reason = "not_biallelic_snp"
+			if reason:
+				dropped[reason] = dropped.get(reason, 0) + 1
+			else:
+				yield r
+
+	for _, group in groupby(candidates(), key=lambda r: r.pos):
+		first = next(group)
+		count = 1 + sum(1 for _ in group)
+		if count > 1:
+			dropped["duplicate_position"] = dropped.get("duplicate_position", 0) + count
+		else:
+			yield first
+
+
+def singer_prep_request(a, chrom):
+	src = singer_source_vcf(a, chrom)
+	return dict(
+		source=singer_stamp(src),
+		index=singer_stamp(str(src) + (".tbi" if Path(str(src) + ".tbi").is_file() else ".csi")),
+		code=singer_stamp(__file__),
+		panel=singer_stamp(a.panel) if a.panel.is_file() else None,
+		keep=singer_stamp(a.keep) if a.keep else None,
+		populations=a.singer_populations,
+		per_pop=a.singer_per_pop,
+		seed=a.seed,
+		window=a.singer_window_bp,
+		start=a.singer_start,
+		end=a.singer_end,
+		min_sites=a.singer_min_sites,
+		mac=a.mac_min,
+		build=a.grch,
+	)
+
+
+@contextmanager
+def singer_compressed_vcf_output(path):
+	temporary = path.with_name(path.name + ".next")
+	try:
+		with io.TextIOWrapper(pysam.BGZFile(str(temporary), "w")) as out:
+			yield out
+		temporary.replace(path)
+	finally:
+		temporary.unlink(missing_ok=True)
+
+
+def singer_prepared_vcf(prefix):
+	compressed = Path(str(prefix) + ".vcf.gz")
+	return compressed if compressed.exists() else Path(str(prefix) + ".vcf")
+
+
+def singer_remove_native_text(wd):
+	for path in wd.glob("arg_*.txt*"):
+		path.unlink(missing_ok=True)
+
+
+def singer_prepare(a, chrom):
+	dest = a.prep / f"chr{chrom}"
+	done = dest / "complete.json"
+	req = singer_prep_request(a, chrom)
+	if a.replace == "FALSE" and singer_valid(done, req):
+		return json.loads((dest / "windows.json").read_text())
+	done.unlink(missing_ok=True)
+	dest.mkdir(parents=True, exist_ok=True)
+	v = pysam.VariantFile(str(singer_source_vcf(a, chrom)))
+	matches = [
+		c for c in v.header.contigs if c.removeprefix("chr") in (chrom, "23" if chrom == "X" else chrom)
+	]
+	if len(matches) != 1:
+		raise ValueError(f"expected one chr{chrom} contig")
+	contig = matches[0]
+	length = v.header.contigs[contig].length
+	if not length:
+		raise ValueError("VCF contig must declare chromosome length")
+	samples, meta = singer_sample_panel(a, v, chrom)
+	v.subset_samples(samples)
+	lo = a.singer_start
+	hi = min(a.singer_end or length, length)
+	if chrom == "X":
+		lo = max(lo, 2699520 if a.grch == "37" else 2781479)
+		hi = min(hi, 154931043 if a.grch == "37" else 155701382)
+	if hi <= lo:
+		raise ValueError("empty selected interval")
+	ploidy = 1 if chrom == "X" else 2
+	windows = []
+	files = []
+	qc = []
+	for start in range(lo, hi, a.singer_window_bp):
+		end = min(start + a.singer_window_bp, hi)
+		prefix = dest / f"w{start}_{end}"
+		path = Path(str(prefix) + ".vcf.gz")
+		count = 0
+		dropped = {}
+		with singer_compressed_vcf_output(path) as out:
+			out.write("##fileformat=VCFv4.2\n" + f"##contig=<ID={contig},length={end - start}>\n")
+			out.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Phased genotype">\n')
+			out.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples) + "\n")
+			for r in singer_unique_snps(v.fetch(contig, start, end), start, end, dropped):
+				reason = None
+				gts = []
+				flat = []
+				for name in samples:
+					call = r.samples[name]
+					gt = call.get("GT")
+					if gt is None or any(x is None for x in gt):
+						reason = "missing"
+						break
+					if len(gt) != ploidy:
+						raise ValueError(f"wrong ploidy {name} at {r.pos}")
+					if ploidy == 2 and len(set(gt)) > 1 and not call.phased:
+						raise ValueError(f"unphased heterozygote {name} at {r.pos}")
+					gts.append("|".join(map(str, gt)))
+					flat.extend(gt)
+				if not reason and min(sum(flat), len(flat) - sum(flat)) < a.mac_min:
+					reason = "mac"
+				if reason:
+					dropped[reason] = dropped.get(reason, 0) + 1
+					continue
+				out.write(
+					f"{contig}\t{r.pos - start}\t.\t{r.ref}\t{r.alts[0]}\t.\tPASS\t.\tGT\t"
+					+ "\t".join(gts)
+					+ "\n"
+				)
+				count += 1
+		qc.append(dict(start=start, end=end, sites=count, dropped=dropped))
+		print(f"[SINGER] chr{chrom} window {start}-{end}: sites={count} dropped={dropped}", flush=True)
+		if count < a.singer_min_sites:
+			path.unlink()
+			continue
+		pysam.tabix_index(str(path), preset="vcf", force=True)
+		files.extend([path, Path(str(path) + ".tbi")])
+		windows.append(dict(start=start, end=end, sites=count, prefix=str(prefix)))
+	v.close()
+	if not windows:
+		raise ValueError("no windows with sufficient polymorphic sites")
+	info = dict(
+		chrom=chrom,
+		length=length,
+		ploidy=ploidy,
+		samples=samples,
+		populations={s: meta.get(s, {}).get("pop", "UNKNOWN") for s in samples},
+		windows=windows,
+		qc=qc,
+		regional=a.singer_start != 0 or a.singer_end is not None,
+	)
+	singer_save(dest / "windows.json", info)
+	singer_record(done, req, files + [dest / "windows.json"])
+	for old in dest.glob("w*.vcf*"):
+		if old not in files:
+			old.unlink()
+	print(f"[SINGER] prepared chr{chrom}: samples={len(samples)} windows={len(windows)}", flush=True)
+	return info
+
+
+def singer_load_expected(prefix, ploidy):
+	"""Keep the full expected genotype matrix compact and load it once per window."""
+	positions = []
+	rows = []
+	with pysam.VariantFile(str(singer_prepared_vcf(prefix))) as f:
+		n = len(f.header.samples) * ploidy
+		for r in f:
+			positions.append(r.pos - 1)
+			rows.append(np.fromiter((x for c in r.samples.values() for x in c["GT"]), dtype=np.int8, count=n))
+	if not rows:
+		raise ValueError("empty SINGER input")
+	return np.asarray(positions, dtype=np.float64), np.stack(rows)
+
+
+def singer_validate_window(ts, prefix, ploidy, expected=None):
+	"""Check every leaf and site; explicit alleles make integer comparison exact."""
+	positions, genotypes = singer_load_expected(prefix, ploidy) if expected is None else expected
+	if ts.num_samples != genotypes.shape[1]:
+		raise ValueError("SINGER sample count changed")
+	if ts.num_sites != len(positions):
+		raise ValueError("SINGER lost input sites")
+	for i, v in enumerate(ts.variants(alleles=("0", "1"))):
+		if v.site.position != positions[i]:
+			raise ValueError(f"SINGER coordinate mismatch {v.site.position}")
+		if not np.array_equal(v.genotypes, genotypes[i]):
+			raise ValueError(f"SINGER leaf genotype mismatch at {positions[i]}")
+
+
+def singer_merge_windows(chrom, info, sources, dest, validated=False):
+	tables = tskit.TableCollection(info["length"])
+	tables.time_units = "generations"
+	tables.metadata_schema = tskit.MetadataSchema.permissive_json()
+	tables.metadata = dict(
+		method="singer",
+		chromosome=chrom,
+		coordinate_system="0-based chromosome bp",
+		regional=info["regional"],
+	)
+	tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+	tables.individuals.metadata_schema = tskit.MetadataSchema.permissive_json()
+	n = len(info["samples"]) * info["ploidy"]
+	for name in info["samples"]:
+		ind = tables.individuals.add_row(metadata=dict(sample=name, population=info["populations"][name]))
+		for h in range(info["ploidy"]):
+			tables.nodes.add_row(
+				flags=tskit.NODE_IS_SAMPLE,
+				time=0,
+				individual=ind,
+				metadata=dict(sample=name, haplotype=h + 1),
+			)
+	for w, source in zip(info["windows"], sources):
+		ts = tskit.load(source)
+		if not validated:
+			singer_validate_window(ts, w["prefix"], info["ploidy"])
+		if ts.sequence_length != w["end"] - w["start"]:
+			raise ValueError("SINGER window length mismatch")
+		mapping = {int(node): j for j, node in enumerate(ts.samples())}
+		for node in ts.nodes():
+			if not node.is_sample():
+				mapping[node.id] = tables.nodes.add_row(flags=node.flags, time=node.time)
+		for e in ts.edges():
+			tables.edges.add_row(
+				e.left + w["start"], e.right + w["start"], mapping[e.parent], mapping[e.child]
+			)
+		for site in ts.sites():
+			s = tables.sites.add_row(site.position + w["start"], site.ancestral_state)
+			for mut in site.mutations:
+				tables.mutations.add_row(s, mapping[mut.node], mut.derived_state)
+	tables.sort()
+	tables.build_index()
+	tables.compute_mutation_parents()
+	tables.compute_mutation_times()
+	ts = tables.tree_sequence()
+	if ts.num_samples != n or not ts.num_mutations:
+		raise ValueError("invalid merged ARG")
+	tmp = dest.with_suffix(".next")
+	try:
+		ts.dump(tmp)
+		tmp.replace(dest)
+	finally:
+		tmp.unlink(missing_ok=True)
+	return dict(
+		sites=ts.num_sites, trees=ts.num_trees, samples=ts.num_samples, sequence_length=ts.sequence_length
+	)
+
+
+def singer_memory_budget_gb():
+	"""Use available host RAM and all visible cgroup ancestor limits."""
+	gib = 1024**3
+	limits = []
+	for line in Path("/proc/meminfo").read_text().splitlines():
+		if line.startswith("MemAvailable:"):
+			limits.append(int(line.split()[1]) * 1024 * 0.85 / gib)
+	if os.environ.get("ARG_MEMORY_LIMIT_GB"):
+		limits.append(float(os.environ["ARG_MEMORY_LIMIT_GB"]) * 0.85)
+	for line in Path("/proc/self/cgroup").read_text().splitlines():
+		if line.startswith("0::"):
+			root = Path("/sys/fs/cgroup")
+			path = root / line[3:].lstrip("/")
+			while path == root or root in path.parents:
+				try:
+					cap = (path / "memory.max").read_text().strip()
+					used = int((path / "memory.current").read_text())
+					if cap != "max":
+						limits.append(max(0, int(cap) - used) * 0.85 / gib)
+				except (OSError, ValueError):
+					pass
+				if path == root:
+					break
+				path = path.parent
+	return min(limits) if limits else 24.0
+
+
+def singer_window_workers(a, count):
+	capacity = singer_memory_budget_gb()
+	cpu = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+	workers = min(count, a.jobs, a.threads, cpu, max(1, int(capacity / a.singer_worker_memory_gb)))
+	if capacity < a.singer_worker_memory_gb:
+		print(
+			f"[SINGER] WARNING: available budget {capacity:.1f} GiB is below the per-window reservation; one window may exceed the memory cap",
+			flush=True,
+		)
+	return workers
+
+
+def singer_infer_window(a, info, home, root, req, i, w, stop, read_ts):
+	if stop.is_set():
+		raise RuntimeError("SINGER cancelled")
+	n = a.singer_burnin + a.singer_samples
+	wd = root / f"w{w['start']}_{w['end']}"
+	wd.mkdir(exist_ok=True)
+	prefix = wd / "arg"
+	mark = wd / "complete.json"
+	request = dict(req, window=w)
+	if a.replace == "FALSE" and singer_valid(mark, request):
+		return
+	mark.unlink(missing_ok=True)
+	for partial in wd.glob("posterior_*.trees"):
+		partial.unlink()
+	raw = wd / "raw.complete.json"
+	if a.replace == "TRUE" or not singer_valid(raw, request):
+		raw.unlink(missing_ok=True)
+		singer_remove_native_text(wd)
+		try:
+			# SINGER accepts a filename prefix, so expand only this active window.
+			with tempfile.TemporaryDirectory(prefix="input.", dir=wd) as temporary:
+				input_prefix = Path(temporary) / "window"
+				source = singer_prepared_vcf(w["prefix"])
+				with (
+					gzip.open(source, "rb") if source.suffix == ".gz" else source.open("rb") as inp,
+					Path(str(input_prefix) + ".vcf").open("wb") as out,
+				):
+					shutil.copyfileobj(inp, out)
+				singer_run(
+					[
+						home / "singer",
+						"-Ne",
+						a.singer_ne,
+						"-m",
+						a.mutation_rate,
+						"-r",
+						a.singer_recombination_rate,
+						"-input",
+						input_prefix,
+						"-output",
+						prefix,
+						"-start",
+						0,
+						"-end",
+						w["end"] - w["start"] + 1,
+						"-polar",
+						0.5,
+						"-n",
+						n,
+						"-thin",
+						a.singer_thin,
+						"-ploidy",
+						info["ploidy"],
+						"-seed",
+						a.seed + i,
+					],
+					wd / "run.log",
+					stop,
+				)
+			raw_files = []
+			for j in range(n):
+				for kind in ("nodes", "branches", "muts"):
+					path = Path(str(prefix) + f"_{kind}_{j}.txt")
+					if j < a.singer_burnin:
+						path.unlink(missing_ok=True)
+						continue
+					packed = Path(str(path) + ".gz")
+					with path.open("rb") as inp, gzip.open(packed, "wb", compresslevel=1) as out:
+						shutil.copyfileobj(inp, out)
+					path.unlink()
+					raw_files.append(packed)
+			for unused in wd.glob("arg_*.txt"):
+				unused.unlink()
+			singer_record(raw, request, raw_files)
+		except BaseException:
+			singer_remove_native_text(wd)
+			raise
+	# Compressed native draws allow conversion to resume after a failure.
+	try:
+		files = []
+		expected = singer_load_expected(w["prefix"], info["ploidy"])
+		for j in range(a.singer_burnin, n):
+			if stop.is_set():
+				raise RuntimeError("SINGER cancelled")
+			with tempfile.TemporaryDirectory(prefix="convert.", dir=wd) as temporary:
+				paths = {}
+				for kind in ("nodes", "branches", "muts"):
+					paths[kind] = Path(temporary) / kind
+					source = Path(str(prefix) + f"_{kind}_{j}.txt.gz")
+					with gzip.open(source, "rb") as inp, paths[kind].open("wb") as out:
+						shutil.copyfileobj(inp, out)
+				tables = read_ts(str(paths["nodes"]), str(paths["branches"]))
+				mutations = np.atleast_2d(np.loadtxt(paths["muts"]))
+			previous = None
+			for row in mutations:
+				if row[0] != previous:
+					site = tables.sites.add_row(position=row[0], ancestral_state="0")
+					previous = row[0]
+				tables.mutations.add_row(site=site, node=int(row[1]), derived_state=str(int(row[3])))
+			tables.sort()
+			tables.build_index()
+			tables.compute_mutation_parents()
+			tables.compute_mutation_times()
+			ts = (
+				tables.tree_sequence().keep_intervals([[1, w["end"] - w["start"] + 1]], simplify=False).trim()
+			)
+			singer_validate_window(ts, w["prefix"], info["ploidy"], expected)
+			file = wd / f"posterior_{j}.trees"
+			ts.dump(file)
+			files.append(file)
+		(wd / "convert.log").write_text(
+			f"Validated {len(files)} retained posterior draws against every input genotype.\n"
+		)
+		singer_record(mark, request, files + [wd / "run.log", wd / "convert.log"])
+		singer_remove_native_text(wd)
+		raw.unlink(missing_ok=True)
+	except BaseException:
+		for partial in wd.glob("posterior_*.trees"):
+			partial.unlink(missing_ok=True)
+		raise
+
+
+def singer_infer(a, chrom, info, home):
+	root = a.output / "native" / f"chr{chrom}"
+	root.mkdir(parents=True, exist_ok=True)
+	done = root / "complete.json"
+	req = dict(
+		prepared=singer_stamp(a.prep / f"chr{chrom}" / "complete.json"),
+		code=singer_stamp(__file__),
+		binary=singer_stamp(home / "singer"),
+		converter=singer_stamp(home / "convert_to_tskit"),
+		samples=a.singer_samples,
+		burnin=a.singer_burnin,
+		thin=a.singer_thin,
+		Ne=a.singer_ne,
+		mutation=a.mutation_rate,
+		recombination=a.singer_recombination_rate,
+		seed=a.seed,
+	)
+	if a.replace == "FALSE" and singer_valid(done, req):
+		print(f"[SINGER] reuse chr{chrom}", flush=True)
+		return
+	done.unlink(missing_ok=True)
+	n = a.singer_burnin + a.singer_samples
+	workers = singer_window_workers(a, len(info["windows"]))
+	print(
+		f"[SINGER] chr{chrom}: {workers} concurrent windows; CPU budget={a.threads}, requested jobs={a.jobs}, reserve={a.singer_worker_memory_gb:g} GiB/window",
+		flush=True,
+	)
+	stop = threading.Event()
+	read_ts = runpy.run_path(str(home / "convert_to_tskit"))["read_ts"]
+	pool = ThreadPoolExecutor(max_workers=workers)
+	futures = []
+	try:
+		for i, w in enumerate(info["windows"]):
+			futures.append(pool.submit(singer_infer_window, a, info, home, root, req, i, w, stop, read_ts))
+		for completed, future in enumerate(as_completed(futures), 1):
+			future.result()
+			print(f"[SINGER] chr{chrom}: windows complete {completed}/{len(futures)}", flush=True)
+	except BaseException:
+		stop.set()
+		for future in futures:
+			future.cancel()
+		raise
+	finally:
+		pool.shutdown(wait=True, cancel_futures=True)
+	# Only merge outputs whose complete genotype validation and file stamps pass.
+	for w in info["windows"]:
+		mark = root / f"w{w['start']}_{w['end']}" / "complete.json"
+		if not singer_valid(mark, dict(req, window=w)):
+			raise ValueError(f"changed window outputs: {mark}")
+	merged = a.output / "posterior"
+	merged.mkdir(exist_ok=True)
+	files = []
+	stats = []
+	# Remove only stale posterior exports for this chromosome on explicit rebuild.
+	for p in merged.glob(f"chr{chrom}.sample*.trees"):
+		p.unlink()
+	for j in range(a.singer_burnin, n):
+		sources = [root / f"w{w['start']}_{w['end']}" / f"posterior_{j}.trees" for w in info["windows"]]
+		dest = merged / f"chr{chrom}.sample{j - a.singer_burnin:03d}.trees"
+		stats.append(singer_merge_windows(chrom, info, sources, dest, validated=True))
+		files.append(dest)
+	smap = merged / f"chr{chrom}.sample_map.tsv"
+	with smap.open("w") as f:
+		f.write("tree_node_id\tsample\thaplotype\n")
+		for i, s in enumerate(info["samples"]):
+			for h in range(info["ploidy"]):
+				f.write(f"{i * info['ploidy'] + h}\t{s}\t{h + 1}\n")
+	mask = merged / f"chr{chrom}.inferred.bed"
+	mask.write_text("".join(f"chr{chrom}\t{w['start']}\t{w['end']}\n" for w in info["windows"]))
+	singer_save(
+		root / "qc.json",
+		dict(
+			stats=stats,
+			regional=info["regional"],
+			retained=a.singer_samples,
+			burnin=a.singer_burnin,
+			thin=a.singer_thin,
+			convergence="not assessed: inspect MCMC logs before scientific use",
+		),
+	)
+	singer_record(done, req, files + [smap, mask, root / "qc.json"])
+	# The validated chromosome posterior is now the durable scientific output.
+	for w in info["windows"]:
+		wd = root / f"w{w['start']}_{w['end']}"
+		for path in wd.glob("posterior_*.trees"):
+			path.unlink()
+		singer_remove_native_text(wd)
+		(wd / "raw.complete.json").unlink(missing_ok=True)
+
+
+def singer_export(a, chrom):
+	dest = a.output / "trace/singer"
+	dest.mkdir(parents=True, exist_ok=True)
+	for p in dest.glob(f"chr{chrom}.sample*.trees"):
+		p.unlink()
+	files = list((a.output / "posterior").glob(f"chr{chrom}.*"))
+	for p in files:
+		q = dest / p.name
+		if q.is_symlink() or q.exists():
+			q.unlink()
+		q.symlink_to(p.resolve())
+	marker = dest / "ARG_TRACE_BUILD.tsv"
+	text = (
+		"method\tsinger\nformat\ttrace\ncoordinate_system\t0-based chromosome bp\ntime_units\tgenerations\n"
+	)
+	if not marker.exists() or marker.read_text() != text:
+		marker.write_text(text)
+	singer_record(
+		dest / f"chr{chrom}.complete.json",
+		dict(native=singer_stamp(a.output / "native" / f"chr{chrom}" / "complete.json")),
+		[dest / p.name for p in files] + [dest / "ARG_TRACE_BUILD.tsv"],
+	)
+
+
+def singer_check(a, chrom):
+	p = a.output / "native" / f"chr{chrom}" / "complete.json"
+	if not singer_valid(p):
+		raise ValueError(f"incomplete or changed SINGER outputs: {p}")
+	d = json.loads(p.read_text())
+	req = d["request"]
+	for key in ["prepared", "code", "binary", "converter"]:
+		if singer_stamp(req[key][0]) != req[key]:
+			raise ValueError(f"SINGER {key} changed; rebuild required")
+	prep = Path(req["prepared"][0])
+	data = json.loads(prep.read_text())
+	if not singer_valid(prep):
+		raise ValueError("prepared input changed")
+	for key in ["source", "index", "panel", "keep"]:
+		row = data["request"].get(key)
+		if row and singer_stamp(row[0]) != row:
+			raise ValueError(f"source {key} changed")
+	tsfiles = [Path(x[0]) for x in d["outputs"] if x[0].endswith(".trees")]
+	if len(tsfiles) != req["samples"]:
+		raise ValueError("posterior count mismatch")
+	for f in tsfiles:
+		ts = tskit.load(f)
+		if ts.time_units != "generations" or not ts.num_sites or not ts.num_mutations:
+			raise ValueError("invalid tree")
+	if a.format == "trace" and not singer_valid(a.output / "trace/singer" / f"chr{chrom}.complete.json"):
+		raise ValueError("TRACE export missing or changed")
+	print(f"[SINGER] CHECK PASS chr{chrom}: {len(tsfiles)} posterior samples", flush=True)
+
+
+def singer_arg_singer_main():
+	def interrupted(signum, frame):
+		raise KeyboardInterrupt(f"signal {signum}")
+
+	for sig in (signal.SIGTERM, signal.SIGHUP):
+		signal.signal(sig, interrupted)
+	a = singer_parse()
+	home = Path(os.environ.get("GU_SINGER_HOME", str(Path.home() / "software/singer-0.1.9")))
+	if a.action == "check":
+		for chrom in a.chrs:
+			singer_check(a, chrom)
+		return
+	if not (home / "singer").is_file():
+		raise ValueError("SINGER missing; run bash install.sh --singer")
+	locks = []
+	for path in (a.prep, a.output):
+		path.mkdir(parents=True, exist_ok=True)
+		lock = (path / ".refgen.lock").open("a")
+		fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		locks.append(lock)
+	for chrom in a.chrs:
+		info = singer_prepare(a, chrom)
+		if a.action == "prepare":
+			continue
+		singer_infer(a, chrom, info, home)
+		if a.format == "trace":
+			singer_export(a, chrom)
+		singer_check(a, chrom)
+	print("[SINGER] COMPLETE", flush=True)
+
+
+def singer_arg_singer_cli():
+	try:
+		singer_arg_singer_main()
+	except (ValueError, OSError, RuntimeError, subprocess.CalledProcessError) as e:
+		print("ERROR: " + str(e), file=sys.stderr)
+		sys.exit(2)
+
+
+sys.dont_write_bytecode = True
+
+
+# 🚩 arg_threads_worker
+"""Launch the installed Threads CLI with a bounded, private Ray runtime."""
+import importlib.metadata
+
+
+def threads_threads_worker_main():
+	if sys.argv[1:2] == ["infer"]:
+		# Ray otherwise rewrites even an explicit loopback IP to an external IP.
+		# Despite its name, this switch controls that behavior on Linux too.
+		os.environ["RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER"] = "0"
+		import ray
+
+		original_init = ray.init
+
+		def bounded_init(*args, **kwargs):
+			# This pipeline is single-host. Avoid WSL/VPN interface changes breaking
+			# Ray heartbeats, and never attach to a cluster from RAY_ADDRESS.
+			kwargs["address"] = "local"
+			kwargs["_node_ip_address"] = "127.0.0.1"
+			kwargs.setdefault("num_cpus", int(os.environ["REFGEN_THREADS"]))
+			kwargs.setdefault("object_store_memory", 512 * 1024**2)
+			kwargs.setdefault("include_dashboard", False)
+			return original_init(*args, **kwargs)
+
+		ray.init = bounded_init
+
+	(entry,) = [
+		e
+		for e in importlib.metadata.distribution("threads_arg").entry_points
+		if e.group == "console_scripts" and e.name == "threads"
+	]
+	entry.load()()
+
+
+def threads_arg_threads_worker_cli():
+	threads_threads_worker_main()
+
+
+# 🚩 arg_threads
+"""PGEN -> Threads -> chromosome-coordinate, mutation-bearing TRACE trees.
+
+Runs in an isolated environment. Stage manifests bind checkpoints to inputs,
+options, software versions and output stamps; incomplete stages are never reused.
+"""
+import contextlib
+from functools import wraps
+
+
+threads_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(threads_HERE))
+
+
+class threads_StageTimings:
+	def __init__(self, **metadata):
+		self.started = time.perf_counter()
+		self.data = dict(
+			metadata,
+			**{s + "_seconds": 0.0 for s in ("prepare", "infer", "convert", "check")},
+			cache_hits={},
+			peak_rss_mb=None,
+			peak_rss_scope="sampled sum of process-tree RSS; shared pages may be counted more than once",
+		)
+		self.stack = []
+		self.stop = threading.Event()
+		self.sampler = threading.Thread(target=self._sample_memory, daemon=True)
+		self.sampler.start()
+
+	def _sample_memory(self):
+		try:
+			page_size = os.sysconf("SC_PAGE_SIZE")
+			while not self.stop.is_set():
+				total = 0
+				pending, seen = [os.getpid()], set()
+				while pending:
+					pid = pending.pop()
+					if pid in seen:
+						continue
+					seen.add(pid)
+					proc = Path("/proc") / str(pid)
+					try:
+						total += int((proc / "statm").read_text().split()[1]) * page_size
+						for task in (proc / "task").iterdir():
+							try:
+								pending.extend(map(int, (task / "children").read_text().split()))
+							except (OSError, ValueError):
+								pass
+					except (OSError, ValueError, IndexError):
+						pass
+				self.data["peak_rss_mb"] = max(self.data["peak_rss_mb"] or 0, total / 2**20)
+				self.stop.wait(0.25)
+		except (OSError, ValueError):
+			pass  # Profiling must not change inference success/failure.
+
+	@contextlib.contextmanager
+	def stage(self, name):
+		frame = [time.perf_counter(), 0.0]
+		self.stack.append(frame)
+		try:
+			yield
+		finally:
+			elapsed = time.perf_counter() - frame[0]
+			self.stack.pop()
+			self.data[name + "_seconds"] += elapsed - frame[1]
+			if self.stack:
+				self.stack[-1][1] += elapsed
+
+	def finish(self, path, status, **metadata):
+		self.data.update(metadata, status=status, total_seconds=time.perf_counter() - self.started)
+		self.stop.set()
+		self.sampler.join(timeout=2)
+		path = Path(path)
+		path.parent.mkdir(parents=True, exist_ok=True)
+		tmp = path.with_name(path.name + f".{os.getpid()}.next")
+		try:
+			tmp.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n")
+			tmp.replace(path)
+		finally:
+			tmp.unlink(missing_ok=True)
+
+
+threads_TIMING = None
+
+
+def threads_stage(name):
+	return threads_TIMING.stage(name) if threads_TIMING is not None else contextlib.nullcontext()
+
+
+def threads_timed_stage(name):
+	def decorate(function):
+		@wraps(function)
+		def wrapped(*args, **kwargs):
+			with threads_stage(name):
+				return function(*args, **kwargs)
+
+		return wrapped
+
+	return decorate
+
+
+def threads_cache_hit(name):
+	if threads_TIMING is not None:
+		threads_TIMING.data["cache_hits"][name] = True
+
+
+def threads_env(key, default=None):
+	value = os.environ.get("REFGEN_" + key, default)
+	if value is None:
+		raise ValueError(f"Missing REFGEN_{key}")
+	return value
+
+
+def threads_stamp(path):
+	p = Path(path).resolve(strict=True)
+	s = p.stat()
+	return [str(p), s.st_size, s.st_mtime_ns]
+
+
+def threads_atomic_json(path, data):
+	path = Path(path)
+	tmp = path.with_suffix(path.suffix + ".next")
+	tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+	tmp.replace(path)
+
+
+def threads_checkpoint(path, request, files):
+	threads_atomic_json(path, dict(request=request, outputs=[threads_stamp(p) for p in files]))
+
+
+def threads_verified(path, request=None):
+	try:
+		data = json.loads(Path(path).read_text())
+		return (request is None or data["request"] == request) and all(
+			threads_stamp(row[0]) == row for row in data["outputs"]
+		)
+	except (OSError, ValueError, KeyError, TypeError):
+		return False
+
+
+def threads_run(args, log):
+	import shlex
+
+	args = list(map(str, args))
+	print("[THREADS] " + shlex.join(args), flush=True)
+	with Path(log).open("a") as handle:
+		handle.write("\nCOMMAND " + shlex.join(args) + "\n")
+		handle.flush()
+		proc = subprocess.Popen(args, stdout=handle, stderr=subprocess.STDOUT)
+		try:
+			code = proc.wait()
+			if code:
+				with Path(log).open("rb") as tail:
+					tail.seek(max(0, tail.seek(0, 2) - 5000))
+					print(tail.read().decode(errors="replace"), file=sys.stderr)
+				raise subprocess.CalledProcessError(code, args)
+		finally:
+			if proc.poll() is None:
+				proc.terminate()
+				try:
+					proc.wait(timeout=10)
+				except subprocess.TimeoutExpired:
+					proc.kill()
+					proc.wait()
+
+
+def threads_map_for(chrom):
+	pattern = threads_env("MAP_PATTERN", "")
+	if pattern:
+		path = Path(pattern.replace("{chr}", chrom).replace("%CHR%", chrom))
+		if path.is_file():
+			return path
+	root = Path(threads_env("MAP_DIR"))
+	build = threads_env("GRCH")
+	for name in (
+		f"chr{chrom}.map",
+		f"chr{chrom}.txt",
+		f"chr{chrom}.map.gz",
+		f"chr{chrom}.b{build}.gmap.gz",
+		f"genetic_map_GRCh{build}_chr{chrom}.txt",
+		f"genetic_map_chr{chrom}_combined_b{build}.txt",
+		f"genetic_map_chr{chrom}_combined_b{build}.txt.map",
+	):
+		for suffix in ("", ".gz"):
+			if (root / (name + suffix)).is_file():
+				return root / (name + suffix)
+	raise ValueError(f"No genetic map for chr{chrom} in {root}; use --map-pattern")
+
+
+def threads_read_psam(path):
+	with Path(path).open() as h:
+		fields = h.readline().lstrip("#").split()
+		rows = [dict(zip(fields, line.split())) for line in h if line.strip()]
+	names = [r["IID"] for r in rows]
+	if len(names) != len(set(names)):
+		raise ValueError("Duplicate sample IID")
+	return rows
+
+
+def threads_repack(source, output, chrom, source_map):
+	"""Stream PGEN; enforce phase and unique positions, pack only real X copies."""
+	from importlib.util import module_from_spec, spec_from_file_location
+
+	grid = Path(os.environ.get("REFGEN_GRID_ROOT", threads_HERE.parents[1] / "grid")) / "f"
+	_spec = spec_from_file_location("grid_arg_helpers", grid / "0.arg.py")
+	_grid_arg = module_from_spec(_spec)
+	_spec.loader.exec_module(_grid_arg)
+	read_source = _grid_arg.read_source
+	samples = threads_read_psam(str(source) + ".psam")
+	ids, columns = [], []
+	for i, row in enumerate(samples):
+		if chrom == "X" and row.get("SEX") not in ("1", "2"):
+			raise ValueError("Non-PAR X requires known sex for every selected sample")
+		copies = 1 if chrom == "X" and row["SEX"] == "1" else 2
+		for hap in range(copies):
+			ids.append((row["IID"], hap + 1))
+			columns.append(2 * i + hap)
+	if len(ids) < 4 or len(ids) % 2:
+		raise ValueError("Threads needs an even number of >=4 real haplotypes; check X panel policy")
+	variants = []
+	with Path(str(source) + ".pvar").open() as h:
+		for line in h:
+			if line.startswith("##"):
+				continue
+			if line.startswith("#"):
+				fields = line.lstrip("#").split()
+				continue
+			variants.append(dict(zip(fields, line.split())))
+	bp, cm = read_source(source_map)
+	selected, positions, seen = [], [], set()
+	previous = -1
+	for i, row in enumerate(variants):
+		pos = int(row["POS"])
+		if pos < previous:
+			raise ValueError("Unsorted PVAR")
+		previous = pos
+		if pos not in seen:
+			selected.append(i)
+			positions.append(pos)
+			seen.add(pos)
+	if len(selected) < 2:
+		raise ValueError("Need at least two distinct polymorphic sites")
+	cols = np.asarray(columns, dtype=np.int32)
+	alleles = np.empty(2 * len(samples), dtype=np.int32)
+	phase = np.empty(len(samples), dtype=np.uint8)
+	with pgenlib.PgenReader(os.fsencode(str(source) + ".pgen")) as reader:
+		with pgenlib.PgenWriter(
+			os.fsencode(str(output) + ".pgen"),
+			len(ids) // 2,
+			variant_ct=len(selected),
+			hardcall_phase_present=True,
+		) as writer:
+			for index in selected:
+				reader.read_alleles_and_phasepresent(index, alleles, phase)
+				if np.any((alleles < 0) | (alleles > 1)):
+					raise ValueError(
+						f"Missing/non-biallelic genotype at variant {index}; use --missing-max 0"
+					)
+				het = alleles[::2] != alleles[1::2]
+				if np.any(het & (phase == 0)):
+					raise ValueError(f"Unphased heterozygote at variant {index}")
+				if chrom == "X" and any(het[i] for i, row in enumerate(samples) if row["SEX"] == "1"):
+					raise ValueError("Heterozygous male non-PAR X genotype")
+				writer.append_alleles(np.ascontiguousarray(alleles[cols]), all_phased=True)
+	with Path(str(output) + ".pvar").open("w") as h:
+		h.write("#CHROM\tPOS\tID\tREF\tALT\n")
+		for i in selected:
+			r = variants[i]
+			h.write(f"{chrom}\t{r['POS']}\t{r['ID']}\t{r['REF']}\t{r['ALT']}\n")
+	with Path(str(output) + ".psam").open("w") as h:
+		h.write("#IID\tSEX\n")
+		for i in range(len(ids) // 2):
+			h.write(f"pair_{i}\t2\n")
+	with Path(str(output) + ".haplotypes.tsv").open("w") as h:
+		h.write("sample\thaplotype\n")
+		for sample, hap in ids:
+			h.write(f"{sample}\t{hap}\n")
+	with Path(str(output) + ".map").open("w") as h:
+		h.write("pos\tchr\tcM\n")
+		for pos, genetic in zip(positions, np.interp(positions, bp, cm)):
+			h.write(f"{pos}\t{chrom}\t{genetic:.12g}\n")
+	threads_atomic_json(
+		str(output) + ".qc.json",
+		dict(
+			chromosome=chrom,
+			haplotypes=len(ids),
+			individuals=len(samples),
+			variants=len(selected),
+			duplicate_positions_removed=len(variants) - len(selected),
+			errors=[],
+		),
+	)
+
+
+@threads_timed_stage("prepare")
+def threads_prepare(chrom, prep, work, grid, replace, require=False):
+	p = prep / ("chr" + chrom)
+	source = pfile_prefix(threads_env("PFILE_DIR"), chrom)
+	if chrom == "X":
+		male_sample_ids(str(source) + ".psam")
+	var = Path(str(source) + ".pvar")
+	if not var.is_file():
+		var = Path(str(source) + ".pvar.zst")
+	source_map = threads_map_for(chrom)
+	inputs = [
+		str(source) + ".pgen",
+		var,
+		str(source) + ".psam",
+		source_map,
+		threads_env("ANCESTRY_FILE"),
+		__file__,
+		threads_HERE / "arg.py",
+		grid / "0.arg.py",
+		grid / "0.arg.py",
+		shutil.which("plink2"),
+	]
+	for option in ("ARG_KEEP", "EXTRACT"):
+		if threads_env(option, ""):
+			inputs.append(threads_env(option))
+	if chrom == "X":
+		inputs.append(threads_HERE / "arg.py")
+	request = dict(
+		inputs=[threads_stamp(x) for x in inputs],
+		options={
+			k: threads_env(k)
+			for k in (
+				"GRCH",
+				"ARG_MAF_MIN",
+				"ARG_GENO_MAX",
+				"SEED",
+				"MAX_INDIVIDUALS",
+				"ANCHORS_PER_POP",
+				"ARG_FULL",
+				"X_ODD_MALE",
+			)
+		},
+	)
+	marker = Path(str(p) + ".prepared.json")
+	if not replace and threads_verified(marker, request):
+		threads_cache_hit("prepare")
+		print(f"SKIP verified Threads PGEN chr{chrom}", flush=True)
+		return p
+	if require:
+		raise ValueError(f"Prepared chr{chrom} missing/stale; run prep_gen with the same options")
+	marker.unlink(missing_ok=True)
+	log = prep / "log" / f"arg.prepare.chr{chrom}.log"
+	with tempfile.TemporaryDirectory(prefix=f"prepare.chr{chrom}.", dir=work) as tmp:
+		tmp = Path(tmp)
+		keep = tmp / "keep.tsv"
+		order = tmp / "order.tsv"
+		cmd = [
+			sys.executable,
+			grid / "0.arg.py",
+			"make-arg-keep",
+			"--sample",
+			str(source) + ".psam",
+			"--ancestry",
+			threads_env("ANCESTRY_FILE"),
+			"--out-keep",
+			keep,
+			"--out-panel",
+			tmp / "panel.tsv",
+			"--seed",
+			threads_env("SEED"),
+			"--anchors-per-pop",
+			threads_env("ANCHORS_PER_POP"),
+			"--max-individuals",
+			threads_env("MAX_INDIVIDUALS"),
+		]
+		if threads_env("ARG_FULL") == "TRUE":
+			cmd += ["--full"]
+		if threads_env("ARG_KEEP", ""):
+			cmd += ["--custom-keep", threads_env("ARG_KEEP")]
+		threads_run(cmd, log)
+		if chrom == "X":
+			needle_x_panel(keep, str(source) + ".psam", threads_env("X_ODD_MALE"), tmp / "selection.qc.json")
+			shutil.copy2(tmp / "selection.qc.json", str(p) + ".selection.qc.json")
+		order.write_text("\n".join(keep.read_text().splitlines()[1:]) + "\n")
+		subset = tmp / "subset"
+		cmd = ["plink2", "--pfile", source]
+		if str(var).endswith(".zst"):
+			cmd += ["vzs"]
+		cmd += [
+			"--keep",
+			keep,
+			"--indiv-sort",
+			"f",
+			order,
+			"--snps-only",
+			"just-acgt",
+			"--max-alleles",
+			"2",
+			"--maf",
+			threads_env("ARG_MAF_MIN"),
+			"--mac",
+			"1",
+			"--geno",
+			threads_env("ARG_GENO_MAX"),
+			"--sort-vars",
+			"--make-pgen",
+			"--threads",
+			threads_env("THREADS"),
+			"--out",
+			subset,
+		]
+		if chrom == "X":
+			lo, hi = {"37": (2699521, 154931043), "38": (2781480, 155701382)}[threads_env("GRCH")]
+			cmd += ["--chr", "X", "--from-bp", str(lo), "--to-bp", str(hi)]
+		if threads_env("EXTRACT", ""):
+			cmd += ["--extract", threads_env("EXTRACT")]
+		threads_run(cmd, log)
+		threads_repack(subset, tmp / "ready", chrom, source_map)
+		extensions = ("pgen", "pvar", "psam", "haplotypes.tsv", "map", "qc.json")
+		try:
+			for ext in extensions:
+				shutil.copy2(tmp / f"ready.{ext}", str(p) + "." + ext + ".next")
+				Path(str(p) + "." + ext + ".next").replace(str(p) + "." + ext)
+		finally:
+			for ext in extensions:
+				Path(str(p) + "." + ext + ".next").unlink(missing_ok=True)
+		shutil.copy2(keep, str(p) + ".keep.tsv")
+	files = [str(p) + "." + ext for ext in (*extensions, "keep.tsv")]
+	if chrom == "X":
+		files.append(str(p) + ".selection.qc.json")
+	threads_checkpoint(marker, request, files)
+	print(f"PREPARED Threads chr{chrom}: {p}", flush=True)
+	return p
+
+
+def threads_export_tree(raw, dest, identities, sample_map, pgen_prefix):
+	ts = tszip.decompress(raw)
+	with Path(identities).open() as h:
+		ids = [(r["sample"], int(r["haplotype"])) for r in csv.DictReader(h, delimiter="\t")]
+	if ts.num_samples != len(ids):
+		raise ValueError("Threads conversion changed sample count")
+	tables = ts.dump_tables()
+	offset = ts.metadata.get("offset", 0) if isinstance(ts.metadata, dict) else 0
+	if offset:
+		tables.sequence_length += offset
+		tables.edges.left += offset
+		tables.edges.right += offset
+		tables.sites.position += offset
+	tables.time_units = "generations"
+	tables.metadata_schema = tskit.MetadataSchema.permissive_json()
+	tables.metadata = dict(
+		source_method="threads", source_arg_offset=offset, offset=0, coordinate_system="chromosome_bp"
+	)
+	tables.provenances.add_row(
+		record=json.dumps(
+			dict(
+				software={"name": "gu-threads"},
+				parameters={
+					"source_offset": offset,
+					"time_units": "generations",
+					"ancestral_state_source": "tree_parsimony_not_external_AA",
+				},
+			)
+		)
+	)
+	# arg-needle-lib 1.1.3's mutation converter assumes infinite sites; Threads
+	# parsimony can have several mutations at one site. Build one site per PVAR
+	# row and preserve parent links for recurrent/back mutations instead.
+	topology = tables.tree_sequence()
+	marginal = topology.first()
+	genotypes = np.empty(len(ids), dtype=np.int32)
+	with pgenlib.PgenReader(os.fsencode(str(pgen_prefix) + ".pgen")) as reader:
+		with Path(str(pgen_prefix) + ".pvar").open() as variants:
+			index = 0
+			for line in variants:
+				if line.startswith("#"):
+					continue
+				chrom, position, vid, ref, alt = line.split()[:5]
+				position = int(position)
+				if not 0 <= position < topology.sequence_length:
+					raise ValueError(f"Variant outside inferred ARG: {position}")
+				reader.read_alleles(index, genotypes)
+				marginal.seek(position)
+				ancestor, mutations = marginal.map_mutations(genotypes, alleles=[ref, alt])
+				site = tables.sites.add_row(position=position, ancestral_state=ancestor)
+				base = len(tables.mutations)
+				for mutation in mutations:
+					parent = tskit.NULL if mutation.parent == tskit.NULL else base + mutation.parent
+					tables.mutations.add_row(
+						site=site, node=mutation.node, derived_state=mutation.derived_state, parent=parent
+					)
+				index += 1
+				if index % 100000 == 0:
+					print(f"CONVERT mapped {index} sites: {dest}", flush=True)
+	tables.sort()
+	result = tables.tree_sequence()
+	result.dump(str(dest) + ".next")
+	Path(str(dest) + ".next").replace(dest)
+	Path(sample_map).write_text(
+		"tree_node_id\tsample\thaplotype\n"
+		+ "".join(f"{int(node)}\t{name}\t{hap}\n" for node, (name, hap) in zip(result.samples(), ids))
+	)
+	return result, [(int(node), name, hap) for node, (name, hap) in zip(result.samples(), ids)]
+
+
+def threads_build(chrom, p, out, work, model, replace, action):
+	try:
+		with tempfile.TemporaryDirectory(prefix=f"build.chr{chrom}.", dir=work) as scratch:
+			return threads__build(chrom, p, out, Path(scratch), model, replace, action)
+	finally:
+		if out is not None:
+			for pending in (
+				out / "threads" / f"chr{chrom}.threads.next",
+				out / "trees" / f"chr{chrom}.trees.next",
+			):
+				pending.unlink(missing_ok=True)
+
+
+def threads__build(chrom, p, out, work, model, replace, action):
+	with threads_stage("infer"):
+		instruction = out / "threads" / f"chr{chrom}.threads"
+		marker = out / "threads" / f"chr{chrom}.infer.json"
+		request = dict(
+			prepared=threads_stamp(str(p) + ".prepared.json"),
+			model=model,
+			mode=threads_env("THREADS_MODE"),
+			fit=threads_env("THREADS_FIT"),
+			mutation_rate=threads_env("THREADS_MUTATION_RATE"),
+			threads=threads_env("THREADS"),
+			code=[threads_stamp(__file__), threads_stamp(threads_HERE / "arg.py")],
+			versions={
+				k: importlib.metadata.version(k)
+				for k in ("threads_arg", "arg-needle-lib", "numpy", "pgenlib", "tskit")
+			},
+		)
+		if replace or not threads_verified(marker, request):
+			if action == "convert":
+				raise ValueError(f"No compatible inference checkpoint for chr{chrom}")
+			marker.unlink(missing_ok=True)
+			# Native Linux copies for repeated PGEN scans by all worker processes.
+			local = work / f"chr{chrom}"
+			for ext in ("pgen", "pvar", "psam", "map"):
+				shutil.copyfile(str(p) + "." + ext, str(local) + "." + ext)
+			cmd = [
+				sys.executable,
+				threads_HERE / "arg.py",
+				"threads",
+				"worker",
+				"infer",
+				"--pgen",
+				str(local) + ".pgen",
+				"--map",
+				str(local) + ".map",
+				"--demography",
+				model["path"],
+				"--mutation_rate",
+				threads_env("THREADS_MUTATION_RATE"),
+				"--mode",
+				threads_env("THREADS_MODE"),
+				"--num_threads",
+				threads_env("THREADS"),
+				"--out",
+				str(instruction) + ".next",
+			]
+			if threads_env("THREADS_FIT") == "TRUE":
+				cmd += ["--fit_to_data"]
+			threads_run(cmd, out / "log" / f"arg.infer.chr{chrom}.log")
+			Path(str(instruction) + ".next").replace(instruction)
+			threads_checkpoint(marker, request, [instruction])
+		else:
+			threads_cache_hit("infer")
+			print(f"SKIP verified Threads inference chr{chrom}", flush=True)
+	if action == "infer":
+		return
+	with threads_stage("convert"):
+		tree = out / "trees" / f"chr{chrom}.trees"
+		smap = tree.with_suffix(".sample_map.tsv")
+		converted = out / "trees" / f"chr{chrom}.converted.json"
+		conversion = dict(
+			inference=threads_stamp(marker),
+			identities=threads_stamp(str(p) + ".haplotypes.tsv"),
+			code=threads_stamp(__file__),
+		)
+		if replace or not threads_verified(converted, conversion):
+			converted.unlink(missing_ok=True)
+			raw = work / f"chr{chrom}.tsz"
+			threads_run(
+				["threads", "convert", "--threads", instruction, "--tsz", raw],
+				out / "log" / f"arg.convert.chr{chrom}.log",
+			)
+			ts, rows = threads_export_tree(raw, tree, str(p) + ".haplotypes.tsv", smap, p)
+			with threads_stage("check"):
+				stats = trace_validate(ts, rows, chrom)
+				if ts.num_mutations < 1:
+					raise ValueError("Threads tree has no mutations")
+			threads_atomic_json(tree.with_suffix(".arg_qc.json"), stats)
+			threads_checkpoint(converted, conversion, [tree, smap, tree.with_suffix(".arg_qc.json")])
+			raw.unlink()
+		else:
+			threads_cache_hit("convert")
+		if threads_env("ARG_FORMAT") == "trace":
+			threads_run(
+				[
+					sys.executable,
+					threads_HERE / "arg.py",
+					"trace",
+					"--method",
+					"threads",
+					"--tree",
+					tree,
+					"--sample-map",
+					smap,
+					"--out-dir",
+					out / "trace/threads",
+					"--chr",
+					chrom,
+				],
+				out / "log" / f"arg.trace.chr{chrom}.log",
+			)
+
+
+@threads_timed_stage("check")
+def threads_check(chrom, out):
+	tree = out / "trees" / f"chr{chrom}.trees"
+	smap = tree.with_suffix(".sample_map.tsv")
+	if chrom == "X":
+		validate_x_map(smap, str(pfile_prefix(threads_env("PFILE_DIR"), chrom)) + ".psam")
+	if not threads_verified(out / "threads" / f"chr{chrom}.infer.json") or not threads_verified(
+		out / "trees" / f"chr{chrom}.converted.json"
+	):
+		raise ValueError(f"Missing/modified Threads checkpoint chr{chrom}")
+	converted = json.loads((out / "trees" / f"chr{chrom}.converted.json").read_text())
+	if converted["request"]["inference"] != threads_stamp(out / "threads" / f"chr{chrom}.infer.json"):
+		raise ValueError(f"Tree does not match current Threads inference chr{chrom}")
+
+	ts = tskit.load(tree)
+	stats = trace_validate(ts, trace_read_map(smap, "threads"), chrom)
+	if ts.time_units != "generations" or ts.num_mutations < 1:
+		raise ValueError("Invalid Threads time units or missing mutations")
+	if threads_env("ARG_FORMAT") == "trace":
+		# Read-only validation: no logs or manifests are written here.
+		subprocess.run(
+			[
+				sys.executable,
+				str(threads_HERE / "arg.py"),
+				"trace",
+				"--method",
+				"threads",
+				"--tree",
+				str(tree),
+				"--sample-map",
+				str(smap),
+				"--out-dir",
+				str(out / "trace/threads"),
+				"--chr",
+				chrom,
+				"--check",
+			],
+			check=True,
+		)
+	print(f"Threads CHECK PASS chr{chrom}: {stats}", flush=True)
+
+
+def threads_write_build_metadata(out, chrs, model):
+	"""A chrX-only rebuild must retain the completed autosomes in the manifest."""
+	path = out / "ARG_THREADS_BUILD.json"
+	previous = json.loads(path.read_text()).get("chromosomes", []) if path.is_file() else []
+	completed = []
+	for chrom in dict.fromkeys(previous + chrs):
+		inference = out / "threads" / f"chr{chrom}.infer.json"
+		converted = out / "trees" / f"chr{chrom}.converted.json"
+		if (
+			threads_verified(inference)
+			and threads_verified(converted)
+			and json.loads(converted.read_text())["request"]["inference"] == threads_stamp(inference)
+		):
+			completed.append(chrom)
+	threads_atomic_json(path, dict(method="threads", chromosomes=completed, model=model))
+	if threads_env("ARG_FORMAT") == "trace":
+		(out / "trace/threads/ARG_TRACE_BUILD.tsv").write_text(
+			f"method\tthreads\nformat\ttrace\nbuild\tGRCh{threads_env('GRCH')}\nchromosomes\t{' '.join(completed)}\n"
+		)
+
+
+def threads_arg_threads_main():
+	global threads_TIMING
+
+	def stopped(signum, frame):
+		raise SystemExit(128 + signum)
+
+	for sig in (signal.SIGTERM, signal.SIGHUP):
+		signal.signal(sig, stopped)
+	out = Path(threads_env("ARG_DIR"))
+	prep = Path(threads_env("GEN4ARG_DIR"))
+	action = threads_env("ARG_ACTION")
+	chrs = threads_env("ARG_CHRS").split()
+	if action == "check":
+		for chrom in chrs:
+			threads_check(chrom, out)
+		return
+	grid = Path(os.environ.get("REFGEN_GRID_ROOT", threads_HERE.parents[1] / "grid")) / "f"
+	sys.path.insert(0, str(grid))
+	if not shutil.which("plink2"):
+		raise ValueError("plink2 is missing from PATH")
+	for chrom in chrs:
+		source = pfile_prefix(threads_env("PFILE_DIR"), chrom)
+		for ext in ("pgen", "psam"):
+			threads_stamp(str(source) + "." + ext)
+		if not any(Path(str(source) + "." + ext).is_file() for ext in ("pvar", "pvar.zst")):
+			raise ValueError(f"Missing PVAR for chr{chrom}")
+		if chrom == "X":
+			male_sample_ids(str(source) + ".psam")
+		threads_map_for(chrom)
+	threads_stamp(threads_env("ANCESTRY_FILE"))
+	work = Path(threads_env("ARG_SCRATCH")) / "refgen_threads"
+	if str(work).startswith("/mnt/"):
+		raise ValueError("--scratch must use native Linux storage")
+	for path in (work, prep / "log", out / "threads", out / "trees", out / "log"):
+		path.mkdir(parents=True, exist_ok=True)
+	# Ray uses Unix sockets, whose paths must fit the ~108-byte OS limit.
+	ray_tmp = tempfile.TemporaryDirectory(prefix="gu-ray-")
+	os.environ["RAY_TMPDIR"] = ray_tmp.name
+	import fcntl
+
+	lock = (work / ".lock").open("a")
+	fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+	replace = threads_env("REPLACE") == "TRUE"
+	mu = float(threads_env("THREADS_MUTATION_RATE"))
+	if not math.isfinite(mu) or mu <= 0:
+		raise ValueError("--mutation-rate must be finite and positive")
+	custom = threads_env("THREADS_DEMOGRAPHY", "")
+	if custom:
+		demo = Path(custom).resolve()
+	else:
+		demo = work / "constant.haploid20000.demo"
+		if not demo.exists():
+			demo.write_text("0\t20000\n")
+	values = np.loadtxt(demo, ndmin=2)
+	if (
+		values.shape[1] != 2
+		or not np.isfinite(values).all()
+		or values[0, 0] != 0
+		or np.any(np.diff(values[:, 0]) <= 0)
+		or np.any(values[:, 1] <= 0)
+	):
+		raise ValueError(
+			"Demography must start at generation 0 with increasing times and positive haploid Ne"
+		)
+	model = dict(
+		path=str(demo),
+		sha256=hashlib.sha256(demo.read_bytes()).hexdigest(),
+		description="custom haploid Ne" if custom else "constant haploid Ne=20000 (diploid Ne=10000)",
+	)
+	print(f"Threads model: {model}; workers={threads_env('THREADS')}; chromosome jobs=1", flush=True)
+	for chrom in chrs:
+		threads_TIMING = threads_StageTimings(
+			method="threads",
+			chromosome=chrom,
+			action=action,
+			threads=int(threads_env("THREADS")),
+			mode=threads_env("THREADS_MODE"),
+			fit_to_data=threads_env("THREADS_FIT") == "TRUE",
+			samples=None,
+			sites=None,
+			chromosome_jobs=1,
+			started_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+		)
+		status, error = "failed", None
+		try:
+			p = threads_prepare(chrom, prep, work, grid, replace, require=action in ("infer", "convert"))
+			qc = json.loads(Path(str(p) + ".qc.json").read_text())
+			threads_TIMING.data.update(
+				samples=qc["individuals"], sites=qc["variants"], haplotypes=qc["haplotypes"]
+			)
+			if action != "prepare":
+				threads_build(chrom, p, out, work, model, replace, action)
+			if action not in ("prepare", "infer"):
+				threads_check(chrom, out)
+			status = "passed"
+		except BaseException as exc:
+			error = str(exc)
+			raise
+		finally:
+			try:
+				threads_TIMING.finish(out / "log" / f"arg.timing.chr{chrom}.json", status, error=error)
+			except OSError as exc:
+				print(f"WARNING: could not write Threads timing: {exc}", file=sys.stderr)
+			finally:
+				threads_TIMING = None
+	if action not in ("prepare", "infer"):
+		threads_write_build_metadata(out, chrs, model)
+
+
+def threads_arg_threads_cli():
+	try:
+		threads_arg_threads_main()
+	except Exception as error:
+		print(f"ERROR: {error}", file=sys.stderr, flush=True)
+		raise
+
+
+def singer_entry():
+	global np, pysam, tskit
+	import numpy as np
+	import pysam
+	import tskit
+
+	return singer_arg_singer_cli()
+
+
+def threads_entry():
+	if sys.argv[1:2] == ["worker"]:
+		sys.argv.pop(1)
+		return threads_threads_worker_main()
+	if sys.argv[1:2] in (["--help"], ["-h"]):
+		print(
+			"Threads driver: use ./arg.sh build|check --method threads; worker: arg.py threads worker --help"
+		)
+		return
+	global np, pgenlib, tskit, tszip
+	import numpy as np
+	import pgenlib
+	import tskit
+	import tszip
+
+	return threads_arg_threads_cli()
+
+
+arg_COMMANDS.update(singer=singer_entry, threads=threads_entry)
+
 if __name__ == "__main__":
-	main()
+	arg_main()

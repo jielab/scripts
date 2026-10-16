@@ -1,2 +1,0 @@
-[GRID] env -u R_ENVIRON_USER -u R_LIBS_USER /usr/bin/Rscript /mnt/d/scripts/grid/shiny/app.R --db /mnt/d/analysis/grid/evidence/evidence.sqlite --port 3839 --host 127.0.0.1 --review
-All registered table reads and bounded plot builds passed. This is not a browser interaction test.

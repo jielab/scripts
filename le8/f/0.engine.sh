@@ -725,7 +725,7 @@ declare -A completed_results=()
 # Receipts avoid repeating output checks within the same invocation.
 declare -A run_completed=()
 if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
-	checked_run=$("${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" read "$analysis_root" "$trait_csv" "$BIOM" "$(IFS=,; echo "${jobs[*]}")")
+	checked_run=$("${PYTHON_BIN:-python3}" "$fdir/0.common.py" run-state read "$analysis_root" "$trait_csv" "$BIOM" "$(IFS=,; echo "${jobs[*]}")")
 	while IFS= read -r key; do
 		[[ -z "$key" ]] || run_completed[$key]=TRUE
 	done <<<"$checked_run"
@@ -1283,7 +1283,7 @@ run_one() {
 			echo "[LE8] FAIL $job Y=$trait biom=$run_biom output-validation exit=$rc log=$log_file.audit.csv" >&2
 			return "$rc"
 		}
-		"${PYTHON_BIN:-python3}" "$fdir/0.run_state.py" record "$analysis_root" "$trait" "$run_biom" "$job"
+		"${PYTHON_BIN:-python3}" "$fdir/0.common.py" run-state record "$analysis_root" "$trait" "$run_biom" "$job"
 	fi
 	echo "[LE8] DONE $job Y=$trait biom=$run_biom elapsed=$((SECONDS - started))s"
 }

@@ -1,10 +1,10 @@
 # Window-based IBDmix support candidates. Raw calls remain in the method tab.
 gu_ibdmix_evidence_cached <- function(Q, dataset, build, db_path,
         cache_dir = file.path("/tmp", "gu-shiny-evidence")) {
-    helper <- normalizePath(file.path(app_dir, "..", "f", "ibdmix_loci.py"))
+    helper <- normalizePath(file.path(app_dir, "..", "f", "ibdmix.py"))
     log <- tempfile("gu-evidence-stderr-")
     on.exit(unlink(log), add = TRUE)
-    path <- system2("python3", c(shQuote(helper), "--database", shQuote(db_path),
+    path <- system2("python3", c(shQuote(helper), "loci", "--database", shQuote(db_path),
         "--dataset", shQuote(dataset), "--build", shQuote(build),
         "--cache-dir", shQuote(cache_dir)), stdout = TRUE, stderr = log)
     status <- attr(path, "status")

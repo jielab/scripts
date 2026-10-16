@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GRID_TWIN_PACKAGE_ENTRY — upstream scripts are preserved by install.py.
+# Public entry for GRID twin analysis, benchmark dispatch, and the viewer.
 set -euo pipefail
 umask 077
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -13,4 +13,4 @@ else
 fi
 PYTHON=${GRID_PYTHON:-${ABM_PYTHON:-$default_python}}
 export PYTHONDONTWRITEBYTECODE=1
-exec "$PYTHON" "$ROOT/f/twin_entry.py" "$@"
+exec "$PYTHON" "$ROOT/f/twin.py" "$@"

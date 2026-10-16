@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse,json,os,re,sqlite3,tempfile,html,hashlib
 from pathlib import Path
 import pandas as pd
-from twin_io import sha256,read_table,xlsx_values,public_table,json_write
+from twin import sha256,read_table,xlsx_values,public_table,json_write
 
 SKIP={'dashboard','cache','checkpoints','scoring','work','run','runs','neural','__pycache__','evidence','shiny.upstream','shiny_legacy'}
 PRIVATE_FILE=re.compile(r'(^|[._-])(individuals?|participants?|predictions?|outcomes?|matches|donors?|roster|split|families|scores\.rds|model)([._-]|$)',re.I)
