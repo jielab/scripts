@@ -6,52 +6,75 @@ if [[ ${#ORIGINAL_ARGS[@]} -eq 0 ]]; then ORIGINAL_ARGS=(all); fi
 usage(){ cat <<'HELP'
 Birth-month / birth-environment analysis in UK Biobank
 
-cd /mnt/d/scripts/bmonth
-./bmonth.sh all
-./bmonth.sh prep
-./bmonth.sh phewas
-./bmonth.sh assoc
-./bmonth.sh decomp
-./bmonth.sh med
-./bmonth.sh temp --temp-dir /path/to/HadUK-Grid
-./bmonth.sh tempmed
-./bmonth.sh final
-./bmonth.sh plot
-./bmonth.sh check
+Examples (one line at a time; continue only after success):
+  cd /mnt/d/scripts/bmonth
+  ./bmonth.sh check
+  ./bmonth.sh prep
+  ./bmonth.sh phewas
+  ./bmonth.sh assoc
+  ./bmonth.sh decomp
+  ./bmonth.sh med
+  ./bmonth.sh final
+
+All commands run in the foreground. The 'all' module runs the sequence above.
+
+Optional temperature analysis (requires HadUK-Grid in --temp-dir):
+  ./bmonth.sh temp
+  ./bmonth.sh tempmed
+  ./bmonth.sh final
+
+The 'plot' module redraws figures from saved results.
 
 Options:
-  --out DIR              output directory [ /mnt/d/analysis/bmonth ]
-  --in DIR               phenotype directory containing Rdata/ [ /mnt/d/data/ukb/phe ]
-  --rscript FILE         Rscript binary
-  --outcomes CSV         incident outcomes [cvd_cad,ra]
-  --exposures CSV        scalar exposures
-                         [bmonth_cos,bmonth_sin,bmonth_winter_summer,bmonth_spring_autumn]
-  --phewas-cores N|auto  PheWAS workers [auto: up to 8, memory-limited]
-  --med-boot N           mediation/bootstrap replicates [100]
-  --follow-end DATE      override reconstructed-outcome end
-  --temp-dir DIR         HadUK-Grid NetCDF directory [/mnt/d/data/ukb/temperature]
-  --temp-res RES         HadUK-Grid resolution [1km]
-  --tempmed-phenos CSV   explicit phecodes for temperature decomposition
-  --replace              recompute scalar and joint PheWAS caches
+  --out DIR                  output directory [ /mnt/d/analysis/bmonth ]
+  --in DIR                   phenotype directory containing Rdata/ [ /mnt/d/data/ukb ]
+  --rscript FILE             Rscript binary
+  --outcomes CSV             incident outcomes [cvd_cad,ra]
+  --exposures CSV            PRIMARY birth-month scalar exposures
+                             [bmonth_cos,bmonth_sin,bmonth_winter_summer,bmonth_spring_autumn]
+  --context-exposures CSV    birthplace-context PheWAS exposures
+                             [birth_north_100km,birth_east_100km]
+  --exploratory-traits CSV   exploratory birth-order exposures; 'none' disables
+                             [border12,border1n,border_rank,border_relative]
+  --phewas-cores N|auto      PheWAS workers [auto: up to 8, memory-limited]
+  --med-boot N               mediation/bootstrap replicates [100]
+  --follow-end DATE          override reconstructed-outcome end
+  --temp-dir DIR             HadUK-Grid NetCDF directory [/mnt/d/data/ukb/temperature]
+  --temp-res RES             HadUK-Grid resolution [1km]
+  --tempmed-phenos CSV       explicit phecodes for temperature decomposition
+  --replace                  recompute scalar and joint PheWAS caches
 
-Notes:
-  * Primary birth-month models adjust birth north/east and tdi.birth in addition
-    to age, sex, education, adult TDI and assessment centre.
-  * move (birth-to-current distance from move.rds) is post-birth and is used in
-    D4 sensitivity / interaction analyses, not in the primary model.
-  * `temp` is optional and expects externally downloaded HadUK-Grid files.
-  * `temp` clears inherited PROJ_DATA/PROJ_LIB to avoid Conda database conflicts.
-    For a nonstandard PROJ installation, set BMONTH_PROJ_DATA to the directory
-    containing a proj.db compatible with terra's linked PROJ library.
+Design:
+  * PRIMARY birth-month models adjust age, sex, assessment centre, education,
+    adult TDI, birth north/east and tdi.birth.
+  * Birthplace-context PheWAS restores birth_north_100km and birth_east_100km
+    as exposures using the OLD-compatible D2 model (age, sex, centre,
+    education, adult TDI). These are context/supplementary analyses, not
+    birth-month effects.
+  * The decomposition stage then uses a common sample to quantify attenuation:
+      D1 core
+      D2 + adult SES
+      D3 + birth geography
+      D4 + birthplace TDI proxy
+      D5 + migration distance
+  * Temperature is NOT a baseline PheWAS covariate. It is handled only in
+    the optional temp/tempmed modules.
+  * move is post-birth and is used in D5 sensitivity / interaction analyses,
+    not in the primary model.
+  * Exploratory birth-order traits use age, sex, centre, education and adult TDI
+    for PheWAS, Cox and omics mediation; D1-D5 assess contextual attenuation.
+    Their eligibility rules apply only to birth-order traits.
 HELP
 }
 
 STEP=all
 OUTDIR=/mnt/d/analysis/bmonth
-INDIR=/mnt/d/data/ukb/phe
+INDIR=/mnt/d/data/ukb
 RSCRIPT_BIN=""
 OUTCOMES="cvd_cad,ra"
 EXPOSURES="bmonth_cos,bmonth_sin,bmonth_winter_summer,bmonth_spring_autumn"
+CONTEXT_EXPOSURES="birth_north_100km,birth_east_100km"
+EXPLORATORY_TRAITS="border12,border1n,border_rank,border_relative"
 PHEWAS_CORES=auto
 MED_BOOT=100
 FOLLOW_END=""
@@ -68,6 +91,8 @@ while [[ $# -gt 0 ]]; do
     --rscript) RSCRIPT_BIN="${2:?}"; shift 2 ;;
     --outcomes) OUTCOMES="${2:?}"; shift 2 ;;
     --exposures) EXPOSURES="${2:?}"; shift 2 ;;
+    --context-exposures) CONTEXT_EXPOSURES="${2:?}"; shift 2 ;;
+    --exploratory-traits) EXPLORATORY_TRAITS="${2:?}"; shift 2 ;;
     --phewas-cores) PHEWAS_CORES="${2:?}"; shift 2 ;;
     --med-boot) MED_BOOT="${2:?}"; shift 2 ;;
     --follow-end) FOLLOW_END="${2:?}"; shift 2 ;;
@@ -80,8 +105,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$PHEWAS_CORES" == auto || "$PHEWAS_CORES" =~ ^[1-9][0-9]*$ ]] || { echo 'ERROR: --phewas-cores must be auto or a positive integer' >&2; exit 2; }
-[[ "$MED_BOOT" =~ ^(0|[1-9][0-9]*)$ ]] || { echo 'ERROR: --med-boot must be a nonnegative integer' >&2; exit 2; }
+[[ "$PHEWAS_CORES" == auto || "$PHEWAS_CORES" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'ERROR: --phewas-cores must be auto or a positive integer' >&2; exit 2; }
+[[ "$MED_BOOT" =~ ^(0|[1-9][0-9]*)$ ]] || {
+  echo 'ERROR: --med-boot must be a nonnegative integer' >&2; exit 2; }
 
 RSCRIPT_BIN=${RSCRIPT_BIN:-$(command -v Rscript || true)}
 [[ -n "$RSCRIPT_BIN" ]] || { echo "ERROR: Rscript not found" >&2; exit 1; }
@@ -89,7 +116,9 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 mkdir -p "$OUTDIR"
 
 export BMONTH_OUTDIR="$OUTDIR" BMONTH_INDIR="$INDIR" BMONTH_OUTCOMES="$OUTCOMES"
-export BMONTH_EXPOSURES="$EXPOSURES" BMONTH_PHEWAS_CORES="$PHEWAS_CORES"
+export BMONTH_EXPOSURES="$EXPOSURES" BMONTH_CONTEXT_EXPOSURES="$CONTEXT_EXPOSURES"
+export BMONTH_EXPLORATORY_TRAITS="$EXPLORATORY_TRAITS"
+export BMONTH_PHEWAS_CORES="$PHEWAS_CORES"
 export BMONTH_MED_BOOT="$MED_BOOT" BMONTH_FOLLOW_END="$FOLLOW_END"
 export BMONTH_TEMP_DIR="$TEMP_DIR" BMONTH_TEMP_RES="$TEMP_RES"
 export BMONTH_TEMPMED_PHENOS="$TEMPMED_PHENOS"
@@ -97,7 +126,6 @@ export BMONTH_REPLACE="$REPLACE" BMONTH_FDIR="$SCRIPT_DIR/f"
 export SCRIPT_LOG_DIR="${SCRIPT_LOG_DIR:-$OUTDIR/logs}"
 source /mnt/d/scripts/0f/console.sh "${ORIGINAL_ARGS[@]}" 2>/dev/null || true
 
-# Every stage and worker must stay inside the existing 24 GiB, zero-swap cap.
 [[ -f "$SCRIPT_DIR/../0f/memory_cap.sh" ]] || {
   echo 'ERROR: missing memory guard; refusing to run uncapped.' >&2; exit 1;
 }

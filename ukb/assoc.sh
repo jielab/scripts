@@ -54,7 +54,7 @@ while (($#)); do
 	esac
 done
 set -- "${filtered_args[@]}"
-phedir=${phedir:-$dir0/data/ukb/phe}
+phedir=${phedir:-$dir0/data/ukb}
 outdir=${outdir:-$dir0/analysis/ukb/assoc}
 script_dir=${script_dir:-$dir0/scripts}
 assoc_R=${assoc_R:-$this_dir/f/assoc.R}

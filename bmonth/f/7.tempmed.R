@@ -120,6 +120,6 @@ writeLines(c(
   "Temperature is reconstructed from month/year of birth and birthplace, so it is strongly structured by the exposure.",
   "The 2-df cycle analysis compares annual-cycle likelihood-ratio evidence before versus after temperature adjustment.",
   "Scalar sine/cosine analyses use a linear mediator model and logistic outcome model; a*b is on the outcome log-odds scale.",
-  "Migration distance is not included in the primary covariates because it occurs after birth; it is examined separately in D4."
+  "Migration distance is not included in the primary covariates because it occurs after birth; it is examined separately in D5."
 ),file.path(rawdir,"temperature_methods.txt"))
 message("[tempmed] saved temperature cycle attenuation and scalar mediation-like results.")

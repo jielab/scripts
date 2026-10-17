@@ -2926,7 +2926,7 @@ THIN_CMD
 				mv -f "${gwas_grch_cache}.tmp.$$" "$gwas_grch_cache"
 			else
 				rc=$?
-				echo "ERROR: automatic GRCh detection failed for $gwas; the input must contain usable rsIDs from ${CHECK_GRCH_SNP_LIST:-$dir0/data/ukb/phe/common/snp.lst}, or specify --grch 37/38." >&2
+				echo "ERROR: automatic GRCh detection failed for $gwas; the input must contain usable rsIDs from ${CHECK_GRCH_SNP_LIST:-$dir0/data/ukb/common/snp.lst}, or specify --grch 37/38." >&2
 				return "$rc"
 			fi
 		fi

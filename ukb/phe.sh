@@ -12,7 +12,7 @@ cd /mnt/d/scripts/ukb
 ./phe.sh --start-step data_qc --end-step phe4gwas
 
 # Optional ADuLT phenotype: requires complete population CIP (trait sex age cip source).
-ADULT_ENABLE=TRUE ADULT_TRAITS=cvd_cad ADULT_CIP_FILE=/mnt/d/data/ukb/phe/common/adu_cip.tsv \
+ADULT_ENABLE=TRUE ADULT_TRAITS=cvd_cad ADULT_CIP_FILE=/mnt/d/data/ukb/common/adu_cip.tsv \
   ./phe.sh --steps phe4gwas
 HELP
 }
@@ -146,9 +146,9 @@ DATS=${DATS//,/ }
 
 
 # 🚩 Shell options, paths, and shared inputs
-phedir=${phedir:-$dir0/data/ukb/phe}
+phedir=${phedir:-$dir0/data/ukb}
 script_dir=${script_dir:-$dir0/scripts}
-gen_dir=${gen_dir:-$dir0/data/ukb/gen}
+gen_dir=${gen_dir:-/mnt/f/gen/ukb/37}
 project_name="$(basename "$this_dir")"
 task_name="$(basename "${BASH_SOURCE[0]}" .sh)"
 outdir=${outdir:-$dir0/analysis/$project_name/$task_name}

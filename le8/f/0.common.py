@@ -1190,6 +1190,7 @@ def shared_analysis_settings(values, environ=None):
 	spec = {
 		"group_file": ("LE8_GROUP_FILE", ""),
 		"group_col": ("LE8_GROUP_COLUMN", env.get("PGS_GROUP_COLUMN", "")),
+		"ukb_rel_file": ("LE8_UKB_REL_FILE", "/mnt/f/gen/ukb/37/typ/ukb_rel.dat"),
 		"end_date": ("DATE_FOLLOW_END", "2023-04-01"),
 		"diagnosis_col": ("LE8_Y_DATE", ""),
 		"outer_roster": ("LE8_OUTER_ROSTER", ""),
@@ -1265,6 +1266,7 @@ C4 connect (including interactions, nonlinearity, panel validation and reconstru
 	p.add_argument("--seed", type=int, default=int(os.getenv("SEED", "2026")))
 	p.add_argument("--group-file", type=Path)
 	p.add_argument("--group-col", "--group-column", dest="group_col")
+	p.add_argument("--ukb-rel-file", type=Path, help="UKB KING related-pair source; default LE8_UKB_REL_FILE or /mnt/f/gen/ukb/37/typ/ukb_rel.dat")
 	p.add_argument("--end-date")
 	p.add_argument("--Y-date", "--diagnosis-col", dest="diagnosis_col")
 	p.add_argument("--outer-roster", type=Path, help="Shared eid,role CSV/TSV; roles training/test")
@@ -1900,6 +1902,7 @@ def _run_table_workspace(
 				if not path.is_file() or any(
 					x
 					in {
+						"_protocol",
 						"_history",
 						"_source_figures",
 						"_previous",
@@ -1962,6 +1965,8 @@ def _run_table_workspace(
 			if value.startswith("--") and "=" in value:
 				key, path = value.split("=", 1)
 				return key + "=" + map_path(path)
+			if value.startswith(str(root / "_protocol") + "/"):
+				return value  # Frozen participant-level inputs stay outside result transactions.
 			return (
 				str(work) + value[len(str(root)) :]
 				if value == str(root) or value.startswith(str(root) + "/")
@@ -2047,6 +2052,7 @@ def publish_workspace(work, root, initial, r_bin, env, scopes=None):
 		if not path.is_file() or any(
 			x
 			in {
+				"_protocol",
 				"_history",
 				"_source_figures",
 				"_previous",
@@ -2287,6 +2293,7 @@ def pipeline_worker_command(research, a, trait, layer):
 	]
 	for key in [
 		"ukb_phe",
+		"ukb_rel_file",
 		"group_file",
 		"group_col",
 		"outer_roster",

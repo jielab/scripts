@@ -13,7 +13,7 @@
 | `manhattan_plot.R` | GWAS Manhattan 图 |
 | `configure_ml.R` | R/reticulate 与机器学习环境 |
 | `memory_cap.sh` | GRID、GU 共用的进程组内存限制 |
-| `console.sh` / `console_run.py` | 统一命令行日志 |
+| `console.sh` / `console_run.py` / `process_lifetime.py` | 统一命令行日志、前台任务与子进程生命周期 |
 | `join_file.py` | 按键合并文件 |
 | `add_rsid.py` | rsID 补充 |
 | `hf_download.py` | Hugging Face 下载 |
@@ -25,3 +25,9 @@ GWAS 格式化及 BGZF/tabix 索引实现位于 `../gwas/f/format.f.sh`，LE8 �
 
 GRID 的检索/注意力数值核心维护在 `abm.py`，由 `f/attention.py` 加载。
 LE8 当前使用 `../le8/f/abm.py` 的 twin confidence 实现和 `../le8/f/deviation.py` 的遗传校正分子偏离实现。两项目各自维护输入、结局定义和训练/验证策略。
+
+默认前台运行。普通日志、`SCRIPT_VERBOSE=1`、Shiny 和原始输出模式使用同一进程清理机制。
+Ctrl+C、关闭终端或启动器退出会停止整棵任务进程树；启动器被 SIGKILL 时，Linux 父进程死亡信号触发子监督进程清理。
+内部并行 worker 不等于后台任务：入口持续等待它们，并清理被中间进程遗留的 worker。
+只有用户明确指定 `--foreground FALSE`，或自行使用 `nohup`/后台作业命令时，才允许任务脱离交互终端。
+不要用 `SCRIPT_VERBOSE`、重定向日志或创建 systemd service 来隐式切换后台运行；内存限制使用同步 `systemd-run --scope`。

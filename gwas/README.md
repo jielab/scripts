@@ -22,9 +22,9 @@ Shell 格式化流程、任务生成、执行及 BGZF/tabix 索引函数集中�
 
 `--hm3 TRUE` 先保留 HM3 rsID/坐标或 `P < --p-hm3` 的候选，再转换 ID，并以转换后的 HM3 rsID 或 P 值确认最终保留项。默认阈值为 `1e-3`，不是全基因组显著阈值 `5e-8`。dbSNP 的 BGZF/tabix 副本和按位置查询的结果共用 `<project>/.project/rsid/`，不同 GWAS 只补查新坐标，包含未匹配结果的缓存；首次使用每个版本需要准备参考索引。`--dbsnp FILE`、`--rsid-cache DIR` 可指定其他参考和共享缓存位置。
 
-WSL 本机运行默认 `--local-io AUTO`：排序和 SQLite 临时文件放在 `/tmp/gwas-post-<uid>/<project-key>/<steps>/`，rsID 缓存放在 `~/.cache/gwas/format/projects/<project-key>/rsid/`，MAGMA/HM3 参考放在同一缓存根目录的 `references/`。原始数据和最终结果仍位于原项目。旧项目 rsID 缓存首次使用时在持锁后复制，复制件通过 SQLite 检查并恢复中断事务；不覆盖已有的本地缓存。缓存命中的查询直接持共享锁，只有缺失位置才申请写锁并补查。已完成全套请求模块的 GWAS 在复制参考文件之前即跳过，不因这些性能修改重新计算。
+WSL 本机运行默认 `--local-io AUTO`：排序和 SQLite 临时文件放在 `/tmp/gwas-post-<uid>/<project-key>/<steps>/`，rsID 缓存放在 `/tmp/gwas-cache-<uid>/format/projects/<project-key>/rsid/`，MAGMA/HM3 参考放在同一缓存根目录的 `references/`。原始数据和最终结果仍位于原项目。旧项目 rsID 缓存首次使用时在持锁后复制，复制件通过 SQLite 检查并恢复中断事务；不覆盖已有的本地缓存。缓存命中的查询直接持共享锁，只有缺失位置才申请写锁并补查。已完成全套请求模块的 GWAS 在复制参考文件之前即跳过，不因这些性能修改重新计算。
 
-`--local-cache DIR` 可修改持久缓存根目录，`GWAS_POST_TMP_BASE` 可覆盖临时目录；选择 WSL 本地文件系统才能避免 `/mnt/f` 的跨系统访问开销。显式 `--rsid-cache DIR` 始终优先，不自动搬动用户指定的缓存。`--local-io FALSE` 保留原来的项目内缓存/临时目录，非 WSL 或 bsub 提交默认也保留原行为。修改目录配置只影响之后生成和启动的任务。当前 rsID 缓存仍保留写锁以保护并发补查；不会通过关闭 SQLite 同步或移除锁来加速。
+`--local-cache DIR` 可修改缓存根目录，`GWAS_POST_TMP_BASE` 可覆盖临时目录；选择 WSL 本地文件系统才能避免 `/mnt/f` 的跨系统访问开销。默认缓存位于 `/tmp`，存在时可复用，清理后会按需重建。显式 `--rsid-cache DIR` 始终优先，不自动搬动用户指定的缓存。`--local-io FALSE` 保留原来的项目内缓存/临时目录，非 WSL 或 bsub 提交默认也保留原行为。修改目录配置只影响之后生成和启动的任务。当前 rsID 缓存仍保留写锁以保护并发补查；不会通过关闭 SQLite 同步或移除锁来加速。
 
 列识别函数是 `0f/phenotype.sh` 的 `phe_header_names()`，由 `gwas_clean_header_names()` 调用，支持 CKB 的 `EA_FREQ → EAF`、`AA/A2 → NEA`。`--sample-info FILE` 接受 `phenocode,num_samples,num_cases,num_controls` 或 `GWAS,N` 的 TSV，逐性状补充缺失 N，已有有效 N 保留。可选 `grch` 列用于检查显式版本，或在 `--grch auto` 时提供版本；样本量和版本冲突会在启动任务前报错。
 

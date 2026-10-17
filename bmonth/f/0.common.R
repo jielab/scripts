@@ -4,7 +4,7 @@ suppressPackageStartupMessages({
 })
 
 dir0 <- ifelse(Sys.info()[["sysname"]]=="Windows","D:","/mnt/d")
-indir <- Sys.getenv("BMONTH_INDIR",file.path(dir0,"data","ukb","phe"))
+indir <- Sys.getenv("BMONTH_INDIR",file.path(dir0,"data","ukb"))
 outdir <- Sys.getenv("BMONTH_OUTDIR",file.path(dir0,"analysis","bmonth"))
 rawdir <- file.path(outdir,"raw"); figdir <- file.path(outdir,"fig")
 dir.create(rawdir,recursive=TRUE,showWarnings=FALSE)
@@ -14,17 +14,33 @@ csv_env <- function(name,default=""){
   z <- trimws(strsplit(Sys.getenv(name,default),",",fixed=TRUE)[[1]])
   unique(z[nzchar(z)])
 }
+
+# Main scientific exposures: birth month / annual seasonality.
 EXPOSURES <- csv_env("BMONTH_EXPOSURES",
   "bmonth_cos,bmonth_sin,bmonth_winter_summer,bmonth_spring_autumn")
+
+# Context exposures: retained to reproduce and investigate the strong OLD
+# birthplace geography -> alcohol PheWAS results. These are not birth-month effects.
+CONTEXT_EXPOSURES <- csv_env("BMONTH_CONTEXT_EXPOSURES",
+  "birth_north_100km,birth_east_100km")
+EXPLORATORY_ALL <- c("border12", "border1n", "border_rank", "border_relative")
+EXPLORATORY_TRAITS <- csv_env("BMONTH_EXPLORATORY_TRAITS", paste(EXPLORATORY_ALL, collapse = ","))
+if (identical(EXPLORATORY_TRAITS, "none")) EXPLORATORY_TRAITS <- character()
+if (length(setdiff(EXPLORATORY_TRAITS, EXPLORATORY_ALL)))
+	stop("Invalid BMONTH_EXPLORATORY_TRAITS; use birth-order trait names or 'none'")
+ANALYSIS_EXPOSURES <- unique(c(EXPOSURES, EXPLORATORY_TRAITS))
+PHEWAS_EXPOSURES <- unique(c(EXPOSURES, CONTEXT_EXPOSURES, EXPLORATORY_TRAITS))
+
 OUTCOMES <- csv_env("BMONTH_OUTCOMES","cvd_cad,ra")
 TEMPMED_PHENOS <- csv_env("BMONTH_TEMPMED_PHENOS","")
 REPLACE <- toupper(Sys.getenv("BMONTH_REPLACE","FALSE")) %in% c("TRUE","1","YES")
 
-ALL_EXPOSURES <- c(
+BASE_EXPOSURES <- c(
   "bmonth_cos","bmonth_sin","bmonth_winter_summer","bmonth_spring_autumn",
   "bmonth_rank","birth_north_100km","birth_east_100km","move_log1p")
-if(length(setdiff(EXPOSURES,ALL_EXPOSURES)))
-  stop("Invalid BMONTH_EXPOSURES: ",paste(setdiff(EXPOSURES,ALL_EXPOSURES),collapse=", "))
+ALL_EXPOSURES <- c(BASE_EXPOSURES, EXPLORATORY_ALL)
+bad <- setdiff(unique(c(EXPOSURES,CONTEXT_EXPOSURES)),BASE_EXPOSURES)
+if(length(bad)) stop("Invalid bmonth exposure(s): ",paste(bad,collapse=", "))
 
 as_num <- function(x){
   if(is.numeric(x)||is.logical(x)) return(as.numeric(x))
@@ -59,6 +75,59 @@ read_all <- function(){
 clean_month <- function(x){z<-as_num(x);z[!z%in%1:12]<-NA_real_;z}
 clean_coord <- function(x){z<-as_num(x);z[!is.finite(z)|z<0]<-NA_real_;z}
 
+
+# 🚩 Exploratory birth-order traits, derived locally from the shared UKB inputs
+clean_count <- function(x) {
+	z <- as_num(x)
+	z[!is.finite(z) | z < 0 | z != floor(z)] <- NA_real_
+	z
+}
+
+make_birth_order <- function(dat) {
+	required <- c("cnt_older", "cnt_brother", "cnt_sister", "adopted")
+	missing <- setdiff(required, names(dat))
+	if (length(missing)) {
+		if (length(EXPLORATORY_TRAITS)) stop("Missing exploratory birth-order columns: ",
+			paste(missing, collapse = ", "), "; use --exploratory-traits none to disable")
+		return(dat)
+	}
+	dat %>% mutate(
+		cnt_older = clean_count(cnt_older),
+		cnt_brother = clean_count(cnt_brother),
+		cnt_sister = clean_count(cnt_sister),
+		adopted_num = if_else(as_num(adopted) %in% c(0, 1), as_num(adopted), NA_real_),
+		sibling_n = cnt_brother + cnt_sister,
+		sibship_size = sibling_n + 1,
+		birth_rank = cnt_older + 1,
+		impossible_rank = !is.na(cnt_older) & !is.na(sibling_n) & cnt_older > sibling_n,
+		eligible_border = !is.na(cnt_older) & !is.na(cnt_brother) & !is.na(cnt_sister) &
+			!impossible_rank & (is.na(adopted_num) | adopted_num != 1),
+		border12 = case_when(
+			!eligible_border | sibship_size != 2 ~ NA_real_,
+			birth_rank == 1 ~ 0, birth_rank == 2 ~ 1, TRUE ~ NA_real_),
+		border1n = case_when(
+			!eligible_border | sibship_size < 2 ~ NA_real_,
+			birth_rank == 1 ~ 0, birth_rank == sibship_size ~ 1, TRUE ~ NA_real_),
+		border_rank = if_else(eligible_border & sibship_size >= 2, birth_rank, NA_real_),
+		border_relative = if_else(eligible_border & sibship_size >= 2,
+			(birth_rank - 1) / (sibship_size - 1), NA_real_)
+	)
+}
+
+birth_order_qc <- function(dat) {
+	if (!"eligible_border" %in% names(dat))
+		return(tibble(metric = "birth-order derivation disabled: input columns unavailable", value = nrow(dat)))
+	bind_rows(
+		tibble(metric = "complete three sibling counts", value = sum(complete.cases(dat[, c("cnt_older", "cnt_brother", "cnt_sister")]))),
+		tibble(metric = "adopted==1 excluded from birth-order traits", value = sum(dat$adopted_num == 1, na.rm = TRUE)),
+		tibble(metric = "adoption status unknown (retained if otherwise eligible)", value = sum(is.na(dat$adopted_num))),
+		tibble(metric = "impossible cnt_older > siblings", value = sum(dat$impossible_rank)),
+		tibble(metric = "eligible birth-order N (including singletons)", value = sum(dat$eligible_border)),
+		bind_rows(lapply(EXPLORATORY_ALL, function(x)
+			tibble(metric = paste0(x, " nonmissing"), value = sum(!is.na(dat[[x]])))))
+	)
+}
+
 birth_year_alias <- function(dat){
   cand <- c("birth_year","year_birth","year_of_birth","yob","p34")
   hit <- cand[cand%in%names(dat)]
@@ -71,8 +140,6 @@ derive_birth_year <- function(dat){
     y[!is.finite(y)|y<1900|y>2100|y!=floor(y)]<-NA_real_
     return(list(value=y,source=nm,approx=FALSE))
   }
-  # Fallback only for climate linkage when no explicit year-of-birth column exists.
-  # UKB age is integer age at assessment, so this can be off by one year.
   if(all(c("age","date_attend")%in%names(dat))){
     yr<-as_num(format(as_date(dat$date_attend),"%Y"))-as_num(dat$age)
     yr[!is.finite(yr)|yr<1900|yr>2100]<-NA_real_
@@ -94,8 +161,6 @@ merge_move <- function(dat,required=TRUE){
   if(!all(c("eid","move","tdi.birth")%in%keep))
     stop("move.rds must contain eid, move, and tdi.birth")
   mv<-mv[,keep,drop=FALSE]
-  # all.rds may already contain these variables. Refresh from move.rds without
-  # creating .x/.y names; retain existing values when the move table has no value.
   overlap<-intersect(setdiff(keep,"eid"),names(dat))
   out<-left_join(dat,mv,by="eid",suffix=c("",".move"))
   for(nm in overlap){
@@ -116,12 +181,11 @@ make_birth_month <- function(dat){
   if(!"tdi.birth.nn"%in%names(dat)) dat$tdi.birth.nn <- NA_real_
   out <- dat %>% mutate(
     birth_month=m,birth_north=n,birth_east=e,
-    # Circular coding. -1 around Dec, +1 around Jun.
-    bmonth_cos=-cos(theta),
+    bmonth_cos=-cos(theta),                 # -1 Dec/Jan, +1 Jun/Jul
     bmonth_sin=sin(theta),
     bmonth_winter_summer=case_when(m%in%c(12,1,2)~0,m%in%c(6,7,8)~1,TRUE~NA_real_),
     bmonth_spring_autumn=case_when(m%in%c(3,4,5)~0,m%in%c(9,10,11)~1,TRUE~NA_real_),
-    bmonth_rank=m, # sensitivity only
+    bmonth_rank=m,                          # sensitivity only; month is circular
     birth_north_100km=n/100000,
     birth_east_100km=e/100000,
     move_km=clean_coord(move),
@@ -150,18 +214,59 @@ prep_covars <- function(dat){
   )
 }
 
-# Four prespecified covariate stages.
-# D4 is a post-birth migration sensitivity model, not a pure confounder model.
+# Five prespecified covariate stages.
+# Separating D3 geography from D4 tdi.birth is deliberate: it identifies whether
+# attenuation is caused by geography, birthplace deprivation proxy, or sample loss.
 covars_stage <- list(
   D1_core=c("age","sex","center"),
   D2_adultSES=c("age","sex","center","edu.sco","tdi"),
-  D3_birthContext=c("age","sex","center","edu.sco","tdi",
+  D3_geography=c("age","sex","center","edu.sco","tdi",
+                 "birth_north_100km","birth_east_100km"),
+  D4_birthContext=c("age","sex","center","edu.sco","tdi",
                     "birth_north_100km","birth_east_100km","tdi.birth"),
-  D4_migration=c("age","sex","center","edu.sco","tdi",
+  D5_migration=c("age","sex","center","edu.sco","tdi",
                  "birth_north_100km","birth_east_100km","tdi.birth","move_log1p")
 )
-# Main birth-month analysis: isolate seasonality from birth geography/deprivation.
-covars <- covars_stage$D3_birthContext
+
+# Primary birth-month analysis.
+covars <- covars_stage$D4_birthContext
+
+# OLD-compatible model for birthplace-context PheWAS.
+context_covars <- covars_stage$D2_adultSES
+exploratory_covars <- covars_stage$D2_adultSES
+
+analysis_covars_for <- function(exposure) {
+	if (exposure %in% EXPLORATORY_ALL) exploratory_covars else covars
+}
+analysis_model_label <- function(exposure) {
+	if (exposure %in% EXPLORATORY_ALL) "exploratory_D2_birth_order" else "primary_D4_birthContext"
+}
+analysis_track <- function(exposure) {
+	ifelse(exposure %in% EXPLORATORY_ALL, "exploratory_birth_order",
+		ifelse(exposure %in% c("birth_north_100km", "birth_east_100km"), "birthplace_context",
+			ifelse(exposure == "move_log1p", "postbirth_sensitivity", "birth_month")))
+}
+exposure_unit <- function(exposure) {
+	units <- c(border12 = "second-born vs first-born (two-child families)",
+		border1n = "youngest vs oldest (middle children excluded)",
+		border_rank = "per one-position later birth rank",
+		border_relative = "youngest (1) vs oldest (0) on relative scale")
+	ifelse(exposure %in% names(units), unname(units[exposure]), "per one-unit increase")
+}
+
+phewas_covars_for <- function(exposure){
+  if(exposure %in% EXPLORATORY_ALL) return(exploratory_covars)
+  if(exposure %in% c("birth_north_100km","birth_east_100km")) return(context_covars)
+  if(exposure=="move_log1p") return(covars_stage$D4_birthContext)
+  covars
+}
+phewas_model_label <- function(exposure){
+  if(exposure %in% EXPLORATORY_ALL) return("exploratory_D2_birth_order")
+  if(exposure %in% c("birth_north_100km","birth_east_100km"))
+    return("context_D2_old_compatible")
+  if(exposure=="move_log1p") return("postbirth_D4_sensitivity")
+  "primary_D4_birthContext"
+}
 
 outcome_date_columns <- function(dat,y){
   p<-paste0("fod_icd10_",y); if(p%in%names(dat)) return(p)
@@ -215,17 +320,19 @@ load_cohort<-function(){
   p<-file.path(rawdir,"bmonth.cohort.rds")
   if(!file.exists(p)) stop("Run bmonth.sh prep first")
   d<-validate_ids(readRDS(p),"eid","bmonth cohort")
-  needed<-unique(c(ALL_EXPOSURES,unlist(covars_stage),"birth_year_bm"))
+  needed<-unique(c(BASE_EXPOSURES,EXPLORATORY_TRAITS,unlist(covars_stage),"birth_year_bm"))
   if(length(setdiff(needed,names(d))) ||
      !identical(attr(d,"bmonth_metadata")$covars_primary,covars))
     stop("Cohort uses an older/incompatible model; rerun bmonth.sh prep first")
   d
 }
-fit_cox<-function(dat,exposure,y,covar_names=covars){
+fit_cox<-function(dat,exposure,y,covar_names=analysis_covars_for(exposure)){
   covar_names<-setdiff(covar_names,exposure)
   dat<-ensure_outcome(dat,y);tv<-paste0(y,".t2e");ev<-paste0(y,".Yt2e")
   d<-complete_model_data(dat,unique(c(tv,ev,exposure,covar_names)))
   row<-tibble(outcome=y,exposure=exposure,N=nrow(d),events=sum(d[[ev]]==1),
+    analysis_track=analysis_track(exposure),covariate_model=analysis_model_label(exposure),
+    exposure_unit=exposure_unit(exposure),
     beta=NA_real_,se=NA_real_,HR=NA_real_,conf.low=NA_real_,conf.high=NA_real_,
     p=NA_real_,status="skipped",note="")
   if(nrow(d)<500||row$events<20||length(unique(d[[exposure]]))<2) return(row)
@@ -238,8 +345,6 @@ fit_cox<-function(dat,exposure,y,covar_names=covars){
   row$conf.high<-exp(b+qnorm(.975)*s);row$p<-sm[exposure,"Pr(>|z|)"];row$status<-"ok";row
 }
 annotate_phecodes <- function(x){
-  # addPhecodeInfo performs an inner join: annotate a dictionary, then left join
-  # so unmapped tests remain in the multiple-testing denominator and outputs.
   out<-as.data.frame(x);out$phenotype<-as.character(out$phenotype)
   info<-as.data.frame(PheWAS::addPhecodeInfo(data.frame(phenotype=unique(out$phenotype))))
   names(info)[names(info)=="group"]<-"category"
@@ -252,3 +357,16 @@ annotate_phecodes <- function(x){
   out
 }
 write_csv2<-function(x,name)write.csv(x,file.path(rawdir,name),row.names=FALSE,na="")
+
+
+# 🚩 Keep figure data alongside each rendered figure
+remove_result_figure <- function(name) {
+	unlink(file.path(figdir, c(paste0(name, ".png"), paste0(name, ".xlsx"))))
+}
+save_result_figure <- function(plot, name, results, width, height, dpi = 300) {
+	remove_result_figure(name)
+	if (is.null(plot) || !nrow(results)) return(invisible(NULL))
+	ggplot2::ggsave(file.path(figdir, paste0(name, ".png")), plot,
+		width = width, height = height, dpi = dpi, bg = "white")
+	writexl::write_xlsx(list(results = as.data.frame(results)), file.path(figdir, paste0(name, ".xlsx")))
+}

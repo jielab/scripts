@@ -16,7 +16,8 @@ cd /mnt/d/scripts/gu
 
 Threads keeps one chromosome job. Each build writes log/arg.timing.chrN.json
 with prepare/infer/convert/check times, cache hits, and sampled process-tree RSS.
-Scratch must remain on native Linux storage. No generic ARG GPU backend is used.
+Scratch defaults to /tmp/refgen_arg_scratch-<uid>/ and must remain on native Linux storage.
+No generic ARG GPU backend is used.
 HELP
 }
 

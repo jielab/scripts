@@ -55,7 +55,7 @@ Important parameters:
   --chrs 1-22                  Autosomes; subsets get separate filenames/directories.
   --seed N                     20260904 (chromosome number added for each chain).
   --keep FILE / --remove FILE  PLINK sample lists; default remove: /mnt/d/files/ukb.exclude.id.
-  --score-dir DIR              Default: /mnt/d/data/ukb/pgs for both CPU and CUDA.
+  --score-dir DIR              Default: /mnt/f/gen/ukb/pgs for both CPU and CUDA.
   --backend MODE               auto (default): detect CUDA, otherwise use CPU.
                                cpu or cuda explicitly selects a backend.
   --gpu-device INT             CUDA device index (default 0)
@@ -77,7 +77,7 @@ Automatic execution and output layout:
   Execution tuning preserves fitted-input identity; validated completed chromosomes are reused.
   CPU scoring keeps its own worker budget (GRID_SCORE_JOBS; defaults to --jobs).
   GRID_CSX_GPU_CACHE_GIB changes that cache budget; GIG and NumPy RNG remain CPU.
-  Permanent weights remain beside the source GWAS; scores use /mnt/d/data/ukb/pgs.
+  Permanent weights remain beside the source GWAS; scores use /mnt/f/gen/ukb/pgs.
   Both backends publish to these same paths for downstream Disco/GRID compatibility.
   An explicit --score-dir overrides the score destination.
   Each raw chromosome contains mcmc.timing.json (load, MCMC, write, peak VRAM).

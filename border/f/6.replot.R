@@ -1,5 +1,0 @@
-source(file.path(Sys.getenv('BORDER_FDIR'),'0.common.R'))
-source(file.path(Sys.getenv('BORDER_FDIR'),'phewas_plot.R'))
-pf<-file.path(rawdir,'phewas.rds')
-if(!file.exists(pf))stop('Saved PheWAS results missing: ',pf)
-plot_phewas_figures(readRDS(pf))

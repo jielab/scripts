@@ -19,6 +19,8 @@ cd /mnt/d/scripts/ukb
 # Independent SNP extraction from typed data; BED coordinates must match its build.
 ./gen.sh snp --dir-gen /mnt/f/gen/ukb/37 --data typ --snp-file /mnt/d/files/Wang_MY.bed \
   --snp-file-type bed --dir-out /mnt/d/analysis/ukb --label Wang
+
+默认在前台执行。只有显式 --background 才将 pgs/snp/apoe 提交到 bsub。
 HELP
 }
 
@@ -422,7 +424,7 @@ EOF2
 
 	if [[ "${dry_run:-N}" == Y ]]; then
 		echo "OK: dry run; PGS script written to: $cmd_file"
-	elif command -v bsub >/dev/null 2>&1; then
+	elif [[ $background == Y ]]; then
 		(cd "$dir_out" && bsub -q short -J "$label.pgs" -o "$label.pgs.LOG" -e "$label.pgs.ERR" <"$cmd_file")
 		echo "OK: PGS job submitted: $cmd_file"
 	else
@@ -579,7 +581,7 @@ EOF2
 
 	if [[ "${dry_run:-N}" == Y ]]; then
 		echo "OK: dry run; extraction script written to: $cmd_file"
-	elif command -v bsub >/dev/null 2>&1; then
+	elif [[ $background == Y ]]; then
 		(cd "$work_dir" && bsub -q spec -J "$label" -o "$label.LOG" -e "$label.ERR" <"$cmd_file")
 		echo "OK: SNP extraction job submitted: $cmd_file"
 	else
@@ -605,7 +607,7 @@ set +H
 set -e
 
 cd "$dirout"
-plink2 --pfile $dir0/data/ukb/imp/hap/chr19 --extract apoe.snps --export vcf id-paste=iid bgz --out apoe
+plink2 --pfile /mnt/f/gen/ukb/37/hap/chr19 --extract apoe.snps --export vcf id-paste=iid bgz --out apoe
 tabix -f apoe.vcf.gz
 bcftools query -l apoe.vcf.gz | awk 'BEGIN{print "IID"}; {print \$1}' > sample.ids
 bcftools query -f '%CHROM:%POS:%REF:%ALT[ %GT]\n' -r 19:45411941 apoe.vcf.gz | tr ' ' '\n' > snp1.txt
@@ -619,16 +621,27 @@ cat apoe.hap.count.txt
 EOF2
 	chmod +x "$dirout/apoe.cmd"
 
-	(cd "$dirout" && bsub -q spec -J apoe -o apoe.LOG -e apoe.ERR <apoe.cmd)
-	echo "OK: APOE extraction job submitted: $dirout/apoe.cmd"
+	if [[ ${dry_run:-N} == Y ]]; then
+		echo "OK: dry run; APOE script written to: $dirout/apoe.cmd"
+	elif [[ $background == Y ]]; then
+		(cd "$dirout" && bsub -q spec -J apoe -o apoe.LOG -e apoe.ERR <apoe.cmd)
+		echo "OK: APOE extraction job submitted: $dirout/apoe.cmd"
+	else
+		bash "$dirout/apoe.cmd"
+	fi
 }
 
 pos_args=()
 flank=
 flank_set=N
 dry_run=N
+background=N
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+		--background)
+			background=Y
+			shift
+			;;
 		-h | --help)
 			usage
 			exit 0

@@ -18,7 +18,7 @@ DATASETS=emp,wbe,长江,厦门污水,全球污水,纳米布沙漠
 REF=/mnt/f/metag/ref_kraken2_ictv
 DB="$REF/kraken2_broad_v1"
 MAP="$REF/virus_map_v1/virus_genome_types.sqlite"
-UNIT=metag-reference-build.service
+UNIT=metag-reference-build.scope
 LOG="$DB/metag_build_logs/supervised-build.log"
 LIMITS=(--property=MemoryHigh=30G --property=MemoryMax=36G
         --property=MemorySwapMax=4G --property=OOMPolicy=stop
@@ -29,29 +29,25 @@ flock -n 8 || { echo '另一个 metag.sh prep_ref 正在执行，请等待它完
 "$METAG" datasets "$DATASETS"
 systemctl --user show --property=Version --value >/dev/null
 
-build_running() {
-  case "$(systemctl --user show "$UNIT" --property=ActiveState --value)" in
-    active|activating|deactivating) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 run_metag() {
-  systemd-run --user --wait --pipe --collect \
+  systemd-run --user --scope --quiet --collect \
     --unit="metag-$1-$(date +%s%N)" "${LIMITS[@]}" "$METAG" "$@"
 }
 
-# 2. 复用正在运行的建库；已停止且未完成时，恢复原来的建库任务。
-if ! build_running && [[ ! -f "$DB/metag_build_state/all.complete" ]]; then
+# 2. 前台恢复建库；不能接管历史上独立启动的后台服务。
+case "$(systemctl --user show metag-reference-build.service --property=ActiveState --value)" in
+  active|activating|deactivating)
+    echo '历史后台建库服务仍在运行；请先明确停止该服务，再以前台方式运行 prep_ref。' >&2
+    exit 1 ;;
+esac
+if [[ ! -f "$DB/metag_build_state/all.complete" ]]; then
   mkdir -p "$DB/metag_build_logs"
   systemctl --user reset-failed "$UNIT" 2>/dev/null || true
-  systemd-run --user --unit="$UNIT" "${LIMITS[@]}" \
-    --property="StandardOutput=append:$LOG" \
-    --property="StandardError=append:$LOG" \
+  printf '前台恢复参考建库；日志：%s\n' "$LOG"
+  systemd-run --user --scope --quiet --collect --unit="$UNIT" "${LIMITS[@]}" \
     "$METAG" build-db --db "$DB" --threads 16 --download-threads 8 \
-    --max-db-gb 24 --execute
+    --max-db-gb 24 --execute 2>&1 | tee -a "$LOG"
 fi
-printf '等待参考建库完成；日志：%s\n' "$LOG"
-while build_running; do sleep 30; done
 if [[ ! -f "$DB/metag_build_state/all.complete" || ! -s "$DB/hash.k2d" ||
       ! -s "$DB/opts.k2d" || ! -s "$DB/taxo.k2d" || ! -s "$MAP" ]]; then
   printf '参考尚未完成，已停止。请查看日志：%s\n' "$LOG" >&2

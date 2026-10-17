@@ -31,7 +31,7 @@ Project and execution:
     Default drop: unresolved rows go to qc/[trait].rsid.unresolved.tsv.gz.
   --dbsnp FILE --rsid-cache DIR  Optional mapping reference/cache overrides
   --local-io AUTO|TRUE|FALSE   AUTO uses local scratch/caches for local WSL runs
-  --local-cache DIR           Default: ~/.cache/gwas/format (persistent references/rsIDs)
+  --local-cache DIR           Default: /tmp/gwas-cache-<uid>/format (references/rsIDs)
     Existing project rsID caches are imported once; explicit --rsid-cache wins.
     GWAS_POST_TMP_BASE overrides the default /tmp/gwas-post-<uid>/<project>/<steps>.
   --sample-info FILE          TSV: phenocode,num_samples or num_cases,num_controls;

@@ -3,6 +3,23 @@ make_plot<-function(d,kind,metric,title='GRID'){
   if(nrow(d)>1000)return(empty_plot('More than 1,000 rows: refine the table filters before plotting.'))
   theme<-theme_minimal(base_size=13)+theme(legend.position='bottom',plot.title=element_text(size=14,face='bold'),panel.grid.minor=element_blank())
   method<-first_col(d,c('method','model'));if(is.null(method)){d$.method<-'Result';method<-'.method'}
+  if(kind=='abm_selector_curve'){
+    z<-reshape(d[,c('purpose','selector','actual_coverage','candidate_gain_same_subset','selector_delta_loss_vs_control')],
+      varying=c('candidate_gain_same_subset','selector_delta_loss_vs_control'),v.names='value',timevar='question',
+      times=c('candidate gain vs fallback','selector effect vs matched control'),direction='long')
+    return(ggplot(z,aes(actual_coverage,value,colour=question,linetype=purpose))+geom_hline(yintercept=0,linetype=3)+geom_line()+geom_point()+
+      labs(x='Actual coverage',y='Primary-loss difference',title=title)+theme)
+  }
+  if(kind=='abm_primary_contrasts'){
+    z<-reshape(d[,intersect(c('purpose','selector','candidate_minus_fallback_loss','selector_minus_control_loss'),names(d)),drop=FALSE],
+      varying=c('candidate_minus_fallback_loss','selector_minus_control_loss'),v.names='value',timevar='contrast',
+      times=c('candidate - fallback','selector - matched control'),direction='long')
+    return(ggplot(z,aes(value,purpose,shape=contrast))+geom_vline(xintercept=0,linetype=2)+geom_point(size=3)+labs(x='Primary-loss difference',y=NULL,title=title)+theme)
+  }
+  if(kind=='abm_reference_cleaning'){
+    return(ggplot(d,aes(delta_loss,contrast))+geom_vline(xintercept=0,linetype=2)+geom_point(size=3)+
+      geom_segment(aes(x=lower,xend=upper,yend=contrast),na.rm=TRUE)+labs(x='Paired loss difference (negative favours first model)',y=NULL,title=title)+theme)
+  }
   if(kind%in%c('contrasts','legacy_contrasts')){
     value<-first_col(d,c('delta','difference'));lo<-first_col(d,c('lower','lower95'));hi<-first_col(d,c('upper','upper95'))
     if(is.null(value))return(empty_plot())

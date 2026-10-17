@@ -34,8 +34,8 @@ Data and paths:
   --python PATH                GRID_PRSFORMER_PYTHON / GRID_PYTHON, else an existing compatible environment.
   --upstream-dir DIR           /mnt/f/software/PRSformer (official checkout).
   --dir-gen DIR                /mnt/f/gen/ukb/37/hap (chr*.pgen/pvar/psam).
-  --pheno-file FILE            /mnt/d/data/ukb/phe/Rdata/all.rds.
-  --ancestry-file FILE         /mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz.
+  --pheno-file FILE            /mnt/d/data/ukb/Rdata/all.rds.
+  --ancestry-file FILE         /mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz.
   --group-col NAME             genetic_ancestry.
   --covariates LIST            age,sex,PC1,PC2; numeric columns, training-only fitting.
   --height-col / --ldl-col     height / ldl.
@@ -111,8 +111,8 @@ UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-/mnt/f/software/PRSformer}
 MODE=all
 TRAITS=height,ldl,t2dm
 DIR_GEN=/mnt/f/gen/ukb/37/hap
-PHENO_FILE=/mnt/d/data/ukb/phe/Rdata/all.rds
-ANCESTRY_FILE=/mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+PHENO_FILE=/mnt/d/data/ukb/Rdata/all.rds
+ANCESTRY_FILE=/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
 GROUP_COL=genetic_ancestry
 COVARIATES=age,sex,PC1,PC2
 HEIGHT_COL=height

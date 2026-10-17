@@ -887,7 +887,7 @@ get_icd_fast <- function(ver, dat.code = NA, dat.date = NA, fn,
 get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 	new_col_name <- paste0("fod_ref_", label.this)
 	if (new_col_name %in% names(dat.this)) return(dat.this)
-	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(paste0("D:/data/ukb/phe/Rdata/fod.date0.rds"))
+	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(paste0("D:/data/ukb/Rdata/fod.date0.rds"))
 		target_cols <- grep(code.this, names(dat.fod), value = TRUE)
 		if (length(target_cols) == 0) { warning(paste("No columns found for pattern:", code.this)); return(dat.this) }
 		out <- dat.fod[, "eid", drop = FALSE]
@@ -901,7 +901,8 @@ get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 
 # 🚩 Relatedness filtering
 rel_seek <- function(eid, cutoff = 0.0882, id1_col = "ID1", id2_col = "ID2", kin_col = "Kinship") {
-	rel <- read.table(paste0(dir0, '/data/ukb/gen/typ/ukb_rel.dat'), header = TRUE)
+	gen_dir <- Sys.getenv("GEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37" else "/mnt/f/gen/ukb/37")
+	rel <- read.table(file.path(gen_dir, "typ/ukb_rel.dat"), header = TRUE)
 	rel_sub <- rel[rel[[kin_col]] > cutoff & rel[[id1_col]] %in% eid & rel[[id2_col]] %in% eid, c(id1_col, id2_col, kin_col)]
 	rel_sub$rowid <- seq_len(nrow(rel_sub))
 	work <- rel_sub[, c(id1_col, id2_col, "rowid")]; names(work) <- c("ID1", "ID2", "rowid")

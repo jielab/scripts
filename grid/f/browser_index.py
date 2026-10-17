@@ -24,6 +24,9 @@ def context(path):
 
 def kind_of(d):
     c=set(d)
+    if {'purpose','selector','actual_coverage','candidate_gain_same_subset','selector_delta_loss_vs_control'}<=c:return 'abm_selector_curve'
+    if {'candidate_minus_fallback_loss','selector_minus_control_loss'}<=c:return 'abm_primary_contrasts'
+    if {'contrast','delta_loss','lower','upper','metric'}<=c:return 'abm_reference_cleaning'
     if {'contrast','delta','lower','upper','metric'}<=c:return 'contrasts'
     if {'mean_confidence','method'}<=c:return 'confidence'
     if {'actual_coverage','subset','method'}<=c:return 'metrics'

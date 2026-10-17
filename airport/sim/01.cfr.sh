@@ -1,4 +1,12 @@
 #!/bin/bash
+source /mnt/d/scripts/0f/console.sh
+set -e
+background=FALSE
+case "${1:-}" in
+  --background) background=TRUE ;;
+  '') ;;
+  *) echo 'Usage: 01.cfr.sh [--background]' >&2; exit 2 ;;
+esac
 
 
 # 🚩 01.cfr
@@ -26,6 +34,10 @@ for X in $(
 	R CMD BATCH $label.R
 	" >$outdir/$label.cmd
 	cd $outdir
-	bsub -q short -n 40 -J avia.$label -o $label.LOG -e $label.ERR <$label.cmd
+	if [[ $background == TRUE ]]; then
+		bsub -q short -n 40 -J avia.$label -o $label.LOG -e $label.ERR <$label.cmd
+	else
+		bash "$label.cmd"
+	fi
 
 done

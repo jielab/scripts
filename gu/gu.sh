@@ -35,6 +35,8 @@ gu_run_phyml() (
 # Preparation validates its own tools and does not restore analysis results.
 case "${1:-}:${2:-}" in
 	ukb:inspect-pgen | ukb:make-panel-pgen | ukb:pilot | ukb:pgen-vcf)
+		# This early entry returns before the normal logging setup below.
+		SCRIPT_CONSOLE_PASSTHROUGH=1 source "$ROOT/../0f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
 		if [[ ${CONDA_DEFAULT_ENV:-} != ${GU_ENV_NAME:-gu} && ${GU_ENV_REEXEC:-0} != 1 ]]; then
 			conda_owner=${GU_CONDA_EXE:-${GU_CONDA_BASE:-$HOME/anaconda3}/bin/conda}
 			[[ -x $conda_owner ]] || { echo "ERROR: activate the GU conda environment before UKB preparation" >&2; exit 2; }
@@ -2204,7 +2206,7 @@ exit "$rc"'
 	# 馃毄 Genome-build validation
 	# Use coordinate sentinels when pvars do not contain rsIDs.
 	gu_check_grch_pvar_positions() {
-		local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/phe/common/snp.lst}
+		local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}
 		local n37 n38 inferred expected_n
 		[[ -s $src && -s $gold ]] || {
 			echo "ERROR: positional GRCh check input is missing: pvar=$src gold=$gold" >&2

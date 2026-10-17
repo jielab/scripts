@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from c1_lock_roster import grouping_audit, GROUPING_SOURCE
 
 RELEASE="2026-10-17.c1-lockpaper-v1"
 
@@ -60,7 +61,7 @@ def fig1_conceptual(out):
         "Disease risk: 17%\nMolecular predictability: HIGH\n\nRisk answers: how high?\nPredictability answers: how reliable?")
     arr((4.05,5.8),(4.9,5.8));arr((8.75,5.8),(9.9,5.8))
     box(.3,1.0,4.0,2.2,"D  Locked validation design",
-        "One outcome-blind family-level outer test roster\nshared by conventional C1 and ABM.\nABM development is split internally into\nbuild / tune / gate / calibration roles.")
+        "One outcome-blind outer test roster\nshared by conventional C1 and ABM.\nABM development is split internally into\nbuild / tune / gate / calibration roles.")
     box(5.0,1.0,4.0,2.2,"E  Primary predictability estimand",
         "At 20/40/50/60/80/100% coverage:\ncompare frozen-selector participants with\npredicted-risk–matched outcome-blind controls.\nPrimary: ΔBrier / ΔLogLoss AURC.")
     box(9.7,1.0,4.0,2.2,"F  Reference-agent specificity",
@@ -205,7 +206,18 @@ def supplement_selectors(root,out):
     savefig(fig,Path(out)/"FigS_selector_multiroute")
     return z
 
-def tables(out,bench,curve,summ,clean,selectors):
+def manuscript_grouping_audit(root):
+    rows = []
+    for layer in ("prot", "met"):
+        path = Path(root) / layer / "c1_abm/abm_twin/host_contract.json"
+        if path.is_file():
+            # Describe the actual frozen fit, never a newly created global roster.
+            audit = grouping_audit(json.loads(path.read_text()))
+            rows.append(dict(layer=layer, **audit))
+    return pd.DataFrame(rows)
+
+
+def tables(out,bench,curve,summ,clean,selectors,grouping=None):
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
     with pd.ExcelWriter(out/"C1_LOCKPAPER_main_tables.xlsx",engine="openpyxl") as w:
         bench.to_excel(w,sheet_name="Table1_population_prediction",index=False)
@@ -213,6 +225,8 @@ def tables(out,bench,curve,summ,clean,selectors):
         clean.to_excel(w,sheet_name="Table3_reference_cleaning",index=False)
         curve.to_excel(w,sheet_name="Fig3_source",index=False)
         selectors.to_excel(w,sheet_name="Supplement_selectors",index=False)
+        if grouping is not None:
+            grouping.to_excel(w,sheet_name="Supplement_kinship_audit",index=False)
     bench.to_csv(out/"Table1_population_prediction.tsv",sep="\t",index=False)
     summ.to_csv(out/"Table2_predictability.tsv",sep="\t",index=False)
     clean.to_csv(out/"Table3_reference_cleaning.tsv",sep="\t",index=False)
@@ -223,7 +237,23 @@ def main(argv=None):
     out.mkdir(parents=True,exist_ok=True)
     fig1_conceptual(out)
     bench=fig2_population(root,out);curve,summ=fig3_predictability(root,out);clean=fig4_cleaning(root,out);selectors=supplement_selectors(root,out)
-    tables(out,bench,curve,summ,clean,selectors)
+    grouping = manuscript_grouping_audit(root)
+    tables(out,bench,curve,summ,clean,selectors,grouping)
+    grouped = (len(grouping) == 2 and {"grouping_source", "family_disjoint_outer_split", "family_disjoint_ABM_roles"} <= set(grouping)
+               and grouping.grouping_source.eq(GROUPING_SOURCE).all()
+               and grouping.family_disjoint_outer_split.eq(True).all()
+               and grouping.family_disjoint_ABM_roles.eq(True).all())
+    methods = (
+        "Genetically related participants were grouped using the UK Biobank KING relatedness data. "
+        "All participants belonging to the same kinship-connected component were assigned to the same "
+        "outer data split, preventing close relatives from crossing the development-test boundary. "
+        "Components were constructed from all released related pairs before intersection with the analytical cohort. "
+        "Participants absent from the relatedness graph received singleton groups. No participants were removed "
+        "because of relatedness. The same groups were used for ABM development-role assignment and "
+        "kinship-component block bootstrap inference. These groups represent genetic connectivity, not known pedigrees."
+        if grouped else "Kinship-aware Methods language is pending verified kinship-aware fits for both omic layers."
+    )
+    (out/"Methods_kinship.txt").write_text(methods + "\n")
     required=[f"{name}.{ext}" for name in ("Fig1_conceptual_framework","Fig2_population_average_prediction",
         "Fig3_predictability_coverage","Fig4_reference_agent_cleaning","FigS_selector_multiroute") for ext in ("pdf","png")]
     missing=[name for name in required if not (out/name).is_file()]

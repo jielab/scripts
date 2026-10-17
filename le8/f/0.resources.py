@@ -186,7 +186,7 @@ def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,rese
     pending.sort(key=lambda t:(-float(t.get('memory_gib',1)),t['_position']))
     old_handlers={}
     def interrupted(signum,frame):raise KeyboardInterrupt(f'signal {signum}')
-    for sig in (signal.SIGTERM,signal.SIGINT):old_handlers[sig]=signal.signal(sig,interrupted)
+    for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):old_handlers[sig]=signal.signal(sig,interrupted)
     try:
         while pending or running:
             launched=False
@@ -367,7 +367,7 @@ def phase_main(argv):
     old={}
     def stop(signum,frame):raise KeyboardInterrupt(f'signal {signum}')
     try:
-        for sig in (signal.SIGTERM,signal.SIGINT):old[sig]=signal.signal(sig,stop)
+        for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):old[sig]=signal.signal(sig,stop)
         def affinity():os.sched_setaffinity(0,cpus)
         proc=subprocess.Popen(command,env=env,preexec_fn=affinity)
         # Share terminal job control; this supervisor cleans its own descendants.

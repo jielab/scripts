@@ -56,4 +56,27 @@ server<-function(input,output,session){
   observeEvent(input$catalogue_rows_selected,{i<-input$catalogue_rows_selected;if(length(i)&&i>=1&&i<=nrow(scoped())){updateSelectizeInput(session,'table',selected=scoped()$table_id[i]);updateNavbarPage(session,'nav',selected='results')}})
   output$audit_table<-renderDT(datatable(DBI::dbReadTable(con,'audit'),rownames=FALSE,filter='top',escape=TRUE,options=list(pageLength=15,scrollX=TRUE)),server=TRUE)
   output$metadata<-renderPrint(DBI::dbReadTable(con,'metadata'))
+  abm_values<-function(name){
+    tr<-if(is.null(input$trait)||input$trait=='all')sort(setdiff(unique(cat$trait),'all'))[1]else input$trait
+    if(length(tr)!=1L||is.na(tr))return(data.frame(message='Run the FINAL ABM, then reindex final.'))
+    r<-cat[cat$name==name & cat$trait==tr & cat$module=='Twin test' & !as.logical(cat$legacy),,drop=FALSE]
+    if(!nrow(r))return(data.frame(message='Run the FINAL ABM, then reindex final.'))
+    read_values(con,r[nrow(r),,drop=FALSE])
+  }
+  abm_curve<-reactive(abm_values('selector_curve'))
+  abm_panel<-function(purpose){d<-abm_curve();if(!'purpose'%in%names(d))return(d);d[d$purpose==purpose,,drop=FALSE]}
+  abm_plot<-function(purpose){
+    d<-abm_panel(purpose);if(!nrow(d)||!'actual_coverage'%in%names(d))return(empty_plot('No ABM selector curve in the current run.'))
+    value<-if(purpose=='predictability')d$selector_delta_loss_vs_control else d$candidate_gain_same_subset
+    label<-if(purpose=='predictability')'Fallback loss: selected - matched control (lower is better)' else 'Fallback loss - candidate loss (higher is better)'
+    z<-data.frame(coverage=d$actual_coverage,value=value)
+    ggplot(z,aes(coverage,value))+geom_hline(yintercept=0,linetype=2)+geom_line()+geom_point()+theme_minimal(base_size=12)+labs(x='Actual coverage',y=label)
+  }
+  output$abm_predictability_plot<-renderPlot(abm_plot('predictability'))
+  output$abm_benefit_plot<-renderPlot(abm_plot('benefit'))
+  output$abm_predictability_table<-renderDT(datatable(abm_panel('predictability'),rownames=FALSE,options=list(pageLength=6,scrollX=TRUE)),server=FALSE)
+  output$abm_benefit_table<-renderDT(datatable(abm_panel('benefit'),rownames=FALSE,options=list(pageLength=6,scrollX=TRUE)),server=FALSE)
+  output$abm_cleaning_plot<-renderPlot({d<-abm_values('reference_cleaning');if(!'delta_loss'%in%names(d))return(empty_plot('No reference-cleaning table.'));ggplot(d,aes(delta_loss,contrast))+geom_vline(xintercept=0,linetype=2)+geom_point(size=3)+geom_segment(aes(x=lower,xend=upper,yend=contrast),na.rm=TRUE)+theme_minimal(base_size=12)+labs(x='Paired loss difference (negative favours first model)',y=NULL)})
+  output$abm_cleaning_table<-renderDT(datatable(abm_values('reference_cleaning'),rownames=FALSE,options=list(pageLength=8,scrollX=TRUE)),server=FALSE)
+  output$abm_status<-renderDT(datatable(abm_values('abm_status'),rownames=FALSE,options=list(dom='t',scrollX=TRUE)),server=FALSE)
 }

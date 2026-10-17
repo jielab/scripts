@@ -106,7 +106,7 @@ class Config:
     gate_iterations: int = 100
     min_role_n: int = 30
     min_class_n: int = 10
-    bootstrap: int = 500
+    bootstrap: int = 1000
     grouping_status: str = "individual_unverified"
     upstream_gwas_overlap: str = "unknown"
     label_budget_note: str = "build fit; tune selection; separate probability calibration and audit"

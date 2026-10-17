@@ -8,7 +8,17 @@ c1_lockpaper_protocol <- function() {
     if (!identical(record$release, "2026-10-17.c1-lockpaper-v1") ||
         !identical(record$roster_sha256, digest::digest(file=path, algo="sha256")))
         stop("C1 LOCKPAPER outer roster integrity/protocol mismatch")
-    list(release=record$release, outer_roster=normalizePath(path, mustWork=TRUE), outer_roster_sha256=record$roster_sha256)
+    if (nzchar(record$group_file) &&
+        !identical(record$group_file_sha256, digest::digest(file=record$group_file, algo="sha256")))
+        stop("C1 LOCKPAPER group map SHA256 mismatch")
+    if (!is.null(record$relatedness_source_file) &&
+        !identical(record$relatedness_source_sha256, digest::digest(file=record$relatedness_source_file, algo="sha256")))
+        stop("C1 LOCKPAPER relatedness source SHA256 mismatch")
+    audit_fields <- c("relatedness_source_file", "relatedness_source_sha256", "group_map_sha256",
+        "pair_rows", "related_participant_N", "singleton_participant_N", "component_N",
+        "largest_component_size", "grouping_unit", "grouping_source", "family_disjoint_outer_split")
+    c(list(release=record$release, outer_roster=normalizePath(path, mustWork=TRUE), outer_roster_sha256=record$roster_sha256),
+      record[intersect(audit_fields, names(record))])
 }
 c1_export_benchmark <- function(pred, layer, rawdir, horizon) {
     local <- file.path(rawdir, "_LOCAL_ONLY")
@@ -1901,6 +1911,7 @@ run_c1_prediction_layer <- function(layer = c("protein", "metabolite")) {
 	split <- make_outer_split(dat, evar = evar) ; dat$final_split <- split
 	# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
 	protocol <- c1_lockpaper_protocol()
+	write_raw_csv(tibble::as_tibble(protocol), "c1.grouping_audit.csv", rawdir)
 	write_raw_csv(tibble::tibble(protocol="2026-10-17.c1-lockpaper-v1",outer_roster=normalizePath(Sys.getenv("LE8_OUTER_ROSTER"),mustWork=TRUE),
 		outer_roster_sha256=protocol$outer_roster_sha256,
 		N=nrow(dat),training=sum(split=="training"),validation=sum(split=="validation"),events=sum(dat[[evar]]==1),

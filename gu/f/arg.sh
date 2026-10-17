@@ -421,7 +421,7 @@ arg_cli() (
 		if [[ -s $gen_root/samples.txt ]]; then
 			ancestry_file=$gen_root/samples.txt
 		else
-			ancestry_file=/mnt/d/data/ukb/phe/pca/ukb.ancestry.auto.tsv.gz
+			ancestry_file=/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
 		fi
 	fi
 	if [[ -z $dir_pfile ]]; then
@@ -440,7 +440,7 @@ arg_cli() (
 	arg_dir=$(realpath -m "$arg_dir")
 	dataset=$(basename -- "$(dirname -- "$gen_root")")
 	identity=$(printf '%s\n' "$gen_root" "$dir_pfile" "$arg_dir" | sha256sum | cut -c1-16)
-	scratch=${scratch:-$HOME/refgen_arg_scratch/${dataset}.b${grch}.${identity}}
+	scratch=${scratch:-/tmp/refgen_arg_scratch-${UID}/${dataset}.b${grch}.${identity}}
 	scratch=$(realpath -m "$scratch")
 	if [[ -z $gen4arg_dir ]]; then
 		if [[ $method == threads ]]; then

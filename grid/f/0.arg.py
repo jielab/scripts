@@ -17,6 +17,7 @@ upstream. Native ASMC workspaces use batches of 16 instead of the default 64.
 """
 import inspect
 import logging
+import os
 import textwrap
 import importlib.util
 from pathlib import Path
@@ -28,8 +29,7 @@ import sysconfig
 
 def backend_path():
 	return (
-		Path.home()
-		/ ".cache/gu/asmc-memory/v1.4.0-p2"
+		Path(f"/tmp/gu-cache-{os.getuid()}/asmc-memory/v1.4.0-p2")
 		/ sys.implementation.cache_tag
 		/ ("asmc_python_bindings" + sysconfig.get_config_var("EXT_SUFFIX"))
 	)

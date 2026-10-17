@@ -1,5 +1,5 @@
 source(file.path(Sys.getenv('BMONTH_FDIR'),'0.common.R'))
 dat<-load_cohort()
-res<-bind_rows(lapply(OUTCOMES,function(y)bind_rows(lapply(EXPOSURES,function(x)fit_cox(dat,x,y)))))
+res<-bind_rows(lapply(OUTCOMES,function(y)bind_rows(lapply(ANALYSIS_EXPOSURES,function(x)fit_cox(dat,x,y)))))
 if(nrow(res))res<-res%>%group_by(exposure)%>%mutate(FDR=p.adjust(p,'BH'))%>%ungroup()
 write_csv2(res,'main_associations.csv');saveRDS(res,file.path(rawdir,'main_associations.rds'));print(res,n=Inf)

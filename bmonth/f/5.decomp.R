@@ -11,15 +11,19 @@ pick_candidates<-function(){
   sf<-file.path(rawdir,"phewas.rds")
   if(file.exists(sf)){
     s<-as_tibble(readRDS(sf))
-    for(x in unique(s$exposure)){
+    for(x in intersect(unique(s$exposure),PHEWAS_EXPOSURES)){
       d<-s%>%filter(exposure==x,is.finite(p))%>%arrange(p)
       thr<-unique(d$bonferroni_threshold);thr<-thr[is.finite(thr)][1]
       hit<-if(length(thr))d%>%filter(p<thr) else d[0,]
-      # Keep confirmed hits plus top 10 so attenuation can be inspected even when
-      # the month signal is suggestive rather than Bonferroni-significant.
+      # Keep all Bonferroni hits plus top 10 for transparent attenuation checks.
       out[[x]]<-unique(c(as.character(hit$phenotype),as.character(head(d$phenotype,10))))
     }
   }
+  # Explicitly preserve alcohol phenotypes because OLD geography PheWAS showed
+  # exceptionally strong associations and they are the key regression test.
+  for(x in intersect(c("birth_north_100km","birth_east_100km"),PHEWAS_EXPOSURES))
+    out[[x]] <- unique(c(out[[x]],"317","317.1","317.11"))
+
   jf<-file.path(rawdir,"phewas_joint.rds")
   if(file.exists(jf)){
     j<-as_tibble(readRDS(jf))
@@ -36,13 +40,17 @@ cand<-pick_candidates()
 if(!length(cand)) stop("No PheWAS results found. Run bmonth.sh phewas first.")
 
 fit_scalar_stage<-function(exposure,phenotype){
+  if(!phenotype%in%names(phenos)) return(tibble())
   ytab<-phenos[,c("id",phenotype),drop=FALSE];names(ytab)<-c("eid",".y")
   z<-inner_join(dat,ytab,by="eid")
-  # Common D4 sample makes beta attenuation comparable across stages.
-  common_cov<-setdiff(covars_stage$D4_migration,exposure)
+
+  # IMPORTANT: fixed common D5 sample -> changes across stages are adjustment
+  # effects, not changing-sample artifacts.
+  common_cov<-setdiff(covars_stage$D5_migration,exposure)
   z<-complete_model_data(z,unique(c(".y",exposure,common_cov)))
   if(nrow(z)<500||sum(z$.y)<20||sum(!z$.y)<20||length(unique(z[[exposure]]))<2)
     return(tibble())
+
   rows<-lapply(names(covars_stage),function(stage){
     cv<-setdiff(covars_stage[[stage]],exposure)
     fit<-model_try(glm(reformulate(c(exposure,cv),response=".y"),data=z,family=binomial()))
@@ -56,21 +64,38 @@ fit_scalar_stage<-function(exposure,phenotype){
            p=sm[exposure,"Pr(>|z|)"])
   })
   r<-bind_rows(rows);r$exposure<-exposure;r$phenotype<-phenotype
-  b1<-r$beta[match("D1_core",r$stage)];b2<-r$beta[match("D2_adultSES",r$stage)]
+  b1<-r$beta[match("D1_core",r$stage)]
+  b2<-r$beta[match("D2_adultSES",r$stage)]
+  b3<-r$beta[match("D3_geography",r$stage)]
   r$attenuation_vs_D1<-if(is.finite(b1)&&abs(b1)>1e-8)1-r$beta/b1 else NA_real_
   r$attenuation_vs_D2<-if(is.finite(b2)&&abs(b2)>1e-8)1-r$beta/b2 else NA_real_
+  r$attenuation_vs_D3<-if(is.finite(b3)&&abs(b3)>1e-8)1-r$beta/b3 else NA_real_
   r
 }
+
 scalar_exposures<-intersect(names(cand),ALL_EXPOSURES)
 scalar<-bind_rows(lapply(scalar_exposures,function(x)
   bind_rows(lapply(cand[[x]],function(y)fit_scalar_stage(x,y)))))
+if (!nrow(scalar)) scalar <- tibble(stage=character(),N=integer(),cases=integer(),
+  beta=double(),SE=double(),OR=double(),p=double(),exposure=character(),phenotype=character(),
+  attenuation_vs_D1=double(),attenuation_vs_D2=double(),attenuation_vs_D3=double())
+scalar$analysis_track <- analysis_track(scalar$exposure)
+scalar$exposure_unit <- exposure_unit(scalar$exposure)
 write_csv2(scalar,"decomposition_scalar.csv")
 saveRDS(scalar,file.path(rawdir,"decomposition_scalar.rds"))
 
+# Focus table for the old geography-alcohol finding.
+geo_alcohol <- scalar %>%
+  filter(exposure %in% c("birth_north_100km","birth_east_100km"),
+         phenotype %in% c("317","317.1","317.11")) %>%
+  arrange(phenotype,exposure,match(stage,names(covars_stage)))
+write_csv2(geo_alcohol,"audit_geography_alcohol.csv")
+
 fit_cycle_stage<-function(phenotype){
+  if(!phenotype%in%names(phenos)) return(tibble())
   ytab<-phenos[,c("id",phenotype),drop=FALSE];names(ytab)<-c("eid",".y")
   z<-inner_join(dat,ytab,by="eid")
-  z<-complete_model_data(z,unique(c(".y","bmonth_cos","bmonth_sin",covars_stage$D4_migration)))
+  z<-complete_model_data(z,unique(c(".y","bmonth_cos","bmonth_sin",covars_stage$D5_migration)))
   if(nrow(z)<500||sum(z$.y)<20||sum(!z$.y)<20)return(tibble())
   bind_rows(lapply(names(covars_stage),function(stage){
     cv<-covars_stage[[stage]]
@@ -92,4 +117,4 @@ if(nrow(cycle)){
 }
 write_csv2(cycle,"decomposition_cycle.csv")
 saveRDS(cycle,file.path(rawdir,"decomposition_cycle.rds"))
-message("[decomp] saved four-stage decomposition using a common D4 complete-case sample.")
+message("[decomp] saved five-stage common-sample decomposition and audit_geography_alcohol.csv")

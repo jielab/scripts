@@ -503,7 +503,7 @@ def prepared_tables(args, traits, covariates):
 
 
 def raw_tables(args, traits, covariates):
-	path = required(option(args, "pheno_file", "/mnt/d/data/ukb/phe/Rdata/all.rds"))
+	path = required(option(args, "pheno_file", "/mnt/d/data/ukb/Rdata/all.rds"))
 	source_traits = {option(args, f"{t}_col", "auto" if t == "t2dm" else t) for t in traits}
 	columns = list(dict.fromkeys(["eid", "IID", "#IID", "ID", *covariates, *sorted(source_traits), "t2dm.Yr2e", "t2dm.Yt2e"]))
 	data = filter_ids(identified(read_table(path, columns), "Phenotype"), args)
@@ -520,14 +520,14 @@ def raw_tables(args, traits, covariates):
 		raise ValueError(f"Missing phenotype covariates: {sorted(missing)}")
 	data = data[["eid", *covariates, *traits]].copy()
 	sources = [source_stamp(path)]
-	ancestry_path = required(option(args, "ancestry_file", "/mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"))
+	ancestry_path = required(option(args, "ancestry_file", "/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"))
 	ancestry = identified(read_table(ancestry_path), "Ancestry")
 	column = next((x for x in (option(args, "group_col", "genetic_ancestry"), "ancestry", "target", "predicted_ancestry") if x in ancestry), None)
 	if column is None:
 		raise ValueError("No ancestry label column")
 	ancestry["ancestry"] = ancestry[column].fillna("UNASSIGNED").astype(str)
 	data = data.merge(ancestry[["eid", "ancestry"]], on="eid", how="inner", validate="one_to_one")
-	pca_path = required(option(args, "pca_file", "/mnt/d/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"))
+	pca_path = required(option(args, "pca_file", "/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"))
 	pca = identified(read_table(pca_path), "Projected PCA")
 	npc = int(option(args, "distance_pcs", 10))
 	if not 1 <= npc <= 20:
@@ -549,7 +549,7 @@ def raw_tables(args, traits, covariates):
 	data = data.loc[data.eid.isin(common)].copy()
 	tables = {}
 	for trait in traits:
-		score_path = required(Path(option(args, "score_dir", "/mnt/d/data/ukb/pgs")) / trait / "1csx.scores.rds")
+		score_path = required(Path(option(args, "score_dir", "/mnt/f/gen/ukb/pgs")) / trait / "1csx.scores.rds")
 		score = identified(read_table(score_path), f"{trait} CSx")
 		if set(CSX) - set(score):
 			raise ValueError(f"{score_path}: requires all four csx.<POP> scores")
@@ -744,7 +744,7 @@ def native_weights(args, trait):
 
 def verify_csx_score_provenance(args, trait, registry, chromosomes):
 	"""Link the four original score columns to the posterior weights being annotated."""
-	score = required(Path(option(args, "score_dir", "/mnt/d/data/ukb/pgs")) / trait / "1csx.scores.rds")
+	score = required(Path(option(args, "score_dir", "/mnt/f/gen/ukb/pgs")) / trait / "1csx.scores.rds")
 	path = score.with_suffix(".provenance.json")
 	if not path.is_file():
 		raise ValueError(f"Missing CSx score/weight provenance: {path}. Rerun 1.csx.sh --stage score with the existing weights; MCMC need not be rerun")

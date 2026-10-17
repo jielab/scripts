@@ -33,9 +33,20 @@ from twin_core import (
     Config, TwinModel, assert_roles, assign_roles, hash_number, id_hash,
     state_hash, validate_ids,
 )
+from abm_routes import (
+    VERSION as GRID_ABM_VERSION,
+    apply_abm_routes, evaluate_abm_routes, fit_abm_routes,
+    load_abm_routes_config, write_source_provenance,
+)
 
+# GRID_ABM_FINAL_20261017
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'config/twin.json'
+DEFAULT_ABM_ROUTES_CONFIG = ROOT / 'config/abm_routes.json'
+
+
+def abm_routes_config():
+    return load_abm_routes_config(os.getenv('GRID_ABM_ROUTES_CONFIG', str(DEFAULT_ABM_ROUTES_CONFIG)))
 
 
 # Numeric input and aggregate publication
@@ -282,6 +293,19 @@ def calibrate_disco(extra,model):
     p=cal.predict(m.predict(scale.transform(imputer.transform(xt))))
     bundle=dict(columns=names,imputer=imputer,scale=scale,model=m,calibration=cal)
     return p,bundle,dict(method='Disco_reference',status='local_train_only_calibration',scope='same build/tune/cal roles; not a new run of upstream DiscoDivas')
+
+
+def verify_existing_prsformer_roster(root,full_cohort,query_ids):
+    root=Path(root);roster=root/'prsformer/split.rds'
+    if not roster.is_file():return dict(status='PRSformer_saved_roster_unavailable',reused=False)
+    r=identified(read_table(roster));c=identified(full_cohort)
+    if not {'eid','split'}<=set(r) or set(r.eid)!=set(c.eid):raise ValueError('Existing PRSformer outer cohort differs from current GRID cohort')
+    rt=r.set_index('eid');test=set(rt.index[rt.split.astype(str).eq('test')])
+    if test!=set(map(str,query_ids)):raise ValueError('Existing PRSformer test roster differs from ABM frozen test roster; do not compare or silently refit')
+    if 'group' in rt and 'family_id' in c:
+        if not np.array_equal(rt.loc[c.eid,'group'].astype(str),c.family_id.astype(str)):
+            raise ValueError('Existing PRSformer reference groups differ from ABM groups')
+    return dict(status='PRSformer_saved_roster_matches_ABM',reused=True,test_N=len(test),test_roster_hash=id_hash(query_ids))
 
 
 def verified_prsformer(root,trait,full_cohort,truth,config,covariates,endpoint_definition):
@@ -559,6 +583,9 @@ def npz(path):
 def export_projection(p,path):
     d=pd.DataFrame(dict(eid=p['eid'],group=p['group'],selected=p['selected'],reason=p['reason'],**p['diagnostics']))
     for name,v in p['predictions'].items():d['prediction::'+name]=v
+    for key in ('selected_support','selected_policy','selected_predictability'):
+        if key in p:d[key]=p[key]
+    for name,v in p.get('selector_scores_final',{}).items():d['selector::'+name]=v
     d['expected_squared_error']=p['expected_squared_error'];d['model_hash']=p['frozen_hash']
     d.to_csv(path,sep='\t',index=False,float_format='%.17g',compression='gzip')
 
@@ -567,14 +594,21 @@ def save_fit(model,out):
     out=Path(out);out.mkdir(parents=True,exist_ok=True);private=out/'_LOCAL_ONLY';private.mkdir(mode=0o700,exist_ok=True)
     joblib.dump(model,private/'model.joblib',compress=3)
     digest=state_hash(model)
-    json_write(out/'MODEL_FROZEN.json',dict(model_hash=digest,config=asdict(model.config),test_outcomes_used=False,clinical_release=False))
+    abm=getattr(model,'grid_abm',None)
+    json_write(out/'MODEL_FROZEN.json',dict(model_hash=digest,config=asdict(model.config),test_outcomes_used=False,clinical_release=False,
+        abm_version=GRID_ABM_VERSION,abm_routes_config=asdict(abm.config) if abm is not None else None,
+        abm_routes_audit=abm.audit if abm is not None else None))
     pd.DataFrame(model.donors).to_csv(private/'donors.tsv.gz',sep='\t',index=False,float_format='%.17g')
     feature_rows=[]
     for pos,original in enumerate(model.prep.keep):
         is_genetic=original in set(model.prep.profile_keep)
         gp=list(model.prep.profile_keep).index(original) if is_genetic else None
         feature_rows.append(dict(feature=model.features[original],role='genetic_profile' if is_genetic else 'clinical_covariate',training_mean=model.prep.mean[pos],training_sd=model.prep.scale[pos],imputation_median=model.prep.median[pos],distance_weight=model.geometry.weights[gp] if is_genetic else 0.,full_model_coefficient=model.predictors['ABM_full'].coefficients[pos]))
-    write_aggregate(out/'aggregate',dict(training_summary=pd.DataFrame([model.training_summary]),roles=pd.DataFrame(model.role_summary),tuning=pd.DataFrame(model.tuning),OOF_audit=pd.DataFrame(model.oof_audit),profile_features=pd.DataFrame(feature_rows)),dict(trait=model.config.trait,module='Twin training',run_id=digest))
+    tables=dict(training_summary=pd.DataFrame([model.training_summary]),roles=pd.DataFrame(model.role_summary),tuning=pd.DataFrame(model.tuning),OOF_audit=pd.DataFrame(model.oof_audit),profile_features=pd.DataFrame(feature_rows))
+    if abm is not None:
+        tables['route_tuning']=pd.DataFrame(abm.tuning)
+        tables['abm_training_audit']=pd.DataFrame([{k:v for k,v in abm.audit.items() if not isinstance(v,(list,dict,tuple))}])
+    write_aggregate(out/'aggregate',tables,dict(trait=model.config.trait,module='Twin training',run_id=digest))
 
 
 def fit_cmd(args):
@@ -584,13 +618,15 @@ def fit_cmd(args):
     out=Path(args.output)
     if out.exists():raise FileExistsError('Choose a fresh fit directory; old models are never overwritten')
     model=TwinModel(cfg).fit(**{k:d[k] for k in needed})
-    save_fit(model,out);print(json.dumps(dict(model=str(out/'_LOCAL_ONLY/model.joblib'),hash=state_hash(model))))
+    model=fit_abm_routes(model,d,abm_routes_config())
+    save_fit(model,out);write_source_provenance(out,ROOT,abm_routes_config())
+    print(json.dumps(dict(model=str(out/'_LOCAL_ONLY/model.joblib'),hash=state_hash(model),abm=GRID_ABM_VERSION)))
 
 
 def project_cmd(args):
     model=joblib.load(args.model);d=npz(args.data)
     if set(d)!= {'X','ids','groups','features'}:raise ValueError('Project accepts only predictors/identity, never query outcomes')
-    p=model.project(**d);out=Path(args.output)
+    p=model.project(**d);p=apply_abm_routes(model,p,d['X'],d['ids'],d['groups']);out=Path(args.output)
     if out.exists():raise FileExistsError(out)
     out.parent.mkdir(parents=True,exist_ok=True);joblib.dump(p,out,compress=3)
     export_projection(p,out.with_suffix('.confidence.tsv.gz'));print(json.dumps(dict(query_N=len(p['eid']),selected_N=int(p['selected'].sum()))))
@@ -622,6 +658,7 @@ def evaluate_cmd(args):
     model=joblib.load(args.model);p=joblib.load(args.predictions);truth=identified(read_table(args.truth))
     external,availability=benchmark_manifest(args.comparators,p['eid'],truth,model.config.trait,args.endpoint)
     tables,status=evaluate(model,p,truth,external=external,bootstrap=args.bootstrap)
+    if 'selected_predictability' in p:tables.update(evaluate_abm_routes(model,p,truth,bootstrap=args.bootstrap))
     if availability:tables['comparator_provenance']=pd.DataFrame(availability)
     out=Path(args.output)
     if out.exists():raise FileExistsError('Choose a new report directory')
@@ -633,6 +670,19 @@ def evaluate_cmd(args):
 def run(args):
     traits=args.traits.split(',')
     if not traits or len(set(traits))!=len(traits) or not set(traits)<= {'height','ldl','t2dm'}:raise ValueError('Use unique height,ldl,t2dm traits')
+    route_cfg=abm_routes_config()
+    if args.analysis_root:
+        command=[sys.executable,str(ROOT/'f/check_comparators.py'),'--analysis-root',args.analysis_root,
+                 '--prsformer-upstream',os.getenv('GRID_PRSFORMER_UPSTREAM','/mnt/f/software/PRSformer'),'--strict']
+        receipt=subprocess.run(command,capture_output=True,text=True)
+        if receipt.returncode:
+            raise ValueError('Published comparator preflight failed: '+(receipt.stdout or receipt.stderr).strip())
+        comparator_check=json.loads(receipt.stdout)
+        print('[GRID preflight] Published comparator provenance passed',flush=True)
+    else:comparator_check=None
+    # Validate every requested trait before fitting the first one. These input
+    # contexts keep evaluation truth separate from the development-only fit API.
+    contexts=[]
     for trait in traits:
         cfg=config_file(args.config,trait)
         d,groups,meta=load_source(args.prepared or str(Path(args.cache_dir)/'prepared.joblib'),trait,
@@ -642,8 +692,19 @@ def run(args):
         endpoint=meta.get('endpoint_definition') or meta.get('prepared_settings',{}).get(trait+'_col',trait)
         if trait=='t2dm' and endpoint=='auto':endpoint='baseline_t2dm_from_Yr2e_Yt2e'
         endpoint=args.endpoint or endpoint
-        if args.check:
-            print(json.dumps(dict(trait=trait,input='validated',endpoint=endpoint,**flow)));continue
+        prsformer_reuse=verify_existing_prsformer_roster(args.analysis_root,d,query['ids']) if args.analysis_root else dict(status='analysis_root_unavailable',reused=False)
+        if args.analysis_root:
+            cov=meta.get('prepared_settings',{}).get('covariates','')
+            cov=cov.split(',') if isinstance(cov,str) and cov else list(groups.get('covariates',[]))
+            _,comparison=verified_prsformer(args.analysis_root,trait,d,truth,cfg,cov,endpoint)
+            if comparison['status']!='same_roster_endpoint_and_covariates_verified':
+                raise ValueError('PRSformer comparison preflight failed: '+comparison['status'])
+            prsformer_reuse['provenance']=comparison
+        print(json.dumps(dict(trait=trait,input='validated',endpoint=endpoint,prsformer_reuse=prsformer_reuse,**flow)),flush=True)
+        if not args.check:contexts.append((trait,cfg,d,groups,meta,raw,query,truth,flow,extra,endpoint,prsformer_reuse))
+    if args.check:return
+    while contexts:
+        trait,cfg,d,groups,meta,raw,query,truth,flow,extra,endpoint,prsformer_reuse=contexts.pop(0)
         root=Path(args.out_root)/'twin'/trait;root.mkdir(parents=True,exist_ok=True)
         runid=args.run_id or datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'_'+uuid.uuid4().hex[:8]
         import re
@@ -651,19 +712,24 @@ def run(args):
         dest=root/runid
         if dest.exists():raise FileExistsError('Existing run is immutable: '+str(dest))
         dest.mkdir();local=dest/'_LOCAL_ONLY';local.mkdir(mode=0o700)
-        json_write(dest/'protocol.json',dict(config=asdict(cfg),input=meta,flow=flow,endpoint_definition=endpoint,test_roster_changed=False,validation_scope='exploratory_previously_inspected_test'))
+        json_write(dest/'protocol.json',dict(config=asdict(cfg),abm_routes_config=asdict(route_cfg),abm_version=GRID_ABM_VERSION,
+            comparator_principle='CSx, DiscoDivas and PRSformer are published-method sanity-check comparators; ABM is the only novel method',
+            prsformer_reuse=prsformer_reuse,comparator_check=comparator_check,input=meta,flow=flow,endpoint_definition=endpoint,test_roster_changed=False,validation_scope='exploratory_previously_inspected_test'))
+        write_source_provenance(dest,ROOT,route_cfg)
         np.savez_compressed(local/'development.npz',**raw)
         np.savez_compressed(local/'test_X.npz',**query)
         truth.to_csv(local/'test_truth.tsv.gz',sep='\t',index=False,float_format='%.17g')
         pd.DataFrame(dict(eid=raw['ids'],group=raw['groups'],role=raw['roles'])).to_csv(local/'development_roles.tsv.gz',sep='\t',index=False)
         try:
             print(f'[GRID twin] FIT {trait}: {len(raw["ids"])} development; {len(query["ids"])} frozen test rows',flush=True)
-            model=TwinModel(cfg).fit(**raw);save_fit(model,dest/'fit')
+            model=TwinModel(cfg).fit(**raw);model=fit_abm_routes(model,raw,route_cfg);save_fit(model,dest/'fit')
             audit=raw['roles']=='audit';pa=model.project(raw['X'][audit],raw['ids'][audit],raw['groups'][audit],raw['features'],audit=True)
+            pa=apply_abm_routes(model,pa,raw['X'][audit],raw['ids'][audit],raw['groups'][audit])
             ta=pd.DataFrame(dict(eid=raw['ids'][audit],y=raw['y'][audit]))
             at,ast=evaluate(model,pa,ta,bootstrap=args.bootstrap)
+            at.update(evaluate_abm_routes(model,pa,ta,route_cfg,bootstrap=args.bootstrap))
             write_aggregate(dest/'audit',at,dict(trait=trait,module='Twin audit',run_id=pa['frozen_hash']))
-            p=model.project(**query);joblib.dump(p,local/'predictions.joblib',compress=3)
+            p=model.project(**query);p=apply_abm_routes(model,p,query['X'],query['ids'],query['groups']);joblib.dump(p,local/'predictions.joblib',compress=3)
             export_projection(p,local/'confidence.tsv.gz')
             # The predictor/membership was frozen and saved BEFORE test truth is used below.
             ext,availability=benchmark_manifest(args.comparators,p['eid'],truth,trait,endpoint)
@@ -681,17 +747,22 @@ def run(args):
                 except (ValueError,FileNotFoundError,RuntimeError,ImportError) as exc:
                     availability.append(dict(method='PRSformer',status='comparison_not_verified',reason=str(exc)))
             tables,status=evaluate(model,p,truth,external=ext,bootstrap=args.bootstrap)
+            tables.update(evaluate_abm_routes(model,p,truth,route_cfg,bootstrap=args.bootstrap))
             if ext:joblib.dump(ext,local/'comparator_predictions.joblib',compress=3)
             tables['comparator_provenance']=pd.DataFrame(availability)
             write_aggregate(dest/'test',tables,dict(trait=trait,module='Twin test',run_id=p['frozen_hash']))
             json_write(dest/'test/status.json',status)
             draw_report(tables,dest/'test/figures')
-            json_write(dest/'COMPLETE.json',dict(status='completed',model_hash=p['frozen_hash'],test_roster_hash=id_hash(query['ids']),clinical_release=False))
+            json_write(dest/'COMPLETE.json',dict(status='completed',model_hash=p['frozen_hash'],test_roster_hash=id_hash(query['ids']),clinical_release=False,
+                abm_version=GRID_ABM_VERSION,source_provenance='SOURCE_FROZEN.json',prsformer_reused=bool(prsformer_reuse.get('reused',False))))
             json_write(root/'CURRENT.json',dict(run=runid,model_hash=p['frozen_hash']))
             print(f'[GRID twin] COMPLETE {trait}: {dest}',flush=True)
         except BaseException:
             json_write(dest/'FAILED.json',dict(status='failed_partial_run_not_promoted',previous_CURRENT_unchanged=True))
             raise
+    if args.analysis_root and Path(args.out_root).resolve().is_relative_to(Path(args.analysis_root).resolve()):
+        print('[GRID] Updating the final evidence index for completed ABM results',flush=True)
+        subprocess.run([sys.executable,str(ROOT/'f/browser_index.py'),'--analysis-root',args.analysis_root],check=True)
 
 
 def demo(args):
@@ -717,7 +788,7 @@ def demo(args):
 
 def analysis_main(argv=None):
     a=argparse.ArgumentParser(description='GRID twin: run/fit/project/evaluate/demo with separated outcome access.');sp=a.add_subparsers(dest='command',required=True)
-    r=sp.add_parser('abm');r.add_argument('--traits',default='height,ldl,t2dm');r.add_argument('--cache-dir',default='/tmp/grid-cache/grid');r.add_argument('--prepared');r.add_argument('--data-file');r.add_argument('--schema');r.add_argument('--roles-file')
+    r=sp.add_parser('abm');r.add_argument('--traits',default='height,ldl,t2dm');r.add_argument('--cache-dir',default='/mnt/d/analysis/grid/cache/abm');r.add_argument('--prepared');r.add_argument('--data-file');r.add_argument('--schema');r.add_argument('--roles-file')
     r.add_argument('--config',default=str(DEFAULT_CONFIG),help='Configuration JSON (default: config/twin.json beside grid.sh)');r.add_argument('--out-root',default='/mnt/d/analysis/grid/abm');r.add_argument('--analysis-root',default='/mnt/d/analysis/grid');r.add_argument('--run-id');r.add_argument('--check',action='store_true');r.add_argument('--endpoint');r.add_argument('--comparators');r.add_argument('--bootstrap',type=int);r.add_argument('--threads',type=int,default=4,help='Numeric worker threads (default: 4)')
     f=sp.add_parser('fit');f.add_argument('--data',required=True);f.add_argument('--config',required=True);f.add_argument('--output',required=True);f.add_argument('--threads',type=int,default=4)
     p=sp.add_parser('project');p.add_argument('--model',required=True);p.add_argument('--data',required=True);p.add_argument('--output',required=True);p.add_argument('--threads',type=int,default=4)
@@ -733,28 +804,32 @@ def analysis_main(argv=None):
 
 HELP='''GRID — genetic-profile twin confidence
 
+Examples (one line at a time; continue only after success):
+  cd /mnt/d/scripts/grid
+  ./grid.sh prsformer --cache-dir /mnt/d/analysis/grid/cache/abm
   ./grid.sh abm --check
-  ./grid.sh abm --traits height,ldl,t2dm
-  ./grid.sh final --analysis-root /mnt/d/analysis/grid
-  ./grid.sh shiny --analysis-root /mnt/d/analysis/grid
-  ./grid.sh demo --output /tmp/grid-smoke
-  ./grid.sh project --model MODEL --data test_X.npz --output local_prediction.joblib
-  ./grid.sh evaluate --help
+  ./grid.sh abm
+  ./grid.sh final
+  ./grid.sh shiny
+
+Requires completed upstream preparation: 0.pca.sh, 1.csx.sh, 2.disco.sh.
+Default traits: height,ldl,t2dm. PRSformer and ABM share the cache above.
+All commands run in the foreground; Ctrl+C stops Shiny before the next project.
 
 ABM consumes the EXISTING prepared.joblib and preserves its outer test roster.
-ABM defaults: 4 threads; config/twin.json beside grid.sh; /tmp/grid-cache/grid/prepared.joblib.
+ABM defaults: 4 threads; config/twin.json beside grid.sh; /mnt/d/analysis/grid/cache/abm/prepared.joblib.
+The ABM command automatically checks comparator provenance and all requested traits before fitting.
+Completed runs under the analysis root automatically refresh the final/Shiny evidence index.
 --data-file plus --schema can provide an explicit equivalent numeric dataset.
 New results: <out-root>/twin/<trait>/<run>. Old results are not overwritten.
 The direct fit/project/evaluate entry points keep test labels out of projection.
 
-Upstream preparation: ./0.pca.sh, ./1.csx.sh, ./2.disco.sh.
 PRSformer uses the shared GRID cohort by default.
-  ./grid.sh prsformer [original options]
+Module options: ./grid.sh <module> --help
 
 final indexes saved results only; no model is re-fitted by opening Shiny.
 Sequences of prsformer,abm,final,shiny accept only --traits and --dry-run.
 Use separate commands for custom paths or benchmark-specific flags.
-Shiny is foreground.
 '''
 
 

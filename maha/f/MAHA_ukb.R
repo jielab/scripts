@@ -1,5 +1,5 @@
 dir0 <- ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d")
-indir <- file.path(dir0, "data", "ukb", "phe")
+indir <- file.path(dir0, "data", "ukb")
 maha_outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(dir0, "analysis", "maha"))
 .this_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 .this_file <- if (length(.this_arg)) sub("^--file=", "", .this_arg[[1]]) else file.path(dir0, "scripts", "maha", "f", "MAHA_ukb.R")

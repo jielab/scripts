@@ -590,7 +590,7 @@ le8_table_result_paths <- function(paths, root) {
 	# Runtime audits are retained as logs, not interpreted as analysis tables.
 	# Match below root so a caller may itself live under a directory named logs.
 	relative <- substring(paths, nchar(sub('/+$', '', root)) + 2L)
-	paths[!grepl('(^|/)(_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints|logs)/', relative)]
+	paths[!grepl('(^|/)(_protocol|_history|_source_figures|_previous|le8_annotations|prepared|neural|quality_neural|checkpoints|logs)/', relative)]
 }
 le8_table_stores <- function(root) {
 	paths <- list.files(root, pattern = '[.]xlsx$', recursive = TRUE, full.names = TRUE)
@@ -1484,12 +1484,12 @@ SEED <- as.integer(Sys.getenv("SEED", unset = "2026"))
 set.seed(SEED)
 
 indir <- find_first_existing(c(
-	Sys.getenv("UKB_PHE", unset = ""), file.path(dir0, "data/ukb/phe"),
-	"/mnt/ddata/ukb/phe", "D:/data/ukb/phe"
-), file.path(dir0, "data/ukb/phe"))
+	Sys.getenv("UKB_PHE", unset = ""), file.path(dir0, "data/ukb"),
+	"/mnt/d/data/ukb", "D:/data/ukb"
+), file.path(dir0, "data/ukb"))
 common_dir <- find_first_existing(c(
 	Sys.getenv("UKB_COMMON", unset = ""), file.path(indir, "common"),
-	"/mnt/ddata/ukb/phe/common", "D:/data/ukb/phe/common"
+	"/mnt/d/data/ukb/common", "D:/data/ukb/common"
 ), file.path(indir, "common"))
 analysis_root <- Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(dir0, "analysis/le8"))
 out.base <- file.path(analysis_root, Y)
@@ -1523,9 +1523,9 @@ prot_bed_file <- find_first_existing(
 )
 met_list_file <- find_first_existing(c(
 	Sys.getenv("LE8_MET_LIST", unset = ""), file.path(common_dir, "met.lst"),
-	"D:/data/ukb/phe/common/met.lst"
+	"D:/data/ukb/common/met.lst"
 ), file.path(common_dir, "met.lst"))
-ukb_bgen_dir <- Sys.getenv("UKB_BGEN_DIR", unset = "/mnt/d/data/ukb/gen/imp")
+ukb_bgen_dir <- Sys.getenv("UKB_BGEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37/imp" else "/mnt/f/gen/ukb/37/imp")
 
 # Source existing project helpers when present. The new code does not require association.R,
 # but uses the user's existing t2e() definition from phenotype.R when available.
@@ -2944,7 +2944,7 @@ LE8_BASELINE_VERSION <- "2026-09-21.baseline-med-source-v3"
 le8_attach_baseline_medication <- function(x) {
 	# Raw i0 responses retain -7 (none of the above), which phe.R may have
 	# converted to NA. Never infer a negative response from that processed NA.
-	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", "/mnt/d/data/ukb/phe"))
+	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", "/mnt/d/data/ukb"))
 	path <- Sys.getenv("LE8_BASELINE_MED_FILE", file.path(root, "rap/vip.tab.gz"))
 	if (!file.exists(path)) return(x)
 	explicit <- nzchar(Sys.getenv("LE8_BASELINE_MED_FILE", ""))

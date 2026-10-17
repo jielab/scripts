@@ -1,10 +1,11 @@
 pacman::p_load(tidyverse, data.table, survival)
 
 dir0 <- Sys.getenv("DIR0", unset = ifelse(Sys.info()[["sysname"]] == "Windows", "D:/", "/mnt/d"))
-indir <- Sys.getenv("PHEDIR", unset = paste0(dir0, "/data/ukb/phe"))
+indir <- Sys.getenv("PHEDIR", unset = paste0(dir0, "/data/ukb"))
 outdir <- Sys.getenv("UKB_OUT", unset = paste0(dir0, "/analysis/ukb/phe"))
 script_dir <- Sys.getenv("SCRIPT_DIR", unset = file.path(dir0, "scripts"))
-gen_dir <- Sys.getenv("GEN_DIR", unset = file.path(dir0, "data/ukb/gen"))
+gen_dir <- Sys.getenv("GEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37" else "/mnt/f/gen/ukb/37")
+pgs_dir <- Sys.getenv("PGS_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/pgs" else "/mnt/f/gen/ukb/pgs")
 map_tile_cache <- normalizePath(
 	file.path(dir0, "data", "ukb", "map", "maha", "rosm.cache"),
 	winslash = "/", mustWork = TRUE
@@ -742,7 +743,7 @@ gen <- gen0 %>% mutate(
 )
 saveRDS(gen, paste0(indir, "/Rdata/gen.rds"))
 
-pgs <- fread(file.path(dir0, "data/ukb/pgs/all.pgs.gz"), header = TRUE) %>% as.data.frame()
+pgs <- fread(file.path(pgs_dir, "all.pgs.gz"), header = TRUE) %>% as.data.frame()
 names(pgs) <- sub("\\.score_sum$", ".pgs", names(pgs))
 saveRDS(pgs, paste0(indir, "/Rdata/pgs.rds"))
 

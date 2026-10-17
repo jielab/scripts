@@ -145,7 +145,11 @@ class Config:
 	final_multiroute_release: str = ""
 
 	def validate(self) -> None:
-		from c1_lock_roster import RELEASE, COVERAGES
+		from c1_lock_roster import RELEASE, COVERAGES, validate_seed
+		if self.final_multiroute_release == RELEASE:
+			validate_seed(self.seed)
+			if not np.isclose(self.primary_coverage, 0.5, rtol=0, atol=1e-12):
+				raise ValueError("C1 LOCKPAPER fixes primary_coverage at 0.50")
 		if self.final_multiroute_release == RELEASE and (tuple(self.coverages) != COVERAGES or self.bootstrap != 1000):
 			raise ValueError("C1 LOCKPAPER fixes six coverage points and 1000 family/group bootstrap replicates")
 		if os.getenv("ABM_FINAL_SELECTOR", "risk_resid_error").strip() != "risk_resid_error":
@@ -1009,6 +1013,11 @@ class TwinABM:
 			clinical_predictors_excluded_from_distance=[self.feature_names[j] for j in self.prep.clinical_columns],
 			geometry_integrated_features=self.panel_names,
 			primary_predictability_selector="risk_resid_error",
+			release=a.final_multiroute_release,
+			seed=a.seed,
+			primary_coverage=a.primary_coverage,
+			grouping_unit=a.grouping_unit,
+			independent_family_support_verified=a.grouping_unit == "family",
 			coverage_grid=list(a.coverages),
 			selector_bootstrap_requested=a.bootstrap,
 			confidence_definition="100*geometric_mean(proximity,independent_support,donor_concordance,profile_radius); zero without support",
@@ -1524,7 +1533,8 @@ def fit_predictability_extension(model, data):
 	known = (w > 0) & np.asarray(dg["technical_qc"], bool) & np.asarray(dg["supported"], bool)
 	if known.sum() < max(100, 2 * a.min_events) or y[known].sum() < a.min_events:
 		raise ValueError("Insufficient supported tune_gate outcomes for predictability extension")
-	base_risk = np.asarray(pg[a.primary], float)
+	predictability_target_model = "elasticnet_full"
+	base_risk = np.asarray(pg[predictability_target_model], float)
 	sq = np.square(y - base_risk)
 	ll = logloss_rows(y, base_risk)
 	sqr, sq_edges, sq_means = _weighted_bin_residual(sq, base_risk, w * known, bins=max(5, 2 * a.risk_bins))
@@ -1591,6 +1601,9 @@ def fit_predictability_extension(model, data):
 		risk_means={"squared": sq_means, "logloss": ll_means},
 		audit={
 			"primary": primary,
+			"primary_predictability_selector": primary,
+			"predictability_target_model": predictability_target_model,
+			"predictability_target_definition": "OOF/frozen-model prediction error residualized within frozen predicted-risk strata",
 			"routes": list(ROUTE_NAMES),
 			"gate_N": int(gate.sum()),
 			"gate_known_supported_N": int(known.sum()),
@@ -1606,6 +1619,10 @@ def fit_predictability_extension(model, data):
 	)
 	model.final_predictability = ext
 	model.training_audit["final_predictability"] = ext.audit
+	for key in ("primary_predictability_selector", "predictability_target_model", "predictability_target_definition"):
+		model.training_audit[key] = ext.audit[key]
+	print(f"[LE8 C1 LOCK] primary_predictability_selector={primary}; "
+	      f"predictability_target_model={predictability_target_model}", flush=True)
 	return model
 
 
@@ -1650,6 +1667,7 @@ def apply_predictability_extension(model, prediction, X, ids, groups):
 	p["masks"] = masks
 	p["selector_scores"] = core_scores
 	p["primary_predictability_selector"] = ext.primary
+	p["predictability_target_model"] = ext.audit.get("predictability_target_model", "unspecified")
 	p["predictability_routes"] = list(ROUTE_NAMES)
 	p["selection_semantics"] = (
 		"Primary selector predicts development error relative to participants at similar predicted risk; "

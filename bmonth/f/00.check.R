@@ -1,4 +1,4 @@
-required<-c("dplyr","tidyr","tibble","survival","PheWAS","ggplot2","ggrepel","digest","patchwork")
+required<-c("dplyr","tidyr","tibble","survival","PheWAS","ggplot2","ggrepel","digest","patchwork","writexl")
 missing<-required[!vapply(required,requireNamespace,logical(1),quietly=TRUE)]
 if(length(missing))stop("Missing R packages: ",paste(missing,collapse=", "))
 source(file.path(Sys.getenv("BMONTH_FDIR"),"0.common.R"))
@@ -6,11 +6,12 @@ files<-file.path(indir,"Rdata",c("all.rds","PheWAS.rds","prot.rds","met.rds","mo
 if(any(!file.exists(files)))stop("Missing input files: ",paste(files[!file.exists(files)],collapse=", "))
 dat<-read_all() %>% merge_move(required=TRUE) %>% make_birth_month()
 bys<-attr(dat,"birth_year_source"); if(is.null(bys)) bys<-"unknown"
-dat<-prep_covars(dat)
+dat<-prep_covars(dat) %>% make_birth_order()
 cat("Input cohort:",nrow(dat),"\n")
 cat("tdi.birth nonmissing:",sum(!is.na(dat$tdi.birth)),"\n")
 cat("move nonmissing:",sum(!is.na(dat$move_km)),"\n")
 cat("birth-year source:",bys,"\n")
-for(x in ALL_EXPOSURES)cat(x,sum(!is.na(dat[[x]])),"nonmissing\n")
+for(x in c(BASE_EXPOSURES,EXPLORATORY_TRAITS))cat(x,sum(!is.na(dat[[x]])),"nonmissing\n")
+print(birth_order_qc(dat),n=Inf)
 if(!requireNamespace("terra",quietly=TRUE))
   cat("NOTE: terra is not installed; only the optional `bmonth.sh temp` stage needs it.\n")

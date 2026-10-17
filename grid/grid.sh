@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Public entry for GRID twin analysis, benchmark dispatch, and the viewer.
+# Usage and copy-ready examples: ./grid.sh --help (defined in f/twin.py).
 set -euo pipefail
+# Preserve the public command's raw output while supervising every worker.
+SCRIPT_CONSOLE_PASSTHROUGH=1 source /mnt/d/scripts/0f/console.sh
 umask 077
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # Match the existing noninteractive GRID environment selection without importing

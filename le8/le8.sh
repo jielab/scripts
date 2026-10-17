@@ -17,6 +17,18 @@ le8_usage() {
 	cat <<'HELP'
 LE8 FINAL — Usage: ./le8.sh [module[,module...]] [options]
 
+Examples (one line at a time; continue only after success):
+  cd /mnt/d/scripts/le8
+  ./le8.sh --Y cvd_cad --biom prot,met --preflight
+  ./le8.sh c1_correlate,c1_abm --Y cvd_cad --biom prot,met --replace TRUE
+  ./le8.sh --Y cvd_cad --biom prot,met
+  ./le8.sh final --Y cvd_cad --biom prot,met
+  ./le8.sh shiny --Y cvd_cad --biom prot,met --no-reindex
+
+The C1 line refits once for the kinship upgrade; remove --replace TRUE when resuming.
+The next line checks/skips completed C1 and continues C2-C5.
+All commands run in the foreground; Ctrl+C stops Shiny before the next project.
+
 No module list: c1_correlate -> c1_abm (Twin/deviation) -> C2 -> C3 -> C4 (connect/panel validation/reconstruction) -> C5.
 Run final,shiny separately to combine completed outcomes and omic layers.
 Each analysis module writes cumulative performance tables/figures in its performance/ directory.
@@ -29,30 +41,14 @@ ABM uses Rdata/prot.rds and Rdata/met.rds, with no automatic plate/well/center a
 Named RDS values keep their supplied scale; input/adjustment changes require a new ABM fit.
 For an integrated refit use c1_abm --replace TRUE; successful replacements retain _history snapshots.
 Keep the original --outer-roster. Previously inspected tests remain exploratory.
-Family data are optional, including standalone prepare; absent: individual ID groups with kinship unverified.
+C1 automatically groups UKB KING kinship-connected components, retaining all participants.
+Explicit --group-file / --group-col take precedence; missing KING source: individual_unverified warning.
+Legacy individual outer rosters require an explicit one-time archive before the kinship upgrade.
 Objective coronary endpoints are optional for reference calibration; missing endpoints disable diagnostic evaluation.
 C1 and ABM publish each outcome/omic layer separately so completed layers survive later failures.
 Result workbooks and reusable raw/model objects restore working inputs in /tmp.
 Saved fits regenerate PNGs with same-name result workbooks; no refitting.
 Native tables use XLSX and reusable objects use RDS. ABM uses aggregate XLSX/TSV and private LOCAL_ONLY arrays/models.
-
-Examples (copy directly; run/resume C1-C5 for both omic layers):
-  cd /mnt/d/scripts/le8
-  ./le8.sh --Y cvd_cad --biom prot,met --preflight && \
-  ./le8.sh --Y cvd_cad --biom prot,met
-
-Run/resume C1 associations and the new ABM, then build the aggregate report:
-  ./le8.sh c1_correlate,c1_abm --Y cvd_cad --biom prot,met
-  ./le8.sh final --Y cvd_cad --biom prot,met
-
-After that analysis succeeds, build the report and open Shiny:
-  ./le8.sh final --Y cvd_cad --biom prot,met
-  ./le8.sh shiny --Y cvd_cad --biom prot,met --no-reindex
-
-Resume an interrupted run with valid checkpoints (no forced refit):
-  ./le8.sh --Y cvd_cad --biom prot,met
-Continue from C3; completed C1/C2 dependencies are checked and skipped:
-  ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
 
 Modules:
   c1_correlate   C1 associations + basic clinical/biomarker prediction benchmark
@@ -100,6 +96,7 @@ Main options (defaults are set below in this script):
   --out DIR              Must be <analysis-root>/final
   --group-file FILE      Shared eid,group mapping (LE8_GROUP_FILE)
   --group-col COLUMN     Shared phenotype family column (LE8_GROUP_COLUMN)
+  --ukb-rel-file FILE     UKB KING pairs (LE8_UKB_REL_FILE; default /mnt/f/gen/ukb/37/typ/ukb_rel.dat)
   --end-date YYYY-MM-DD  Administrative cutoff (DATE_FOLLOW_END)
   --Y-date COLUMN       Outcome diagnosis date, shared with ABM
   --outer-roster FILE    Shared eid,role table (training/test), for paired comparisons
@@ -136,7 +133,9 @@ The RAM cap includes the waiting R process, MR workers and scheduler headroom.
 Shared pool across LE8 runs: LE8_TOTAL_CORES=16 and LE8_RESOURCE_MEMORY_GIB=32 (GiB).
 All concurrent runs must use the same pool settings; per-run requests may be smaller.
 Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
-Runs stay in the terminal foreground: Ctrl+C stops the job; Ctrl+Z suspends the whole job.
+Runs stay in the terminal foreground, including SCRIPT_VERBOSE=1.
+Ctrl+C/terminal closure stops the run and its workers; Ctrl+Z suspends the whole job.
+When the launcher exits, remaining child processes are terminated before cleanup finishes.
 SCRIPT_VERBOSE=1 streams all diagnostics to the terminal.
 PYTHON_BIN / LE8_REPORT_PYTHON and ABM_PYTHON select existing environments.
 ABM_PYTHON defaults to the report interpreter; select a separate backend environment if needed.
@@ -219,7 +218,8 @@ le8_main() {
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
-	export UKB_PHE=${UKB_PHE:-/mnt/d/data/ukb/phe}
+	export UKB_PHE=${UKB_PHE:-/mnt/d/data/ukb}
+	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-/mnt/f/gen/ukb/37/typ/ukb_rel.dat}
 	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-/mnt/f/gwas/main}
 	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-/mnt/f/gwas/prot}
 	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-/mnt/f/gwas/met}
@@ -235,8 +235,8 @@ le8_main() {
 	export C4_FOCUS_BUDGETS=${C4_FOCUS_BUDGETS:-5,10,50}
 	export C4_MODULE_BOOT=${C4_MODULE_BOOT:-100} C4_MODULE_STABILITY=${C4_MODULE_STABILITY:-0.70}
 	# Author-published CIGMA inference remains labelled as external evidence.
-	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/d/data/reference/cigma/chen2026/cigma.results.csv ]]; then
-		export C5_CIGMA_RESULTS=/mnt/d/data/reference/cigma/chen2026/cigma.results.csv
+	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/f/annot/cigma/chen2026/cigma.results.csv ]]; then
+		export C5_CIGMA_RESULTS=/mnt/f/annot/cigma/chen2026/cigma.results.csv
 	fi
 	if [[ $# -gt 0 && $1 != -* ]]; then
 		modules=$1
@@ -309,6 +309,10 @@ le8_main() {
 			;;
 		--ukb-phe)
 			ukb_phe=${2:?--ukb-phe requires DIR}
+			shift 2
+			;;
+		--ukb-rel-file)
+			extra+=("$1" "${2:?--ukb-rel-file requires FILE}")
 			shift 2
 			;;
 		--memory-limit-gb)

@@ -9,14 +9,7 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # The public Python entry normally owns logging; also support direct invocation.
 export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/tmp/grid-logs/runs}
-_console_bypass=0
-for arg in "$@"; do
-    case $arg in -h|--help|help|--dry-run|--dry-run=*) _console_bypass=1 ;; esac
-done
-if [[ ${SCRIPT_CONSOLE_ACTIVE:-0} != 1 && ${SCRIPT_VERBOSE:-0} != 1 && $_console_bypass == 0 && -f $ROOT/../0f/console_run.py ]]; then
-    exec "${GRID_PYTHON:-python3}" "$ROOT/../0f/console_run.py" --script "$ROOT/f/prsformer.entry.sh" -- "$@"
-fi
-unset _console_bypass
+source "$ROOT/../0f/console.sh"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
 need_value() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || die "Missing value for $1"; }

@@ -125,7 +125,7 @@ flock --shared --nonblock "$REF/kraken2_broad_v1/.metag_build.lock" \
   && echo 'ref_invertebrates.url 下载成功'
 ```
 
-若提示锁被占用，先检查 `systemctl --user status metag-reference-build.service --no-pager`；不要删除锁文件。
+若提示锁被占用，先检查 `systemctl --user status metag-reference-build.scope --no-pager`；不要删除锁文件。
 下载失败后可重跑对应终端的代码块，已完成文件和 `.aria2` 续传状态均保留。
 命令仅为本次 aria2 关闭代理，保持 HTTPS 证书验证，不修改系统代理或终端环境。
 远端长度相同的已有文件可复用，但长度一致不等于 MD5 通过；旧下载器的 `.tmp` 保留。
@@ -169,16 +169,17 @@ HTTPS 仍可用，见 [NCBI 公告](https://ncbiinsights.ncbi.nlm.nih.gov/2026/0
 /mnt/d/scripts/metag/metag.sh prep_ref
 
 # 2. 上一条成功后，由你启动六组正式全量分析。
-systemd-run --user --wait --pipe --collect --unit="metag-full-$(date +%s%N)" \
+systemd-run --user --scope --quiet --collect --unit="metag-full-$(date +%s%N)" \
   --property=MemoryHigh=30G --property=MemoryMax=36G \
   --property=MemorySwapMax=4G --property=OOMPolicy=stop --property=KillMode=control-group \
   /mnt/d/scripts/metag/metag.sh full emp,wbe,长江,厦门污水,全球污水,纳米布沙漠 \
   --threads 16 --execute
 ```
 
-`prep_ref` 及正式分析均使用 systemd 用户服务，内存软限制 30 GiB、硬限制 36 GiB、swap 上限 4 GiB；
+`prep_ref` 及正式分析均使用同步前台 systemd scope，内存软限制 30 GiB、硬限制 36 GiB、swap 上限 4 GiB；
 24 GiB 只是数据库 hash 表上限。其他程序不受此限制，仍应避免多个高内存任务同时挤满系统。
 建库日志写入共享参考目录的 `kraken2_broad_v1/metag_build_logs/supervised-build.log`；审计、试跑和正式分析在终端显示输出。
+退出入口或关闭终端会终止其子任务。历史上独立启动的 `metag-reference-build.service` 必须先明确停止，前台入口不会接管它。
 准备失败后可重新执行 `metag.sh prep_ref`，有效缓存及已完成的参考步骤会复用；部分索引或覆盖不足须先排查，不能删除锁或跳过检查。
 
 本次仅处理 emp、wbe、长江、厦门污水、全球污水、纳米布沙漠。
@@ -189,7 +190,7 @@ ocean、sub 尚在下载，neon 需人工映射，均不在初始分析命令中
 可在另一终端查看建库进度：
 
 ```bash
-systemctl --user status metag-reference-build.service --no-pager
+systemctl --user status metag-reference-build.scope --no-pager
 tail -n 20 /mnt/f/metag/ref_kraken2_ictv/kraken2_broad_v1/metag_build_logs/supervised-build.log
 ```
 

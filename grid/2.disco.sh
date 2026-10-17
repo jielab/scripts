@@ -26,12 +26,12 @@ Prerequisites:
 
 Important parameters:
   --trait NAME / --traits LIST   Default: height,ldl,t2dm; traits run sequentially.
-  --pca-file FILE               /mnt/d/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+  --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
   --med-file FILE               /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
   --distance-pcs N              10; reference and target use the same PCs (>=5).
   --a-list A1,A2,A3,A4          Default 1,1,1,1, in AFR,EAS,EUR,SAS order.
   --regress-pca TRUE|FALSE      Default TRUE (official recommendation).
-  --score-dir DIR               /mnt/d/data/ukb/pgs (input and permanent output).
+  --score-dir DIR               /mnt/f/gen/ukb/pgs (input and permanent output).
   --output-root DIR             /mnt/d/analysis/grid (result namespace).
   --replace TRUE|FALSE          Default FALSE; reuse matching outputs.
   --check                       Check prerequisite files/packages; no computation.

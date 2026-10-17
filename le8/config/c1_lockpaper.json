@@ -2,7 +2,10 @@
   "release": "2026-10-17.c1-lockpaper-v1",
   "article_working_title": "Population-average omics prediction conceals substantial heterogeneity in individual predictability",
   "outer_test_fraction": 0.2,
-  "outer_split_unit": "family/group; individual ID only when family mapping is unavailable",
+  "outer_split_unit": "UKB KING kinship-connected components; singleton groups for participants absent from the source graph",
+  "grouping_precedence": "explicit group-file, explicit group-col, UKB KING source; individual_unverified only when the source is absent",
+  "kinship_source": "LE8_UKB_REL_FILE or /mnt/f/gen/ukb/37/typ/ukb_rel.dat; all released rows, no edge filtering",
+  "kinship_scope": "Full source graph before analytical subsetting; retain related participants; grouping only for partitioning and bootstrap",
   "primary_selector": "risk_resid_error",
   "coverage_grid": [
     0.2,

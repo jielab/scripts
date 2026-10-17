@@ -3,12 +3,14 @@ source(file.path(Sys.getenv("BMONTH_FDIR"),"0.common.R"))
 dat <- read_all() %>% merge_move(required=TRUE) %>% make_birth_month()
 birth_year_source <- attr(dat,"birth_year_source")
 birth_year_approx <- attr(dat,"birth_year_approx")
-dat <- prep_covars(dat)
+dat <- prep_covars(dat) %>% make_birth_order()
 for(y in OUTCOMES) dat <- ensure_outcome(dat,y)
 
 keep <- unique(c(
   "eid","birth_month","birth_year_bm","birth_north","birth_east",
   ALL_EXPOSURES,
+  "cnt_older","cnt_brother","cnt_sister","adopted","adopted_num",
+  "sibling_n","sibship_size","birth_rank","impossible_rank","eligible_border",
   "tdi.birth","tdi.birth.nn","move_km","move_log1p",
   "lon.birth","lat.birth","lon.home","lat.home",
   "bmonth_cos_x_north","bmonth_sin_x_north",
@@ -28,6 +30,12 @@ attr(cohort,"bmonth_metadata") <- list(
   birth_year_approx=birth_year_approx,
   covars_primary=covars,
   covars_stage=covars_stage,
+  exploratory_traits=EXPLORATORY_TRAITS,
+  exploratory_covariates=exploratory_covars,
+  note_birth_order=paste("Exploratory birth-order traits exclude adopted==1, invalid sibling counts,",
+    "impossible ranks and singletons; unknown adoption status is retained.",
+    "Eligibility does not restrict the birth-month or geography analyses.",
+    "D2 models do not additionally adjust family size."),
   note_tdi_birth=paste(
     "tdi.birth is the value created by ukb/f/phe.R: current-home TDI spatial surface",
     "mapped by nearest neighbour to birthplace. It is a birthplace deprivation proxy,",
@@ -49,12 +57,14 @@ qc <- bind_rows(
          value=safe_median(nn_km)),
   tibble(metric="tdi.birth nearest-neighbour distance p95 km",
          value=safe_q95(nn_km)),
-  bind_rows(lapply(ALL_EXPOSURES,function(x)
+  bind_rows(lapply(BASE_EXPOSURES,function(x)
     tibble(metric=paste0(x," nonmissing"),value=sum(!is.na(dat[[x]])))))
 )
 write_csv2(qc,"cohort_qc.csv")
+write_csv2(birth_order_qc(dat),"birth_order_qc.csv")
 write_csv2(count(dat,birth_month,name="N"),"birth_month_counts.csv")
 writeLines(capture.output(str(attr(cohort,"bmonth_metadata"))),
            file.path(rawdir,"cohort_metadata.txt"))
 cat("Saved ",file.path(rawdir,"bmonth.cohort.rds"),"\n",sep="")
 print(qc,n=Inf)
+print(birth_order_qc(dat),n=Inf)

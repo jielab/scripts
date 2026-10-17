@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Public entry point; runtime modules live in f/.
 set -euo pipefail
+SCRIPT_CONSOLE_PASSTHROUGH=1 source /mnt/d/scripts/0f/console.sh
 export PYTHONDONTWRITEBYTECODE=1
 METAG_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -37,7 +38,7 @@ metag.sh 自动激活环境；pilot/full 不重复校验已由用户确认通过
 /mnt/d/scripts/metag/metag.sh prep_ref
 
 # 2. 上一条成功后，由你启动六组正式全量分析。
-systemd-run --user --wait --pipe --collect --unit="metag-full-$(date +%s%N)" \
+systemd-run --user --scope --quiet --collect --unit="metag-full-$(date +%s%N)" \
   --property=MemoryHigh=30G --property=MemoryMax=36G \
   --property=MemorySwapMax=4G --property=OOMPolicy=stop --property=KillMode=control-group \
   /mnt/d/scripts/metag/metag.sh full emp,wbe,长江,厦门污水,全球污水,纳米布沙漠 \
@@ -46,7 +47,7 @@ systemd-run --user --wait --pipe --collect --unit="metag-full-$(date +%s%N)" \
 prep_ref 与全量命令限制为 36 GiB 内存和 4 GiB swap；其他程序不受此限制。
 正式参考索引、覆盖审计及真实试跑仍待完成，自动检查保持暂停。
 建库进度：
-  systemctl --user status metag-reference-build.service --no-pager
+  systemctl --user status metag-reference-build.scope --no-pager
   tail -n 20 /mnt/f/metag/ref_kraken2_ictv/kraken2_broad_v1/metag_build_logs/supervised-build.log
 
 目录默认在 /mnt/f/metag；可用 --data-root 修改（共享数据库路径仍由 --db/--virus-map 指定）。

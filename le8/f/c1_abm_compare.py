@@ -23,7 +23,7 @@ if "le8_common" not in sys.modules:
 import numpy as np
 import pandas as pd
 from c1_selector_inference import infer_selector
-from c1_lock_roster import RELEASE, eid_hash
+from c1_lock_roster import RELEASE, eid_hash, grouping_audit
 # C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
 from sklearn.metrics import roc_auc_score
 from abm import uno_c
@@ -304,6 +304,7 @@ def compare(benchmark, prediction, truth, km, config):
 				ABM_test_eid_hash=eid_hash(ids),
 				C1_common_eid_hash=eid_hash(c1.loc[c1.eid.isin(ids), "eid"]),
 				ABM_common_eid_hash=eid_hash(ids[np.isin(ids, c1.eid)]),
+				common_holdout_eid_hash=eid_hash(joined.eid),
 				outer_roster=benchmark.get("lockpaper_protocol", {}).get("outer_roster", ""),
 				outer_roster_sha256=benchmark.get("lockpaper_protocol", {}).get("outer_roster_sha256", ""),
 				horizon=config.horizon,
@@ -317,9 +318,13 @@ def compare(benchmark, prediction, truth, km, config):
 				),
 				selection_semantics=str(prediction.get("selection_semantics", "legacy core selector")),
 				test_outcomes_used_for_selection=False,
+				grouping_unit=getattr(config, "grouping_unit", "individual_unverified"),
+				independent_family_support_verified=getattr(config, "grouping_unit", "individual_unverified") == "family",
 			)
 		]
 	)
+	if status.C1_common_eid_hash.iloc[0] != status.ABM_common_eid_hash.iloc[0]:
+		raise ValueError("C1 and ABM common held-out eid hashes differ")
 	# Keep the existing cumulative-renderer contract compact and discrimination-only.
 	# Detailed route/loss results remain in their dedicated workbook sheets.
 	legacy = pairwise[pairwise["subset"].isin(["all", "selected", "rejected"])].drop(
@@ -363,12 +368,20 @@ def comparison_from_paths(benchmark, twin, *, selector_inference=False):
 		if not np.array_equal(np.asarray(pred["eid"], str), np.asarray(truth["eid"], str)):
 			raise ValueError("Invalid ABM prediction/truth roster")
 		ans=compare(base,pred,truth,model.km,model.config)
+		audit = grouping_audit(contract)
+		if audit:
+			if audit.get("grouping_unit") != getattr(model.config, "grouping_unit", "individual_unverified"):
+				raise ValueError("Frozen model and grouping audit disagree")
+			ans["grouping_audit"] = pd.DataFrame([audit])
 		if selector_inference:
 			curve,inference=infer_selector(pred,truth["time"],truth["event"],pred["group"],model.km,
 				coverages=getattr(model.config,"coverages",(0.2,0.4,0.5,0.6,0.8,1.0)),
-				B=getattr(model.config,"bootstrap",1000),seed=getattr(model.config,"seed",2026))
+				B=getattr(model.config,"bootstrap",1000),seed=getattr(model.config,"seed",2026),
+				grouping_unit=getattr(model.config,"grouping_unit","individual_unverified"))
 			ans["lockpaper_selector_curve"]=curve
 			ans["lockpaper_selector_inference"]=inference
+			for key, value in audit.items():
+				inference[key] = value
 		return ans
 
 
@@ -387,6 +400,7 @@ def run_comparison(args, scope, work, publish, completed, finish):
 		model=twin / "fit/MODEL_FROZEN.json",
 		predictions=twin / "test_predictions_LOCAL_ONLY.joblib",
 		truth=twin / "test_truth_LOCAL_ONLY.npz",
+		host_contract=twin / "host_contract.json",
 	)
 	signature = {k: sha256(p) if p.is_file() else "unavailable" for k, p in inputs.items()}
 	signature["lockpaper_release"] = RELEASE

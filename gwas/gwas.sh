@@ -11,7 +11,7 @@ usage() {
 	cat <<'HELP'
 cd /mnt/d/scripts/gwas
 
-# Requires /mnt/d/data/ukb/phe/common/ukb.phe; phenotype preparation: ../ukb/phe.sh -h.
+# Requires /mnt/d/data/ukb/common/ukb.phe; phenotype preparation: ../ukb/phe.sh -h.
 ./gwas.sh prep_gwas --grch 37 --sparse-grm TRUE --threads 4 --jobs 8
 ./gwas.sh prep_regenie --grch 37 --threads 4 --jobs 8
 ./gwas.sh run_regenie --grch 37 --pheno-name height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu --threads 4 --jobs 8
@@ -50,7 +50,7 @@ grch=37 threads=4 memory=24000 min_mac=100 jobs=8
 global_maf=1e-4
 [[ "$module" != run_regenie ]] || min_mac=5
 typed_dir=''
-imputed_dir='' phenotype_file=/mnt/d/data/ukb/phe/common/ukb.phe covariate_file=''
+imputed_dir='' phenotype_file=/mnt/d/data/ukb/common/ukb.phe covariate_file=''
 phenotypes=height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu
 type=auto event_col='' covariates=age,sex,tdi,PC1,PC2,PC3,PC4 categorical_covariates=''
 output_dir=/mnt/f/gwas/self/common

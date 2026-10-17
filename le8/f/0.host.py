@@ -28,7 +28,7 @@ def cohort_parser():
 	p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
 	p.add_argument("--Y", dest="trait", default="cvd_cad")
 	p.add_argument("--biom", choices=["prot", "met"], default="prot")
-	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", "/mnt/d/data/ukb/phe"))
+	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", "/mnt/d/data/ukb"))
 	for name in [
 		"phe-file",
 		"omics-file",
@@ -40,6 +40,7 @@ def cohort_parser():
 		"categorical",
 		"group-col",
 		"group-file",
+		"ukb-rel-file",
 		"outer-roster",
 	]:
 		p.add_argument("--" + name)
@@ -127,6 +128,7 @@ def cohort_assign_roles(p, a):
 		role[selected] = name
 	if set(role) != set(ROLES) | {"test"}:
 		raise ValueError("Each development role and test must have eligible participants")
+	check_group_roles(groups, role)
 	return role
 
 
@@ -615,6 +617,7 @@ def host_config(args):
 	values = ["--Y", args.Y, "--biom", args.biom, "--seed", str(args.seed), "--r-bin", args.r_bin]
 	for key, flag in [
 		("ukb_phe", "ukb-phe"),
+		("ukb_rel_file", "ukb-rel-file"),
 		("group_file", "group-file"),
 		("group_col", "group-col"),
 		("outer_roster", "outer-roster"),
@@ -623,20 +626,21 @@ def host_config(args):
 		("shared_covariates", "covariates"),
 	]:
 		value = getattr(args, key, None)
-		if value is not None:
+		# An unset shared adjustment is serialized as "" by the public worker.
+		# Keep the established clinical default instead of passing --covariates "".
+		if value is not None and (key != "shared_covariates" or value):
 			values += ["--" + flag, str(value)]
 	# Scope and random seed are owned by the public invocation.
 	extra = shlex.split(args.host_args)
 	if any(t.split("=")[0] in {"--Y", "--biom", "--seed"} for t in extra):
 		raise ValueError("Set outcome, layer and seed using the public options")
-	a = cohort_configure(cohort_parser().parse_args(values + extra))
-	a.cores = args.cores
+	a = cohort_parser().parse_args(values + extra)
 	if not a.demo:
-		from c1_lock_roster import ensure_roster
-		roster = Path(a.outer_roster) if a.outer_roster else args.analysis_root / "_protocol" / f"c1_outer_roster_seed{a.seed}.tsv"
-		ensure_roster(ukb_phe=a.ukb_phe, output=roster, seed=a.seed,
-		              group_file=a.group_file, group_col=a.group_source_column, r_bin=a.r_bin)
-		a.outer_roster = str(roster)
+		from c1_lock_roster import configure_roster
+		a.analysis_root = args.analysis_root
+		configure_roster(a)
+	a = cohort_configure(a)
+	a.cores = args.cores
 	return a
 
 
@@ -777,10 +781,14 @@ def prepare_host(args, work):
 		validation_status="exploratory",
 		input_config=vars(a),
 	)
-	from c1_lock_roster import RELEASE, eid_hash, roster_record
+	from c1_lock_roster import RELEASE, eid_hash, roster_record, grouping_audit
 	audit.update(lockpaper_release=RELEASE, ABM_test_eid_hash=eid_hash(ids[roles == "test"]),
 	             outer_roster=a.outer_roster,
 	             outer_roster_sha256=roster_record(a.outer_roster)["roster_sha256"] if a.outer_roster else "synthetic")
+	if a.outer_roster:
+		audit.update(grouping_audit(roster_record(a.outer_roster)))
+	# This flag is emitted only after checking the prepared, eligible ABM roster.
+	audit["family_disjoint_ABM_roles"] = bool(a.group_col)
 	return (
 		dict(
 			X=np.c_[x, C],
@@ -818,6 +826,7 @@ from abm import load_config
 from le8_common import write_tables, load_pgs, merge_native_scores
 import deviation as deviation
 from c1_abm_compare import run_comparison
+from c1_lock_roster import grouping_audit
 
 
 def parser():
@@ -832,6 +841,7 @@ def parser():
 	p.add_argument("--r-bin", default="Rscript")
 	for flag in [
 		"ukb-phe",
+		"ukb-rel-file",
 		"group-file",
 		"group-col",
 		"outer-roster",
@@ -999,6 +1009,7 @@ def run_deviation(args, data, stage, config, audit):
 		stage / "aggregate",
 		{
 			"pgs_quality_audit": pgs_audit,
+			"grouping_audit": pd.DataFrame([grouping_audit(audit)]),
 			"endpoint_flow": flow,
 			"support_status": pd.DataFrame(
 				[
@@ -1053,9 +1064,13 @@ def main(args):
 		deviation_supported = True
 	if args.preflight:
 		a = host_config(args)
-		from c1_lock_roster import PRIMARY_SELECTOR, COVERAGES, sha
+		from c1_lock_roster import PRIMARY_SELECTOR, COVERAGES, PREDICTABILITY_TARGET_MODEL, sha
 		print(f"[LE8 C1 LOCK] outer_roster={a.outer_roster}; SHA256={sha(a.outer_roster) if a.outer_roster else 'synthetic'}; "
-		      f"primary_selector={PRIMARY_SELECTOR}; coverages={COVERAGES}; bootstrap={cfg.bootstrap}", flush=True)
+		      f"release={RELEASE}; seed={cfg.seed}; primary_selector={PRIMARY_SELECTOR}; "
+		      f"primary_coverage={cfg.primary_coverage:.2f}; coverage_grid={COVERAGES}; "
+		      f"selector_bootstrap_requested={cfg.bootstrap}; predictability_target_model={PREDICTABILITY_TARGET_MODEL}; "
+		      f"grouping_unit={'family' if a.group_col else 'individual_unverified'}; "
+		      f"independent_family_support_verified={bool(a.group_col)}", flush=True)
 		if not a.demo:
 			for path in [
 				a.phe_file,
@@ -1119,6 +1134,7 @@ def main(args):
 				write_tables(
 					stage / "aggregate",
 					{
+						"grouping_audit": pd.DataFrame([grouping_audit(audit)]),
 						"support_status": pd.DataFrame(
 							[
 								{

@@ -110,7 +110,7 @@ retry() {
 }
 
 if (( ! CHECK )); then
-  CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/metag"
+  CACHE="/tmp/metag-install-$UID"
   mkdir -p "$CACHE"
   exec 8>"$CACHE/install.lock"
   flock -n 8 || fail '另一个 install.sh 正在运行。'

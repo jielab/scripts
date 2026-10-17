@@ -587,7 +587,7 @@ gu_plan_ukb_resources() {
 # Share successful reference checks across workers. Fingerprints include the
 # actual source, sentinel list and validator code; changed inputs are rechecked.
 gu_build_check_key() {
-	python3 - "$1" "$2" "$3" "${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/phe/common/snp.lst}" \
+	python3 - "$1" "$2" "$3" "${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}" \
 		"$(declare -f check_GRCH phe_zcat phe_check_grch_tabix_rows gu_check_grch_pvar_positions)" <<'PY'
 import hashlib, json, sys
 from pathlib import Path

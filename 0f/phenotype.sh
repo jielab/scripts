@@ -503,7 +503,7 @@ PGS_USAGE
 # 🚩 Genome-build detection
 # Detect GRCh37/38 from sentinel variants; export CHECK_GRCH_RESULT.
 check_GRCH() {
-	local input="${1:?check_GRCH requires INPUT}" expected="${2:-}" gold="${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/phe/common/snp.lst}"
+	local input="${1:?check_GRCH requires INPUT}" expected="${2:-}" gold="${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}"
 	local src="$input" kind=text tmp n m37 m38 best mismatch build expected_n chr candidate pv
 	local -a ref_bims=() ref_pvars=()
 	[[ -s "$gold" ]] || {
@@ -714,7 +714,7 @@ phe_run_background() {
 	}
 	mkdir -p -- "$(dirname -- "$log_file")"
 	echo "Starting $title. Log: $log_file"
-	nohup "$@" >"$log_file" 2>&1 </dev/null &
+	SCRIPT_BACKGROUND=1 nohup "$@" >"$log_file" 2>&1 </dev/null &
 	echo "PID: $!"
 	job_pattern="$(phe_background_job_pattern "$@")"
 	echo "Job: pgrep -af '$job_pattern'"

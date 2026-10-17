@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import time
+from process_lifetime import arm_parent_death, cleanup as cleanup_descendants, prctl
 
 
 def descendants(parent):
@@ -47,23 +48,43 @@ def send_remaining(pids, sig):
 
 
 @contextmanager
-def managed_process(command, env):
-	foreground = env.get("SCRIPT_FOREGROUND") == "1"
-	proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=not foreground)
+def managed_process(command, env, capture=True):
+	# Logging mode never controls workload lifetime. Even verbose/help entry points
+	# get the same terminal-bound supervisor, including parent SIGKILL protection.
+	guard = [sys.executable, str(Path(__file__).with_name("process_lifetime.py")),
+	         "--parent-pid", str(os.getpid()), "--", *command]
+	# If the inner supervisor itself dies, adopt and clean its workers here.
+	prctl(36, 1)
+	proc = subprocess.Popen(guard, env=env, stdout=subprocess.PIPE if capture else None,
+	                        stderr=subprocess.STDOUT if capture else None, start_new_session=False)
 	try:
 		yield proc
 	finally:
-		if proc.poll() is None or sys.exc_info()[0] is not None:
-			# A logging/console failure must not orphan the computation.
-			pids = descendants(proc.pid)
-			if not foreground:
-				try:
-					os.killpg(proc.pid, signal.SIGKILL)
-				except ProcessLookupError:
-					pass
-			send_remaining(pids, signal.SIGKILL)
-			proc.wait()
-		proc.stdout.close()
+		cleanup_descendants(proc)
+		if proc.stdout is not None:
+			proc.stdout.close()
+
+
+def passthrough(script, args):
+	"""Preserve raw stdout/stdin for verbose mode, viewers and machine-readable CLIs."""
+	background = explicit_background()
+	env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1", SCRIPT_FOREGROUND="1",
+	           SCRIPT_BACKGROUND="1" if background else "0")
+	with managed_process(["bash", str(Path(script).resolve()), *args], env, capture=False) as proc:
+		def cancel(sig, _frame):
+			if proc.poll() is None:
+				proc.send_signal(sig)
+		for sig in ((signal.SIGINT, signal.SIGTERM) if background else (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)):
+			signal.signal(sig, cancel)
+		if not background:
+			arm_parent_death()
+		rc = proc.wait()
+		return rc if rc >= 0 else 128 - rc
+
+
+def explicit_background():
+	# nohup communicates its explicit user intent through inherited SIGHUP=IGN.
+	return os.getenv("SCRIPT_BACKGROUND") == "1" or signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
 
 
 def console_label(script, args):
@@ -254,23 +275,22 @@ def run(script, args):
 	directory = Path(os.environ.get("SCRIPT_LOG_DIR", default_log_dir))
 	directory.mkdir(parents=True, exist_ok=True)
 	log = directory / f"{label}.{datetime.datetime.now():%Y%m%d-%H%M%S}.{os.getpid()}.log"
-	env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1")
-	foreground = env.get("SCRIPT_FOREGROUND") == "1"
+	background = explicit_background()
+	env = dict(os.environ, SCRIPT_CONSOLE_ACTIVE="1", SCRIPT_FOREGROUND="1",
+	           SCRIPT_BACKGROUND="1" if background else "0")
 	with managed_process(["bash", str(script), *args], env) as proc:
 		cancelled = []
 
 		def cancel(sig, frame):
 			if not cancelled:
 				cancelled.append((sig, time.monotonic(), descendants(proc.pid)))
-				if not foreground:
-					try:
-						os.killpg(proc.pid, signal.SIGTERM)
-					except ProcessLookupError:
-						pass
-				send_remaining(cancelled[0][2], signal.SIGTERM)
+				if proc.poll() is None:
+					proc.send_signal(sig)
 
-		for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+		for sig in ((signal.SIGINT, signal.SIGTERM) if background else (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)):
 			signal.signal(sig, cancel)
+		if not background:
+			arm_parent_death()
 		print(f"[{label}] 开始；详细日志：{log}", flush=True)
 		done = failed = 0
 		stage = ""
@@ -418,6 +438,10 @@ def run(script, args):
 		selector.register(proc.stdout, selectors.EVENT_READ)
 		with log.open("wb") as out:
 			while selector.get_map() or proc.poll() is None:
+				if proc.poll() is not None:
+					# An adopted worker can still hold the log pipe open after the
+					# inner supervisor dies. Clean it before waiting for pipe EOF.
+					cleanup_descendants(proc)
 				for key, _ in selector.select(timeout=1):
 					chunk = os.read(key.fileobj.fileno(), 65536)
 					if not chunk:
@@ -436,11 +460,6 @@ def run(script, args):
 				now = time.monotonic()
 				if cancelled and now - cancelled[0][1] >= 10:
 					send_remaining(cancelled[0][2], signal.SIGKILL)
-					if not foreground:
-						try:
-							os.killpg(proc.pid, signal.SIGKILL)
-						except ProcessLookupError:
-							pass
 			if pending:
 				show_line(pending)
 			rc = proc.wait()
@@ -473,6 +492,8 @@ def run(script, args):
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("--script", required=True)
+	parser.add_argument("--passthrough", action="store_true")
 	parser.add_argument("args", nargs=argparse.REMAINDER)
 	a = parser.parse_args()
-	raise SystemExit(run(a.script, a.args[1:] if a.args[:1] == ["--"] else a.args))
+	runner = passthrough if a.passthrough else run
+	raise SystemExit(runner(a.script, a.args[1:] if a.args[:1] == ["--"] else a.args))

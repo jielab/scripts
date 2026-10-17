@@ -293,8 +293,8 @@ results_main <- function(args) {
   get <- function(n,default) if(is.null(opt[[n]])) default else opt[[n]]
   root <- get("analysis-root","/mnt/d/analysis/grid")
   traits <- strsplit(get("traits","height,ldl,t2dm"),",",fixed=TRUE)[[1]]
-  common <- list(analysis_root=root,score_dir=get("score-dir","/mnt/d/data/ukb/pgs"),
-    pca_dir=get("pca-dir","/mnt/d/data/ukb/pca_proj"),ancestry_file=get("ancestry-file","/mnt/d/data/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"),traits=traits)
+  common <- list(analysis_root=root,score_dir=get("score-dir","/mnt/f/gen/ukb/pgs"),
+    pca_dir=get("pca-dir","/mnt/f/gen/ukb/pca_proj"),ancestry_file=get("ancestry-file","/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"),traits=traits)
   if(mode=="summary") do.call(build_dashboard,c(common,list(final_root=get("final-root",file.path(root,"final")),
     grid_root=get("grid-root",file.path(root,"abm")),prs_root=get("prsformer-root",root))))
   else if(mode %in% c("pca","csx","disco")) do.call(publish_module,c(list(module=mode),common,list(subset=get("subset",""))))

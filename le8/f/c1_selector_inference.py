@@ -48,7 +48,10 @@ def _finite_mean(values):
     finite=values[np.isfinite(values)]
     return float(finite.mean()) if len(finite) else np.nan
 
-def infer_selector(prediction,time,event,groups,km,coverages=(.2,.4,.5,.6,.8,1.0),routes=ROUTES,B=1000,seed=2026):
+def infer_selector(prediction,time,event,groups,km,coverages=(.2,.4,.5,.6,.8,1.0),routes=ROUTES,B=1000,seed=2026,
+                   grouping_unit="individual_unverified"):
+    if grouping_unit not in {"family", "individual_unverified"}:
+        raise ValueError("Invalid grouping unit")
     if tuple(coverages)!=COVERAGES or PRIMARY_SELECTOR not in routes:
         raise ValueError("C1 LOCKPAPER requires the locked coverage grid and primary selector")
     if int(B)!=B or B<1: raise ValueError("Bootstrap replicates must be positive")
@@ -111,6 +114,7 @@ def infer_selector(prediction,time,event,groups,km,coverages=(.2,.4,.5,.6,.8,1.0
         infer.append(dict(route=p.route,AURC_delta_Brier=p.AURC_delta_Brier,AURC_delta_Brier_lo=c0[0],AURC_delta_Brier_hi=c0[1],
                           AURC_delta_LogLoss=p.AURC_delta_LogLoss,AURC_delta_LogLoss_lo=c1[0],AURC_delta_LogLoss_hi=c1[1],
                           mean_delta_AUC=p.mean_delta_AUC,mean_delta_AUC_lo=c2[0],mean_delta_AUC_hi=c2[1],
-                          valid_boot=min(c0[2],c1[2]),requested_boot=int(B),bootstrap_unit="family/group",
+                          valid_boot=min(c0[2],c1[2]),requested_boot=int(B),bootstrap_unit=grouping_unit,
+                          independent_family_support_verified=grouping_unit == "family",
                           uncertainty="conditional on frozen models, selector, risk-matched controls and censoring estimator"))
     return curve,pd.DataFrame(infer)

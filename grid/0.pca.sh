@@ -19,11 +19,11 @@ Modules (run in order; existing completed outputs are reused):
 
 Important parameters:
   --dir-imp DIR                 /mnt/f/gen/ukb/37/imp (chr*.pgen/pvar/psam)
-  --pca-file FILE               /mnt/d/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+  --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
   --pca-weight FILE             /mnt/d/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
   --med-file FILE               /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
   --cov-pcs N / --distance-pcs N 20 / 10; require 5 <= distance <= covariate PCs.
-  --phe-file FILE               /mnt/d/data/ukb/phe/Rdata/phe.rds
+  --phe-file FILE               /mnt/d/data/ukb/Rdata/phe.rds
   --ancestry-file FILE          Default: ukb.ancestry.auto.tsv.gz beside PCA file.
   --ancestry-prob-min VALUE     0.90; --anchor-max-per-group 10000
   --jobs N                     At most 4 concurrent chromosomes, memory-limited.
@@ -33,7 +33,7 @@ Important parameters:
   --check                       Validate existing projection or genotype inputs.
   --dry-run TRUE                Same preflight/plan behavior; no analysis.
 
-Permanent individual PCA, distance and ancestry data: /mnt/d/data/ukb/pca_proj/
+Permanent individual PCA, distance and ancestry data: /mnt/f/gen/ukb/pca_proj/
 Reports: /mnt/d/analysis/grid/pca/{projection,ancestry}.xlsx/.png and summary.rds.
 Temporary chromosome scores: <output-root>/pca/work/projection/chr<N>.sscore.
 Commands/logs: <output-root>/pca/{cmd,log}/ and work/projection/log/.

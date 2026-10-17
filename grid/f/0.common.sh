@@ -112,13 +112,13 @@ grid_configure() {
 	GRID_DRY_RUN=${GRID_DRY_RUN:-FALSE}
 	GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/f/gwas/4grid/common}
 	if [[ -z ${GRID_TARGET_DIR+x} ]]; then
-		GRID_TARGET_DIR=/mnt/d/data/ukb/gen/typ
+		GRID_TARGET_DIR=/mnt/f/gen/ukb/37/typ
 		if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s /mnt/f/gen/ukb/37/hap/chr1.pgen ]]; then
 			GRID_TARGET_DIR=/mnt/f/gen/ukb/37/hap
 		fi
 	fi
 	GRID_IMP_DIR=${GRID_IMP_DIR:-/mnt/f/gen/ukb/37/imp}
-	GRID_PHE_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/phe/Rdata/phe.rds}
+	GRID_PHE_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/Rdata/phe.rds}
 	GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}
 	export GRID_CSX_BACKEND=${GRID_CSX_BACKEND:-cpu} GRID_CSX_GPU=${GRID_CSX_GPU:-0}
 	GRID_KEEP=${GRID_KEEP:-}
@@ -612,7 +612,7 @@ grid_configure() {
 		[[ $GRID_BIM_EXPLICIT == TRUE ]] || GRID_CSX_BIM_PREFIX="$GRID_TARGET_DIR/ukb_array"
 		[[ $GRID_SNPINFO_EXPLICIT == TRUE ]] || GRID_CSX_SNPINFO="$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3"
 		[[ -n $GRID_LDSCORE_DIR ]] || GRID_LDSCORE_DIR="$GRID_OUTPUT_ROOT/reference/ldscore"
-		[[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="$GRID_DATA_ROOT/data/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
+		[[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
 		[[ -n $GRID_ANCESTRY_FILE ]] || GRID_ANCESTRY_FILE="$(dirname -- "$GRID_PCA_FILE")/ukb.ancestry.auto.tsv.gz"
 		[[ $GRID_JOBS =~ ^[1-9][0-9]*$ ]] || _grid_die "--jobs must be a positive integer"
 		[[ $GRID_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die "--threads must be a positive integer"
@@ -792,7 +792,7 @@ grid_pipeline() (
 	grid_configure "$@"
 	GRID_CHECK=FALSE
 	GRID_STAGE=all
-	GRID_SCORE_DIR=${GRID_SCORE_DIR:-/mnt/d/data/ukb/pgs}
+	GRID_SCORE_DIR=${GRID_SCORE_DIR:-/mnt/f/gen/ukb/pgs}
 	GRID_DISCO_A=1,1,1,1
 	GRID_REGRESS_PCA=TRUE
 	GRID_CSX_MODELS=populations,auto,meta

@@ -52,7 +52,7 @@
   "gate_iterations": 100,
   "min_role_n": 30,
   "min_class_n": 10,
-  "bootstrap": 500,
+  "bootstrap": 1000,
   "grouping_status": "individual_unverified",
   "upstream_gwas_overlap": "unknown",
   "label_budget_note": "build fit; tune selection; separate probability calibration and audit"

@@ -18,7 +18,7 @@ gwas_storage_configure() {
 	esac
 	gwas_storage_ready=FALSE
 	[[ "$local_io" == TRUE ]] || return 0
-	local_cache_root=$(realpath -m "${local_cache_arg:-${XDG_CACHE_HOME:-$HOME/.cache}/gwas/format}")
+	local_cache_root=$(realpath -m "${local_cache_arg:-/tmp/gwas-cache-$UID/format}")
 	key=$(printf '%s\n%s\n' "$(realpath -m "$dir_out")" "$category" | sha256sum | cut -c1-20)
 	local_project_cache="$local_cache_root/projects/$key"
 	: "${GWAS_POST_TMP_BASE:=/tmp/gwas-post-$UID/$key/$step_key}"

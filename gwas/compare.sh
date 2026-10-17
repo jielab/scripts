@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A foreground Shiny server must keep its listening URL and live diagnostics.
-if [[ ${1:-} != shiny ]]; then source /mnt/d/scripts/0f/console.sh; fi
+source /mnt/d/scripts/0f/console.sh
 set -euo pipefail
 # Defaults, CLI and module commands live here. Project discovery/build alignment
 # analysis functions live in f/ and the Shiny application lives in shiny/.

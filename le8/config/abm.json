@@ -1,7 +1,7 @@
 {
   "trait": "cvd_cad",
   "layer": "prot",
-  "seed": 12345,
+  "seed": 2026,
   "horizon": 10.0,
   "folds": 5,
   "repeats": 2,
