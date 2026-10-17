@@ -85,7 +85,7 @@ Main options (defaults are set below in this script):
   --r-bin FILE           Rscript
   --port N               3839
   --host ADDRESS         127.0.0.1
-  --memory-limit-gb N    Process-tree RAM cap; default 24 GiB; 0 disables it
+  --memory-limit-gb N    Process-tree RAM cap; default 32 GiB; 0 disables it
   --memory-swap-gb N     Explicit swap cap
   --run-abm              Include ABM with an explicit module list
   --skip-abm             Skip ABM in the default C1-C5 sequence
@@ -131,7 +131,8 @@ summary report: final/; aggregate database: evidence/; execution logs and caches
 Question-led C1 → C2 → C4 overview and figures: final/; Shiny opens the aggregate evidence browser.
 LE8 reconstruction uncertainty: C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad,ra --biom prot,met
 Final report files overwrite the fixed final/ destination.
-Per-run defaults: 8 CPU cores and 24 GiB RAM.
+Per-run defaults: 8 CPU cores and 32 GiB RAM.
+The RAM cap includes the waiting R process, MR workers and scheduler headroom.
 Shared pool across LE8 runs: LE8_TOTAL_CORES=16 and LE8_RESOURCE_MEMORY_GIB=32 (GiB).
 All concurrent runs must use the same pool settings; per-run requests may be smaller.
 Screen: major stages and one failure summary; full logs: /tmp/le8-logs/runs/.
@@ -212,7 +213,9 @@ le8_main() {
 	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
 	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
-	local cores=8 ukb_phe="" memory_limit=${LE8_MEMORY_LIMIT_GB:-24} memory_swap="" dry_run=FALSE
+	# C2 retains the R analysis heap while external MR workers run. A 24 GiB
+	# phase can leave less than one 4 GiB worker after the 4 GiB reserve.
+	local cores=8 ukb_phe="" memory_limit=${LE8_MEMORY_LIMIT_GB:-32} memory_swap="" dry_run=FALSE
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.

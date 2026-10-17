@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """0.host utilities and command entry points."""
 from __future__ import annotations
+# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
 import sys
 
 sys.dont_write_bytecode = True
@@ -113,7 +114,8 @@ def cohort_assign_roles(p, a):
 
 	groups = cohort_family_groups(p, a)
 	outer = cohort_shared_outer_roles(p, a)
-	values = np.array([tie_hash(g, a.seed) / 2**64 for g in groups])
+	# Independent hash stream: outer test families occupy the lowest outer hashes.
+	values = np.array([tie_hash(g, a.seed + 7919 if outer is not None else a.seed) / 2**64 for g in groups])
 	edges = np.array([0, 0.50, 0.60, 0.68, 0.76, 0.84])
 	if outer is not None:
 		edges = edges / edges[-1]
@@ -629,6 +631,12 @@ def host_config(args):
 		raise ValueError("Set outcome, layer and seed using the public options")
 	a = cohort_configure(cohort_parser().parse_args(values + extra))
 	a.cores = args.cores
+	if not a.demo:
+		from c1_lock_roster import ensure_roster
+		roster = Path(a.outer_roster) if a.outer_roster else args.analysis_root / "_protocol" / f"c1_outer_roster_seed{a.seed}.tsv"
+		ensure_roster(ukb_phe=a.ukb_phe, output=roster, seed=a.seed,
+		              group_file=a.group_file, group_col=a.group_source_column, r_bin=a.r_bin)
+		a.outer_roster = str(roster)
 	return a
 
 
@@ -769,6 +777,10 @@ def prepare_host(args, work):
 		validation_status="exploratory",
 		input_config=vars(a),
 	)
+	from c1_lock_roster import RELEASE, eid_hash, roster_record
+	audit.update(lockpaper_release=RELEASE, ABM_test_eid_hash=eid_hash(ids[roles == "test"]),
+	             outer_roster=a.outer_roster,
+	             outer_roster_sha256=roster_record(a.outer_roster)["roster_sha256"] if a.outer_roster else "synthetic")
 	return (
 		dict(
 			X=np.c_[x, C],
@@ -867,13 +879,18 @@ def completed(target):
 
 def check_input_reuse(target, current):
 	"""Do not silently reuse a raw-assay fit under the cleaned-RDS contract."""
+	if target.name == "abm_twin":
+		from abm import VERSION
+		marker = target / "fit/MODEL_FROZEN.json"
+		if not marker.is_file() or json.loads(marker.read_text()).get("version") != VERSION:
+			raise ValueError("C1 LOCKPAPER requires a fresh molecular-only fit; run c1_correlate,c1_abm --replace TRUE")
 	contract = target / "host_contract.json"
 	if not contract.is_file():
 		return
 	previous = json.loads(contract.read_text()).get("input_config", {})
 	if not previous:
 		return
-	keys = ("phe_file", "omics_file", "met_input", "transform", "covariates", "residualize", "categorical")
+	keys = ("phe_file", "omics_file", "met_input", "transform", "covariates", "residualize", "categorical", "outer_roster", "group_file", "group_source_column", "seed")
 	changed = [key for key in keys if previous.get(key) != getattr(current, key)]
 	if changed:
 		raise ValueError(
@@ -1015,8 +1032,9 @@ def run_deviation(args, data, stage, config, audit):
 
 
 def main(args):
+	from c1_lock_roster import RELEASE
 	scope = args.analysis_root / args.Y / args.biom / "c1_abm"
-	cfg = replace(load_config(args.config), trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores)
+	cfg = replace(load_config(args.config), trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores, final_multiroute_release=RELEASE)
 	cfg.validate()
 	dc = deviation.read_config(args.deviation_config or ROOT / f"config/deviation_{args.biom}.json")
 	dc = replace(dc, trait=args.Y, layer=args.biom, seed=args.seed)
@@ -1035,6 +1053,9 @@ def main(args):
 		deviation_supported = True
 	if args.preflight:
 		a = host_config(args)
+		from c1_lock_roster import PRIMARY_SELECTOR, COVERAGES, sha
+		print(f"[LE8 C1 LOCK] outer_roster={a.outer_roster}; SHA256={sha(a.outer_roster) if a.outer_roster else 'synthetic'}; "
+		      f"primary_selector={PRIMARY_SELECTOR}; coverages={COVERAGES}; bootstrap={cfg.bootstrap}", flush=True)
 		if not a.demo:
 			for path in [
 				a.phe_file,
@@ -1079,6 +1100,9 @@ def main(args):
 			with tempfile.TemporaryDirectory(prefix="_abm_staging_", dir=scope) as work:
 				run_comparison(args, scope, Path(work), publish, completed, finish)
 				refresh_performance(args, scope, Path(work))
+				try:
+					subprocess.run([sys.executable,str(Path(__file__).with_name("c1_article.py")),"--analysis-root",str(args.analysis_root),"--Y",args.Y],check=True)
+				except Exception as exc: print("[LE8 C1 LOCK] manuscript reporting warning:",exc,file=sys.stderr)
 			return
 		work = Path(tempfile.mkdtemp(prefix="_abm_staging_", dir=scope))
 		try:
@@ -1138,6 +1162,9 @@ def main(args):
 				print("[LE8 twin] DONE deviation", flush=True)
 			run_comparison(args, scope, work, publish, completed, finish)
 			refresh_performance(args, scope, work)
+			try:
+				subprocess.run([sys.executable,str(Path(__file__).with_name("c1_article.py")),"--analysis-root",str(args.analysis_root),"--Y",args.Y],check=True)
+			except Exception as exc: print("[LE8 C1 LOCK] manuscript reporting warning:",exc,file=sys.stderr)
 		except BaseException as exc:
 			# The public console recognizes this prefix before the outer
 			# CalledProcessError hides the actual cause behind a long command.

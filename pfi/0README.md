@@ -61,7 +61,7 @@ The preferred journal-rank input is a JCR-derived file with journal-year-categor
 3. if no matched category exists, use the mean percentile across categories;
 4. keep `max_percentile` and `mean_percentile` for sensitivity analyses.
 
-Expected input columns are documented in `conf/journal_rank_schema.csv`. Minimal required columns are:
+Expected input columns are documented below. Minimal required columns are:
 
 ```text
 journal_key, jcr_year, jcr_category, journal_domain, jif_percentile, jif_quartile
@@ -70,8 +70,27 @@ journal_key, jcr_year, jcr_category, journal_domain, jif_percentile, jif_quartil
 Optional columns:
 
 ```text
-journal_title, issn, eissn, impact_factor, journal_citation_indicator, total_cites
+journal_title, issn, eissn, impact_factor, journal_citation_indicator, jif_rank, total_cites
 ```
+
+| Column | Definition |
+|---|---|
+| `journal_key` | Stable lowercase journal identifier; prefer ISSN/eISSN, with normalized title as fallback |
+| `journal_title` | Journal title |
+| `issn`, `eissn` | Print and electronic ISSN |
+| `jcr_year` | JCR year used for the score |
+| `jcr_category` | JCR subject category |
+| `journal_domain` | Broad domain: `basic_biomedical`, `clinical_science`, `public_health`, `health_services`, or `methods_data_software` |
+| `impact_factor` | Journal Impact Factor |
+| `journal_citation_indicator` | Journal Citation Indicator, when available |
+| `jif_rank` | JIF rank within category |
+| `jif_quartile` | `Q1`, `Q2`, `Q3`, or `Q4` |
+| `jif_percentile` | JIF percentile within category, 0–100; higher is better |
+| `total_cites` | Total citations in the JCR year |
+
+Domain inference uses the rules in the corresponding Python processing module.
+There is no separate CSV configuration for domain rules or scoring weights;
+the review dimensions and formula are documented below.
 
 ## Paper-score rubric
 
@@ -228,7 +247,7 @@ For scientific results, put the real JCR/JCI-derived file here:
 /mnt/d/scripts/pfi/journal_rank_real.csv
 ```
 
-Required columns are documented in `conf/journal_rank_schema.csv`. Minimal
+Required columns are documented under [Journal score construction](#journal-score-construction). Minimal
 columns:
 
 ```text

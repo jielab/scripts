@@ -2345,6 +2345,13 @@ def pipeline_main(argv=None):
 		set(modules) & common["NATIVE"] or a.fit_joint or a.fit_reference or a.fit_genetic or a.details
 	):
 		raise ValueError("Unrecognized options: " + " ".join(unknown))
+	# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
+	# One frozen outcome-blind family-level outer roster is shared by conventional C1 and ABM.
+	# configure_roster creates c1_outer_roster_seed*.tsv and exports LE8_OUTER_ROSTER.
+	if set(modules) & {"c1_correlate", "c1_abm"}:
+		from c1_lock_roster import configure_roster
+		configure_roster(a, settings=shared_analysis_settings(a)[0], dry_run=a.dry_run)
+
 	# Fail before a native C1 scan if research configuration or files are unavailable.
 	if "c1_abm" in modules:
 		for trait in a.Y.split(","):

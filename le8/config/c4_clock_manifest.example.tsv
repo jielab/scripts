@@ -1,7 +1,0 @@
-clock	source	variable
-kidney_custom	all	creatinine
-kidney_custom	all	cystatin_c
-kidney_custom	all	eGFR
-brain_custom	img	img_p26521
-brain_custom	img	img_p26517
-brain_custom	img	img_total_cortical_gm

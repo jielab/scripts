@@ -57,7 +57,21 @@ cd /mnt/d/scripts/allele
 
 ## 配置与环境检查
 
-修改分析路径时，先执行 `cp -n config.example.env allele.env`，再编辑 `allele.env`。输入目录变量为 `ALLELE_VCF_DIR`；未配置新变量时仍兼容显式设置的旧 `ALLELE_GNOMAD` 输入路径。安装脚本与分析入口读取同一配置，`allele.env` 中的赋值优先于同名环境变量；分析命令的 `--vcf`、`--vcf-dir`、`--fasta`、`--out` 参数可覆盖配置。若配置文件固定了 `ALLELE_OUT`，请将示例输出路径写进配置，或在每一步传入相同的 `--out DIR`。`./allele.sh --help` 会显示当前配置的路径。独立下载脚本 `/mnt/f/annot/gnomad/gnomad_download.sh` 不读取此配置，用自己的 `--out`、`--proxy` 参数。
+默认配置已内置于 `f/common.sh`，通常无需配置文件。需要固定自定义路径时，在项目目录创建或编辑 `allele.env`，只写需要覆盖的变量；例如 `ALLELE_OUT=/mnt/d/analysis/allele_gnomad_v4.1`。输入目录变量为 `ALLELE_VCF_DIR`；未配置新变量时仍兼容显式设置的旧 `ALLELE_GNOMAD` 输入路径。安装脚本与分析入口读取同一配置，`allele.env` 中的赋值优先于同名环境变量；分析命令的 `--vcf`、`--vcf-dir`、`--fasta`、`--out` 参数可覆盖配置。若配置文件固定了 `ALLELE_OUT`，请将示例输出路径写进配置，或在每一步传入相同的 `--out DIR`。`./allele.sh --help` 会显示当前配置的路径。独立下载脚本 `/mnt/f/annot/gnomad/gnomad_download.sh` 不读取此配置，用自己的 `--out`、`--proxy` 参数。
+
+可覆盖的变量及内置默认值如下；API key 本身仍放在代码目录外：
+
+| 变量 | 默认值 |
+|---|---|
+| `ALLELE_ENV_NAME` | `allele` |
+| `ALLELE_OUT` | `/mnt/d/analysis/allele` |
+| `ALLELE_VCF_DIR` | `/mnt/f/annot/gnomad` |
+| `ALLELE_FASTA` | `/mnt/f/gen/1hgp/38/GRCH38.fasta.gz`（需相邻 `.fai` 和 `.gzi`） |
+| `ALLELE_API_KEY_FILE` | `/mnt/d/files/alphaG.api` |
+| `ALLELE_ATLAS_SCORERS` | `ATAC,DNASE,CHIP_TF,CHIP_HISTONE,CAGE,PROCAP` |
+| `ALLELE_ATLAS_CHUNK` | `128` |
+| `ALLELE_BIALLELIC_RATIO` | `2` |
+| `ALLELE_SEED` | `20261015` |
 
 自定义 conda 可通过 `ALLELE_CONDA_EXE=/path/to/conda` 指定，配置文件可通过 `ALLELE_CONFIG=/path/to/file.env` 指定。环境缺失时会提示先安装；依赖导入失败时检查命令返回非零状态。数据路径和 API key 不影响依赖检查是否通过，但必须在对应分析阶段配置。
 
@@ -101,7 +115,6 @@ allele/
 ├── allele.sh
 ├── install.sh
 ├── environment.yml
-├── config.example.env
 └── f/
     ├── common.sh
     ├── check_ac.py

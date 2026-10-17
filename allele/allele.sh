@@ -85,7 +85,7 @@ prepare 默认正式输入匹配 gnomad.genomes.v4.1.sites.chr*.vcf.bgz；检查
 prepare 的 X/Y 不在默认常染色体分析中，显式 --chr all 才加入；需另行考虑倍性。
 prepare 已有结果时不会覆盖，请使用新的 --out。后续步骤必须使用同一个 --out。
 全基因组 Atlas 的时间和空间取决于 select 的位点数，离线测试不验证 API 授权。
-更多说明见 README.md；自定义路径可复制 config.example.env 为 allele.env。
+更多说明见 README.md；自定义路径可在 allele.env 中写入需要覆盖的变量。
 HELP
 printf '\n当前路径\n  VCF 目录: %s\n  FASTA:    %s\n  分析输出（prepare 等）: %s\n  check_ac 输出: 由 --out FILE.tsv 指定；省略时仅终端\n' \
   "$ALLELE_VCF_DIR" "$ALLELE_FASTA" "$ALLELE_OUT"

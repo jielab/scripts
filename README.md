@@ -39,6 +39,15 @@
 - LE8 的公共调度、读写和临时续跑核验集中在 `f/0.common.py`，队列输入及运行衔接在 `f/0.host.py`，独立资源调度保留 `f/0.resources.py`。ABM、分子偏离和汇总分别由 `abm.py`、`deviation.py`、`final.py` 实现。`config/abm.json` 与 `config/deviation_{prot,met}.json` 是默认运行参数，整理代码时保持其内容不变。已完成 C1 的核验记录只放 `/tmp/le8-completed/`，文件状态改变或记录不存在时重新执行原有结果检查。
 - 项目 `f/` 中的前期处理和公用代码使用 `0.` 前缀，例如 `0.common.R`。其他模块使用对应前缀，例如 `c1.`、`c2.`；不用 `0_`、`c1_` 作为代码文件的模块前缀。
 - `0f/` 只放确实常用、跨项目复用的工具；目录名已有 `0`，其中的文件不再加 `0.`。项目专用功能留在对应项目，例如 GWAS 专用功能放 `gwas/`。
+- GRID 的依赖统一由 `grid/environment.yml` 定义，使用 `grid/install_grid.sh` 安装；不另保留 twin 的重复依赖清单。
+
+## LE8 可选输入
+
+`le8/config/` 只保留默认运行读取的 `abm.json`、`deviation_prot.json` 和 `deviation_met.json`。多路线分析由各模块代码实现，不另存未被程序读取的路线说明 JSON。
+
+- C4 自定义时钟通过环境变量 `C4_CLOCK_MANIFEST` 指定 TSV，列为 `clock`、`source`、`variable`。同一 `clock` 只能使用一种来源：`all`、`img` 或 `omics`，且至少有三个实际可用变量。例如肾脏时钟可列出 `all` 中的 `creatinine`、`cystatin_c`、`eGFR`，前提是这些列确实存在。不设置该变量时，仍按原流程处理全局组学、可用的表型系统及脑影像时钟。
+- 显式 PGS 映射由 `--pgs-mapping` 指定，列为 `pgs_column`、`feature`，例如 `L_VLDL_TG.pct.SCORE_SUM` 对应 `L_VLDL_TG.pct`。
+- 客观终点数据由 `--objective-file` 指定。`known_cad_at_index` 表示采样时已知 CAD（0=无，1=有，缺失=未知）；`index_date` 为分子采样日期；`objective_date` 为独立判读的冠脉检查日期；`objective_cad` 为按预先定义标准判定的 0/1 客观病变终点；`objective_modality` 使用 `CCTA` 或 `INVASIVE_CORONARY_ANGIOGRAPHY`，`CAC_CT` 仅用于独立钙化任务。两次日期不同时需要 `intervening_cad` 和 `intervening_treatment`，0 分别表示期间无 CAD 事件、无相关新治疗或治疗改变。
 
 ## 分析结果
 
@@ -71,4 +80,4 @@
 - LE8 通过 `le8.sh` 在 `/tmp` 展开交换数据、执行分析和重绘，成功后发布结果。当前结果工作簿同时保存可复用的汇总导出，因此应保留；个体数据仍单独保存为按内容命名的 RDS。
 - 结果保留“疾病／数据层／模块”的必要归属，减少方法名、运行版本、导入副本等重复目录层级。同一份 ABM 结果直接读取，不另建 `imported_*` 副本。中间扫描、GPU 格式转换和自动输入表使用 `/tmp/le8-cache/`。
 - 分享 Shiny 使用专门的汇总查看包，按已登记的表格和图片收集依赖，保留相对路径；不直接发送整个分析目录，不打包个体 RDS、模型权重、原始数据或临时缓存。
-- LE8 工作簿可以正常查看。Excel 等软件重新保存可能移除程序用于恢复精确数据的内部内容；需要编辑展示版时另存到其他目录。具体入口和结果说明见 `le8/README.md`。
+- LE8 工作簿可以正常查看。Excel 等软件重新保存可能移除程序用于恢复精确数据的内部内容；需要编辑展示版时另存到其他目录。具体入口和选项见 `le8/le8.sh --help`。

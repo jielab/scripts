@@ -1,6 +1,32 @@
-source(file.path(Sys.getenv("BMONTH_FDIR"),"0.common.R"))
+# Conda can export a proj.db from a different PROJ installation. Clear inherited
+# resource paths before loading terra/GDAL, which cache them at initialization.
+# A nonstandard installation can explicitly opt in with BMONTH_PROJ_DATA.
+local({
+  proj_vars<-c("PROJ_DATA","PROJ_LIB")
+  proj_dir<-Sys.getenv("BMONTH_PROJ_DATA","")
+  if(nzchar(proj_dir)){
+    if(!file.exists(file.path(proj_dir,"proj.db")))
+      stop("BMONTH_PROJ_DATA must name a directory containing proj.db: ",proj_dir)
+    Sys.setenv(PROJ_DATA=proj_dir,PROJ_LIB=proj_dir)
+  } else {
+    if(any(nzchar(Sys.getenv(proj_vars))))
+      message("[temp] Clearing inherited PROJ_DATA/PROJ_LIB; using the linked PROJ library's default data paths.")
+    Sys.unsetenv(proj_vars)
+  }
+})
 if(!requireNamespace("terra",quietly=TRUE))
   stop("Package `terra` is required for the optional HadUK-Grid temperature linkage.")
+local({
+  ok<-tryCatch({
+    p<-terra::vect(matrix(c(530000,180000),ncol=2),crs="EPSG:27700")
+    isTRUE(nzchar(terra::crs(p)))
+  },error=function(e)FALSE)
+  if(!ok)
+    stop("Cannot resolve EPSG:27700 with the linked PROJ library. ",
+         "Set BMONTH_PROJ_DATA to a compatible directory containing proj.db.")
+  message("[temp] PROJ search paths: ",paste(terra::projPaths(),collapse="; "))
+})
+source(file.path(Sys.getenv("BMONTH_FDIR"),"0.common.R"))
 
 tempdir<-Sys.getenv("BMONTH_TEMP_DIR",file.path(dir0,"data","ukb","temperature"))
 resolution<-Sys.getenv("BMONTH_TEMP_RES","1km")

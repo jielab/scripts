@@ -18,11 +18,6 @@ if [[ -z "${rank_file:-}" ]]; then
 	rank_file="$PFI_ROOT/journal_rank_real.csv"
 fi
 
-schema_file="$PFI_ROOT/conf/journal_rank_schema.csv"
-if [[ -s "$PFI_ROOT/journal_rank_schema.csv" && ! -s "$schema_file" ]]; then
-	cp -p "$PFI_ROOT/journal_rank_schema.csv" "$schema_file"
-fi
-
 looks_like_schema=0
 if [[ -s "$rank_file" && "$(basename "$rank_file")" == "journal_rank_schema.csv" ]]; then
 	looks_like_schema=1
@@ -73,7 +68,6 @@ fi
 
 "$PFI_PYTHON_BIN" -u f/normalize_journal_rank.py \
 	--rank "$rank_file" \
-	--schema "$schema_file" \
 	--out "$PFI_JOURNAL_RANK_NORMALIZED" \
 	--audit_csv "$DAT_DIR/journal_rank_normalized_audit.csv" \
 	2>&1 | tee "$LOG_DIR/08b_normalize_journal_rank.log"

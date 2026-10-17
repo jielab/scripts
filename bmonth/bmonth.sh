@@ -40,6 +40,9 @@ Notes:
   * move (birth-to-current distance from move.rds) is post-birth and is used in
     D4 sensitivity / interaction analyses, not in the primary model.
   * `temp` is optional and expects externally downloaded HadUK-Grid files.
+  * `temp` clears inherited PROJ_DATA/PROJ_LIB to avoid Conda database conflicts.
+    For a nonstandard PROJ installation, set BMONTH_PROJ_DATA to the directory
+    containing a proj.db compatible with terra's linked PROJ library.
 HELP
 }
 

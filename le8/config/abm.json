@@ -48,5 +48,5 @@
   "audit_min_cases": 30,
   "audit_min_controls": 30,
   "bootstrap": 1000,
-  "final_multiroute_release": "2026-10-15.final-multiroute-v1"
+  "final_multiroute_release": "2026-10-17.c1-lockpaper-v1"
 }

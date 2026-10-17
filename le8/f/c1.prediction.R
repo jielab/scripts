@@ -1,5 +1,15 @@
 # C1 conventional prediction: training-only selection, clinical/omics comparisons.
 # Statistical settings retain their existing FINAL_* names for run compatibility.
+c1_eid_hash <- function(ids) digest::digest(paste0(paste0(sort(unique(as.character(ids))), "\n"), collapse=""), algo="sha256", serialize=FALSE)
+c1_lockpaper_protocol <- function() {
+    path <- Sys.getenv("LE8_OUTER_ROSTER", "")
+    if (!nzchar(path)) stop("C1 LOCKPAPER requires frozen shared outer roster")
+    record <- jsonlite::fromJSON(paste0(path, ".protocol.json"))
+    if (!identical(record$release, "2026-10-17.c1-lockpaper-v1") ||
+        !identical(record$roster_sha256, digest::digest(file=path, algo="sha256")))
+        stop("C1 LOCKPAPER outer roster integrity/protocol mismatch")
+    list(release=record$release, outer_roster=normalizePath(path, mustWork=TRUE), outer_roster_sha256=record$roster_sha256)
+}
 c1_export_benchmark <- function(pred, layer, rawdir, horizon) {
     local <- file.path(rawdir, "_LOCAL_ONLY")
     dir.create(local, recursive = TRUE, showWarnings = FALSE, mode = "0700")
@@ -9,6 +19,7 @@ c1_export_benchmark <- function(pred, layer, rawdir, horizon) {
     tryCatch(writeLines(jsonlite::toJSON(list(
         format = "le8-c1-benchmark-v1", trait = Y, layer = if (layer == "protein") "prot" else "met",
         horizon = horizon, score_kind = "risk_ranking", predictions = pred,
+        lockpaper_protocol = c(c1_lockpaper_protocol(), list(validation_eid_hash=c1_eid_hash(pred$eid))),
         analysis_options = le8_analysis_options(), interpretation = "Frozen outer-test predictions; exploratory internal validation"
     ), dataframe = "rows", auto_unbox = TRUE, digits = NA, na = "null"), connection),
     finally = close(connection))
@@ -550,14 +561,9 @@ theme_5c <- function(base_size = 12) {
 
 # 🚩 Fixed outer split and score fitting
 make_outer_split <- function(dat, evar = NULL, test_frac = FINAL_TEST_FRAC, seed = SEED) {
+	c1_lockpaper_protocol()
 	shared <- le8_outer_roles(dat)
-	if (!is.null(shared)) return(shared)
-	groups <- le8_participant_groups(dat); families <- sort(unique(groups))
-	if (length(families)<2L || !is.finite(test_frac) || test_frac<=0 || test_frac>=1) stop("Invalid outer split fraction or insufficient families")
-	set.seed(seed)
-	n_test <- max(1L,min(length(families)-1L,round(length(families)*test_frac)))
-	held <- families[sample.int(length(families),n_test)]
-	ifelse(groups %in% held,"validation","training")
+	shared
 }
 
 fit_glmnet_score <- function(dat, vars, tvar, evar, split, label, inner = INNER, alpha = 1,
@@ -1893,6 +1899,14 @@ run_c1_prediction_layer <- function(layer = c("protein", "metabolite")) {
 	prevalent_dat <- dat_all |> filter(is.finite(.data[[bvar]]), .data[[bvar]] <= 0)
 	dat <- dat_all[complete.cases(dat_all[, c(tvar, evar), drop = FALSE]) & dat_all[[tvar]] > 0, , drop = FALSE] ; rm(dat_all) ; invisible(gc())
 	split <- make_outer_split(dat, evar = evar) ; dat$final_split <- split
+	# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
+	protocol <- c1_lockpaper_protocol()
+	write_raw_csv(tibble::tibble(protocol="2026-10-17.c1-lockpaper-v1",outer_roster=normalizePath(Sys.getenv("LE8_OUTER_ROSTER"),mustWork=TRUE),
+		outer_roster_sha256=protocol$outer_roster_sha256,
+		N=nrow(dat),training=sum(split=="training"),validation=sum(split=="validation"),events=sum(dat[[evar]]==1),
+		training_eid_hash=c1_eid_hash(dat$eid[split=="training"]),
+		validation_eid_hash=c1_eid_hash(dat$eid[split=="validation"])),
+		"c1.lockpaper_protocol.csv",rawdir)
 	message("C1 prediction/", layer, ": N=", nrow(dat), ", events=", sum(dat[[evar]] == 1), ", training=", sum(split == "training"), ", validation=", sum(split == "validation"), ", biomarkers=", length(biom_vars))
 
 	c1f <- u1$file ; c1 <- u1$data ; a1 <- c1$association %||% tibble()

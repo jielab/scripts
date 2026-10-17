@@ -97,7 +97,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.model_selection import StratifiedGroupKFold
 
-VERSION = "ABM-TWIN-2026-10-14-molecular-qc"
+VERSION = "ABM-TWIN-2026-10-17-c1-lockpaper"
 ROLES = ("build", "tune_model", "tune_gate", "calibration_fit", "calibration_audit")
 
 
@@ -145,6 +145,11 @@ class Config:
 	final_multiroute_release: str = ""
 
 	def validate(self) -> None:
+		from c1_lock_roster import RELEASE, COVERAGES
+		if self.final_multiroute_release == RELEASE and (tuple(self.coverages) != COVERAGES or self.bootstrap != 1000):
+			raise ValueError("C1 LOCKPAPER fixes six coverage points and 1000 family/group bootstrap replicates")
+		if os.getenv("ABM_FINAL_SELECTOR", "risk_resid_error").strip() != "risk_resid_error":
+			raise ValueError("C1 LOCKPAPER fixes primary selector risk_resid_error")
 		if self.grouping_unit not in {"family", "individual_unverified"}:
 			raise ValueError("Invalid grouping unit")
 		if not (0 < self.keep_fraction <= 1 and self.horizon > 0):
@@ -493,20 +498,23 @@ def choose_model_panel(prep, X, y, w, config):
 
 
 class ModelProfileGeometry:
-	"""A vector of selected standardized predictors, NOT a 1-D risk score.
+	"""Coefficient-weighted profile geometry with an explicit predictor subset."""
 
-    Opposing predictor changes cannot cancel as they could in beta'X.
-    Every selected predictor retains a positive distance weight.
-    """
-
-	def fit(self, X, coefficients):
+	def fit(self, X, coefficients, columns=None):
+		X = np.asarray(X)
 		beta = np.abs(np.asarray(coefficients, float))
-		self.weights = np.sqrt(0.25 + 0.75 * beta / max(beta.mean(), 1e-8))
-		self.n_components_ = X.shape[1]
+		self.columns = np.arange(X.shape[1], dtype=int) if columns is None else np.asarray(columns, int)
+		if len(self.columns) < 2:
+			raise ValueError("Twin geometry requires at least two predictors")
+		if np.any(self.columns < 0) or np.any(self.columns >= X.shape[1]):
+			raise ValueError("Invalid geometry columns")
+		b = beta[self.columns]
+		self.weights = np.sqrt(0.25 + 0.75 * b / max(b.mean(), 1e-8))
+		self.n_components_ = len(self.columns)
 		return self
 
 	def transform(self, X):
-		return np.asarray(X) * self.weights
+		return np.asarray(X)[:, self.columns] * self.weights
 
 
 def crossfit_quality(X, time, event, ids, groups, config: Config):
@@ -910,17 +918,24 @@ class TwinABM:
 					if best is None or score < best[0]:
 						best = score, model
 				self.models[kind + "_" + arm] = best[1]
-		self.banks = {}
+		# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
+		# Risk models keep clinical+omics. Primary twin distance is molecular-only.
 		eligible = pruning["eligible"]
-		common_pca = ModelProfileGeometry().fit(z[b], self.models["elasticnet_full"].coef_[0])
+		mol_positions = np.flatnonzero(~np.isin(self.prep.keep, np.asarray(self.prep.clinical_columns, int)))
+		if len(mol_positions) < 2:
+			raise ValueError("Fewer than two molecular predictors in twin geometry")
+		self.geometry_molecular_model_positions = mol_positions.copy()
+		self.geometry_molecular_features = [self.panel_names[j] for j in mol_positions]
+		self.banks, self.banks_integrated = {}, {}
+		coef = self.models["elasticnet_full"].coef_[0]
+		mol_geometry = ModelProfileGeometry().fit(z[b], coef, columns=mol_positions)
+		integrated_geometry = ModelProfileGeometry().fit(z[b], coef, columns=np.arange(z.shape[1]))
 		for arm, select in (("full", eligible), ("clean", pruning["keep"])):
-			bb = b[select]
-			bank = TwinBank().fit(
-				z[bb], y[bb], w[bb], ids[bb], groups[bb], quality["oof_loss"][select], a, common_pca
-			)
-			tt = t[technical[t]]
-			bank.calibrate_radius(z[tt], ids[tt], groups[tt])
-			self.banks[arm] = bank
+			bb, tt = b[select], t[technical[t]]
+			for banks, geometry in ((self.banks, mol_geometry), (self.banks_integrated, integrated_geometry)):
+				bank = TwinBank().fit(z[bb], y[bb], w[bb], ids[bb], groups[bb], quality["oof_loss"][select], a, geometry)
+				bank.calibrate_radius(z[tt], ids[tt], groups[tt])
+				banks[arm] = bank
 		self.calibrators = {}
 		pred, _ = self._raw(X[cal], ids[cal], groups[cal])
 		self.calibrators = {name: Calibrator().fit(p, y[cal], w[cal]) for name, p in pred.items()}
@@ -988,7 +1003,14 @@ class TwinABM:
 				for n, m in self.models.items()
 				if hasattr(m, "coef_")
 			},
-			matching_space="selected predictor vector; coefficient-weighted distances",
+			matching_space="LOCKPAPER primary: selected molecular predictors only; coefficient-weighted distances",
+			matching_space_sensitivity="selected molecular + mandatory baseline clinical predictors",
+			geometry_molecular_features=self.geometry_molecular_features,
+			clinical_predictors_excluded_from_distance=[self.feature_names[j] for j in self.prep.clinical_columns],
+			geometry_integrated_features=self.panel_names,
+			primary_predictability_selector="risk_resid_error",
+			coverage_grid=list(a.coverages),
+			selector_bootstrap_requested=a.bootstrap,
 			confidence_definition="100*geometric_mean(proximity,independent_support,donor_concordance,profile_radius); zero without support",
 			retained_cases=int(np.sum(y[b][pruning["keep"]])),
 			known_cases=int(np.sum(y[b])),
@@ -1039,6 +1061,7 @@ class TwinABM:
 			prob, d = bank.predict(z[qc], ids[qc], groups[qc], pred["elasticnet_full"][qc])
 			pred["twin_" + arm] = pred["elasticnet_full"].copy()
 			pred["twin_" + arm][qc] = prob
+			pred["twin_molecular_" + arm] = pred["twin_" + arm].copy()
 			if arm == "clean":
 				diag = {name: np.zeros(len(X), dtype=value.dtype) for name, value in d.items()}
 				for name, value in d.items():
@@ -1046,6 +1069,10 @@ class TwinABM:
 				for name in ("radius_ratio", "nearest_radius_ratio"):
 					diag[name][~qc] = 100.0
 				diag["donor_loss"][~qc] = 10.0
+		for arm, bank in self.banks_integrated.items():
+			prob, _ = bank.predict(z[qc], ids[qc], groups[qc], pred["elasticnet_full"][qc])
+			pred["twin_integrated_" + arm] = pred["elasticnet_full"].copy()
+			pred["twin_integrated_" + arm][qc] = prob
 		diag["technical_qc"] = qc
 		diag["molecular_missing_fraction"] = self.prep.missing(X)
 		diag["frozen_molecular_missing_fraction"] = self.prep.missing(X, panel=False)
@@ -1552,8 +1579,8 @@ def fit_predictability_extension(model, data):
 			rules[(name, float(q))] = FrozenRule().fit(values, eligible, ids[cal], q, a.seed + 1811)
 
 	primary = os.getenv("ABM_FINAL_SELECTOR", "risk_resid_error").strip()
-	if primary not in ROUTE_NAMES:
-		raise ValueError("ABM_FINAL_SELECTOR must be one of: " + ",".join(ROUTE_NAMES))
+	if primary != "risk_resid_error":
+		raise ValueError("C1 LOCKPAPER fixes primary selector risk_resid_error; alternative selectors remain secondary")
 	ext = PredictabilityExtension(
 		primary=primary,
 		risk_bins=max(5, 2 * a.risk_bins),
@@ -1823,6 +1850,8 @@ def evaluate(model, prediction, time, event, truth_ids, bootstrap=None, full_cur
 		("all_cohort_training_effect", primary, "all", baseline, "all"),
 		("fallback_policy", "fallback_policy", "all", baseline, "all"),
 		("twin_library_cleaning", "twin_clean", "selected", "twin_full", "selected"),
+		("twin_integrated_library_cleaning", "twin_integrated_clean", "selected", "twin_integrated_full", "selected"),
+		("molecular_vs_integrated_twin", "twin_clean", "selected", "twin_integrated_clean", "selected"),
 		("beyond_risk_composition", baseline, "selected", baseline, "risk_matched_random"),
 		("beyond_confidence_selection", baseline, "selected", baseline, "confidence_count_matched"),
 	]

@@ -5,6 +5,10 @@ This directory contains the minimal runtime source copied from the official
 GU intentionally keeps the model checkpoints outside the scripts tree under
 `/mnt/f/gen/archaic/38/models`.
 
+Install through `gu/install.sh`: non-Torch dependencies are maintained in
+`requirements-gu.txt`, and the installer selects the GPU-specific Torch profile.
+The unused upstream dependency list is not bundled.
+
 The training and inference module is named `src/stepsagnostic/training_inference.py`;
 package exports and installer checks use this name. Unused ResUNet source files
 were removed; the active Mamba/Transformer and smoother definitions are unchanged.

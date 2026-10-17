@@ -1,0 +1,36 @@
+{
+  "release": "2026-10-17.c1-lockpaper-v1",
+  "article_working_title": "Population-average omics prediction conceals substantial heterogeneity in individual predictability",
+  "outer_test_fraction": 0.2,
+  "outer_split_unit": "family/group; individual ID only when family mapping is unavailable",
+  "primary_selector": "risk_resid_error",
+  "coverage_grid": [
+    0.2,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "primary_selective_estimand": "AURC delta IPCW Brier and IPCW log-loss versus predicted-risk-matched outcome-blind controls",
+  "secondary_selective_estimand": "same-subset IPCW AUC and horizon-truncated Uno C",
+  "bootstrap": {
+    "unit": "family/group",
+    "B": 1000,
+    "CI": [
+      0.025,
+      0.975
+    ],
+    "model_refit": false
+  },
+  "twin_geometry": {
+    "primary": "molecular-only selected omic predictors",
+    "sensitivity": "integrated molecular + baseline clinical predictors",
+    "risk_models": "clinical + omics unchanged"
+  },
+  "main_results": [
+    "Population-average omics prediction reaches a familiar performance plateau",
+    "Individual molecular predictability is heterogeneous and can be estimated outcome-blind",
+    "Reference-agent cleaning improves local twin inference but not global population models"
+  ]
+}

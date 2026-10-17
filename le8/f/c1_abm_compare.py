@@ -22,6 +22,9 @@ if "le8_common" not in sys.modules:
 
 import numpy as np
 import pandas as pd
+from c1_selector_inference import infer_selector
+from c1_lock_roster import RELEASE, eid_hash
+# C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
 from sklearn.metrics import roc_auc_score
 from abm import uno_c
 
@@ -150,6 +153,9 @@ def compare(benchmark, prediction, truth, km, config):
 			[
 				getattr(config, "primary", "elasticnet_clean"),
 				"twin_clean",
+				"twin_full",
+				"twin_integrated_clean",
+				"twin_integrated_full",
 				"elasticnet_full",
 				"lightgbm_full",
 				"lightgbm_clean",
@@ -294,6 +300,12 @@ def compare(benchmark, prediction, truth, km, config):
 				common_holdout_N=int(joined.eid.nunique()),
 				ABM_test_N=len(ids),
 				C1_test_N=int(c1.eid.nunique()),
+				C1_validation_eid_hash=eid_hash(c1.eid),
+				ABM_test_eid_hash=eid_hash(ids),
+				C1_common_eid_hash=eid_hash(c1.loc[c1.eid.isin(ids), "eid"]),
+				ABM_common_eid_hash=eid_hash(ids[np.isin(ids, c1.eid)]),
+				outer_roster=benchmark.get("lockpaper_protocol", {}).get("outer_roster", ""),
+				outer_roster_sha256=benchmark.get("lockpaper_protocol", {}).get("outer_roster_sha256", ""),
 				horizon=config.horizon,
 				primary_selective_metric="Delta IPCW Brier/log-loss versus predicted-risk-matched outcome-blind control across coverage; raw AURC secondary",
 				secondary_metrics="same-subset IPCW AUC and horizon-truncated Uno C",
@@ -322,8 +334,8 @@ def compare(benchmark, prediction, truth, km, config):
 	}
 
 
-def comparison_from_paths(benchmark, twin):
-	from abm import model_hash, load_model
+def comparison_from_paths(benchmark, twin, *, selector_inference=False):
+	from abm import VERSION, model_hash, load_model
 
 	if not benchmark.is_file():
 		return {"status": pd.DataFrame([dict(status="C1_benchmark_unavailable")])}
@@ -339,11 +351,25 @@ def comparison_from_paths(benchmark, twin):
 	with gzip.open(benchmark, "rt") as f:
 		base = json.load(f)
 	model = load_model(twin / required[0])
+	if getattr(model, "molecular_qc_version", None) != VERSION or base.get("lockpaper_protocol", {}).get("release") != RELEASE:
+		return {"status": pd.DataFrame([dict(status="C1_LOCKPAPER_refit_required", detail="Refit both C1 modules with --replace TRUE")])}
+	contract = json.loads((twin / "host_contract.json").read_text())
+	if contract.get("outer_roster_sha256") != base["lockpaper_protocol"].get("outer_roster_sha256"):
+		return {"status": pd.DataFrame([dict(status="outer_roster_mismatch", detail="C1 and ABM used different outer rosters")])}
 	pred = joblib.load(twin / required[1])
 	if pred["frozen_model_hash"] != model_hash(model):
 		raise ValueError("ABM comparison predictions do not match frozen model")
 	with np.load(twin / required[2], allow_pickle=False) as truth:
-		return compare(base, pred, truth, model.km, model.config)
+		if not np.array_equal(np.asarray(pred["eid"], str), np.asarray(truth["eid"], str)):
+			raise ValueError("Invalid ABM prediction/truth roster")
+		ans=compare(base,pred,truth,model.km,model.config)
+		if selector_inference:
+			curve,inference=infer_selector(pred,truth["time"],truth["event"],pred["group"],model.km,
+				coverages=getattr(model.config,"coverages",(0.2,0.4,0.5,0.6,0.8,1.0)),
+				B=getattr(model.config,"bootstrap",1000),seed=getattr(model.config,"seed",2026))
+			ans["lockpaper_selector_curve"]=curve
+			ans["lockpaper_selector_inference"]=inference
+		return ans
 
 
 def run_comparison(args, scope, work, publish, completed, finish):
@@ -363,10 +389,11 @@ def run_comparison(args, scope, work, publish, completed, finish):
 		truth=twin / "test_truth_LOCAL_ONLY.npz",
 	)
 	signature = {k: sha256(p) if p.is_file() else "unavailable" for k, p in inputs.items()}
+	signature["lockpaper_release"] = RELEASE
 	if completed(target) and (target / "sources.json").is_file():
 		if json.loads((target / "sources.json").read_text()) == signature:
 			return
-	tables = comparison_from_paths(benchmark, twin)
+	tables = comparison_from_paths(benchmark, twin, selector_inference=True)
 	write_tables(stage, tables, "ABM twin", args.biom, args.Y, workbook="C1_ABM_comparison.xlsx")
 	json_write(stage / "sources.json", signature)
 	finish(stage, dict(source="same-roster C1 versus ABM selective prediction", source_hashes=signature))

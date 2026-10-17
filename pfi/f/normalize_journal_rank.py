@@ -9,7 +9,7 @@ Output columns intentionally match the README contract:
   journal_domain, impact_factor, journal_citation_indicator, jif_rank,
   jif_quartile, jif_percentile, total_cites, actual_journal_score_0_100
 
-The input must contain real journal records. The schema CSV is documentation only.
+The input must contain real journal records; field definitions are in 0README.md.
 """
 
 from __future__ import annotations
@@ -129,7 +129,6 @@ def read_any_csv(path: Path) -> pd.DataFrame:
 def main() -> None:
 	ap = argparse.ArgumentParser()
 	ap.add_argument("--rank", required=True)
-	ap.add_argument("--schema", default="")
 	ap.add_argument("--out", required=True)
 	ap.add_argument("--audit_csv", required=True)
 	args = ap.parse_args()
