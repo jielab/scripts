@@ -1,0 +1,60 @@
+{
+  "trait": "height",
+  "trait_type": "continuous",
+  "seed": 20260904,
+  "folds": 5,
+  "repeats": 2,
+  "role_fractions": [
+    0.6,
+    0.15,
+    0.15,
+    0.05,
+    0.05
+  ],
+  "keep_fraction": 0.99,
+  "pruning": "profile_concordance",
+  "soft_floor": 0.1,
+  "primary": "ABM_clean",
+  "selector": "support_quality",
+  "primary_coverage": 0.5,
+  "coverages": [
+    0.2,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "ridge_grid": [
+    1.0,
+    10.0,
+    100.0,
+    1000.0
+  ],
+  "logistic_c_grid": [
+    0.01,
+    0.1,
+    1.0
+  ],
+  "pilot_ridge": 100.0,
+  "pilot_c": 0.1,
+  "max_iter": 3000,
+  "max_genetic_missing": 0.2,
+  "max_covariate_missing": 0.2,
+  "max_feature_missing": 0.3,
+  "profile_kind": "genetic_summary",
+  "max_profile_dims": 32,
+  "k": 64,
+  "min_twins": 20,
+  "min_group_ess": 15.0,
+  "radius_quantile": 0.9,
+  "query_batch": 256,
+  "gate_iterations": 100,
+  "min_role_n": 30,
+  "min_class_n": 10,
+  "bootstrap": 1000,
+  "grouping_status": "individual_unverified",
+  "upstream_gwas_overlap": "unknown",
+  "label_budget_note": "build fit; tune selection; separate prediction calibration and audit",
+  "validation_scope": "exploratory_previously_inspected_test"
+}

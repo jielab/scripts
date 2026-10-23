@@ -1,0 +1,15 @@
+dataset	example_root	projects	note	input_nucleic_acid	library_method	reverse_transcription	dna_retained	virus_enriched	processing_protocol	is_control	metadata_evidence	metadata_review_status	local_path_status
+ocean	/mnt/f/metag/ocean	PRJEB1787	用户明确的目录；PE+少量SE454	DNA	shotgun	unknown	unknown	unknown	unknown	unknown	0.README.md#ocean-source	provisional	exists_20261014
+sub	/mnt/f/metag/sub	PRJNA732392	目录需本地核对；保留额外未配对文件	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+emp	/mnt/f/metag/emp	PRJEB42019	目录需本地核对；仅WGS子集	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+Weurope	/mnt/f/metag/Weurope	PRJEB68319	欧洲五城市污水时间序列；W 表示 WBE；归档已剪切	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+neon	/mnt/f/metag/neon	PRJEB22068,PRJNA406976,PRJNA406977	目录需本地核对；不自动认定单文件是原始SE	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+changj	/mnt/f/metag/changj	PRJNA873262	目录需本地核对	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+Wxiamen	/mnt/f/metag/Wxiamen	PRJNA1480870	目录需本地核对；区分国际航班与城市来源	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+Wglobal	/mnt/f/metag/Wglobal	PRJEB13831	目录需本地核对；runs不等于独立样本	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+Ndesert	/mnt/f/metag/Ndesert	PRJNA943124	目录需本地核对	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	exists_20261014
+casper	/mnt/e/metag/casper	PRJNA1247874	目录需本地核对；RNA和人源mask	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	NOT_VERIFIED_E_unavailable_20261014
+scotland	/mnt/e/metag/scotland	PRJEB60913	目录需本地核对；医院社区污水厂分层	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	NOT_VERIFIED_E_unavailable_20261014
+england	/mnt/e/metag/england	PRJEB85861	目录需本地核对；河流生物膜	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	NOT_VERIFIED_E_unavailable_20261014
+oxford	/mnt/e/metag/oxford	PRJEB34634	目录需本地核对；UNRESOLVED_run隔离	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	NOT_VERIFIED_E_unavailable_20261014
+london	/mnt/e/metag/london	PRJEB62830	目录需本地核对；捕获扩增子对照合池默认待审核	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	unknown	NOT_VERIFIED_E_unavailable_20261014

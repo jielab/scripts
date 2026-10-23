@@ -1,0 +1,9 @@
+phenotype,description,audit_exposure,audit_direction,followup_theme
+411.4,Coronary atherosclerosis,border1n,higher,CAD and smoking pathway
+496,Chronic airway obstruction,border1n,higher,CAD and smoking pathway
+165.1,Cancer of bronchus; lung,border1n,higher,CAD and smoking pathway
+250.2,Type 2 diabetes,border_relative,lower,Opposing cardiometabolic pattern
+401,Hypertension,border_relative,lower,Opposing cardiometabolic pattern
+351,Other peripheral nerve disorders,border1n,higher,Neurologic specificity
+389,Hearing loss,border_relative,higher,Neurologic specificity
+535,Gastritis and duodenitis,border_relative,higher,Gastrointestinal specificity

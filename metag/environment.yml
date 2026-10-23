@@ -1,0 +1,16 @@
+name: metag
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - openpyxl>=3.1
+  - kraken2=2.17.1
+  - fastp>=0.23.4
+  - seqkit
+  - pigz
+  - bowtie2
+  - samtools
+  - multiqc
+  - blast

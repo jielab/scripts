@@ -1,0 +1,9 @@
+{
+  "version": "LE8-C1-methods-2026-10-22-v1",
+  "description": "Optional scientific sensitivities; not another mandatory full analysis.",
+  "methods": ["abm_legacy", "abm_lenient", "abm_profile", "abm_deep"],
+  "overrides": {
+    "abm_lenient": {"keep_fraction": 0.98},
+    "abm_profile": {"geometry": "all_molecular", "panel_selection": "all"}
+  }
+}

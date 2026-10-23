@@ -1,0 +1,6 @@
+{
+  "version": "LE8-C1-methods-2026-10-22-v1",
+  "description": "Default C1 plan: five primary methods plus named legacy, molecular deviation and deep comparisons; history has an automatic architecture-matched ablation.",
+  "methods": ["glmnet", "lightgbm", "abm_case_preserving", "abm_profile", "abm_prevalent", "abm_legacy", "molecular_deviation", "abm_deep"],
+  "overrides": {}
+}

@@ -1,0 +1,13 @@
+field	ukb_field	type	encoding	analysis_note
+sex	31	binary	0=F;1=M	Core covariate; explicit roster recoding
+ethnic.c	21000	factor	White|Mixed|Asian|Black|Chinese|Other|White-Black|White-Asian	Self-reported broad categories; White is not White British or genetic ancestry
+ethnicity	21000	integer-coded category	coding_1001	Convert to a prespecified factor; do not model raw codes as a continuous dose
+PC1..PC40	22009	numeric	Genetic principal components	Explicitly select prespecified PCs through extra-covariate configuration
+birth_country	1647	integer-coded category	1 England;2 Wales;3 Scotland;4 Northern Ireland;5 Republic of Ireland;6 Elsewhere;-1/-3 missing	UK-born restriction uses 1:4 after excluding negative/missing values
+birth_country_nonUK	20115	integer-coded category	coding_89	Do not infer UK-born from missing non-UK country
+smoke.c	20116	factor	never|previous|current	Post-birth conditional/pathway covariate; use paired complete samples
+smoke_pack	20161	numeric	pack-years	Structural missingness requires a documented rule; do not discard all never smokers or set all missing to zero
+smoke_quit_age	2897	numeric	years	Only applicable former smokers; validate ages before derivation
+prot.plate	30901	numeric-coded category	Olink sample-run plate	Create a separately named factor in supplemental covariates; plate alone is not complete batch/LOD QC
+adopted	1767	binary	0 not adopted;1 adopted	Main retains unknown; sensitivity restricts to 0
+cnt_older	5057	nonnegative integer	Number of older siblings	Cannot identify true full-sibling families or twins

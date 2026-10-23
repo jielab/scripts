@@ -1,0 +1,7 @@
+McManus et al., Cell Genomics 2023;3(3):100264.
+DOI: 10.1016/j.xgen.2023.100264
+Table S1: AFR/EAS/EUR/SAS per-autosome counts.
+Table S4: four-population universal per-autosome counts.
+Retrieved 2026-10-19 from Document S2 (mmc7.pdf), supplementary pp. 29 and 32.
+https://www.ebi.ac.uk/europepmc/webservices/rest/PMC10025450/supplementaryFiles
+Count agreement does not establish coordinate identity.

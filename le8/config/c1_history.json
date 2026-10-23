@@ -1,0 +1,13 @@
+{
+  "n_components": 12,
+  "n_prototypes": 6,
+  "min_prevalent": 20,
+  "age_band_years": 10.0,
+  "match_sex": true,
+  "weighting_policy": "duration_treatment",
+  "duration_half_weight_years": 5.0,
+  "unknown_duration_weight": 0.5,
+  "medication_weight": 0.5,
+  "unknown_medication_weight": 0.75,
+  "max_neighbours": 64
+}

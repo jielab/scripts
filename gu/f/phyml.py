@@ -1,0 +1,2808 @@
+#!/usr/bin/env python3
+"""GU phyml utilities. See --help for commands."""
+
+from __future__ import annotations
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+sys.dont_write_bytecode = True
+
+if "gu_0_common" not in sys.modules:
+	_spec = spec_from_file_location("gu_0_common", Path(__file__).with_name("0.common.py"))
+	_common = module_from_spec(_spec)
+	sys.modules[_spec.name] = _common
+	try:
+		_spec.loader.exec_module(_common)
+	except BaseException:
+		sys.modules.pop(_spec.name, None)
+		raise
+from gu_0_common import load_module, reference_role, scientific_segment
+
+
+# 🚩 phyml_contract
+"""Scientific workflow identity shared by generation and resume checks."""
+WORKFLOW = "gwas_lead_ld_core_archaic5_v2"
+LEAD_MATCHING_RULE = "unordered_exact_allele_pair_v1"
+LINEAGE_REFS = {"Neanderthal": ("Altai", "Chagyr", "Vindija"), "Denisovan": ("Denisova", "Denisova25")}
+REFS = tuple(ref for refs in LINEAGE_REFS.values() for ref in refs)
+
+
+# 🚩 phyml_core
+"""Shared VCF and haplotype readers for the GU GWAS risk-core workflow."""
+
+
+import csv
+import re
+import subprocess
+import tempfile
+from array import array
+from collections import Counter
+from typing import Iterator
+from functools import lru_cache
+from pathlib import Path
+
+load_module("0.common.py")
+from gu_0_common import enable_wide_csv_fields
+
+
+enable_wide_csv_fields()
+
+BASES = {"A", "C", "G", "T"}
+
+
+# 🚩 Locus errors and command execution
+class SkipLocus(RuntimeError):
+	"""A chromosome-window has no usable data and may be skipped."""
+
+	def __init__(self, message: str, code: str = "low_sequence_information", details: dict | None = None):
+		super().__init__(message)
+		self.code = code
+		self.details = details or {}
+
+
+def fail(message: str) -> None:
+	raise SystemExit(f"ERROR: {message}")
+
+
+def run(args: list[str]) -> str:
+	p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	if p.returncode:
+		fail(f"command failed ({p.returncode}): {' '.join(args)}\n{p.stderr.strip()}")
+	return p.stdout
+
+
+# 🚩 Sample metadata and VCF lookup
+def read_sexes(path: Path) -> dict[str, str]:
+	with path.open() as handle:
+		reader = csv.DictReader(handle, delimiter="\t")
+		if not reader.fieldnames or "sample" not in reader.fieldnames or "sex" not in reader.fieldnames:
+			fail(f"{path} must contain tab-separated sample and sex columns")
+		out = {}
+		for row in reader:
+			sex = str(row["sex"]).strip().lower()
+			if sex in {"1", "m", "male"}:
+				sex = "male"
+			elif sex in {"2", "f", "female"}:
+				sex = "female"
+			elif sex in {"", "0", "na", "n/a", ".", "unknown", "u"}:
+				sex = "unknown"
+			else:
+				fail(f"invalid sex for sample {row['sample']}: {row['sex']}")
+			out[row["sample"]] = sex
+	return out
+
+
+@lru_cache(maxsize=None)
+def vcf_path(vcf_dir: Path, chrom: str) -> Path:
+	candidates = [
+		vcf_dir / f"chr{chrom}.vcf.gz",
+		vcf_dir / f"{chrom}.vcf.gz",
+		vcf_dir / f"chr{chrom}.bcf",
+		vcf_dir / f"{chrom}.bcf",
+	]
+	for path in candidates:
+		if path.is_file() and path.stat().st_size:
+			return path
+	fail(f"modern VCF for chr{chrom} not found under {vcf_dir}")
+
+
+@lru_cache(maxsize=None)
+def contigs(vcf: Path) -> dict[str, int | None]:
+	header = run(["bcftools", "view", "-h", str(vcf)])
+	out: dict[str, int | None] = {}
+	for line in header.splitlines():
+		m = re.match(r"##contig=<ID=([^,>]+)(?:,length=([0-9]+))?", line, re.I)
+		if m:
+			out[m.group(1)] = int(m.group(2)) if m.group(2) else None
+	return out
+
+
+@lru_cache(maxsize=None)
+def vcf_contig(vcf: Path, chrom: str) -> str:
+	names = contigs(vcf)
+	for candidate in (chrom, f"chr{chrom}", "23" if chrom == "X" else chrom):
+		if candidate in names:
+			return candidate
+	fail(f"VCF {vcf} has no contig for chr{chrom}")
+
+
+@lru_cache(maxsize=None)
+def archaic_vcf(root: Path, ref: str, chrom: str) -> Path:
+	aliases = [ref]
+	if ref.lower() == "denisova":
+		aliases += ["Denisovan"]
+	dirs = []
+	for alias in aliases:
+		dirs += [root / alias, root / "avcf" / alias]
+	patterns = [f"*chr{chrom}_*.vcf.gz", f"*chr{chrom}.*.vcf.gz", f"*chr{chrom}.vcf.gz", f"*{chrom}.vcf.gz"]
+	for directory in dirs:
+		if not directory.is_dir():
+			continue
+		for pattern in patterns:
+			found = sorted(x for x in directory.glob(pattern) if x.is_file() and x.stat().st_size)
+			if found:
+				return found[0]
+	fail(f"archaic VCF ref={ref} chr={chrom} not found under {root}")
+
+
+@lru_cache(maxsize=None)
+def vcf_samples(vcf: Path) -> tuple[str, ...]:
+	return tuple(x for x in run(["bcftools", "query", "-l", str(vcf)]).splitlines() if x)
+
+
+# 🚩 Streaming VCF queries
+def query_rows(vcf: Path, region: str, include_aa: bool = False) -> tuple[list[str], Iterator[list[str]]]:
+	samples = list(vcf_samples(vcf))
+	fmt = "%CHROM\t%POS\t%ID\t%REF\t%ALT" + ("\t%INFO/AA" if include_aa else "") + "[\t%GT]\n"
+	command = ["bcftools", "query", *(["--allow-undef-tags"] if include_aa else []), "-r", region, "-f", fmt, str(vcf)]
+
+	def stream():
+		# Do not retain the full sample-by-variant text or millions of GT strings.
+		# A file for stderr avoids pipe deadlocks when bcftools emits warnings.
+		with tempfile.TemporaryFile(mode="w+t") as errors:
+			proc = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=errors)
+			try:
+				for line in proc.stdout:
+					if line.strip():
+						yield line.rstrip("\r\n").split("\t")
+				if proc.wait():
+					errors.seek(0)
+					fail(f"command failed ({proc.returncode}): {' '.join(command)}\n{errors.read().strip()}")
+			finally:
+				proc.stdout.close()
+				if proc.poll() is None:
+					proc.terminate()
+				proc.wait()
+
+	return samples, stream()
+
+
+# 🚩 Genotype and ancestral allele decoding
+def called_base(ref: str, alt: str, gt: str, phased_required: bool) -> tuple[str, str]:
+	alleles = [ref] + alt.split(",")
+	if gt in {".", "./.", ".|."}:
+		return "N", "N"
+	if phased_required and "/" in gt and gt.split("/")[0] != gt.split("/")[-1]:
+		return "N", "N"
+	parts = re.split(r"[/|]", gt)
+	if len(parts) == 1:
+		parts *= 2
+	if len(parts) != 2 or any(not x.isdigit() or int(x) >= len(alleles) for x in parts):
+		return "N", "N"
+	return alleles[int(parts[0])].upper(), alleles[int(parts[1])].upper()
+
+
+def called_haploid_base(ref: str, alt: str, gt: str) -> str:
+	"""Return one male-X allele and reject every diploid representation."""
+	alleles = [ref] + alt.split(",")
+	if gt in {".", "", "./.", ".|."}:
+		return "N"
+	parts = re.split(r"[/|]", gt)
+	if len(parts) != 1 or not parts[0].isdigit() or int(parts[0]) >= len(alleles):
+		fail(f"chrX.male contains a non-haploid/heterozygous GT: {gt}")
+	return alleles[int(parts[0])].upper()
+
+
+def ancestral_allele(value: str, ref: str, alt: str, allow_third_allele: bool = False) -> str:
+	"""Normalize 1KG INFO/AA values such as A, A|, or A|||."""
+	token = re.split(r"[|,]", str(value).strip().upper(), maxsplit=1)[0]
+	return token if len(token) == 1 and token in BASES and (allow_third_allele or token in {ref, alt}) else "N"
+
+
+def alt_dosage(gt: str, ploidy: int) -> int | None:
+	"""Return ALT-allele dosage without requiring phased genotypes."""
+	if gt in {".", "", "./.", ".|."}:
+		return None
+	parts = re.split(r"[/|]", gt)
+	if len(parts) != ploidy or any(not x.isdigit() or int(x) > 1 for x in parts):
+		return None
+	return sum(int(x) for x in parts)
+
+
+# 🚩 Modern haplotypes
+def modern_data(
+	vcf: Path,
+	contig: str,
+	locus: dict,
+	min_mac: int,
+	sexes: dict[str, str],
+	x_male_only: bool,
+	x_par_diploid: bool,
+	ancestral_any_base: bool = False,
+	audit=None,
+):
+	samples, rows = query_rows(vcf, f"{contig}:{locus['start'] + 1}-{locus['end']}", include_aa=True)
+	if not samples:
+		fail(f"modern VCF has no samples: {vcf}")
+	missing = [sample for sample in samples if sample not in sexes] if sexes else []
+	if sexes and missing:
+		fail(f"samples absent from samples.txt (first examples): {','.join(missing[:10])}")
+	sites = []
+	anchors = []
+	coordinate_anchor = re.fullmatch(r"(?:chr)?([^:]+):(\d+):([ACGT]+):([ACGT]+)", locus["name"], re.I)
+	if locus["chrom"] == "X" and x_male_only and sexes:
+		nonmale = [sample for sample in samples if sexes.get(sample) != "male"]
+		if nonmale:
+			fail(f"chrX.male VCF contains samples not marked male (first examples): {','.join(nonmale[:10])}")
+	for fields in rows:
+		if len(fields) < 6 + len(samples):
+			continue
+		_, pos, vid, ref, alt, aa, *gts = fields
+		pos_i = int(pos)
+		coordinate_match = coordinate_anchor and (
+			coordinate_anchor[1],
+			int(coordinate_anchor[2]),
+			coordinate_anchor[3].upper(),
+			coordinate_anchor[4].upper(),
+		) == (locus["chrom"], pos_i, ref.upper(), alt.upper())
+		if locus["name"] in vid.split(";") or coordinate_match:
+			anchors.append((pos_i, ref, alt))
+		if audit is not None:
+			audit.append(dict(pos=pos_i, ref=ref, alt=alt, modern_status="non_biallelic_SNP", retained_modern=0))
+		if len(ref) != 1 or len(alt) != 1 or ref.upper() not in BASES or alt.upper() not in BASES:
+			continue
+		haps = []
+		ploidy = 1 if locus["chrom"] == "X" and x_male_only else 2
+		# GT vocabulary is tiny; decode once per site, not once per sample.
+		decoded = {}
+		dosage_values = array("b")
+		for sample, gt in zip(samples, gts):
+			if gt not in decoded:
+				if locus["chrom"] == "X" and x_male_only:
+					pair = (called_haploid_base(ref.upper(), alt.upper(), gt), "N")
+				elif locus["chrom"] != "X" or x_par_diploid:
+					pair = called_base(ref.upper(), alt.upper(), gt, phased_required=True)
+				else:
+					fail("chrX input requires an explicit male non-PAR or diploid PAR mode")
+				dose = alt_dosage(gt, ploidy)
+				decoded[gt] = (pair, -1 if dose is None else dose)
+			pair, dose = decoded[gt]
+			haps.extend(pair)
+			dosage_values.append(dose)
+		haps = "".join(haps)
+		counts = Counter(x for x in haps if x in BASES)
+		if audit is not None:
+			audit[-1].update(modern_status="MAC_below_threshold" if len(counts) < 2 or min(counts.values()) < min_mac else "retained", modern_called_copies=sum(counts.values()), retained_modern=int(len(counts) >= 2 and min(counts.values()) >= min_mac))
+		if len(counts) < 2 or min(counts.values()) < min_mac:
+			continue
+		sites.append(
+			dict(
+				pos=pos_i,
+				vid=vid,
+				ref=ref.upper(),
+				alt=alt.upper(),
+				ancestral=ancestral_allele(aa, ref.upper(), alt.upper(), ancestral_any_base),
+				haps=haps,
+				dosages=dosage_values,
+			)
+		)
+	if not sites:
+		raise SkipLocus(f"no polymorphic biallelic SNPs with MAC >= {min_mac}")
+	target_pos = anchors[0][0] if anchors else (locus["core_start"] + locus["core_end"]) // 2
+	# LD selection needs an anchor that survived the biallelic/MAC filters.  An
+	# exact named anchor is preferred; otherwise use the closest eligible SNP
+	# and report its actual position downstream.
+	anchor_pos = min(sites, key=lambda x: (abs(x["pos"] - target_pos), x["pos"]))["pos"]
+	return samples, sites, anchor_pos
+
+
+# 🚩 Archaic haplotypes
+def archaic_calls(
+	vcf: Path, contig: str, locus: dict, modern_sites: list[dict], allow_third_allele: bool = False, audit=None
+) -> dict[int, str]:
+	_, rows = query_rows(vcf, f"{contig}:{locus['start'] + 1}-{locus['end']}")
+	wanted = {x["pos"]: x for x in modern_sites}
+	calls: dict[int, str] = {}
+	for fields in rows:
+		if len(fields) < 6:
+			continue
+		_, pos, _, ref, alt, *gts = fields
+		pos_i = int(pos)
+		if pos_i not in wanted:
+			continue
+		observed = []
+		for gt in gts:
+			observed.extend(called_base(ref.upper(), alt.upper(), gt, phased_required=False))
+		# A heterozygote containing one allele outside the modern pair is
+		# still a heterozygote; filtering that allele first creates a false
+		# homozygous match. Missing/heterozygous archaic calls remain unknown.
+		calls[pos_i] = (
+			observed[0]
+			if (
+				observed
+				and len(set(observed)) == 1
+				and observed[0] in BASES
+				and (allow_third_allele or observed[0] in {wanted[pos_i]["ref"], wanted[pos_i]["alt"]})
+			)
+			else "N"
+		)
+		if audit is not None:
+			audit[pos_i] = ("callable" if calls[pos_i] in BASES else "missing_GT" if any("." in gt for gt in gts) else "heterozygous" if len(set(observed) & BASES) > 1 else "incompatible_allele_or_GT")
+	if audit is not None:
+		for pos in wanted: audit.setdefault(pos, "record_absent")
+	return calls
+
+
+# 🚩 phyml_thresholds
+"""ILS probability used by the GWAS risk-core workflow.
+"""
+
+import math
+
+
+# 🚩 Incomplete lineage sorting probability
+def ils_probability(length_bp, recomb_cm_mb=0.53, split_years=550000, archaic_age_years=50000, generation_years=29):
+	"""Gamma(shape=2) survival; same model as old ils_p, without 1-CDF cancellation.
+
+	This is a model-based screen, not a calibrated introgression probability.
+	The caller supplies the observed diagnostic span, never the flanked region.
+	"""
+	x = max(0, length_bp) * recomb_cm_mb * 1e-8 * ((2 * split_years - archaic_age_years) / generation_years)
+	return math.exp(-x) * (1 + x)
+
+
+# 🚩 phyml_tree_summary
+"""Shared Newick parser and bootstrap support for GWAS risk trees."""
+
+
+import re
+from dataclasses import dataclass, field
+
+load_module("0.common.py")
+from gu_0_common import enable_wide_csv_fields
+
+
+enable_wide_csv_fields()
+
+
+# 🚩 Bootstrap support
+def bootstrap_values(newick: str) -> list[float]:
+	return [float(x) for x in re.findall(r"\)([0-9]+(?:\.[0-9]+)?)(?=[:),;])", newick)]
+
+
+# 🚩 Newick tree structure and parsing
+@dataclass
+class NewickNode:
+	label: str = ""
+	children: list["NewickNode"] = field(default_factory=list)
+	support: float | None = None
+	node_id: str = ""
+
+
+def parse_newick(text: str) -> NewickNode:
+	"""Parse the simple, unquoted Newick emitted by PhyML.
+
+	Keeping this tiny parser local avoids adding a Biopython dependency to the
+	normalization path.  Tip labels have already been sanitized by safe_label.
+	"""
+	source = "".join(text.split())
+	index = 0
+	serial = 0
+
+	def token() -> str:
+		nonlocal index
+		start = index
+		while index < len(source) and source[index] not in ":,();":
+			index += 1
+		return source[start:index]
+
+	def branch_length() -> None:
+		nonlocal index
+		if index < len(source) and source[index] == ":":
+			index += 1
+			while index < len(source) and source[index] not in ",();":
+				index += 1
+
+	def subtree() -> NewickNode:
+		nonlocal index, serial
+		if index >= len(source):
+			raise ValueError("unexpected end of Newick")
+		if source[index] != "(":
+			label = token()
+			if not label:
+				raise ValueError("empty Newick tip")
+			node = NewickNode(label=label)
+			branch_length()
+			return node
+		index += 1
+		children = [subtree()]
+		while index < len(source) and source[index] == ",":
+			index += 1
+			children.append(subtree())
+		if index >= len(source) or source[index] != ")":
+			raise ValueError("unterminated Newick clade")
+		index += 1
+		label = token()
+		support = None
+		try:
+			support = float(label) if label else None
+		except ValueError:
+			pass
+		serial += 1
+		node = NewickNode(label=label, children=children, support=support, node_id=f"N{serial}")
+		branch_length()
+		return node
+
+	root = subtree()
+	if index < len(source) and source[index] == ";":
+		index += 1
+	if index != len(source):
+		raise ValueError(f"unexpected Newick content at offset {index}")
+	return root
+
+
+# 🚩 phyml_gwas_input
+"""Prepare original COJO leads, never distance-clump independent GWAS signals."""
+import argparse, csv, hashlib, json, math, os, re, fcntl
+from pathlib import Path
+
+load_module("0.common.py")
+from gu_0_common import CHROM_LENGTHS
+
+load_module("gwas_loci_prepare.py")
+from gu_gwas_loci_prepare import lift
+
+
+def write(path, data, fields=None):
+	path.parent.mkdir(parents=True, exist_ok=True)
+	fields = fields or list(dict.fromkeys(k for r in data for k in r)) or ["status"]
+	tmp = path.with_name(path.name + ".tmp")
+	with tmp.open("w") as f:
+		w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n")
+		w.writeheader()
+		w.writerows(data)
+	tmp.replace(path)
+
+
+def read(path):
+	with path.open() as f:
+		return list(csv.DictReader(f, delimiter="\t"))
+
+
+def complement(a):
+	return a.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+
+
+def parse_cojo(path, build):
+	lines = [x.split() for x in path.read_text().splitlines() if x.strip()]
+	required = {"SNP", "Chr", "bp", "refA", "bJ", "pJ"}
+	if not lines or not required <= set(lines[0]):
+		raise ValueError("COJO requires columns: " + ", ".join(sorted(required)))
+	accepted, audit, seen = [], [], set()
+	for n, vals in enumerate(lines[1:], 1):
+		r = dict(zip(lines[0], vals))
+		name = r.get("SNP", "")
+		try:
+			if len(vals) != len(lines[0]):
+				raise ValueError("wrong_column_count")
+			ch = re.sub("^chr", "", r["Chr"], flags=re.I).upper()
+			ch = "X" if ch == "23" else ch
+			pos = int(r["bp"])
+			beta = float(r["bJ"])
+			p = float(r["pJ"])
+			effect = r["refA"].upper()
+			if ch not in CHROM_LENGTHS[build] or not 1 <= pos <= CHROM_LENGTHS[build][ch]:
+				raise ValueError("invalid_position")
+			if not math.isfinite(beta) or beta == 0 or not math.isfinite(p) or not 0 <= p <= 1:
+				raise ValueError("invalid_effect_or_P")
+			if not re.fullmatch("[ACGT]+", effect):
+				raise ValueError("invalid_effect_allele")
+			m = re.fullmatch(r"(?:chr)?([^:]+):(\d+):([ACGT]+):([ACGT]+)", name, re.I)
+			ref, alt = ("", "")
+			if m:
+				mc = "X" if m[1] == "23" else m[1].upper()
+				if mc != ch or int(m[2]) != pos:
+					raise ValueError("SNP_ID_disagrees_with_CHR_POS")
+				ref, alt = m[3].upper(), m[4].upper()
+				if ref == alt or effect not in (ref, alt):
+					raise ValueError("effect_allele_disagrees_with_SNP_ID")
+			elif not re.fullmatch("rs[0-9]+", name):
+				raise ValueError("unsupported_SNP_ID")
+			if name in seen:
+				raise ValueError("duplicate_SNP_ID")
+			seen.add(name)
+			accepted.append(
+				dict(
+					input_row=n,
+					locus_id=name,
+					index_snp=name,
+					source_build="GRCh" + build,
+					source_chr=ch,
+					source_pos=pos,
+					chr=ch,
+					lead_pos=pos,
+					ref=ref,
+					alt=alt,
+					effect_allele=effect,
+					beta_j=beta,
+					p_j=p,
+					strand="+",
+				)
+			)
+		except (ValueError, KeyError) as e:
+			audit.append(dict(input_row=n, index_snp=name, status="skipped", reason=str(e)))
+	return accepted, audit
+
+
+def prepare(a):
+	out = a.output
+	out.mkdir(parents=True, exist_ok=True)
+	leads, audit = parse_cojo(a.input, a.build)
+	provenance = dict(
+		input=str(a.input.resolve()),
+		input_sha256=hashlib.sha256(a.input.read_bytes()).hexdigest(),
+		source_build=a.build,
+		analysis_build="37",
+		method="original_COJO_leads_no_distance_collapse",
+		search_flank_bp=a.window,
+	)
+	if a.build == "38" and leads:
+		binary = Path(os.environ.get("GU_LIFTOVER", "/mnt/d/software/bin/liftOver"))
+		print(
+			f"[GU GWAS] liftOver={binary.resolve()} sha256={hashlib.sha256(binary.read_bytes()).hexdigest()}",
+			flush=True,
+		)
+		source = out / "leads.GRCh38.bed"
+		source.write_text(
+			"".join(
+				f"chr{r['chr']}\t{r['lead_pos'] - 1}\t{r['lead_pos'] - 1 + max(1, len(r['ref']))}\t{r['input_row']}\t0\t+\n"
+				for r in leads
+			)
+		)
+		hits = lift(binary, a.chain, source, out / "leads.lifted.GRCh37.bed", out / "leads.unmapped.bed")
+		provenance.update(
+			liftover_binary=str(binary.resolve()),
+			liftover_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+			chain=str(a.chain),
+			chain_sha256=hashlib.sha256(a.chain.read_bytes()).hexdigest(),
+		)
+		mapped = []
+		for r in leads:
+			h = hits[str(r["input_row"])]
+			reason = ""
+			if len(h) != 1:
+				reason = "lead_unmapped_or_multiple_mapping"
+			else:
+				x = h[0]
+				ch = x[0].removeprefix("chr")
+				pos = int(x[1]) + 1
+				if ch != r["chr"] or ch not in CHROM_LENGTHS["37"] or int(x[2]) - int(x[1]) != max(1, len(r["ref"])):
+					reason = "lead_mapping_changes_chromosome_or_allele_span"
+				else:
+					r.update(chr=ch, lead_pos=pos, strand=x[5])
+					if x[5] == "-":
+						for key in ("ref", "alt", "effect_allele"):
+							r[key] = complement(r[key])
+			if reason:
+				audit.append(dict(input_row=r["input_row"], index_snp=r["index_snp"], status="skipped", reason=reason))
+			else:
+				mapped.append(r)
+		leads = mapped
+	for r in leads:
+		r.update(
+			search_start=max(0, r["lead_pos"] - 1 - a.window),
+			search_end=min(CHROM_LENGTHS["37"][r["chr"]], r["lead_pos"] + a.window),
+		)
+	write(out / "gwas_leads.GRCh37.tsv", leads)
+	write(out / "input.audit.tsv", audit, ["input_row", "index_snp", "status", "reason"])
+	for r in audit:
+		print(f"[GU GWAS] SKIP row={r['input_row']} SNP={r['index_snp']} reason={r['reason']}", flush=True)
+	if not leads:
+		raise ValueError("No valid original COJO leads remain")
+	# These are extraction windows, not inferred core haplotypes or standalone inputs.
+	(out / "search_windows.GRCh37.bed").write_text(
+		"".join(f"{r['chr']}\t{r['search_start']}\t{r['search_end']}\t{r['locus_id']}\n" for r in leads)
+	)
+	provenance.update(n_leads=len(leads), n_skipped=len(audit))
+	(out / "manifest.json").write_text(json.dumps(provenance, indent=2) + "\n")
+	print(
+		f"[GU GWAS] {len(leads)} original leads retained; {len(audit)} skipped; LD cohort is set by the target; cores will be defined by r² > 0.98",
+		flush=True,
+	)
+	print(
+		f"[GU GWAS] lead audit: {out / 'gwas_leads.GRCh37.tsv'}; extraction BED is NOT a standalone PhyML input",
+		flush=True,
+	)
+
+
+def phyml_gwas_input_cli():
+	p = argparse.ArgumentParser(description=__doc__)
+	p.add_argument("--input", type=Path, required=True)
+	p.add_argument("--output", type=Path, required=True)
+	p.add_argument("--build", choices=["37", "38"], required=True)
+	p.add_argument("--window", type=int, default=500000)
+	p.add_argument("--chain", type=Path, default=Path("/mnt/d/files/liftOver/hg38ToHg19.over.chain.gz"))
+	args = p.parse_args()
+	args.output.mkdir(parents=True, exist_ok=True)
+	with (args.output / ".prepare.lock").open("w") as lock:
+		fcntl.flock(lock, fcntl.LOCK_EX)
+		prepare(args)
+
+
+# 🚩 phyml_run
+"""Run one PhyML tree; a pre-bootstrap main tree is never a completion marker."""
+import argparse, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time
+from pathlib import Path
+
+SUFFIXES = [
+	"_phyml_tree.txt",
+	"_phyml_stats.txt",
+	"_phyml_boot_trees.txt",
+	"_phyml_boot_stats.txt",
+	"_phyml_tree.png",
+	".phyml.log",
+	".phyml.complete.json",
+	".phyml.timeout.json",
+]
+
+
+def phyml_run_digest(p):
+	h = hashlib.sha256()
+	with Path(p).open("rb") as f:
+		for block in iter(lambda: f.read(1024 * 1024), b""):
+			h.update(block)
+	return h.hexdigest()
+
+
+def phyml_run_outputs(phy, boot):
+	names = ["_phyml_tree.txt", "_phyml_stats.txt", ".phyml.log"]
+	if boot > 0:
+		names += ["_phyml_boot_trees.txt", "_phyml_boot_stats.txt"]
+	return [Path(str(phy) + s) for s in names]
+
+
+def completion_error(phy, boot):
+	logpath = Path(str(phy) + ".phyml.log")
+	log = logpath.read_text(errors="replace") if logpath.is_file() else ""
+	# PhyML also omits its runtime footer on a numerical exit. Report the
+	# recorded cause before interpreting absent products as an interruption.
+	if "Cannot work out eigen vectors" in log:
+		return "numerical_model_fit_failed (Cannot work out eigen vectors)"
+	files = phyml_run_outputs(phy, boot)
+	if any(not p.is_file() or not p.stat().st_size for p in files):
+		return "missing/empty tree, stats, log or bootstrap outputs"
+	finish = list(re.finditer(r"\. Time used\s+\d+h\d+m\d+s", log))
+	if not finish:
+		return "no final runtime footer (interrupted run)"
+	if not re.search(r"Printing the most likely tree", log):
+		return "missing final tree report"
+	if boot > 0:
+		progress = list(re.finditer(r"\b" + str(boot) + r"\s*/\s*" + str(boot) + r"\b", log))
+		if not progress or progress[-1].end() > finish[-1].start():
+			return f"bootstrap did not finish {boot}/{boot}"
+		with Path(str(phy) + "_phyml_boot_trees.txt").open() as f:
+			count = 0
+			for line in f:
+				line = line.strip()
+				if not line:
+					continue
+				if not line.endswith(";") or line.count("(") != line.count(")"):
+					return "invalid bootstrap Newick"
+				count += 1
+		if count != boot:
+			return f"bootstrap trees={count}, expected={boot}"
+	tree = Path(str(phy) + "_phyml_tree.txt").read_text().strip()
+	if not tree.endswith(";") or tree.count("(") != tree.count(")"):
+		return "invalid final Newick"
+	return None
+
+
+def phyml_run_request(phy, boot, binary, seed=None):
+	data = dict(
+		schema=1,
+		input_sha256=phyml_run_digest(phy),
+		binary=str(binary),
+		binary_sha256=phyml_run_digest(binary),
+		model="HKY85",
+		categories=4,
+		alpha="e",
+		invariant="e",
+		bootstrap=boot,
+	)
+	if seed is not None:
+		data["seed"] = seed
+	return data
+
+
+def seal(phy, req, execution=None):
+	p = Path(str(phy) + ".phyml.complete.json")
+	q = p.with_suffix(".next")
+	data = dict(request=req, outputs={str(x): phyml_run_digest(x) for x in phyml_run_outputs(phy, req["bootstrap"])})
+	if execution is not None:
+		data["execution"] = execution
+	q.write_text(json.dumps(data, indent=2) + "\n")
+	q.replace(p)
+
+
+def reusable(phy, req, adopt=True):
+	why = completion_error(phy, req["bootstrap"])
+	if why:
+		return False, why
+	receipt = Path(str(phy) + ".phyml.complete.json")
+	if receipt.exists():
+		try:
+			data = json.loads(receipt.read_text())
+			if data["request"] != req:
+				return False, "input/software/options changed"
+			if set(data["outputs"]) != {str(x) for x in phyml_run_outputs(phy, req["bootstrap"])}:
+				return False, "incomplete output receipt"
+			if any(phyml_run_digest(p) != d for p, d in data["outputs"].items()):
+				return False, "completed output changed"
+		except (OSError, ValueError, KeyError):
+			return False, "invalid completion receipt"
+		return True, "verified completion receipt"
+	# Adopt historical results only when their own full log proves completion
+	# and the input predates the main tree. Subsequent reuse uses content hashes.
+	log = Path(str(phy) + ".phyml.log").read_text(errors="replace")
+	import shlex
+
+	command = re.search(r"\. Command line:\s*(.*)", log)
+	try:
+		args = shlex.split(command.group(1)) if command else []
+	except ValueError:
+		args = []
+	if not args or Path(args[0]).name != Path(req["binary"]).name:
+		return False, "historical executable does not match"
+	options = [("-i", str(phy)), ("-m", "HKY85"), ("-c", "4"), ("-a", "e"), ("-v", "e"), ("-b", str(req["bootstrap"]))]
+	if "seed" in req:
+		options.append(("--r_seed", str(req["seed"])))
+	for key, val in options:
+		if key not in args or args.index(key) + 1 >= len(args) or args[args.index(key) + 1] != val:
+			return False, "historical command does not match requested input/options"
+	if phy.stat().st_mtime_ns > Path(str(phy) + "_phyml_tree.txt").stat().st_mtime_ns:
+		return False, "input newer than historical tree"
+	if adopt:
+		seal(phy, req)
+	return True, "verified complete historical bootstrap"
+
+
+def protected_result(phy, boot=100):
+	# A receipt is also evidence of prior completion when a product was lost.
+	return Path(str(phy) + ".phyml.complete.json").is_file() or completion_error(phy, boot) is None
+
+
+def require_replace(phy, reason):
+	raise RuntimeError(
+		f"completed PhyML result preserved: {reason}; input={phy}; "
+		"use --replace-phyml TRUE only to explicitly replace it"
+	)
+
+
+def prepare_input(phy, text, replace=False):
+	old = phy.read_text() if phy.exists() else None
+	# Whitespace formatting alone is not a different alignment. Keep the exact
+	# original bytes and mtime so its completion hashes remain valid.
+	if old is not None and old.split() == text.split():
+		return
+	if not replace and protected_result(phy):
+		require_replace(phy, "alignment changed or original input is missing")
+	clean(phy)
+	phy.write_text(text)
+
+
+def clean(phy):
+	for suffix in SUFFIXES:
+		Path(str(phy) + suffix).unlink(missing_ok=True)
+	# Only products for this exact input, never other loci/trees.
+	for p in list(phy.parent.glob(phy.name + "_phyml_tree.panelB*")) + list(
+		phy.parent.glob(phy.name + "_phyml_tree.*.panelB*")
+	):
+		if p.is_file():
+			p.unlink()
+
+
+def reuse_identical_sibling(phy, req):
+	"""Only byte-identical alignments and identical settings may share a tree."""
+	for source in sorted(phy.parent.glob("haplotypes.evidence.*.phy")):
+		if source == phy or phyml_run_digest(source) != req["input_sha256"]:
+			continue
+		ok, _ = reusable(source, req)
+		if not ok:
+			continue
+		clean(phy)
+		for src, dst in zip(phyml_run_outputs(source, req["bootstrap"]), phyml_run_outputs(phy, req["bootstrap"])):
+			shutil.copy2(src, dst)
+		with Path(str(phy) + ".phyml.log").open("a") as f:
+			f.write(f"\n[GU PHYML] Reused identical alignment and model from {source}\n")
+		seal(phy, req)
+		return source
+	return None
+
+
+def state(phy, scope, status, rc, elapsed=0):
+	p = Path(str(phy) + ".phyml.run.status.tsv")
+	q = p.with_suffix(".next")
+	q.write_text(
+		"scope\tstatus\trc\telapsed_seconds\tphy\ttree\tlog\n"
+		+ f"{scope}\t{status}\t{rc}\t{elapsed}\t{phy}\t{phy}_phyml_tree.txt\t{phy}.phyml.log\n"
+	)
+	q.replace(p)
+
+
+def stop_process_group(proc):
+	# The foreground supervisor owns MPI/worker descendants and reaps them.
+	if proc.poll() is not None:
+		return
+	proc.terminate()
+	try:
+		proc.wait(timeout=12)
+	except subprocess.TimeoutExpired:
+		proc.kill()
+		proc.wait()
+
+
+def interrupted(signum, frame):
+	raise RuntimeError(f"PhyML interrupted by signal {signum}")
+
+
+def discard_partial(phy):
+	for suffix in SUFFIXES:
+		if suffix not in (".phyml.log", ".phyml.timeout.json"):
+			Path(str(phy) + suffix).unlink(missing_ok=True)
+
+
+def record_tree_timeout(phy, req, timeout, elapsed, reason='time_limit'):
+	boot_trees = Path(str(phy) + '_phyml_boot_trees.txt')
+	with phy.open() as handle:
+		nseq, nsites = map(int, handle.readline().split())
+	record = dict(timeout_seconds=timeout, elapsed_seconds=int(elapsed),
+		bootstrap_completed=boot_trees.read_text().count(';') if boot_trees.exists() else 0,
+		n_sequences=nseq, n_sites=nsites, input_sha256=req['input_sha256'], reason=reason,
+		rc=124, recorded_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'))
+	Path(str(phy) + '.phyml.timeout.json').write_text(json.dumps(record, indent=2) + '\n')
+	discard_partial(phy)
+	return record
+
+
+def run_attempt(phy, cmd, deadline):
+	remaining = None if deadline is None else deadline - time.monotonic()
+	proc = None
+	try:
+		with Path(str(phy) + ".phyml.log").open("w") as f:
+			if remaining is not None and remaining <= 0:
+				f.write("[GU PHYML] Timeout budget exhausted before starting this attempt\n")
+				return 124
+			# MPI otherwise consumes the caller's remaining task-list lines.
+			guard = Path(__file__).resolve().parents[2] / "0f/process_lifetime.py"
+			proc = subprocess.Popen(
+				[sys.executable, str(guard), "--parent-pid", str(os.getpid()), "--", *cmd],
+				stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT, start_new_session=False,
+				# Debian's `phyml` launcher otherwise starts its own mpirun
+				# even when --cpus=1 (or on the serial fallback).
+				env=dict(os.environ, PHYMLMPI="no", PHYMLCPUS="1"),
+			)
+			while True:
+				remaining = None if deadline is None else deadline - time.monotonic()
+				if remaining is not None and remaining <= 0:
+					stop_process_group(proc)
+					return 124
+				try:
+					return proc.wait(timeout=60 if remaining is None else min(60, remaining))
+				except subprocess.TimeoutExpired:
+					if deadline is not None and time.monotonic() >= deadline:
+						stop_process_group(proc)
+						return 124
+					# Continue enforcing the deadline silently.
+	finally:
+		if proc is not None and proc.poll() is None:
+			stop_process_group(proc)
+
+
+def archive_failure(phy, req, attempt, why):
+	prefix = str(phy) + f".phyml.failed.{time.time_ns()}"
+	log = Path(prefix + ".log")
+	shutil.copy2(str(phy) + ".phyml.log", log)
+	Path(prefix + ".json").write_text(
+		json.dumps(dict(request=req, attempt=attempt, completion_error=why, log=str(log)), indent=2) + "\n"
+	)
+	return str(log)
+
+
+def phyml_run_main():
+	p = argparse.ArgumentParser()
+	p.add_argument("--phy", type=Path, required=True)
+	p.add_argument("--scope", required=True)
+	p.add_argument("--bootstrap", type=int, default=100)
+	p.add_argument("--timeout", type=float, default=7200)
+	p.add_argument("--cpus", type=int, default=1)
+	p.add_argument("--seed", type=int, default=int(os.environ["PHYML_TREE_SEED"]) if os.environ.get("PHYML_TREE_SEED") else None)
+	p.add_argument("--mpi-fallback", choices=["serial", "error"], default="serial")
+	p.add_argument("--verify-only", action="store_true")
+	a = p.parse_args()
+	phy = a.phy.resolve()
+	if a.bootstrap < 0 or a.timeout < 0 or a.cpus < 1:
+		p.error("bootstrap/timeout must be nonnegative and cpus positive")
+	serial = shutil.which("phyml")
+	mpi = shutil.which("phyml-mpi")
+	mpirun = shutil.which("mpirun")
+	if os.environ.get("PHYML_BACKEND") == "cuda":
+		serial = os.environ.get("PHYML_GPU_BIN", "/mnt/d/software/gu/phyml-gpu/phyml-gpu")
+		if not os.access(serial, os.X_OK):
+			raise RuntimeError("PhyML GPU binary unavailable; run bash f/phyml_gpu/build.sh")
+		mpi = mpirun = None
+		a.cpus = 1
+	if not serial:
+		raise RuntimeError("phyml executable unavailable")
+	with Path(str(phy) + ".phyml.lock").open("a") as lock:
+		fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		return run_locked(a, phy, serial, mpi, mpirun)
+
+
+def run_locked(a, phy, serial, mpi, mpirun):
+	force = os.environ.get("PHYML_REPLACE") == "TRUE" and not a.verify_only
+	# Changing the execution CPU count alone must not replace a complete tree.
+	for binary in dict.fromkeys(x for x in (serial, mpi) if x):
+		req = phyml_run_request(phy, a.bootstrap, Path(binary).resolve(), a.seed)
+		ok, why = reusable(phy, req, adopt=not a.verify_only)
+		if ok and not force:
+			if not a.verify_only:
+				state(phy, a.scope, "COMPLETE_VERIFIED", 0)
+			print(f"[GU PHYML] tree={'VERIFIED' if a.verify_only else 'SKIP'} reason={why} input={phy}", flush=True)
+			return 0
+	if a.verify_only:
+		print(f"ERROR: planned tree is not complete: {why}; input={phy}", file=sys.stderr)
+		return 1
+	if not force and protected_result(phy, a.bootstrap):
+		require_replace(phy, why)
+	binary = serial
+	launcher = []
+	if a.cpus > 1 and a.bootstrap > 0:
+		if mpi and mpirun:
+			# PhyML rounds replicates UP to a multiple of MPI ranks. Choose a
+			# divisor so requesting 100 always produces exactly 100, not 112.
+			a.cpus = max(n for n in range(1, min(a.cpus, a.bootstrap) + 1) if a.bootstrap % n == 0)
+			binary = mpi
+			launcher = [mpirun, "--bind-to", "none", "-np", str(a.cpus)]
+		else:
+			print("[GU PHYML] MPI unavailable; using one CPU", flush=True)
+	req = phyml_run_request(phy, a.bootstrap, Path(binary).resolve(), a.seed)
+	reused = None if force else reuse_identical_sibling(phy, req)
+	if reused:
+		state(phy, a.scope, "COMPLETE_REUSED", 0)
+		print(f"[GU PHYML] tree=REUSE identical_input={reused} input={phy}", flush=True)
+		return 0
+	previous = Path(str(phy) + '.phyml.run.status.tsv')
+	if not force and os.environ.get('PHYML_RETRY_TIMEOUTS') != 'TRUE' and a.timeout and previous.exists():
+		old = rows(previous)
+		timeout_record = Path(str(phy) + '.phyml.timeout.json')
+		if len(old) == 1 and old[0]['status'] == 'TIMEOUT' and timeout_record.exists():
+			saved = json.loads(timeout_record.read_text())
+			if saved.get('rc') == 124 and saved.get('input_sha256') == req['input_sha256']:
+				print(f'[GU PHYML] DEFER recorded timeout; set PHYML_RETRY_TIMEOUTS=TRUE to retry input={phy}', flush=True)
+				return 124
+		# A killed process can leave RUNNING behind. Use only time evidenced by
+		# its output writes, never the idle time since the user stopped the run.
+		if len(old) == 1 and old[0]['status'] == 'RUNNING' and phy.stat().st_mtime_ns <= previous.stat().st_mtime_ns:
+			elapsed = max([previous.stat().st_mtime] + [p.stat().st_mtime for p in phyml_run_outputs(phy, a.bootstrap) if p.exists()]) - previous.stat().st_mtime
+			if elapsed >= a.timeout:
+				record_tree_timeout(phy, req, a.timeout, elapsed, reason='interrupted_run_already_exceeded_budget')
+				state(phy, a.scope, 'TIMEOUT', 124, int(elapsed))
+				print(f'[GU PHYML] DEFER previous interrupted tree already used at least {int(elapsed)}s; budget={a.timeout}s input={phy}', flush=True)
+				return 124
+	if force:
+		why = "explicit --replace-phyml TRUE"
+	print(f"[GU PHYML] tree=REPLACE reason={why} input={phy}", flush=True)
+	clean(phy)
+	state(phy, a.scope, "RUNNING", "")
+	start = time.monotonic()
+	deadline = start + a.timeout if a.timeout else None
+	cmd = launcher + [binary, "-i", str(phy), "-m", "HKY85", "-c", "4", "-a", "e", "-v", "e", "-b", str(a.bootstrap)]
+	if a.seed is not None:
+		cmd += ["--r_seed", str(a.seed)]
+	print(f"[GU PHYML] bootstrap_cpus={a.cpus if launcher else 1} input={phy}", flush=True)
+	attempts = []
+	rc = 1
+	signal.signal(signal.SIGTERM, interrupted)
+	signal.signal(signal.SIGINT, interrupted)
+	try:
+		rc = run_attempt(phy, cmd, deadline)
+		why = completion_error(phy, a.bootstrap)
+		log = Path(str(phy) + ".phyml.log").read_text(errors="replace")
+		match = re.search(r"\. Random seed:\s*(\d+)", log)
+		seed = int(match.group(1)) if match else a.seed
+		attempts.append(dict(backend="mpi" if launcher else "serial", command=cmd, rc=rc, seed=seed))
+		# One computational-error recovery, never a retry for weak support,
+		# incomplete zero-exit output, timeout, or interruption. MPI and serial
+		# have different random streams even with the same initial seed.
+		mpi_error = (
+			rc > 0 and rc not in (124, 130, 137, 143) and bool(re.search(r"MPI_ERR_[A-Z_]+|MPI_ERRORS_ARE_FATAL", log))
+		)
+		if launcher and (rc == 1 or mpi_error) and a.mpi_fallback == "serial" and seed is not None:
+			failed_log = archive_failure(phy, req, attempts[-1], why)
+			attempts[-1]["failed_log"] = failed_log
+			if deadline is not None and time.monotonic() >= deadline:
+				rc = 124
+			else:
+				print(f"[GU PHYML] mpi=FAILED rc={rc} fallback=serial seed={seed} failed_log={failed_log}", flush=True)
+				clean(phy)
+				req = phyml_run_request(phy, a.bootstrap, Path(serial).resolve(), a.seed)
+				cmd = [
+					serial,
+					"-i",
+					str(phy),
+					"-m",
+					"HKY85",
+					"-c",
+					"4",
+					"-a",
+					"e",
+					"-v",
+					"e",
+					"-b",
+					str(a.bootstrap),
+					"--r_seed",
+					str(seed),
+				]
+				rc = run_attempt(phy, cmd, deadline)
+				why = completion_error(phy, a.bootstrap)
+				attempts.append(dict(backend="serial", command=cmd, rc=rc, seed=seed))
+		if rc == 0 and why is None:
+			seal(phy, req, dict(attempts=attempts))
+			state(phy, a.scope, "COMPLETE", 0, int(time.monotonic() - start))
+			return 0
+		if rc == 124:
+			print(f'[GU PHYML] DEFER tree_timeout limit={a.timeout}s input={phy}', flush=True)
+			record_tree_timeout(phy, req, a.timeout, time.monotonic() - start)
+		else:
+			print(f"ERROR: incomplete PhyML rc={rc}: {why}; input={phy}", file=sys.stderr)
+		# Prevent this invocation's summary stages from reading a partial tree.
+		discard_partial(phy)
+		state(phy, a.scope, "TIMEOUT" if rc == 124 else "FAILED", rc or 1, int(time.monotonic() - start))
+		return rc or 1
+	except Exception:
+		discard_partial(phy)
+		state(phy, a.scope, "FAILED", 1, int(time.monotonic() - start))
+		raise
+
+
+def phyml_run_cli():
+	try:
+		sys.exit(phyml_run_main())
+	except (OSError, RuntimeError, ValueError) as e:
+		print(f"ERROR: {e}", file=sys.stderr)
+		sys.exit(1)
+
+
+# 🚩 phyml_locus_cache
+"""Validate whole-locus completion before launching a GU worker.
+
+Large reference files use path/size/mtime fingerprints; small results use SHA256.
+Historical runs require an explicit successful worker footer, never just TSVs.
+"""
+import argparse
+import csv
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+
+
+def phyml_locus_cache_digest(path):
+	h = hashlib.sha256()
+	with path.open("rb") as f:
+		for block in iter(lambda: f.read(1024 * 1024), b""):
+			h.update(block)
+	return h.hexdigest()
+
+
+def rows(path):
+	with path.open() as f:
+		return list(csv.DictReader(f, delimiter="\t"))
+
+
+def command(path):
+	env, argv = {}, []
+	for line in path.read_text().splitlines():
+		words = shlex.split(line)
+		if words[:1] == ["export"]:
+			for word in words[1:]:
+				key, value = word.split("=", 1)
+				env[key] = value
+		elif words[:1] == ["exec"]:
+			argv = words[1:]
+	if len(argv) < 2 or argv[1] not in ("phyml", "phyml-GPU"):
+		raise ValueError("not a phyml worker")
+	env["PHYML_BACKEND"] = "cuda" if argv[1] == "phyml-GPU" else "cpu"
+	args = argv[2:]
+	if args[:1] == ["run"]:
+		args = args[1:]
+	for flag in ("--keep-males",):
+		if flag in args:
+			args.insert(args.index(flag) + 1, "TRUE")
+	if len(args) % 2 or any(not k.startswith("--") for k in args[::2]):
+		raise ValueError("unsupported worker arguments")
+	opts = dict(zip(args[::2], args[1::2]))
+	return env, opts
+
+
+def phyml_locus_cache_request(cmd, archaic_root):
+	env, opts = command(cmd)
+	bed = Path(opts["--loci"]).read_text().split()
+	if len(bed) != 4:
+		raise ValueError("expected one locus")
+	lead = [r for r in rows(Path(env["GU_PHYML_LEAD_TABLE"])) if r["locus_id"] == bed[3]]
+	if len(lead) != 1:
+		raise ValueError("missing original lead")
+	prefix = Path(opts["--target-dir"])
+	ch = bed[0].removeprefix("chr")
+	sources = [
+		p
+		for p in prefix.parent.glob(prefix.name + ch + ".*")
+		if p.name.endswith(
+			(".pgen", ".pvar", ".pvar.zst", ".psam", ".bed", ".bim", ".fam", ".vcf.gz", ".bcf", ".tbi", ".csi")
+		)
+	]
+	if not sources:
+		raise ValueError("missing target input")
+	panel = opts.get("--sample-panel") or os.environ.get("GU_SAMPLE_PANEL")
+	if not panel:
+		panel = next(
+			(str(p) for p in (prefix.parent / "samples.txt", prefix.parent.parent / "samples.txt") if p.is_file()), None
+		)
+	if not panel:
+		raise ValueError("sample panel unavailable")
+	sources.append(Path(panel))
+	if opts.get("--keep"): sources.append(Path(opts["--keep"]))
+	if opts.get("--keep-psam"): sources.append(Path(opts["--keep-psam"].rsplit(',', 2)[0]))
+	if opts.get("--target", "").startswith("ukb-"):
+		aa_root = Path(env.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf")
+		aa_source = vcf_path(aa_root, ch)
+		sources += [aa_source, Path(str(aa_source) + '.tbi'), Path(str(aa_source) + '.csi')]
+	root = Path(archaic_root)
+	if not root.is_dir():
+		raise ValueError("archaic root unavailable")
+	sources += [
+		p for p in root.rglob("*") if re.search(r"(?<![0-9])(?:chr)?" + re.escape(ch) + r"[_.]", p.name) and p.is_file()
+	]
+	stamps = {}
+	for p in sorted(set(sources)):
+		if p.is_file():
+			s = p.stat()
+			stamps[str(p.resolve())] = [s.st_size, s.st_mtime_ns]
+	ignored = {
+		"--memory-cap",
+		"--foreground",
+		"--auto-final",
+		"--replace-phyml",
+		"--phyml-jobs",
+		"--loci",
+		"--sample-panel",
+	}
+	code = {name: phyml_locus_cache_digest(Path(__file__).with_name(name)) for name in ("phyml.py", "phyml.R")}
+	backend = env.get("PHYML_BACKEND", "cpu")
+	gpu_binary = Path(env.get("PHYML_GPU_BIN", "/mnt/d/software/gu/phyml-gpu/phyml-gpu"))
+	return dict(
+		schema=1,
+		workflow=WORKFLOW,
+		lead=lead[0],
+		bed=bed,
+		options={k: v for k, v in opts.items() if k not in ignored},
+		sources=stamps,
+		sample_panel=str(Path(panel).resolve()),
+		archaic_root=str(root.resolve()),
+		code=code,
+		**({"backend": backend, "gpu_binary_sha256": phyml_run_digest(gpu_binary)} if backend == "cuda" else {}),
+		**({"tree_seed": env["PHYML_TREE_SEED"]} if env.get("PHYML_TREE_SEED") else {}),
+		environment={k: os.environ.get(k, "") for k in ("GU_CHRX_MALE_ONLY", "GU_CHRX_PAR_DIPLOID")},
+	)
+
+
+def phyml_scientific_output(name):
+	# Display files and path-bearing runtime receipts do not determine the fit.
+	path = Path(name)
+	return (path.suffix in ('.tsv', '.phy', '.txt') or name.endswith(('.phyml.log', '.phyml.timeout.json'))) and not name.endswith(('phylogeny_panel_b.tsv', '.phyml.run.status.tsv'))
+
+
+def phyml_locus_cache_outputs(out):
+	required = (
+		"gwas_loci.tsv",
+		"gwas_haplotypes.tsv",
+		"gwas_copies.tsv",
+		"gwas_lead.tsv",
+		"gwas_parameters.json",
+		"loci.tsv",
+		"trees.tsv",
+		"evidence_trees.tsv",
+		"haplotypes.tsv",
+		"haplotype_samples.tsv",
+		"skipped_loci.tsv",
+	)
+	if any(not (out / "final" / name).is_file() or not (out / "final" / name).stat().st_size for name in required):
+		raise ValueError("missing final outputs")
+	return {
+		str(p.relative_to(out)): phyml_locus_cache_digest(p)
+		for folder in ("final", "loci")
+		for p in sorted((out / folder).glob("*"))
+		if p.is_file() and phyml_scientific_output(p.name) and ".failed." not in p.name
+	}
+
+
+def successful(cmd, req, evidence_log=None):
+	out = cmd.parent
+	log = cmd.with_suffix(".log").read_text() if evidence_log is None else evidence_log
+	if cmd.with_suffix(".err").exists() or f"analysis_unit={cmd.stem} status=complete" not in log:
+		raise ValueError("no successful worker completion")
+	if "status=failed" in log or "plot export failed" in log:
+		raise ValueError("failed worker")
+	if f"archaic reference root={req['archaic_root']}\n" not in log:
+		raise ValueError("reference root changed")
+	if f"sample metadata={req['sample_panel']}\n" not in log:
+		raise ValueError("sample panel changed")
+	if rows(out / "final/gwas_lead.tsv") != [req["lead"]]:
+		raise ValueError("lead changed")
+	params = json.loads((out / "final/gwas_parameters.json").read_text())
+	if params["workflow"] != WORKFLOW:
+		raise ValueError("historical workflow changed")
+	summaries = rows(out / "final/gwas_loci.tsv")
+	timed_out = len(summaries) == 2 and all(r['status'] == 'tree_failed' and r['reason'] == 'tree_timeout' for r in summaries)
+	if timed_out:
+		phy = out / 'loci/haplotypes.phy'
+		timeout = json.loads(Path(str(phy) + '.phyml.timeout.json').read_text())
+		state_rows = rows(Path(str(phy) + '.phyml.run.status.tsv'))
+		if (timeout['rc'] != 124 or timeout['input_sha256'] != phyml_run_digest(phy)
+			or len(state_rows) != 1 or state_rows[0]['status'] != 'TIMEOUT'):
+			raise ValueError('invalid timeout record')
+	if len(summaries) != 2 or any(r['status'] == 'not_evaluable' or (r['status'] == 'tree_failed' and not timed_out) for r in summaries):
+		raise ValueError("incomplete locus")
+	trees = rows(out / "final/trees.tsv")
+	if len(trees) != 1 or trees[0]["tree_status"] not in (("failed",) if timed_out else ("complete", "not_run")):
+		raise ValueError("incomplete tree summary")
+	if (
+		any(r["status"] in ("tree_supported", "tree_not_supported") for r in summaries)
+		and trees[0]["tree_status"] != "complete"
+	):
+		raise ValueError("tree result without completed tree")
+	for tree in trees:
+		if tree["tree_status"] == "complete":
+			if completion_error(out / "loci/haplotypes.phy", 100):
+				raise ValueError("incomplete tree")
+			for lineage in ("Neanderthal", "Denisovan"):
+				for suffix in (".png", ".xlsx", ".full.png", ".full.xlsx"):
+					plot = out / "loci" / f"haplotypes.phy_phyml_tree.{lineage}.panelB{suffix}"
+					if not plot.is_file() or not plot.stat().st_size:
+						raise ValueError("missing plot")
+	return 'timeout' if timed_out else 'complete'
+
+
+def process(mode, cmd, archaic_root):
+	receipt = cmd.parent / ".phyml.locus.complete.json"
+	if mode == "adopt" and receipt.exists():
+		return False
+	if mode == 'check':
+		if command(cmd)[1].get('--replace-phyml', 'FALSE') == 'TRUE':
+			return False
+		if not receipt.is_file():
+			# Pending/interrupted loci have no success evidence. Reject them
+			# before enumerating reference files for every unscheduled worker.
+			return process('adopt', cmd, archaic_root)
+	if mode == "adopt":
+		# Reject interrupted historical workers before scanning references.
+		log = cmd.with_suffix(".log").read_text()
+		if cmd.with_suffix(".err").exists() or f"analysis_unit={cmd.stem} status=complete" not in log:
+			raise ValueError("no successful worker completion")
+	req = phyml_locus_cache_request(cmd, archaic_root)
+	if mode == "check":
+		data = json.loads(receipt.read_text())
+		params = json.loads((cmd.parent / "final/gwas_parameters.json").read_text())
+		if params.get("lead_matching_rule") != LEAD_MATCHING_RULE and any(
+			r.get("status") == "lead_absent_or_ambiguous" for r in rows(cmd.parent / "final/gwas_loci.tsv")
+		):
+			# These skipped loci have no fitted tree to preserve. Recheck the
+			# old ordered-allele rejection once under the corrected matcher.
+			return False
+		if data.get('outcome') == 'timeout' and os.environ.get('PHYML_RETRY_TIMEOUTS') == 'TRUE':
+			return False
+		# Code hashes record provenance, not permission to replace completed
+		# analyses. Actual inputs/options and output integrity still must match.
+		saved = {k: v for k, v in data["request"].items() if k != "code"}
+		current = {k: v for k, v in req.items() if k != "code"}
+		outputs = {name: value for name, value in data["outputs"].items() if phyml_scientific_output(name)}
+		return saved == current and outputs == phyml_locus_cache_outputs(cmd.parent)
+	outcome = successful(cmd, req)
+	if mode == "adopt":
+		# Old runs have no source fingerprints. Only adopt sources older than
+		# their successful log, with the original command and exact saved lead.
+		finished = cmd.with_suffix(".log").stat().st_mtime_ns
+		if any(stamp[1] > finished for stamp in req["sources"].values()):
+			return False
+		if cmd.stat().st_mtime_ns > finished:
+			return False
+	data = dict(request=req, outputs=phyml_locus_cache_outputs(cmd.parent), outcome=outcome)
+	tmp = receipt.with_name(receipt.name + f".{os.getpid()}.tmp")
+	tmp.write_text(json.dumps(data, indent=2) + "\n")
+	tmp.replace(receipt)
+	return True
+
+
+def phyml_locus_cache_main():
+	p = argparse.ArgumentParser(description=__doc__)
+	p.add_argument("mode", choices=("check", "seal", "adopt", "partition"))
+	p.add_argument("cmd", type=Path)
+	p.add_argument("--pending", type=Path)
+	p.add_argument("--archaic-root", required=True)
+	a = p.parse_args()
+	if a.mode == "partition":
+		if a.pending is None:
+			p.error("partition requires --pending")
+		commands = [Path(line) for line in a.cmd.read_text().splitlines() if line]
+		pending = []
+		skipped = 0
+		skipped_results = 0
+		deferred = 0
+		for index, cmd in enumerate(commands, 1):
+			try:
+				ok = process("check", cmd, a.archaic_root)
+			except (OSError, ValueError, KeyError, TypeError):
+				ok = False
+			if ok:
+				skipped += 1
+				skipped_results += bool(rows(cmd.parent / "final/skipped_loci.tsv"))
+				deferred += json.loads((cmd.parent / '.phyml.locus.complete.json').read_text()).get('outcome') == 'timeout'
+			else:
+				pending.append(str(cmd))
+		a.pending.write_text("".join(cmd + "\n" for cmd in pending))
+		print(
+			f"[GU CMD] RESUME total={len(commands)} reused={skipped} pending={len(pending)} skipped={skipped_results} deferred={deferred}",
+			flush=True,
+		)
+		return
+	try:
+		ok = process(a.mode, a.cmd, a.archaic_root)
+	except (OSError, ValueError, KeyError, TypeError) as e:
+		if a.mode == 'seal':
+			print(f'ERROR: cannot seal PhyML locus {a.cmd.stem}: {e}', file=sys.stderr)
+		ok = False
+	raise SystemExit(0 if ok else 1)
+
+
+def phyml_locus_cache_cli():
+	phyml_locus_cache_main()
+
+
+# 🚩 phyml_gwas
+"""GWAS-anchored LD-core phylogeny following Zeberg & Pääbo (2020).
+
+EUR defines LD. All sampled populations supply recurrent modern haplotypes.
+No archaic-similarity search, replacement index SNP, or candidate tip sampling.
+"""
+import argparse, hashlib, json, math, os, subprocess, sys, fcntl
+from collections import Counter, defaultdict
+from pathlib import Path
+
+
+def reference_lineage(ref):
+	return next(lineage for lineage, refs in LINEAGE_REFS.items() if ref in refs)
+
+
+def risk_from_effect(ref, alt, effect, beta):
+	if effect not in (ref, alt) or "," in alt or ref == alt:
+		raise SkipLocus("effect allele does not match exact target variant", "lead_allele_mismatch")
+	return effect if beta > 0 else (alt if effect == ref else ref)
+
+
+def exact_lead(row, records, n_samples, haploid=False):
+	found = []
+	for f in records:
+		if int(f[1]) != int(row["lead_pos"]):
+			continue
+		ref, alt = f[3].upper(), f[4].upper()
+		if row["ref"]:
+			# The reference allele can switch between genome builds. Match
+			# the exact allele pair, then decode GT in the target VCF order.
+			# No strand inference or third-allele substitution is permitted.
+			if {ref, alt} != {row["ref"].upper(), row["alt"].upper()}:
+				continue
+		elif row["index_snp"] not in f[2].split(";"):
+			continue
+		if "," in alt or len(f) != 5 + n_samples:
+			continue
+		found.append(f)
+	if len(found) != 1:
+		raise SkipLocus("exact original lead absent or ambiguous; no replacement SNP", "lead_absent_or_ambiguous")
+	f = found[0]
+	risk = risk_from_effect(f[3], f[4], row["effect_allele"], float(row["beta_j"]))
+	copies = []
+	for gt in f[5:]:
+		alleles = (called_haploid_base(f[3], f[4], gt), "N") if haploid else called_base(f[3], f[4], gt, True)
+		copies.extend(1 if x == risk else 0 if x in (f[3], f[4]) else -1 for x in alleles)
+	return dict(pos=int(f[1]), ref=f[3], alt=f[4], vcf_id=f[2], risk_allele=risk, copies=copies,
+		allele_order="swapped" if row["ref"] and f[3].upper() != row["ref"].upper() else "matched")
+
+
+def phased_ld(risk, site, indexes):
+	n = sx = sy = sxy = 0
+	for i in indexes:
+		a, b = risk[i], site["haps"][i]
+		if a < 0 or b not in (site["ref"], site["alt"]):
+			continue
+		y = int(b == site["alt"])
+		n += 1
+		sx += a
+		sy += y
+		sxy += a * y
+	denom = sx * (n - sx) * sy * (n - sy)
+	if n < 4 or denom == 0:
+		return None, n, ""
+	cov = n * sxy - sx * sy
+	return min(1.0, cov * cov / denom), n, site["alt"] if cov > 0 else site["ref"]
+
+
+def define_core(sites, lead, indexes):
+	ld = []
+	high = []
+	for s in sites:
+		r2, n, allele = phased_ld(lead["copies"], s, indexes)
+		passed = r2 is not None and r2 > 0.98
+		ld.append(
+			dict(
+				pos=s["pos"],
+				id=s["vid"],
+				ref=s["ref"],
+				alt=s["alt"],
+				ld_r2=r2,
+				n_EUR_copies=n,
+				risk_linked_allele=allele,
+				core_marker=int(passed),
+			)
+		)
+		if passed:
+			high.append(s)
+	if len(high) < 2:
+		raise SkipLocus("fewer than two SNPs with EUR r² > 0.98", "insufficient_high_LD_markers", dict(ld=ld))
+	start = min([lead["pos"]] + [s["pos"] for s in high]) - 1
+	end = max([lead["pos"] + len(lead["ref"]) - 1] + [s["pos"] for s in high])
+	return [s for s in sites if start < s["pos"] <= end], ld, start, end
+
+
+def risk_clade(newick, risk_tips, modern_tips, refs=LINEAGE_REFS["Neanderthal"]):
+	"""Test all risk tips + the specified lineage, excluding other archaics."""
+	root = parse_newick(newick)
+	edges = []
+
+	def visit(node):
+		tips = {node.label} if not node.children else set().union(*(visit(c) for c in node.children))
+		edges.append((node, tips))
+		return tips
+
+	all_tips = visit(root)
+	required = set(risk_tips) | set(refs)
+	if (
+		not risk_tips
+		or not required <= all_tips
+		or "Ancestral" not in all_tips
+		or not (set(modern_tips) - set(risk_tips))
+	):
+		return None
+	matches = []
+	for node, tips in edges:
+		if node is root:
+			continue
+		for side in (tips, all_tips - tips):
+			if side == required:
+				matches.append(dict(bootstrap=node.support, tips=",".join(sorted(side)), node=node.node_id))
+	return max(matches, key=lambda x: -1 if x["bootstrap"] is None else x["bootstrap"], default=None)
+
+
+def allele_topology_audit(newick, haps, lineage, complete=True):
+	"""Apply the same predefined split to BOTH lead alleles on a saved tree.
+
+	These are tree-support diagnostics, not introgression calls or calibrated
+	P values. Keep the original risk-only tree_pass contract for downstream
+	carrier validation; nonrisk carriers require their own validation.
+	"""
+	result = dict(nonrisk_tree_pass=None, nonrisk_tree_bootstrap=None,
+		nonrisk_tree_tips="", nonrisk_tree_status="not_evaluated",
+		either_allele_tree_pass=None, supported_allele_role="not_evaluated")
+	if not complete or not newick or not haps:
+		return result
+	modern = {h["hap_id"] for h in haps}
+	passed = []
+	for role in ("risk", "nonrisk"):
+		match = risk_clade(newick, {h["hap_id"] for h in haps if h["role"] == role}, modern, LINEAGE_REFS[lineage])
+		bs = match["bootstrap"] if match else None
+		ok = bs is not None and bs >= 70
+		if ok: passed.append(role)
+		if role == "nonrisk":
+			result.update(nonrisk_tree_pass=int(ok), nonrisk_tree_bootstrap=bs,
+				nonrisk_tree_tips=match["tips"] if match else "",
+				nonrisk_tree_status="supported" if ok else "not_supported")
+	result.update(either_allele_tree_pass=int(bool(passed)), supported_allele_role=";".join(passed) or "neither")
+	return result
+
+
+def prepare_sequences(sites, calls, samples, lead, haploid):
+	# Use the same sites and modern tips for both lineage tests. All five
+	# archaic references must be callable. Missing ancestry
+	# remains N (never substitute REF); constant columns are retained after
+	# singleton removal, as required for HKY+I parameter estimation.
+	sites = [s for s in sites if all(calls[r].get(s["pos"], "N") in BASES for r in REFS)]
+	indexes = [2 * i + h for i in range(len(samples)) for h in range(1 if haploid else 2)]
+	grouped = defaultdict(list)
+	for i in indexes:
+		if lead["copies"][i] < 0:
+			continue
+		seq = "".join(s["haps"][i] for s in sites)
+		grouped[seq].append(i)
+	recurrent = []
+	for seq, ix in sorted(grouped.items(), key=lambda x: (-len(x[1]), x[0])):
+		if len(ix) < 2:
+			continue
+		flags = {lead["copies"][i] for i in ix}
+		role = "risk" if flags == {1} else "nonrisk" if flags == {0} else "mixed"
+		recurrent.append(dict(hap_id=f"H{len(recurrent) + 1:05d}", seq=seq, indices=ix, role=role, n=len(ix)))
+	return sites, recurrent, grouped
+
+
+def run_verified_tree(command):
+	result = subprocess.run(command)
+	if result.returncode == 0:
+		result = subprocess.run(command + ["--verify-only"])
+	return result
+
+
+def annotate_ukb_ancestor(sites, chrom, locus):
+	root = Path(os.environ.get("PHYML_ANCESTRAL_VCF_DIR", os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf"))
+	source = vcf_path(root, chrom)
+	contig = vcf_contig(source, chrom)
+	wanted = {(s["pos"], s["ref"], s["alt"]) for s in sites}
+	_, records = query_rows(source, f"{contig}:{locus['start']+1}-{locus['end']}", include_aa=True)
+	bases = {}
+	for fields in records:
+		key = (int(fields[1]), fields[3].upper(), fields[4].upper())
+		if key not in wanted: continue
+		base = ancestral_allele(fields[5], key[1], key[2], True)
+		bases[key] = base if key not in bases or bases[key] == base else "N"
+	for site in sites:
+		site["ancestral"] = bases.get((site["pos"], site["ref"], site["alt"]), "N")
+	return dict(ancestral_source=str(source) + "; GRCh37 exact POS/REF/ALT INFO/AA; unmatched remains N",
+		ancestral_annotated_sites=sum(s["ancestral"] in BASES for s in sites))
+
+
+TIMEOUT_COLUMNS = ['unit', 'locus_id', 'dataset', 'reason', 'timeout_seconds', 'elapsed_seconds',
+	'bootstrap_completed', 'n_sequences', 'n_sites', 'recorded_at', 'phy', 'command_file']
+
+
+def update_timeout_list(out, dataset, locus_id, timed_out=False):
+	"""One durable, atomically updated queue shared by all locus workers."""
+	marker = out / 'phyml.timeout.json'
+	if not timed_out and not marker.exists():
+		return
+	phy = out / 'loci/haplotypes.phy'
+	entry = None
+	if timed_out:
+		entry = json.loads(Path(str(phy) + '.phyml.timeout.json').read_text())
+		entry.update(unit=out.name, locus_id=locus_id, dataset=dataset,
+			phy=str(phy), command_file=str(out / (out.name + '.cmd')))
+		marker.write_text(json.dumps(entry, indent=2) + '\n')
+	queue = out.parent / 'phyml.timeouts.tsv'
+	lock = _common.gu_result_lock(queue)
+	with lock.open('a') as handle:
+		fcntl.flock(handle, fcntl.LOCK_EX)
+		entries = {r['unit']: r for r in rows(queue)} if queue.exists() else {}
+		if entry is None:
+			entries.pop(out.name, None)
+		else:
+			entries[out.name] = entry
+		tmp = queue.with_name(queue.name + f'.{os.getpid()}.tmp')
+		with tmp.open('w') as stream:
+			writer = csv.DictWriter(stream, fieldnames=TIMEOUT_COLUMNS, delimiter='\t', extrasaction='ignore')
+			writer.writeheader()
+			writer.writerows(entries[k] for k in sorted(entries))
+		tmp.replace(queue)
+		if entry is None:
+			marker.unlink(missing_ok=True)
+	if timed_out:
+		print(f'[GU PHYML] DEFER {locus_id}: tree_timeout; retry list={queue}', flush=True)
+
+
+def run_locus(a, row):
+	out = a.out
+	final = out / "final"
+	loc = out / "loci"
+	final.mkdir(parents=True, exist_ok=True)
+	loc.mkdir(parents=True, exist_ok=True)
+	row = dict(row)
+	lid = row["locus_id"]
+	ch = row["chr"]
+	pos = int(row["lead_pos"])
+	# Defer intermediate writes until the existing completed tree is safe.
+
+	preserve = os.environ.get("PHYML_REPLACE") != "TRUE" and protected_result(loc / "haplotypes.phy")
+	pending_tables = {}
+	haploid = ch == "X" and a.x_male_only
+	ident = dict(
+		locus_id=lid,
+		index_snp=row["index_snp"],
+		source_build=row["source_build"],
+		source_pos=row["source_pos"],
+		dataset_id=a.dataset,
+		genome_build="GRCh37",
+		chr=ch,
+		lead_pos=pos,
+		p_j=row["p_j"],
+		beta_j=row["beta_j"],
+		effect_allele=row["effect_allele"],
+		ld_population="selected UKB cohort" if a.dataset.startswith("ukb-") else "1KG EUR",
+		ld_r2_threshold=0.98,
+		selection_method="gwas_lead_ld_core",
+		analysis_start=int(row["search_start"]),
+		analysis_end=int(row["search_end"]),
+		core_start=pos - 1,
+		core_end=pos,
+		lineage="Neanderthal",
+		tree_pass=0,
+		tree_bootstrap=None,
+		status="not_evaluable",
+		reason="",
+		risk_allele="",
+		n_ld_sites=None,
+		n_sites=None,
+		n_panel=None,
+		n_panel_copies=None,
+		n_lead_called=None,
+		n_lead_called_copies=None,
+		n_recurrent_copies=None,
+		n_singleton_copies=None,
+		x_mode="male_haploid_nonpar" if haploid else "diploid",
+		n_risk_copies=None,
+		n_candidate_haplotypes=None,
+		n_candidate_copies=None,
+	)
+	locus = dict(
+		chrom=ch, name=lid, start=int(row["search_start"]), end=int(row["search_end"]), core_start=pos - 1, core_end=pos
+	)
+	haps = []
+	detail = []
+	copyrows = []
+	allcopies = []
+	tree = dict(
+		locus_id=lid,
+		tree_status="not_run",
+		candidate_lineage="Neanderthal",
+		expected_lineage="Neanderthal",
+		candidate_clade_pass=0,
+		candidate_clade_bootstrap=None,
+		tree_call_reason="not_run",
+		candidate_clade_tips="",
+		candidate_tips_in_clade="",
+		expected_archaic_tips_in_clade="",
+		control_tips_in_clade="",
+		candidate_context_tips_in_clade="",
+		n_candidate_tips_in_clade=0,
+		n_expected_archaic_tips_in_clade=0,
+		candidate_clade_n_tips=0,
+		candidate_clade_modern_tips=0,
+		candidate_clade_archaic_tips=0,
+		candidate_clade_specificity=None,
+		tree_scope="gwas_risk_core",
+		tree_newick="",
+		tree_file="",
+		stats_file="",
+		plot_file="",
+		tree_has_ancestral_outgroup=0,
+	)
+	failed = False
+	try:
+		vcf = vcf_path(a.vcf_dir, ch)
+		contig = vcf_contig(vcf, ch)
+		panel = read(a.sample_file)
+		meta = {r["sample"]: r for r in panel}
+		samples, records = query_rows(vcf, f"{contig}:{pos}-{pos}")
+		if any(s not in meta for s in samples):
+			raise ValueError("sample panel must include every VCF sample and population")
+		eur = list(range(len(samples))) if a.dataset.startswith("ukb-") else [
+			i
+			for i, s in enumerate(samples)
+			if meta[s].get("super_pop", "") == "EUR" or meta[s].get("pop", "") in {"CEU", "GBR", "FIN", "IBS", "TSI"}
+		]
+		if not eur:
+			raise ValueError("No EUR samples in --sample-panel; LD cannot use all populations as a fallback")
+		ident["ld_population"] = ("UKB selected cohort: " + ",".join(sorted({meta[s].get("pop", "UKB") for s in samples}))) if a.dataset.startswith("ukb-") else "1KG EUR"
+		ident.update(n_panel=len(samples), n_panel_copies=len(samples) * (1 if haploid else 2))
+		lead = exact_lead(row, records, len(samples), haploid)
+		ident.update(n_lead_called=sum(any(x >= 0 for x in lead["copies"][2*i:2*i+2]) for i in range(len(samples))), n_lead_called_copies=sum(x >= 0 for x in lead["copies"]))
+		ident.update(
+			risk_allele=lead["risk_allele"],
+			lead_allele_order=lead["allele_order"],
+			target_variant=f"{ch}:{pos}:{lead['ref']}:{lead['alt']}",
+			n_EUR_individuals=len(eur),
+			n_risk_copies=sum(x == 1 for x in lead["copies"]),
+		)
+		indexes = [2 * i + h for i in eur for h in range(1 if haploid else 2)]
+		eur_called = [lead["copies"][i] for i in indexes if lead["copies"][i] >= 0]
+		ident["n_LD_individuals"] = len(eur)
+		ident["risk_frequency_LD"] = sum(eur_called) / len(eur_called) if eur_called else None
+		ident["risk_frequency_EUR"] = ident["risk_frequency_LD"] if not a.dataset.startswith("ukb-") else None
+		if a.dataset.startswith("ukb-"): ident["n_EUR_individuals"] = None
+		modern_audit = []
+		pending_tables["modern_site_qc.tsv"] = modern_audit
+		_, sites, _ = modern_data(
+			vcf, contig, locus, 2, read_sexes(a.sample_file), a.x_male_only, a.x_par_diploid, ancestral_any_base=True, audit=modern_audit
+		)
+		if a.dataset.startswith("ukb-"):
+			ident.update(annotate_ukb_ancestor(sites, ch, locus))
+		# Multiple records at one coordinate cannot be matched to an archaic
+		# base unambiguously; exclude them rather than merge unrelated alleles.
+		counts = Counter(s["pos"] for s in sites)
+		for q in modern_audit:
+			if counts[q["pos"]] > 1: q.update(modern_status="duplicate_position", retained_modern=0)
+		sites = [s for s in sites if counts[s["pos"]] == 1]
+		core, ld, start, end = define_core(sites, lead, indexes)
+		if a.dataset.startswith("ukb-"):
+			for marker in ld: marker["n_LD_copies"] = marker.pop("n_EUR_copies")
+		pending_tables["ld.tsv"] = ld
+		ident.update(
+			core_start=start,
+			core_end=end,
+			core_kb=(end - start) / 1000,
+			n_ld_sites=sum(r["core_marker"] for r in ld),
+			n_search_sites=len(sites),
+			anchor_pos=pos,
+			selected_start=start,
+			selected_end=end,
+		)
+		high = [r for r in ld if r["core_marker"]]
+		# Search limits are explicit: the inferred span is conditional on this
+		# finite window, and a marker near an edge requests a wider search.
+		ident["search_edge_warning"] = int(start - locus["start"] < 10000 or locus["end"] - end < 10000)
+		calls = {}
+		callability = {ref: {} for ref in REFS}
+		for ref in REFS:
+			av = archaic_vcf(a.archaic_root, ref, ch)
+			calls[ref] = archaic_calls(
+				av, vcf_contig(av, ch), dict(locus, start=start, end=end), core, allow_third_allele=True, audit=callability[ref]
+			)
+		markers = {r["pos"]: r["risk_linked_allele"] for r in high}
+		for ref in REFS:
+			called = [(p, b) for p, b in markers.items() if calls[ref].get(p, "N") in BASES]
+			ident[ref + "_LD_matches"] = sum(calls[ref][p] == b for p, b in called)
+			ident[ref + "_LD_called"] = len(called)
+		pending_tables["site_qc.tsv"] = [dict(
+			chr=ch, pos=site["pos"], lead=int(site["pos"] == pos), high_ld=int(site["pos"] in markers),
+			ancestral=site["ancestral"], risk_linked_allele=markers.get(site["pos"], ""),
+			risk_equals_ancestral=int(markers[site["pos"]] == site["ancestral"]) if site["pos"] in markers and site["ancestral"] in BASES else None,
+			retained_alignment=int(all(calls[r].get(site["pos"], "N") in BASES for r in REFS)),
+			**{ref + "_callability": callability[ref][site["pos"]] for ref in REFS},
+			**{ref + "_base": calls[ref].get(site["pos"], "N") for ref in REFS},
+		) for site in core]
+		sites, haps, grouped = prepare_sequences(core, calls, samples, lead, haploid)
+		ident.update(n_core_sites_before_reference_filter=len(core), lead_retained_for_tree=int(any(site["pos"] == pos for site in sites)), high_ld_sites_retained_for_tree=sum(site["pos"] in markers for site in sites),
+			high_ld_max_gap_bp=max((b-a for a,b in zip(sorted(markers), sorted(markers)[1:])), default=0),
+			ld_ancestral_risk_matches=sum(q["risk_equals_ancestral"] == 1 for q in pending_tables["site_qc.tsv"]),
+			n_recurrent_copies=sum(h["n"] for h in haps))
+		ident.update(
+			n_sites=len(sites),
+			n_compared=len(sites),
+			n_ancestral_sites=sum(s["ancestral"] in BASES for s in sites),
+			n_tree_haplotypes=len(haps),
+			n_singleton_copies=sum(len(ix) for ix in grouped.values() if len(ix) == 1),
+			n_candidate_haplotypes=sum(h["role"] == "risk" for h in haps),
+			n_candidate_copies=sum(h["n"] for h in haps if h["role"] == "risk"),
+			n_nonrisk_haplotypes=sum(h["role"] == "nonrisk" for h in haps),
+		)
+		if len(sites) < 2:
+			raise SkipLocus("insufficient five-reference callable core sites", "insufficient_tree_sites")
+		arch = {r: "".join(calls[r][s["pos"]] for s in sites) for r in REFS}
+		ancestor = "".join(s["ancestral"] for s in sites)
+		ident.update(unique_archaic_sequences=len(set(arch.values())), all_archaic_different_sites=sum(len(set(column)) > 1 for column in zip(*arch.values())),
+			neanderthal_vs_denisovan_fixed_differences=sum(len({arch[r][i] for r in LINEAGE_REFS["Neanderthal"]}) == 1 and len({arch[r][i] for r in LINEAGE_REFS["Denisovan"]}) == 1 and arch["Altai"][i] != arch["Denisova"][i] for i in range(len(sites))))
+		pending_tables["sites.tsv"] = [
+			dict(chr=ch, pos=s["pos"], id=s["vid"], ref=s["ref"], alt=s["alt"]) for s in sites
+		]
+		pending_tables["archaic.tsv"] = [dict(archaic=r, lineage=reference_lineage(r), seq=arch[r]) for r in REFS]
+		pending_tables["ancestral.tsv"] = [
+			dict(reference="Ancestral", n_callable=ident["n_ancestral_sites"], seq=ancestor)
+		]
+		for h in haps:
+			h["copies"] = ";".join(f"{samples[i // 2]}:{i % 2 + 1}" for i in h["indices"])
+			comp = []
+			for ref, seq in arch.items():
+				pairs = [(x, y) for x, y in zip(h["seq"], seq) if x in BASES and y in BASES]
+				nm = sum(x == y for x, y in pairs)
+				nc = len(pairs)
+				comp.append((nm / nc if nc else 0, nc, nm, ref))
+			prop, nc, nm, ref = max(comp)
+			d = dict(
+				ident,
+				hap_id=h["hap_id"],
+				role=h["role"],
+				n_copies=h["n"],
+				n_individuals=len({i // 2 for i in h["indices"]}),
+				n_compared=nc,
+				n_match=nm,
+				archaic=ref,
+				prop_match=prop,
+				candidate_start=start,
+				candidate_end=end,
+				call="risk_haplotype"
+				if h["role"] == "risk"
+				else "nonrisk_control"
+				if h["role"] == "nonrisk"
+				else "risk_nonrisk_sequence_unresolved",
+				tree_pass=0,
+			)
+			d["superpopulation_copy_counts"] = ",".join(
+				f"{p}:{n}"
+				for p, n in sorted(
+					Counter(meta[samples[i // 2]].get("super_pop", "UNKNOWN") for i in h["indices"]).items()
+				)
+			)
+			detail.append(d)
+			for i in h["indices"]:
+				cp = dict(
+					locus_id=lid,
+					hap_id=h["hap_id"],
+					sample=samples[i // 2],
+					sample_id=samples[i // 2],
+					haplotype=i % 2 + 1,
+					candidate_start=start,
+					candidate_end=end,
+					role=h["role"],
+				)
+				allcopies.append(cp)
+				if h["role"] == "risk":
+					copyrows.append(cp)
+			h.update(
+				locus_id=lid,
+				genome_build="GRCh37",
+				best_archaic=ref,
+				best_lineage=reference_lineage(ref),
+				n_compared=nc,
+				n_match=nm,
+				prop_match=prop,
+				direct_match_pass=0,
+			)
+		pending_tables["haplotypes.tsv"] = [{k: v for k, v in h.items() if k != "indices"} for h in haps]
+		if any(h["role"] == "mixed" for h in haps):
+			ident.update(n_candidate_haplotypes=None, n_candidate_copies=None)
+			raise SkipLocus("lead alleles share identical callable core sequences", "risk_nonrisk_sequence_unresolved")
+		if not ident["n_candidate_haplotypes"] or not ident["n_nonrisk_haplotypes"]:
+			raise SkipLocus("both recurrent risk and nonrisk haplotypes required", "insufficient_recurrent_haplotypes")
+		if not ident["n_ancestral_sites"]:
+			raise SkipLocus("ancestral human bases absent; REF is not an outgroup", "ancestral_sequence_unavailable")
+		phy = loc / "haplotypes.phy"
+		tree["phy_file"] = str(phy)
+		seqs = [(h["hap_id"], h["seq"]) for h in haps] + list(arch.items()) + [("Ancestral", ancestor)]
+		phytext = f"{len(seqs)} {len(sites)}\n" + "".join(f"{label:<10} {seq}\n" for label, seq in seqs)
+		prepare_input(phy, phytext, replace=os.environ.get("PHYML_REPLACE") == "TRUE")
+		pending_tables["haplotypes.phy.meta.tsv"] = [
+			dict(
+				phy_label=label,
+				label=label,
+				role=next(
+					(h["role"] for h in haps if h["hap_id"] == label),
+					"ancestral" if label == "Ancestral" else "archaic",
+				),
+			)
+			for label, seq in seqs
+		]
+		ident.update(status="tree_not_requested", reason="sequence_prepared")
+		if a.action == "run" and a.plot_phy == "TRUE":
+			print(
+				f"[GU PHYML] {lid}: LD cohort={len(eur)}; core={ch}:{start + 1}-{end}; LD markers={ident['n_ld_sites']}; tree sites={len(sites)}; recurrent haplotypes={len(haps)}; bootstrap=100",
+				flush=True,
+			)
+			cmd = [
+				sys.executable,
+				str(Path(__file__).with_name("phyml.py")),
+				"run",
+				"--phy",
+				str(phy),
+				"--scope",
+				"gwas_risk_core",
+				"--bootstrap",
+				"100",
+				"--timeout",
+				str(a.timeout),
+				"--cpus",
+				str(a.cpus),
+				"--mpi-fallback",
+				"serial",
+			]
+			proc = run_verified_tree(cmd)
+			treepath = Path(str(phy) + "_phyml_tree.txt")
+			statpath = Path(str(phy) + "_phyml_stats.txt")
+			if proc.returncode:
+				if preserve:
+					require_replace(phy, "existing tree could not be verified; see runner diagnostic")
+				# Timeouts are a recorded deferral, so the batch continues normally.
+				failed = proc.returncode != 124
+				logpath = Path(str(phy) + ".phyml.log")
+				failure_log = logpath.read_text(errors="replace") if logpath.exists() else ""
+				reason = (
+					"tree_timeout"
+					if proc.returncode == 124
+					else "numerical_model_fit_failed"
+					if "Cannot work out eigen vectors" in failure_log
+					else "see_PhyML_run_log"
+				)
+				ident.update(status="tree_failed", reason=reason)
+				tree.update(tree_status="failed", tree_call_reason=reason)
+			else:
+				newick = treepath.read_text().strip()
+				risk = {h["hap_id"] for h in haps if h["role"] == "risk"}
+				match = risk_clade(newick, risk, {h["hap_id"] for h in haps})
+				bs = match["bootstrap"] if match else None
+				passed = bool(bs is not None and bs >= 70)
+				reason = "risk_Neanderthal_split" if match else "no_exclusive_risk_Neanderthal_split"
+				ident.update(
+					status="tree_supported" if passed else "tree_not_supported",
+					reason=reason,
+					tree_pass=int(passed),
+					tree_bootstrap=bs,
+				)
+				tree.update(
+					tree_status="complete",
+					tree_newick=newick,
+					tree_file=str(treepath),
+					stats_file=str(statpath),
+					tree_has_ancestral_outgroup=1,
+					candidate_clade_pass=int(passed),
+					candidate_clade_bootstrap=bs,
+					candidate_clade_tips=match["tips"] if match else "",
+					candidate_tips_in_clade=",".join(sorted(risk)) if match else "",
+					candidate_clade_rule="all_recurrent_risk_plus_three_Neanderthals_no_nonrisk_or_ancestor",
+					tree_call_reason=reason,
+					n_bootstrap_nodes=len(bootstrap_values(newick)),
+					expected_archaic_tips_in_clade=",".join(LINEAGE_REFS["Neanderthal"]) if match else "",
+					n_candidate_tips_in_clade=len(risk) if match else 0,
+					n_expected_archaic_tips_in_clade=3 if match else 0,
+					candidate_clade_n_tips=len(risk) + 3 if match else 0,
+					candidate_clade_modern_tips=len(risk) if match else 0,
+					candidate_clade_archaic_tips=3 if match else 0,
+					candidate_clade_specificity=1 if match else None,
+				)
+		tree["tree_call_reason"] = ident["reason"]
+	except SkipLocus as e:
+		if preserve:
+			require_replace(loc / "haplotypes.phy", f"new analysis would skip completed locus: {e.code}")
+		reason = str(e).replace("EUR r²", "selected UKB cohort r²") if a.dataset.startswith("ukb-") else str(e)
+		ident.update(status=e.code, reason=reason)
+		tree["tree_call_reason"] = reason
+		if e.code == "risk_nonrisk_sequence_unresolved":
+			copyrows = []
+		if e.details and "ld" in e.details:
+			if a.dataset.startswith("ukb-"):
+				for marker in e.details["ld"]:
+					if "n_EUR_copies" in marker: marker["n_LD_copies"] = marker.pop("n_EUR_copies")
+			pending_tables["ld.tsv"] = e.details["ld"]
+			ident.update(n_ld_sites=sum(r["core_marker"] for r in e.details["ld"]), n_search_sites=len(e.details["ld"]))
+		print(f"[GU PHYML] SKIP {lid}: {e.code}: {reason}", flush=True)
+	for name in ("sites.tsv", "archaic.tsv", "ancestral.tsv", "haplotypes.tsv", "ld.tsv", "site_qc.tsv", "modern_site_qc.tsv"):
+		(loc / name).unlink(missing_ok=True)
+	for name, table in pending_tables.items():
+		write(loc / name, table)
+	ident["call"] = ident["status"]
+	ident.update(locus_stage_fields(ident))
+	# A length-model sensitivity statistic, not a calibrated locus-specific P.
+	if ident.get("core_kb"):
+		ident["ils_probability"] = ils_probability(ident["core_end"] - ident["core_start"])
+		ident["ld_span_bp"] = ident["core_end"] - ident["core_start"]
+		ident["archaic_shared_tract_bp"] = None
+		ident["local_genetic_length_cm"] = None
+		ident["ils_statistic_scope"] = "LD_span_sensitivity_only;not_shared_tract_evidence"
+		ident["ils_model"] = "assumed_0.53cM/Mb_29yr_550k_split_50k_archaic_age;not_local_map;uncorrected"
+	summaries, lineage_trees, lineage_details = lineage_results(ident, tree, detail, haps, arch if detail else {})
+	write(final / "gwas_loci.tsv", summaries)
+	write(final / "gwas_haplotypes.tsv", lineage_details)
+	write(final / "gwas_copies.tsv", [dict(c, lineage=lineage) for lineage in LINEAGE_REFS for c in copyrows])
+	# Keep one locus row for database/browser identity; retain both tests in
+	# the evidence/report tables. Prefer a supported lineage as representative.
+	representative = max(range(len(summaries)), key=lambda i: summaries[i]["tree_pass"])
+	write(final / "loci.tsv", [summaries[representative]])
+	write(final / "trees.tsv", [lineage_trees[representative]])
+	write(final / "evidence_trees.tsv", lineage_trees)
+	completed_haps = [{k: v for k, v in h.items() if k != "indices"} for h in haps if "copies" in h]
+	write(
+		final / "haplotypes.tsv",
+		completed_haps,
+		list(completed_haps[0]) if completed_haps else ["locus_id", "hap_id", "copies"],
+	)
+	write(
+		final / "haplotype_samples.tsv",
+		allcopies,
+		["locus_id", "hap_id", "sample", "sample_id", "haplotype", "candidate_start", "candidate_end", "role"],
+	)
+	write(final / "skipped_loci.tsv", [] if ident["status"].startswith("tree_") else [ident])
+	write(final / "gwas_lead.tsv", [row])
+	parameters = dict(
+		workflow=WORKFLOW,
+		lead_matching_rule=LEAD_MATCHING_RULE,
+		ld_population=ident["ld_population"],
+		ld_rule="phased_r2 > 0.98",
+		lead=row,
+		tree_populations="selected target cohort: " + a.dataset,
+		minimum_haplotype_copies=2,
+		minimum_minor_allele_copies=2,
+		ancestral_source=ident.get("ancestral_source", "target VCF INFO/AA; unknown remains N; not verified as Ensembl release 100"),
+		references=list(REFS),
+		heterozygous_archaic_policy="mask_as_N",
+		bootstrap=100,
+		model="HKY85+G4+I;estimated",
+		backend="cuda-pruning-v1" if os.environ.get("PHYML_BACKEND") == "cuda" else "cpu",
+		tree_seed=os.environ.get("PHYML_TREE_SEED"),
+		lineage_references=LINEAGE_REFS,
+		tree_rule="one five-reference tree; separately test all recurrent risk + each lineage, excluding other archaics, nonrisk and ancestor; BS >=70",
+		method_source="https://www.nature.com/articles/s41586-020-2818-3",
+	)
+	(final / "gwas_parameters.json").write_text(json.dumps(parameters, indent=2) + "\n")
+	if ident['reason'] == 'tree_timeout':
+		update_timeout_list(out, a.dataset, lid, timed_out=True)
+	elif not failed:
+		update_timeout_list(out, a.dataset, lid)
+	if tree["tree_status"] == "complete":
+		plot = subprocess.run(["Rscript", "--vanilla", str(Path(__file__).with_name("phyml.R")), "--out", str(out)])
+		if plot.returncode:
+			print("[GU PHYML] WARNING: tree completed but plot export failed", flush=True)
+			failed = True
+	print(
+		f"[GU PHYML] {lid}: " + "; ".join(f"{s['lineage']}={s['status']} ({s['reason']})" for s in summaries),
+		flush=True,
+	)
+	return 1 if failed else 0
+
+
+def lineage_results(ident, tree, details, haps, arch):
+	"""Report both prespecified lineage tests from the same inferred tree."""
+	summaries, trees, rows = [], [], []
+	risk = {h["hap_id"] for h in haps if h["role"] == "risk"}
+	modern = {h["hap_id"] for h in haps}
+	sequences = {h["hap_id"]: h["seq"] for h in haps}
+	for lineage, refs in LINEAGE_REFS.items():
+		s = dict(ident, lineage=lineage)
+		t = dict(tree, candidate_lineage=lineage, expected_lineage=lineage)
+		if tree["tree_status"] == "complete":
+			match = risk_clade(tree["tree_newick"], risk, modern, refs)
+			bs = match["bootstrap"] if match else None
+			passed = bool(bs is not None and bs >= 70)
+			reason = f"risk_{lineage}_split" if match else f"no_exclusive_risk_{lineage}_split"
+			s.update(
+				status="tree_supported" if passed else "tree_not_supported",
+				reason=reason,
+				tree_pass=int(passed),
+				tree_bootstrap=bs,
+			)
+			t.update(
+				candidate_clade_pass=int(passed),
+				candidate_clade_bootstrap=bs,
+				candidate_clade_rule="all_recurrent_risk_plus_lineage_no_other_archaics_nonrisk_or_ancestor",
+				tree_call_reason=reason,
+				candidate_clade_tips=match["tips"] if match else "",
+				candidate_tips_in_clade=",".join(sorted(risk)) if match else "",
+				expected_archaic_tips_in_clade=",".join(refs) if match else "",
+				n_candidate_tips_in_clade=len(risk) if match else 0,
+				n_expected_archaic_tips_in_clade=len(refs) if match else 0,
+				candidate_clade_n_tips=len(risk) + len(refs) if match else 0,
+				candidate_clade_modern_tips=len(risk) if match else 0,
+				candidate_clade_archaic_tips=len(refs) if match else 0,
+				candidate_clade_specificity=1 if match else None,
+			)
+		s["call"] = s["status"]
+		# Stage fields must follow this lineage's decision, not the initial
+		# Neanderthal result copied into ident.
+		s.update(locus_stage_fields(s))
+		s.update(allele_topology_audit(tree.get("tree_newick", ""), haps, lineage, tree["tree_status"] == "complete"))
+		if lineage == "Denisovan":
+			s.update(ils_probability=None, ils_model="not_parameterized_for_Denisovan")
+		summaries.append(s)
+		trees.append(t)
+		for detail in details:
+			d = dict(
+				detail,
+				lineage=lineage,
+				tree_bootstrap=s["tree_bootstrap"],
+				tree_pass=int(s["tree_pass"] and detail["role"] == "risk"),
+				call=s["status"] if detail["role"] == "risk" else detail["call"],
+			)
+			comparisons = []
+			for ref in refs:
+				pairs = [(x, y) for x, y in zip(sequences[d["hap_id"]], arch[ref]) if x in BASES and y in BASES]
+				nc = len(pairs)
+				nm = sum(x == y for x, y in pairs)
+				comparisons.append((nm / nc if nc else 0, nc, nm, ref))
+			prop, nc, nm, ref = max(comparisons)
+			d.update(archaic=ref, n_compared=nc, n_match=nm, prop_match=prop)
+			rows.append(d)
+	return summaries, trees, rows
+
+
+def phyml_gwas_main():
+	p = argparse.ArgumentParser(description=__doc__)
+	for name in ("lead-table", "loci", "vcf-dir", "archaic-root", "sample-file", "out"):
+		p.add_argument("--" + name, type=Path, required=True)
+	p.add_argument("--dataset", default="1kg")
+	p.add_argument("--action", choices=["run", "match", "check"], default="run")
+	p.add_argument("--plot-phy", choices=["TRUE", "FALSE"], default="TRUE")
+	p.add_argument("--timeout", type=int, default=7200)
+	p.add_argument("--cpus", type=int, default=4)
+	p.add_argument("--x-male-only", action="store_true")
+	p.add_argument("--x-par-diploid", action="store_true")
+	a = p.parse_args()
+	if not (a.dataset == "1kg" or a.dataset.startswith(("ukb-", "1kg-subset-"))):
+		raise ValueError(
+			"PhyML supports 1KG EUR LD or an explicitly selected UKB cohort"
+		)
+	names = [line.split()[3] for line in a.loci.read_text().splitlines() if line.strip() and not line.startswith("#")]
+	rows = [r for r in read(a.lead_table) if r["locus_id"] in names]
+	if len(rows) != 1 or len(names) != 1:
+		raise ValueError("Each worker requires exactly one original GWAS lead")
+	if a.action == "check":
+		print("[GU PHYML] original lead, " + ("selected UKB cohort" if a.dataset.startswith("ukb-") else "1KG EUR") + " LD and recurrent-haplotype workflow configured")
+		return
+	a.out.mkdir(parents=True, exist_ok=True)
+	lock_root = Path("/tmp/gu-locks")
+	lock_root.mkdir(parents=True, exist_ok=True)
+	with (lock_root / (hashlib.sha256(str(a.out.resolve()).encode()).hexdigest()[:16] + ".lock")).open("a") as lock:
+		fcntl.flock(lock, fcntl.LOCK_EX)
+		raise SystemExit(run_locus(a, rows[0]))
+
+
+def phyml_gwas_cli():
+	try:
+		phyml_gwas_main()
+	except (OSError, RuntimeError, ValueError) as e:
+		print(f"ERROR: {e}", file=sys.stderr)
+		sys.exit(1)
+
+
+# 🚩 phyml_report
+"""Report predefined GWAS risk cores and cross-check their carriers with IBDmix."""
+import argparse, hashlib, json, os, sqlite3
+from pathlib import Path
+from collections import defaultdict
+from datetime import datetime, timezone
+
+dl = load_module("introgression_review.py")
+from gu_introgression_review import write_tsv, atomic_text, coverage, union
+
+
+def local_path(value):
+	value = value or ""
+	if os.name == "nt" and str(value).startswith("/mnt/"):
+		return Path(str(value)[5] + ":" + str(value)[6:])
+	return Path(value)
+
+
+def validate(copies, con, threshold=0.8):
+	"""Same sample and actual tract; TRACE supports unknown ancestry, not lineage."""
+	con.row_factory = sqlite3.Row
+	runs = {
+		(r["dataset_id"], r["genome_build"], dl.dual_lead_chrom(r["chr"]), r["method"]): dict(r)
+		for r in con.execute("SELECT * FROM method_runs")
+	}
+	for unit, run in runs.items():
+		path = local_path(run.get("raw_file", ""))
+		if not path.is_file():
+			continue
+		text = path.read_text(errors="replace").replace("\\t", "\t")
+		# A chromosome-level completion row must not turn an uncovered locus
+		# into a negative when only a subset of that chromosome was analyzed.
+		if any(line.startswith(("loci_file\t", "loci\t")) for line in text.splitlines()):
+			bed = path.parent / "request.loci.analysis.bed"
+			run["_scope"] = []
+			if bed.is_file():
+				for line in bed.read_text().splitlines():
+					fields = line.split()
+					if len(fields) >= 3 and dl.dual_lead_chrom(fields[0]) == unit[2]:
+						run["_scope"].append((int(fields[1]), int(fields[2])))
+		if unit[3] == "ibdmix":
+			meta = dict(line.split("\t", 1) for line in text.splitlines() if "\t" in line)
+			refs = [ref for ref in meta.get("refs", "").split() if reference_role(ref) == "scientific_reference"]
+			run["_male_nonpar"] = meta.get("x_mode") == "male_haploid_nonpar"
+			run["_tested_lineages"] = set()
+			if set(refs) & {"Altai", "Vindija", "Chagyr", "Chagyrskaya"}:
+				run["_tested_lineages"].add("Neanderthal")
+			if any("denis" in ref.lower() for ref in refs) and (
+				meta.get("background_filter") == "0" or meta.get("export_denisovan") == "1"
+			):
+				run["_tested_lineages"].add("Denisovan")
+			chrom = unit[2]
+			scope = ("X_MALE" if "male_haploid_nonpar" in text else "X_PAR") if chrom == "X" else "C" + chrom
+			for roster in (path.parent / "samples" / scope / "ALL.txt", path.parent / "samples" / "ALL.txt"):
+				if roster.is_file():
+					run["_tested_samples"] = set(roster.read_text().split())
+					break
+		if unit[3] == "trace":
+			sm = path.parent / "samples/trace_sample_map.tsv"
+			if sm.is_file():
+				nodes = path.parent / "samples/tree_nodes.txt"
+				chosen = set(nodes.read_text().split()) if nodes.is_file() else None
+				run["_tested_copies"] = {
+					str(r["sample"]) + ":" + str(r["haplotype"])
+					for r in dl.rows(sm)
+					if chosen is None or str(r["tree_node_id"]) in chosen
+				}
+	windows = defaultdict(list)
+	for c in copies:
+		windows[(c["dataset_id"], c["genome_build"], c["chr"])].append((c["candidate_start"], c["candidate_end"]))
+	segments = defaultdict(list)
+	for unit, ww in windows.items():
+		seen = set()
+		for st, en in union(ww):
+			for r in con.execute(
+				"SELECT * FROM segments WHERE dataset_id=? AND genome_build=? AND chr=? AND method IN ('ibdmix','trace') AND start<? AND end>?",
+				(*unit, en, st),
+			):
+				r = dict(r)
+				if not scientific_segment(r):
+					continue
+				key = tuple(r.values())
+				if key in seen:
+					continue
+				seen.add(key)
+				segments[(*unit, r["sample_id"], r["method"])].append(r)
+	result = []
+	for c in copies:
+		unit = (c["dataset_id"], c["genome_build"], c["chr"])
+		interval = (c["candidate_start"], c["candidate_end"])
+		for method in ["ibdmix", "trace"]:
+			run = runs.get((*unit, method), {})
+			complete = run.get("status") == "complete"
+			in_scope = "_scope" not in run or coverage(interval, run["_scope"])["union_fraction"] >= 1 - 1e-9
+			in_panel = (
+				("_tested_copies" not in run or c["sample_id"] + ":" + str(c["haplotype"]) in run["_tested_copies"])
+				and ("_tested_samples" not in run or c["sample_id"] in run["_tested_samples"])
+				and (method != "ibdmix" or c["lineage"] in run.get("_tested_lineages", set()))
+			)
+			compared = complete and in_scope and in_panel
+			eligible = compared and dl.dual_lead_truth(run.get("evidence_eligible"))
+			pool = segments.get((*unit, c["sample_id"], method), [])
+			pool = [s for s in pool if method == "trace" or s["source_class"] == c["lineage"]]
+			samephase = [s for s in pool if str(s.get("haplotype")) == str(c["haplotype"])] if method == "trace" else []
+			best_tract = max((s for s in pool if min(interval[1], s["end"]) > max(interval[0], s["start"])), key=lambda s: min(interval[1], s["end"]) - max(interval[0], s["start"]), default={})
+			m = coverage(interval, [(s["start"], s["end"]) for s in pool])
+			p = coverage(interval, [(s["start"], s["end"]) for s in samephase])
+			result.append(
+				dict(
+					c,
+					method=method,
+					matching_tract_start=best_tract.get("start"),
+					matching_tract_end=best_tract.get("end"),
+					matching_tract_reference=best_tract.get("source"),
+					ld_span_bp=interval[1]-interval[0],
+					method_complete=int(complete),
+					comparison_available=int(compared),
+					evidence_eligible=int(eligible),
+					scope_status="in_scope" if in_scope else "outside_or_unknown_run_scope",
+					panel_status="included_or_panel_not_recorded" if in_panel else "not_in_method_sample_map",
+					availability_note=run.get("availability_note", "no_completed_run"),
+					coverage_threshold=threshold,
+					overlap_fraction=m["best_single_fraction"] if complete or pool else None,
+					union_fraction=m["union_fraction"] if complete or pool else None,
+					overlap_pass=int(m["best_single_fraction"] >= threshold) if compared else None,
+					phase_overlap_pass=int(p["best_single_fraction"] >= threshold)
+					if compared and method == "trace"
+					else None,
+					phase_note=("same_male_nonpar_X_copy;LOD_uncalibrated" if run.get("_male_nonpar") else "same_sample_only_unphased")
+					if method == "ibdmix"
+					else "same_sample_and_stored_haplotype_index",
+					lineage_note="same_lineage" if method == "ibdmix" else "ghost_unknown_not_lineage_validation",
+					callability_note="individual_callable_bases_not_available",
+				)
+			)
+	return result, runs
+
+
+def attach_validation(rows, validation, runs, by_hap=False):
+	grouped = defaultdict(list)
+	for v in validation:
+		grouped[v["candidate_id"] if by_hap else (v["locus_key"], v["lineage"])].append(v)
+	for row in rows:
+		rr = grouped[row.get("candidate_id") if by_hap else (row["locus_key"], row["lineage"])]
+		for method in ["ibdmix", "trace"]:
+			run = runs.get((row["dataset_id"], row["genome_build"], row["chr"], method), {})
+			candidates = [v for v in rr if v["method"] == method]
+			vv = [v for v in candidates if v.get("comparison_available", 1)]
+			complete = run.get("status") == "complete"
+			seen = {v["sample_id"] for v in vv}
+			passing = {v["sample_id"] for v in vv if v["overlap_pass"] == 1}
+			any_overlap = {v["sample_id"] for v in vv if (v.get("overlap_fraction") or 0) > 0}
+			status = (
+				"not_run"
+				if not complete
+				else "no_candidate_to_test"
+				if not candidates
+				else "not_evaluable_scope_or_panel"
+				if not vv
+				else "exploratory"
+				if not dl.dual_lead_truth(run.get("evidence_eligible"))
+				else "overlap_detected"
+				if passing
+				else "partial_overlap"
+				if any_overlap
+				else "not_detected"
+			)
+			row.update(
+				{
+					method + "_status": status,
+					method + "_individuals": len(seen) if complete and vv else None,
+					method + "_unassessed_copies": len(candidates) - len(vv) if complete else None,
+					method + "_any_overlap_individuals": len(any_overlap) if complete and vv else None,
+					method + "_supported_individuals": len(passing) if complete and vv else None,
+					method + "_support_fraction": len(passing) / len(seen) if complete and seen else None,
+					method + "_supported_copies": sum(v["phase_overlap_pass"] == 1 for v in vv)
+					if method == "trace" and complete and vv
+					else None,
+					method + "_candidate_copies": len(vv) if complete and vv else None,
+				}
+			)
+
+
+
+def locus_stage_fields(row):
+	status = row.get("status", row.get("call", "not_evaluable"))
+	complete = status in ("tree_supported", "tree_not_supported")
+	n = int(float(row.get("n_sites") or 0))
+	return dict(input_status="lead_unresolved" if status in ("lead_absent_or_ambiguous", "lead_allele_mismatch") else "lead_resolved" if row.get("risk_allele") else "unknown",
+		ld_status="insufficient" if status == "insufficient_high_LD_markers" else "defined" if row.get("core_kb") else "not_evaluated",
+		alignment_status="risk_nonrisk_unresolved" if status == "risk_nonrisk_sequence_unresolved" else "retained" if n else "not_available",
+		tree_run_status="complete" if complete else "failed" if status == "tree_failed" else "not_run",
+		topology_status="supported" if status == "tree_supported" else "not_supported" if complete else "not_evaluated",
+		sequence_qc="archaic_references_identical" if str(row.get("unique_archaic_sequences")) == "1" else "adequate" if n >= 10 else "low_information" if n else "not_available",
+		probability_calibrated=0)
+
+
+
+def local_map_audit(row):
+	"""Optional explicitly documented X map; never substitute zero male recombination."""
+	result = dict(local_genetic_length_cm=None, genetic_map_status="not_supplied", genetic_map_sex_convention="unknown")
+	path = os.environ.get("PHYML_X_GENETIC_MAP", "")
+	if str(row.get("chr")) != "X" or not path or not row.get("core_kb"):
+		return result
+	convention = os.environ.get("PHYML_X_MAP_SEX_CONVENTION", "")
+	if convention not in ("sex_averaged", "female_meiosis", "historical_X"):
+		raise ValueError("Set PHYML_X_MAP_SEX_CONVENTION to sex_averaged, female_meiosis or historical_X")
+	points = sorted((int(r["pos"]), float(r["cM"])) for r in read(Path(path)) if str(r["chr"]).lower().removeprefix("chr") in ("x", "23"))
+	if len(points) < 2 or any(b[0] <= a[0] or b[1] < a[1] or not math.isfinite(b[1]) for a,b in zip(points, points[1:])) or not math.isfinite(points[0][1]):
+		raise ValueError("X genetic map requires unique positions and finite nondecreasing cM")
+	result.update(genetic_map_sex_convention=convention, genetic_map_source=str(Path(path).resolve()), genetic_map_sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest())
+	left, right = int(row["core_start"]) + 1, int(row["core_end"])
+	if left < points[0][0] or right > points[-1][0]:
+		result["genetic_map_status"] = "outside_map_no_extrapolation"
+		return result
+	from bisect import bisect_left
+	def interpolate(pos):
+		i = bisect_left([p[0] for p in points], pos)
+		if points[i][0] == pos: return points[i][1]
+		p, q = points[i-1], points[i]
+		return p[1] + (q[1]-p[1]) * (pos-p[0]) / (q[0]-p[0])
+	result.update(local_genetic_length_cm=interpolate(right)-interpolate(left), genetic_map_status="LD_span_only_not_shared_tract", genetic_map_coordinate_system="1-based;GRCh37")
+	return result
+
+
+def saved_locus_audit(path, row):
+	loc = path.parent.parent / "loci"
+	read_saved = lambda p: read(p) if p.is_file() and p.stat().st_size else []
+	sites, ld, haps = read_saved(loc / "sites.tsv"), read_saved(loc / "ld.tsv"), read_saved(loc / "haplotypes.tsv")
+	arch = {r["archaic"]: r["seq"] for r in read_saved(loc / "archaic.tsv")}
+	anc = read_saved(loc / "ancestral.tsv")
+	positions = {int(r["pos"]) for r in sites}
+	high = [r for r in ld if str(r.get("core_marker")) == "1"]
+	markers = sorted(int(r["pos"]) for r in high)
+	result = {}
+	lineage = row.get("lineage", "Neanderthal")
+	lineage = "Denisovan" if lineage == "Denisova" else lineage
+	saved_trees = read_saved(path.parent / "evidence_trees.tsv")
+	tree = next((t for t in saved_trees if t.get("expected_lineage", t.get("candidate_lineage")) == lineage), {})
+	result.update(allele_topology_audit(tree.get("tree_newick", ""), haps, lineage, tree.get("tree_status") == "complete"))
+	receipt = path.parent.parent / '.phyml.locus.complete.json'
+	if receipt.is_file() and not row.get('n_panel') and str(row.get('chr')) != 'X':
+		request = json.loads(receipt.read_text()).get('request', {})
+		male = str(request.get('environment', {}).get('GU_CHRX_MALE_ONLY', '')).upper() in ('1', 'TRUE')
+		wanted = ('chrX.male' if str(row.get('chr')) == 'X' and male else 'chr' + str(row.get('chr'))) + '.psam'
+		for filename, stamp in request.get('sources', {}).items():
+			original = Path(filename)
+			if original.name != wanted: continue
+			candidates = [original]
+			if '/1kg/' in filename:
+				candidates.append(Path(os.environ.get('GU_REF_ROOT', '/mnt/f/gen')) / '1kg' / filename.split('/1kg/', 1)[1])
+			for source in candidates:
+				try:
+					stat = source.stat()
+				except OSError:
+					continue
+				if [stat.st_size, stat.st_mtime_ns] != stamp: continue
+				with source.open() as handle:
+					header = handle.readline().split()
+					ids = [line.split()[header.index('IID') if 'IID' in header else header.index('#IID')] for line in handle if line.strip()]
+				result.update(n_panel=len(set(ids)), n_panel_copies=len(set(ids)) * (1 if male else 2), panel_count_source='verified_saved_psam_fingerprint')
+				if male: result['x_mode'] = 'male_haploid_nonpar'
+				break
+	if sites:
+		result.update(lead_retained_for_tree=int(int(row["lead_pos"]) in positions), high_ld_sites_retained_for_tree=sum(p in positions for p in markers))
+	if ld:
+		result["high_ld_max_gap_bp"] = max((b-a for a,b in zip(markers, markers[1:])), default=0)
+	if haps:
+		result["n_recurrent_copies"] = sum(int(r["n"]) for r in haps)
+		if row.get("n_singleton_copies") not in (None, ""):
+			result["n_lead_called_copies"] = result["n_recurrent_copies"] + int(row["n_singleton_copies"])
+			if result.get("x_mode", row.get("x_mode")) == "male_haploid_nonpar": result["n_lead_called"] = result["n_lead_called_copies"]
+		# This is a called-copy denominator, never an invented input panel count.
+	if arch and all(ref in arch for ref in REFS):
+		result["unique_archaic_sequences"] = len(set(arch.values()))
+		result["all_archaic_different_sites"] = sum(len(set(col)) > 1 for col in zip(*arch.values()))
+		result["neanderthal_vs_denisovan_fixed_differences"] = sum(len({arch[r][i] for r in LINEAGE_REFS["Neanderthal"]}) == 1 and len({arch[r][i] for r in LINEAGE_REFS["Denisovan"]}) == 1 and arch["Altai"][i] != arch["Denisova"][i] for i in range(min(map(len, arch.values()))))
+	if anc and sites:
+		ancestor = dict(zip([int(r["pos"]) for r in sites], anc[0]["seq"]))
+		result["ld_ancestral_risk_matches_retained"] = sum(ancestor.get(int(r["pos"]), "N") == r.get("risk_linked_allele") for r in high)
+	result["site_qc_file"] = str(loc / "site_qc.tsv") if (loc / "site_qc.tsv").is_file() else ""
+	result["site_missingness_audit"] = "recorded" if (loc / "site_qc.tsv").is_file() else "unknown_historical_per_reference_calls_not_saved"
+	result["ld_span_bp"] = int(row["core_end"]) - int(row["core_start"]) if row.get("core_kb") else None
+	result["archaic_shared_tract_bp"] = None
+	result["ils_statistic_scope"] = "LD_span_sensitivity_only;not_shared_tract_evidence"
+	result.update(local_map_audit(row))
+	result.update(locus_stage_fields(dict(row, **result)))
+	return result
+
+
+def gwas_rows(path):
+	summaries = read(path)
+	details = read(path.with_name("gwas_haplotypes.tsv"))
+	copies = read(path.with_name("gwas_copies.tsv"))
+	summaries = [s for s in summaries if s.get("locus_id")]
+	result = []
+	all_details = []
+	all_copies = []
+	for s in summaries:
+		s = dict(s)
+		s.update(saved_locus_audit(path, s))
+		lineage = s.get("lineage") or "Neanderthal"
+		if lineage == "Denisova":
+			lineage = "Denisovan"
+		for key in (
+			"core_start",
+			"core_end",
+			"lead_pos",
+			"tree_pass",
+			"n_candidate_haplotypes",
+			"n_candidate_copies",
+			"n_sites",
+			"n_ld_sites",
+		):
+			if s.get(key) not in (None, ""):
+				s[key] = int(s[key])
+		key = hashlib.sha256(
+			"|".join(
+				str(s.get(k, "")) for k in ("dataset_id", "genome_build", "locus_id", "core_start", "core_end")
+			).encode()
+		).hexdigest()[:20]
+		s.update(
+			locus_key=key,
+			lineage=lineage,
+			core_interval=f"{s['core_start'] + 1}–{s['core_end']}" if s.get("core_kb") else "未定义",
+			ld_rule="> 0.98 (" + s.get("ld_population", "1KG EUR") + ")",
+			risk_haplotypes=f"{s['n_candidate_haplotypes']} / {s['n_candidate_copies']}"
+			if s.get("n_candidate_haplotypes") not in (None, "")
+			else None,
+		)
+		result.append(s)
+		for d in details:
+			if d.get("locus_id") != s["locus_id"] or d.get("lineage", "Neanderthal") != lineage:
+				continue
+			d = dict(d, lineage=lineage, locus_key=key, candidate_id=f"{key}|{lineage}|{d['hap_id']}")
+			all_details.append(d)
+			if d["role"] == "risk":
+				for c in copies:
+					if (
+						c.get("locus_id") != s["locus_id"]
+						or c.get("hap_id") != d["hap_id"]
+						or c.get("lineage", "Neanderthal") != lineage
+					):
+						continue
+					all_copies.append(
+						dict(
+							c,
+							dataset_id=s["dataset_id"],
+							genome_build=s["genome_build"],
+							chr=s["chr"],
+							locus_key=key,
+							lineage=lineage,
+							candidate_id=d["candidate_id"],
+							candidate_start=s["core_start"],
+							candidate_end=s["core_end"],
+						)
+					)
+	return result, all_details, all_copies
+
+
+def phyml_report_main():
+	ap = argparse.ArgumentParser(description=__doc__)
+	ap.add_argument("--normalize", required=True, type=Path)
+	ap.add_argument("--database", required=True, type=Path)
+	ap.add_argument("--output", required=True, type=Path)
+	ap.add_argument("--loci", type=Path)
+	args = ap.parse_args()
+	summary = []
+	details = []
+	copies = []
+	files = []
+	trees = []
+	for path in sorted((args.normalize / "phyml").glob("**/final/gwas_loci.tsv")):
+		ss, dd, cc = gwas_rows(path)
+		summary += ss
+		details += dd
+		copies += cc
+		files.extend(path.parent.glob("gwas_*.tsv"))
+		trees += read(path.with_name("evidence_trees.tsv"))
+	with sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True) as con:
+		validation, runs = validate(copies, con)
+	attach_validation(summary, validation, runs)
+	attach_validation(details, validation, runs, True)
+	out = args.output
+	out.mkdir(parents=True, exist_ok=True)
+	for name, rr in [
+		("phyml_locus_report", summary),
+		("phyml_haplotype_report", details),
+		("phyml_copy_validation", validation),
+		("phyml_lineage_trees", trees),
+	]:
+		write_tsv(out / (name + ".tsv"), rr)
+	# This generated report no longer has two competing lead roles.
+	(out / "phyml_lead_report.tsv").unlink(missing_ok=True)
+	atomic_text(
+		out / "phyml_report_manifest.json",
+		json.dumps(
+			dict(
+				created_utc=datetime.now(timezone.utc).isoformat(),
+				workflow="gwas_lead_ld_core",
+				n_loci=len({r["locus_key"] for r in summary}),
+				n_lineage_tests=len(summary),
+				n_haplotype_rows=len(details),
+				ld_population=sorted({r.get("ld_population", "1KG EUR") for r in summary}),
+				ld_rule="r2 > 0.98",
+				risk_definition="COJO refA and bJ; original lead retained",
+				coverage_threshold=0.8,
+				validation_denominator="all recurrent risk-haplotype carriers, regardless of tree support; individuals counted once",
+				tree_support_note="per-lineage predefined risk+archaic split, bootstrap >=70; not a high-confidence introgression classification",
+				input_files=[
+					dict(path=str(p), sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(set(files))
+				],
+			),
+			indent=2,
+		),
+	)
+	print(
+		f"PhyML GWAS report ready: {len({r['locus_key'] for r in summary})} original leads, {len(summary)} lineage tests, {len(details)} recurrent haplotype rows",
+		flush=True,
+	)
+
+
+def phyml_report_cli():
+	phyml_report_main()
+
+
+# 🚩 Archived GWAS audit: validate existing results without fitting trees.
+import gzip
+import io
+import tarfile
+
+TABLES = ("final/gwas_loci.tsv", "final/evidence_trees.tsv", "loci/haplotypes.tsv",
+	"loci/ld.tsv", "loci/site_qc.tsv", "loci/archaic.tsv")
+TREE_PREFIX = "loci/haplotypes.phy"
+PRODUCTS = (TREE_PREFIX + "_phyml_tree.txt", TREE_PREFIX + "_phyml_boot_trees.txt",
+	TREE_PREFIX + ".phyml.log", "final/gwas_parameters.json", "GU-MANIFEST.json")
+
+
+def archive_tables(path):
+	"""Read each gzip stream once; validate the exact members used by the audit."""
+	data = {}
+	with tarfile.open(path, "r|gz") as archive:
+		for member in archive:
+			if member.isfile() and member.name in TABLES + PRODUCTS:
+				if member.name in data:
+					raise ValueError(f"duplicate archive member: {path}: {member.name}")
+				data[member.name] = archive.extractfile(member).read()
+	manifest = json.loads(data.get("GU-MANIFEST.json", b"{}"))
+	checks = {r["path"]: r for r in manifest.get("files", [])}
+	for name, blob in data.items():
+		if checks and name != "GU-MANIFEST.json" and name not in checks:
+			raise ValueError(f"unlisted archive member: {path}: {name}")
+		if name in checks and hashlib.sha256(blob).hexdigest() != checks[name]["sha256"]:
+			raise ValueError(f"archive checksum mismatch: {path}: {name}")
+	tables = {name: list(csv.DictReader(io.StringIO(data.get(name, b"").decode()), delimiter="\t")) for name in TABLES}
+	return tables, {k: v.decode() for k, v in data.items() if k not in TABLES}, bool(checks)
+
+
+def affinity_edges(p, newick, haps, lineage):
+	"""Exploratory pure-lineage edges, explicitly NOT genome-wide positive calls.
+
+	Unlike the predefined whole-allele test, these can contain subsets of modern
+	haplotypes and reference genomes. Scanning edges needs independent evidence.
+	"""
+	root = p.parse_newick(newick)
+	edges = []
+	def visit(node):
+		tips = {node.label} if not node.children else set().union(*(visit(c) for c in node.children))
+		edges.append((node, tips))
+		return tips
+	all_tips = visit(root)
+	modern = {h["hap_id"] for h in haps}
+	refs = set(p.LINEAGE_REFS[lineage])
+	roles = {h["hap_id"]: h["role"] for h in haps}
+	found = {}
+	for node, tips in edges:
+		if node is root or node.support is None or node.support < 70: continue
+		for side in (tips, all_tips - tips):
+			m = side & modern
+			if not m or not side & refs or not modern - side or side - (modern | refs): continue
+			key = ",".join(sorted(side))
+			if key in found and found[key]["bootstrap"] >= node.support: continue
+			found[key] = dict(bootstrap=node.support, tips=key, modern_tips=",".join(sorted(m)),
+				archaic_tips=",".join(sorted(side & refs)), n_risk=sum(roles[h] == "risk" for h in m),
+				n_nonrisk=sum(roles[h] == "nonrisk" for h in m),
+				evidence="exploratory_affinity_only;not_introgression_call;edge_scan_not_multiplicity_calibrated")
+	return list(found.values())
+
+
+def audit(p, dataset, leads):
+	summary, affinities, reference_qc, provenance = [], [], [], []
+	seen = set()
+	for index, archive in enumerate(sorted(dataset.glob("chr*/phyml.raw.tar.gz")), 1):
+		t, raw, checksummed = archive_tables(archive)
+		ss = t["final/gwas_loci.tsv"]
+		if not ss: continue
+		lid = ss[0]["locus_id"]
+		if lid not in leads: continue
+		if len(ss) != 2 or {r.get("lineage") for r in ss} != set(p.LINEAGE_REFS):
+			raise ValueError(f"missing or duplicate lineage summaries: {archive}")
+		if lid in seen: raise ValueError(f"duplicate analysis for {lid}")
+		seen.add(lid)
+		haps, ld, qc = (t[n] for n in ("loci/haplotypes.tsv", "loci/ld.tsv", "loci/site_qc.tsv"))
+		arch = {r["archaic"]: r["seq"] for r in t["loci/archaic.tsv"]}
+		for ref in p.REFS:
+			for reason, count in Counter(r.get(ref + "_callability", "unknown") for r in qc).items():
+				reference_qc.append(dict(locus_id=lid, reference=ref, reason=reason, n_sites=count))
+		for source in ss:
+			s = dict(source)
+			lineage = s.get("lineage", "Neanderthal")
+			tree = next((r for r in t["final/evidence_trees.tsv"] if r.get("expected_lineage") == lineage), {})
+			complete = tree.get("tree_status") == "complete"
+			nw = tree.get("tree_newick", "")
+			if s["status"] in ("tree_supported", "tree_not_supported") and not complete:
+				raise ValueError(f"saved decision without a complete tree: {archive} {lineage}")
+			if complete:
+				log = raw.get(TREE_PREFIX + ".phyml.log", "")
+				boot = raw.get(TREE_PREFIX + "_phyml_boot_trees.txt", "").splitlines()
+				if (raw.get(TREE_PREFIX + "_phyml_tree.txt", "").strip() != nw.strip()
+					or len([x for x in boot if x.strip().endswith(";")]) != 100
+					or "Time used" not in log or "Cannot work out eigen vectors" in log):
+					raise ValueError(f"incomplete or inconsistent saved tree: {archive}")
+				strict = p.risk_clade(nw, {h["hap_id"] for h in haps if h["role"] == "risk"},
+					{h["hap_id"] for h in haps}, p.LINEAGE_REFS[lineage])
+				strict_pass = bool(strict and strict["bootstrap"] is not None and strict["bootstrap"] >= 70)
+				if strict_pass != (str(s["tree_pass"]) == "1"):
+					raise ValueError(f"saved risk decision disagrees with tree: {lid} {lineage}")
+				affinities.extend(dict(locus_id=lid, lineage=lineage, **edge) for edge in affinity_edges(p, nw, haps, lineage))
+			s.update(p.allele_topology_audit(nw, haps, lineage, complete))
+			s.update(p.locus_stage_fields(s))
+			s.update(archive=str(archive), archive_members_checksummed=int(checksummed),
+				ld_markers_r2_gt_08=sum(float(r.get("ld_r2") or 0) > 0.8 for r in ld),
+				ld_markers_r2_gt_098=sum(r.get("core_marker") == "1" for r in ld),
+				n_core_qc_sites=len(qc) if qc else None,
+				all5_callable=sum(r.get("retained_alignment") == "1" for r in qc) if qc else None,
+				nea3_callable=sum(all(r.get(ref + "_base") in p.BASES for ref in p.LINEAGE_REFS["Neanderthal"]) for r in qc) if qc else None,
+				lead_nea3_callable=next((int(all(r.get(ref + "_base") in p.BASES for ref in p.LINEAGE_REFS["Neanderthal"])) for r in qc if r.get("lead") == "1"), None),
+				unique_archaic_sequences=len(set(arch.values())) if arch else None,
+				sequence_resolution="all_archaics_identical" if arch and len(set(arch.values())) == 1 else "see_site_qc")
+			summary.append(s)
+		provenance.append(dict(locus_id=lid, archive=str(archive), archive_sha256=p.phyml_run_digest(archive)))
+		if index % 100 == 0: print(f"[GU AUDIT] {index} archives checked", flush=True)
+	for lid in sorted(set(leads) - seen):
+		for lineage in p.LINEAGE_REFS:
+			summary.append(dict(leads[lid], lineage=lineage, status="no_saved_result", tree_run_status="not_run", tree_pass=None))
+	return summary, affinities, reference_qc, provenance
+
+
+def refresh_report(p, path, summary, output):
+	"""Update diagnostic columns only, retaining original calls and validation."""
+	data = p.read(path)
+	key = lambda r: (r.get("dataset_id"), r["locus_id"], r["lineage"])
+	audit_rows = {key(r): r for r in summary if r.get("dataset_id")}
+	fields = list(p.allele_topology_audit("", [], "Neanderthal")) + list(p.locus_stage_fields({}))
+	updated = 0
+	for row in data:
+		s = audit_rows.get(key(row))
+		if s is None: continue
+		if row.get("status", row.get("call")) != s["status"] or str(row["tree_pass"]) != str(s["tree_pass"]):
+			raise ValueError("Report differs from archived results; run final first: " + str(key(row)))
+		row.update({k: s.get(k) for k in fields})
+		updated += 1
+	if updated != len(audit_rows): raise ValueError("Report is missing audited locus/lineage rows")
+	before = output / "report_before.tsv.gz"
+	if not before.exists():
+		with gzip.open(before, "wb") as handle: handle.write(path.read_bytes())
+	p.write(path, data)
+	return dict(path=str(path), updated_rows=updated, sha256=p.phyml_run_digest(path))
+
+
+def phyml_audit_main(p):
+	parser = argparse.ArgumentParser(description=__doc__)
+	parser.add_argument("--dataset-dir", type=Path, required=True)
+	parser.add_argument("--lead-table", type=Path, required=True)
+	parser.add_argument("--output", type=Path, required=True)
+	parser.add_argument("--refresh-report", type=Path, help="Explicitly refresh diagnostic fields in an existing report; preserve risk calls")
+	a = parser.parse_args()
+	leads = {r["locus_id"]: r for r in p.read(a.lead_table)}
+	summary, affinities, qc, provenance = audit(p, a.dataset_dir, leads)
+	a.output.mkdir(parents=True, exist_ok=True)
+	stages = [dict(lineage=lineage, status=status, n_loci=n) for (lineage, status), n in sorted(Counter((r["lineage"], r["status"]) for r in summary).items())]
+	supported = [r for r in summary if r.get("either_allele_tree_pass") == 1]
+	input_audit = a.lead_table.parent / "input.audit.tsv"
+	tables = dict(stages=stages, loci=summary, allele_tree_support=supported, exploratory_edges=affinities, reference_qc=qc,
+		input_exclusions=p.read(input_audit) if input_audit.is_file() else [])
+	for name, data in tables.items(): p.write(a.output / (name + ".tsv"), data)
+	manifest = dict(lead_table=str(a.lead_table), lead_table_sha256=p.phyml_run_digest(a.lead_table), n_leads=len(leads),
+		method_source="https://www.nature.com/articles/s41586-020-2818-3", code_sha256=p.phyml_run_digest(Path(__file__)),
+		phyml_code_sha256=p.phyml_run_digest(Path(p.__file__)),
+		note="No trees refitted. Whole-allele support and exploratory affinity are not confirmed introgression. LD 0.8 is a sensitivity count only; original threshold remains >0.98.",
+		stages=stages, sources=provenance)
+	if a.refresh_report: manifest["report_refresh"] = refresh_report(p, a.refresh_report, summary, a.output)
+	(a.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+	# Use the repository's lossless workbook writer, with exact TSV attachments.
+	numeric = {"bootstrap", "tree_pass", "tree_bootstrap", "nonrisk_tree_pass", "nonrisk_tree_bootstrap",
+		"either_allele_tree_pass", "all5_callable", "nea3_callable", "lead_nea3_callable", "unique_archaic_sequences",
+		"core_start", "core_end", "lead_pos", "core_kb"}
+	spec = dict(tables=[], metadata=dict(method=manifest["note"]))
+	for name in tables:
+		path = a.output / (name + ".tsv")
+		with path.open() as handle: fields = next(csv.reader(handle, delimiter="\t"))
+		spec["tables"].append(dict(name=name, path=str(path.resolve()),
+			types=["numeric" if k in numeric or k.startswith(("n_", "ld_markers_")) else "character" for k in fields]))
+	job = a.output / "workbook.json"
+	job.write_text(json.dumps(spec))
+	writer = Path(__file__).resolve().parents[2] / "0f/results.py"
+	subprocess.run([p.sys.executable, str(writer), "stream-workbook", str(job), str(a.output / "phyml_audit.xlsx")], check=True)
+	print(json.dumps(dict(n_leads=len(leads), supported_allele_tests=len(supported), stages=stages), ensure_ascii=False), flush=True)
+
+
+def phyml_audit_cli():
+	phyml_audit_main(sys.modules[__name__])
+
+
+SUBCOMMANDS = {
+	"input": phyml_gwas_input_cli,
+	"run": phyml_run_cli,
+	"cache": phyml_locus_cache_cli,
+	"gwas": phyml_gwas_cli,
+	"report": phyml_report_cli,
+	"audit": phyml_audit_cli,
+}
+
+
+def main():
+	import sys
+
+	if len(sys.argv) > 1 and sys.argv[1] in SUBCOMMANDS:
+		command = sys.argv.pop(1)
+		return SUBCOMMANDS[command]()
+	if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+		print(__doc__)
+		print("Commands: " + ", ".join(SUBCOMMANDS))
+		return
+	raise SystemExit("Unknown command: " + sys.argv[1])
+
+
+if __name__ == "__main__":
+	main()
