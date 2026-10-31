@@ -1,0 +1,52 @@
+{
+  "validated_at": "2026-10-31T00:07:18.7887063+08:00",
+  "tests": {
+    "skipped": 0,
+    "count": 60,
+    "native_kraken": true,
+    "passed": 60,
+    "log": "tests.log",
+    "public_default_e2e": true,
+    "cgroup_oom_isolation": true,
+    "hard_kill_database_resume": true
+  },
+  "defaults": {
+    "memory_limit_gib": 40,
+    "memory_high_gib": 36,
+    "db_gib": 24,
+    "internal_reserve_gib": 8,
+    "minimum_hit_groups": 2,
+    "threads": 16,
+    "host_headroom_gib": 8,
+    "quick": true,
+    "confidence": 0,
+    "swap_gib": 0,
+    "read_reports": false
+  },
+  "production_preflight": {
+    "initial_disk_fits": true,
+    "plan_complete": true,
+    "samples": 466,
+    "production_build_started": false,
+    "memory_fits": true,
+    "references": 35401
+  },
+  "original_files": {
+    "changed": [],
+    "checked": 42
+  },
+  "files_sha256": {
+    "f/global_build.py": "92008b1bbf0183810c162c904bea5a99f0928dbcc0b66df8dee36d2279f1c235",
+    "f/global_limits.py": "84cb7ec7e7e9f67550b8ef2fef7e5fdc0116003b9288ef9da4488b0ea170b79d",
+    "f/global_pipeline.py": "6014cebd896d5261ebe7efcd89e4d63b3a0f6a28aa480993b4a409e11418de6f",
+    "f/global_query.py": "caf75b8c0f2eedd3df71fdabaa4e0c58d86d5091d7ac186546816f71c957913a",
+    "f/global_resources.py": "993817b308eb03bfe96f3ff09594374d0198b97fc14a1a796c104f27b62d31ec",
+    "f/global_split.py": "6707350840d524dfddc4e7cc1eb5987236ba63379e9b5c629a87dbdcf03d4a4c",
+    "3.global.sh": "c8f13a33464c85404db1098cf2fdc030184b63d91b1c29eb0770ed7a4dbbcc29"
+  },
+  "limits": [
+    "Full production database has not yet been built; runtime and biological accuracy remain unmeasured.",
+    "Startup rechecks memory and disk; future resource availability cannot be guaranteed.",
+    "Kraken 2 uses CPU; GPU acceleration is not implemented in this route."
+  ]
+}

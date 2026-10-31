@@ -1,0 +1,32 @@
+name: allele3-evolution
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - bcftools>=1.18
+  - samtools>=1.18
+  - pysam>=0.22
+  - matplotlib>=3.7
+  - numpy>=1.24
+  - scipy>=1.11
+  - pandas>=2.0
+  - pybigwig>=0.3.22
+  - openpyxl>=3.1
+  - plotly>=5.20,<8
+  - plink2
+  - zstandard
+  - repeatmasker=4.2.4
+  - rmblast=2.17.0
+  - famdb=3.0.0
+  - trf=4.10.0rc2
+  - h5py
+  - pip
+  - pip:
+      - pyliftover==0.4.1
+      - pgenlib==0.95.1
+# Shared environment for allele3.sh, 1.pca3D.sh, 2.herv.sh and 3.scan.sh.
+# pandas also supports the included offline cohort review script.
+# Optional online stage only:
+# python -m pip install alphagenome==0.10.0

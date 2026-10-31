@@ -1,0 +1,22 @@
+PLINK v2.0.0-a.7.0LM AVX2 AMD (25 Apr 2026)
+Options in effect:
+  --pgen /mnt/f/gen/1kg/38/pfile/chr22.pgen
+  --pgen-info
+
+Hostname: WIN-QNVME2PTKS9
+Working directory: /mnt/d/scripts/metag
+Start time: Sat Oct 31 11:02:18 2026
+
+Random number seed: 1793415738
+72362 MiB RAM detected, ~57452 available; reserving 36181 MiB for main
+workspace.
+Using up to 32 threads (change this with --threads).
+--pgen-info on /mnt/f/gen/1kg/38/pfile/chr22.pgen:
+  Variants: 1066557
+  Samples: 3202
+  REF alleles are all known
+  Maximum allele count for a single variant: 2
+  Explicitly phased hardcalls present
+  No dosages present
+
+End time: Sat Oct 31 11:02:18 2026

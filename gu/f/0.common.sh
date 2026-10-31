@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+
+# Direct CLI help must return before setup, downloads or analysis.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	case "${1:-}" in
+		-h | --help)
+			cat <<'HELP'
+Modules:
+    Library  Shared functions/configuration; source from the owning entry script
+
+Main options:
+    No standalone analysis options. Read the variables/functions below.
+    -h, --help  Show this library help
+
+Example:
+    source ./0.common.sh
+HELP
+			exit 0
+			;;
+	esac
+fi
+
+
+# Validated local runtime defaults; shell exports may override each setting.
+# Called by the public GU and installer entry points.
+gu_load_config() {
+	export GU_CONDA_BASE=${GU_CONDA_BASE:-/home/huangj/anaconda3}
+	export AS3_PYTHON=${AS3_PYTHON:-$GU_CONDA_BASE/envs/as3_mamba/bin/python}
+	export AS3_PYTHON_VERSION=${AS3_PYTHON_VERSION:-3.11}
+	export AS3_TORCH_VERSION=${AS3_TORCH_VERSION:-2.8.0}
+	export AS3_CUDA_VERSION=${AS3_CUDA_VERSION:-12.8}
+	export AS3_TORCHVISION_VERSION=${AS3_TORCHVISION_VERSION:-0.23.0}
+	export AS3_TARGET_CHUNK_SIZE=${AS3_TARGET_CHUNK_SIZE:-64}
+	export AS3_MEMORY_HIGH=${AS3_MEMORY_HIGH:-20G}
+	export AS3_MEMORY_MAX=${AS3_MEMORY_MAX:-24G}
+	export AS3_MEMORY_SWAP_MAX=${AS3_MEMORY_SWAP_MAX:-8G}
+	export GU_ARCHAIC37_ROOT=${GU_ARCHAIC37_ROOT:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/37/vcf}
+	export AS3_REFERENCE_PANEL_DIR=${AS3_REFERENCE_PANEL_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/vcf}
+	export AS3_REFERENCE_MAP=${AS3_REFERENCE_MAP:-$AS3_REFERENCE_PANEL_DIR/Ref_Panel.map.txt}
+	export AS3_MASK_DIR=${AS3_MASK_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/mask}
+	export AS3_MODEL_DIR=${AS3_MODEL_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/models}
+	export AS3_PUBLISHED_CALLS_DIR=${AS3_PUBLISHED_CALLS_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/database_introgression_call}
+}
+
+# 🚩 0.common
+# Shared GU region parsing. BED coordinates are 0-based, half-open.
+
+gu_normalize_chrs() {
+	local raw=${1:-} token
+	raw=${raw//,/ }
+	for token in $raw; do
+		token=${token#chr}
+		token=${token#CHR}
+		token=${token^^}
+		[[ $token == 23 ]] && token=X
+		case "$token" in
+			[1-9] | 1[0-9] | 2[0-2] | X) printf '%s\n' "$token" ;;
+			*)
+				echo "ERROR: unsupported chromosome in --chr: $token" >&2
+				return 2
+				;;
+		esac
+	done | awk '!seen[$0]++' | paste -sd' ' -
+}
+
+gu_normalize_loci() {
+	local input=${1:?gu_normalize_loci requires INPUT} output=${2:?gu_normalize_loci requires OUTPUT}
+	[[ -s $input ]] || {
+		echo "ERROR: --loci file is missing or empty: $input" >&2
+		return 2
+	}
+	mkdir -p "$(dirname -- "$output")"
+	awk 'BEGIN{FS="[[:space:]]+"; OFS="\t"; bad=0; n=0}
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ {next}
+    {
+      chr=toupper($1); sub(/^CHR/,"",chr); if(chr=="23") chr="X"
+      if(!(chr=="X" || (chr ~ /^[0-9]+$/ && (chr+0)>=1 && (chr+0)<=22))){print "ERROR: invalid chromosome at loci line " NR ": " $1 > "/dev/stderr"; bad=1; next}
+      if($2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ || ($3+0)<=($2+0)){
+        print "ERROR: invalid BED interval at loci line " NR ": " $0 > "/dev/stderr"; bad=1; next
+      }
+      name=(NF>=4 && $4!="" && $4!=".") ? $4 : sprintf("locus_%s_%s_%s",chr,$2,$3)
+      key=chr SUBSEP $2 SUBSEP $3 SUBSEP name
+      if(!seen[key]++){print chr,$2+0,$3+0,name; n++}
+    }
+    END{
+      if(bad) exit 2
+      if(n==0){print "ERROR: no valid loci found" > "/dev/stderr"; exit 2}
+    }' "$input" >"$output"
+}
+
+gu_loci_chrs() {
+	awk 'BEGIN{FS="\t"} $1!~/^#/ && NF>=3 && !seen[$1]++{print $1}' "$1" | paste -sd' ' -
+}
+
+gu_loci_regions_for_chr() {
+	local file=${1:?} chr=${2:?} prefix=${3:-}
+	awk -F'\t' -v chr="$chr" -v prefix="$prefix" '$1==chr{printf "%s%s:%d-%d%s",sep,prefix chr,$2+1,$3;sep=","} END{print ""}' "$file"
+}
+
+gu_scope_id() {
+	local loci=${1:-} chrs=${2:-} name_source=${3:-} base sum
+	if [[ -n $loci ]]; then
+		[[ -n $name_source ]] || name_source=$loci
+		base=$(basename -- "$name_source")
+		base=${base%.*}
+		base=$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')
+		sum=$(cksum <"$loci" | awk '{print $1}')
+		printf 'loci-%s-%s\n' "$base" "$sum"
+	elif [[ -n $chrs ]]; then
+		printf 'chr-%s\n' "$(printf '%s' "$chrs" | tr ' ' '_')"
+	else
+		printf 'genome\n'
+	fi
+}
+
+# Human-readable label for public result directories and log names. The
+# content checksum from gu_scope_id remains in hidden cache paths/provenance.
+gu_scope_label() {
+	local loci=${1:-} chrs=${2:-} name_source=${3:-} base
+	if [[ -n $loci ]]; then
+		[[ -n $name_source ]] || name_source=$loci
+		base=$(basename -- "$name_source")
+		base=${base%.*}
+		base=$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')
+		printf '%s\n' "${base:-loci}"
+	elif [[ -n $chrs ]]; then
+		printf 'chr%s\n' "$(printf '%s' "$chrs" | tr ' ' '_')"
+	else
+		printf 'genome\n'
+	fi
+}
+
+# Build one public result directory per analysis unit.
+gu_require_result_path() {
+	local path
+	path=$(realpath -m -- "${1:?}") || return
+	case "$path" in
+		/tmp | /tmp/* | /var/tmp | /var/tmp/* | /dev/shm | /dev/shm/* | /run | /run/*)
+			echo "ERROR: main GU results require a persistent directory, not $path" >&2
+			return 2 ;;
+	esac
+	printf '%s\n' "$path"
+}
+
+# --dir-out names the result root itself; the postfix is appended to its final
+# component, before canonicalization. Cohort hashes remain provenance, not the
+# public batch directory name.
+gu_result_root() {
+	local target=${1:-1kg} directory=${2:-} postfix=${3:-}
+	[[ -z $postfix || $postfix =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || {
+		echo "ERROR: --postfix must start with a letter, number, '_' or '-' and contain no path separators" >&2
+		return 2
+	}
+	if [[ -z $directory ]]; then
+		directory=/mnt/f/analysis/gu/$target
+	fi
+	# Strip trailing slashes without losing the root-directory check.
+	while [[ $directory == */ && $directory != / ]]; do directory=${directory%/}; done
+	[[ $directory != / ]] || { echo "ERROR: --dir-out must not be /" >&2; return 2; }
+	gu_require_result_path "$directory$postfix"
+}
+
+gu_method_directory() {
+	local method=$1 variable
+	case "$method" in *-GPU) printf '%s\n' "$method"; return ;; esac
+	variable=${method^^}_BACKEND
+	if [[ ${!variable:-cpu} == cuda ]]; then printf '%s-GPU\n' "$method"; else printf '%s\n' "$method"; fi
+}
+
+gu_chr_result_dir() {
+	local analysis_root=${1:?} method=${2:?} unit_label=${3:?}
+	# Argument 4 remains accepted for callers using the historical API. The
+	# selected analysis root already identifies the dataset/cohort.
+	local override=${5:-} request_unit_count=${6:-1} out
+	if [[ -n $override ]]; then
+		out=$override
+		((request_unit_count <= 1)) || out=$out/$unit_label
+	else
+		out=$analysis_root/$(gu_method_directory "$method")/$unit_label
+	fi
+	gu_require_result_path "$out"
+}
+
+gu_locus_unit_label() {
+	local map_file=${1:?} chr=${2:?} core_start=${3:?} core_end=${4:?} locus=${5:?}
+	local safe duplicates
+	safe=$(printf '%s' "$locus" | tr -c 'A-Za-z0-9._-' '_')
+	safe=${safe##_}
+	safe=${safe%%_}
+	[[ -n $safe ]] || safe=locus_${core_start}_${core_end}
+	duplicates=$(awk -F'\t' -v c="$chr" -v l="$locus" 'NR>1&&$1==c&&$6==l{n++}END{print n+0}' "$map_file")
+	if ((duplicates > 1)); then
+		printf 'chr%s_%s_%s_%s\n' "$chr" "$safe" "$core_start" "$core_end"
+	else
+		printf 'chr%s_%s\n' "$chr" "$safe"
+	fi
+}
+
+# Target genotype discovery/validation shared by GU entry points and tests.
+
+# Some published 1KG VCFs declare INFO/AC as Number=1. GU analyses use GT and
+# do not consume INFO/AC, so hide only this htslib header warning while keeping
+# every other bcftools diagnostic visible.
+if GU_BCFTOOLS_BIN=$(type -P bcftools 2>/dev/null); then
+	bcftools() {
+		"$GU_BCFTOOLS_BIN" "$@" 2> >(sed '/^\[W::bcf_hdr_check_sanity\] AC should be declared as Number=A$/d' >&2)
+	}
+fi
+
+gu_target_genotype_base() {
+	local prefix=${1:?gu_target_genotype_base requires PREFIX}
+	local chr=${2:?gu_target_genotype_base requires CHR}
+	local x_mode=${3:-${GU_CHRX_TARGET_MODE:-male}}
+	chr=${chr#chr}
+	chr=${chr#CHR}
+	chr=${chr^^}
+	[[ $chr == 23 ]] && chr=X
+	if [[ $chr == X ]]; then
+		case "$x_mode" in
+			par | xy) printf '%sXY\n' "$prefix" ;;
+			male | pure | nonpar | '') printf '%sX.male\n' "$prefix" ;;
+			*)
+				echo "ERROR: invalid chrX target mode: $x_mode" >&2
+				return 2
+				;;
+		esac
+	else
+		printf '%s%s\n' "$prefix" "$chr"
+	fi
+}
+
+gu_chrx_par_bounds_bed() {
+	local build=${1:?gu_chrx_par_bounds_bed requires BUILD}
+	case "${build,,}" in
+		37 | b37 | grch37 | hg19) printf '60000\t2699520\t154931043\t155260560\n' ;;
+		38 | b38 | grch38 | hg38) printf '10000\t2781479\t155701382\t156030895\n' ;;
+		*)
+			echo "ERROR: chrX/PAR routing needs GRCh37 or GRCh38, got: $build" >&2
+			return 2
+			;;
+	esac
+}
+
+gu_classify_chrx_loci() {
+	local bed=${1:?gu_classify_chrx_loci requires BED}
+	local build=${2:?gu_classify_chrx_loci requires BUILD}
+	local p1s p1e p2s p2e
+	read -r p1s p1e p2s p2e < <(gu_chrx_par_bounds_bed "$build") || return 2
+	awk -F '\t' -v p1s="$p1s" -v p1e="$p1e" -v p2s="$p2s" -v p2e="$p2e" '
+    BEGIN{OFS="\t"}
+    {
+      c=toupper($1);sub(/^CHR/,"",c);if(c=="23")c="X";if(c!="X")next
+      n++;s=$2+0;e=$3+0
+      if(e<=s){print "ERROR: invalid chrX BED interval: "$0 > "/dev/stderr";bad=1;next}
+      in1=(s>=p1s&&e<=p1e);in2=(s>=p2s&&e<=p2e)
+      overlaps=(s<p1e&&e>p1s)||(s<p2e&&e>p2s)
+      if(in1||in2)par++
+      else if(overlaps){print "ERROR: chrX locus crosses a PAR/non-PAR boundary: "$0 > "/dev/stderr";boundary=1}
+      else pure++
+    }
+    END{
+      if(bad||boundary)exit 2
+      if(!n){print "none";exit}
+      if(par&&pure){print "ERROR: one --loci request cannot mix pure-X and PAR intervals; run them separately" > "/dev/stderr";exit 2}
+      print par?"par":"male"
+    }' "$bed"
+}
+
+gu_make_chrxy_extract_bed() {
+	local input=${1:?gu_make_chrxy_extract_bed requires INPUT}
+	local output=${2:?gu_make_chrxy_extract_bed requires OUTPUT}
+	local build=${3:?gu_make_chrxy_extract_bed requires BUILD}
+	local p1s p1e p2s p2e
+	read -r p1s p1e p2s p2e < <(gu_chrx_par_bounds_bed "$build") || return 2
+	awk -F '\t' -v p1s="$p1s" -v p1e="$p1e" -v p2s="$p2s" -v p2e="$p2e" '
+    BEGIN{OFS="\t"}
+    {
+      c=toupper($1);sub(/^CHR/,"",c);if(c=="23")c="X"
+      if(c!="X"){print;next}
+      if($2>=p1s&&$3<=p1e)$1="PAR1"
+      else if($2>=p2s&&$3<=p2e)$1="PAR2"
+      else {print "ERROR: non-PAR interval reached chrXY extraction: "$0 > "/dev/stderr";bad=1;next}
+      print
+    }
+    END{exit bad}' "$input" >"$output"
+}
+
+gu_pvar_cat() {
+	local path=${1:?gu_pvar_cat requires PVAR}
+	case "$path" in
+		*.zst)
+			if command -v zstdcat >/dev/null 2>&1; then
+				zstdcat -- "$path"
+			elif command -v zstd >/dev/null 2>&1; then
+				zstd -dc -- "$path"
+			else
+				echo "ERROR: zstdcat or zstd is required to read $path" >&2
+				return 2
+			fi
+			;;
+		*.gz) gzip -dc -- "$path" ;;
+		*) cat -- "$path" ;;
+	esac
+}
+
+gu_link_if_needed() {
+	local source=${1:?gu_link_if_needed requires SOURCE}
+	local dest=${2:?gu_link_if_needed requires DEST}
+	local source_resolved dest_resolved
+	source_resolved=$(readlink -f -- "$source") || return 2
+	if [[ -L $dest ]]; then
+		dest_resolved=$(readlink -f -- "$dest" 2>/dev/null || true)
+		[[ $dest_resolved != "$source_resolved" ]] || return 0
+	fi
+	rm -f -- "$dest"
+	ln -s -- "$source" "$dest"
+}
+
+gu_validate_chrx_male_pfile() {
+	local base=${1:?gu_validate_chrx_male_pfile requires PFILE_PREFIX}
+	local build=${2:?gu_validate_chrx_male_pfile requires BUILD}
+	local pvar="" p1s p1e p2s p2e variants bad_chr par_variants samples nonmale
+	local hethap=NA stats=${base}.basic-stats.txt
+	case "${build,,}" in
+		37 | b37 | grch37 | hg19)
+			build=37
+			p1s=60001
+			p1e=2699520
+			p2s=154931044
+			p2e=155260560
+			;;
+		38 | b38 | grch38 | hg38)
+			build=38
+			p1s=10001
+			p1e=2781479
+			p2s=155701383
+			p2e=156030895
+			;;
+		*)
+			echo "ERROR: chrX.male validation needs GRCh37 or GRCh38, got: $build" >&2
+			return 2
+			;;
+	esac
+	[[ -s ${base}.pgen && -s ${base}.psam ]] || {
+		echo "ERROR: incomplete chrX.male pfile: expected ${base}.{pgen,psam,pvar[.zst]}" >&2
+		return 2
+	}
+	for pvar in "${base}.pvar" "${base}.pvar.zst"; do [[ -s $pvar ]] && break; done
+	[[ -s $pvar ]] || {
+		echo "ERROR: chrX.male pvar is missing for $base" >&2
+		return 2
+	}
+
+	read -r variants bad_chr par_variants < <(
+		gu_pvar_cat "$pvar" | awk -v p1s="$p1s" -v p1e="$p1e" -v p2s="$p2s" -v p2e="$p2e" '
+      BEGIN{FS="[[:space:]]+"}
+      /^#/ {next}
+      NF>=2 {
+        c=toupper($1); sub(/^CHR/,"",c); if(c=="23")c="X"
+        n++; if(c!="X")bad++
+        if(($2>=p1s&&$2<=p1e)||($2>=p2s&&$2<=p2e))par++
+      }
+      END{print n+0,bad+0,par+0}'
+	)
+	((variants > 0 && bad_chr == 0 && par_variants == 0)) || {
+		echo "ERROR: $base is not pure non-PAR chrX: variants=$variants nonX=$bad_chr PAR=$par_variants" >&2
+		return 2
+	}
+
+	read -r samples nonmale < <(
+		awk 'BEGIN{FS="[[:space:]]+"}
+      /^#/ {
+        for(i=1;i<=NF;i++){x=toupper($i);sub(/^#/,"",x);if(x=="IID"||x=="SAMPLE")id=i;if(x=="SEX")sex=i}
+        next
+      }
+      NF {
+        n++; value=tolower($sex)
+        if(!id||!sex||!(value=="1"||value=="m"||value=="male"))bad++
+      }
+      END{print n+0,bad+0}' "${base}.psam"
+	)
+	((samples > 0 && nonmale == 0)) || {
+		echo "ERROR: $base is not male-only or its PSAM lacks IID/SEX: samples=$samples nonmale_or_unknown=$nonmale" >&2
+		return 2
+	}
+
+	if [[ -s ${base}.smiss ]]; then
+		hethap=$(awk 'BEGIN{FS="[[:space:]]+"}
+      NR==1{for(i=1;i<=NF;i++){x=toupper($i);sub(/^#/,"",x);if(x=="HETHAP_CT")col=i};next}
+      col{sum+=$col} END{if(col)print sum+0;else print "NA"}' "${base}.smiss")
+		[[ $hethap == NA || $hethap == 0 ]] || {
+			echo "ERROR: $base has $hethap heterozygous-haploid calls" >&2
+			return 2
+		}
+	fi
+
+	if [[ -s $stats ]]; then
+		awk -F= -v build="GRCh$build" '
+      {sub(/\r$/,"");v[$1]=$2}
+      END{
+        if(("build" in v)&&v["build"]!=build)exit 2
+        if(("chromosome" in v)&&v["chromosome"]!="X")exit 2
+        if(("par_regions_present" in v)&&toupper(v["par_regions_present"])!="FALSE")exit 2
+        if(("nonmale_samples" in v)&&(v["nonmale_samples"]+0)!=0)exit 2
+        if(("plink2_encoding" in v)&&v["plink2_encoding"]!="male_chrX_haploid")exit 2
+      }' "$stats" || {
+			echo "ERROR: chrX.male basic statistics disagree with the requested input/build: $stats" >&2
+			return 2
+		}
+	fi
+	printf 'chrX.male validation=PASS build=GRCh%s variants=%s male_samples=%s PAR_variants=0 heterozygous_haploid=%s source=%s\n' \
+		"$build" "$variants" "$samples" "$hethap" "$base"
+}
+
+gu_validate_chrxy_pfile() {
+	local base=${1:?gu_validate_chrxy_pfile requires PFILE_PREFIX}
+	local build=${2:?gu_validate_chrxy_pfile requires BUILD}
+	local pvar="" p1s p1e p2s p2e variants bad_chr outside_par samples
+	read -r p1s p1e p2s p2e < <(gu_chrx_par_bounds_bed "$build") || return 2
+	[[ -s ${base}.pgen && -s ${base}.psam ]] || {
+		echo "ERROR: incomplete chrXY pfile: expected ${base}.{pgen,psam,pvar[.zst]}" >&2
+		return 2
+	}
+	for pvar in "${base}.pvar" "${base}.pvar.zst"; do [[ -s $pvar ]] && break; done
+	[[ -s $pvar ]] || {
+		echo "ERROR: chrXY pvar is missing for $base" >&2
+		return 2
+	}
+	read -r variants bad_chr outside_par < <(
+		gu_pvar_cat "$pvar" | awk -v p1s="$p1s" -v p1e="$p1e" -v p2s="$p2s" -v p2e="$p2e" '
+      BEGIN{FS="[[:space:]]+"}
+      /^#/ {next}
+      NF>=2 {
+        c=toupper($1);sub(/^CHR/,"",c);if(c=="23")c="X"
+        n++
+        if(c!="PAR1"&&c!="PAR2"&&c!="X"&&c!="XY")bad++
+        in1=($2>p1s&&$2<=p1e);in2=($2>p2s&&$2<=p2e)
+        if(!(in1||in2))outside++
+        if(c=="PAR1"&&!in1)outside++
+        if(c=="PAR2"&&!in2)outside++
+      }
+      END{print n+0,bad+0,outside+0}'
+	)
+	((variants > 0 && bad_chr == 0 && outside_par == 0)) || {
+		echo "ERROR: $base is not a pure PAR pfile: variants=$variants invalid_chrom=$bad_chr outside_PAR=$outside_par" >&2
+		return 2
+	}
+	samples=$(awk 'BEGIN{FS="[[:space:]]+"}
+    /^#/ {for(i=1;i<=NF;i++){x=toupper($i);sub(/^#/,"",x);if(x=="IID"||x=="SAMPLE")id=i};next}
+    NF&&id{n++} END{print n+0}' "${base}.psam")
+	((samples > 0)) || {
+		echo "ERROR: chrXY PSAM lacks samples/IID: ${base}.psam" >&2
+		return 2
+	}
+	printf 'chrXY validation=PASS build=GRCh%s variants=%s samples=%s outside_PAR=0 source=%s\n' \
+		"${build#GRCh}" "$variants" "$samples" "$base"
+}
+
+gu_validate_chrx_male_vcf() {
+	local vcf=${1:?gu_validate_chrx_male_vcf requires VCF}
+	local build=${2:?gu_validate_chrx_male_vcf requires BUILD}
+	local panel=${3:?gu_validate_chrx_male_vcf requires SAMPLE_PANEL}
+	local p1s p1e p2s p2e contig region first work bad variants bad_record
+	command -v bcftools >/dev/null 2>&1 || {
+		echo "ERROR: bcftools is required to validate $vcf" >&2
+		return 2
+	}
+	[[ -s $vcf && -s $panel ]] || {
+		echo "ERROR: chrX.male VCF validation needs VCF and sample/sex metadata" >&2
+		return 2
+	}
+	case "${build,,}" in
+		37 | b37 | grch37 | hg19)
+			build=37
+			p1s=60001
+			p1e=2699520
+			p2s=154931044
+			p2e=155260560
+			;;
+		38 | b38 | grch38 | hg38)
+			build=38
+			p1s=10001
+			p1e=2781479
+			p2s=155701383
+			p2e=156030895
+			;;
+		*)
+			echo "ERROR: chrX.male validation needs GRCh37 or GRCh38, got: $build" >&2
+			return 2
+			;;
+	esac
+	contig=$(bcftools view -h "$vcf" | awk -F'[=,>]' '
+    /^##contig=<ID=/{id=$3;if(id=="X"||id=="chrX"||id=="23"){print id;exit}}')
+	[[ -n $contig ]] || {
+		echo "ERROR: no X/chrX/23 contig in $vcf" >&2
+		return 2
+	}
+	variants=$(bcftools index -n "$vcf") || {
+		echo "ERROR: could not count indexed variants in $vcf" >&2
+		return 2
+	}
+	[[ $variants =~ ^[1-9][0-9]*$ ]] || {
+		echo "ERROR: chrX.male VCF has no variants: $vcf" >&2
+		return 2
+	}
+	bad_record=$(bcftools index -s "$vcf" | awk -v expected="$contig" '$3+0>0&&$1!=expected{print "non-X contig "$1;exit}') || {
+		echo "ERROR: could not inspect indexed chromosome records in $vcf" >&2
+		return 2
+	}
+	[[ -z $bad_record ]] || {
+		echo "ERROR: chrX.male VCF violates the pure haploid-X contract: $bad_record" >&2
+		return 2
+	}
+	# bcftools stats computes ploidy counts without emitting every GT. PSC columns
+	# 4-6 count diploid SNP calls and PSI columns 8-11 count diploid indel calls;
+	# a pure male X export must have zero in all of them and nonzero haploid SNPs.
+	bad_record=$(bcftools stats -s - "$vcf" | awk '
+    $1=="PSC"{n++;dip=$4+$5+$6;hap+=$12+$13;if(dip>0&&bad=="")bad="diploid SNP calls for sample "$3}
+    $1=="PSI"{dip=$8+$9+$10+$11;if(dip>0&&bad=="")bad="diploid indel calls for sample "$3}
+    END{if(!n&&bad=="")bad="no per-sample genotype statistics";if(!hap&&bad=="")bad="no nonmissing haploid SNP calls";if(bad!="")print bad}') || {
+		echo "ERROR: could not inspect genotype ploidy statistics in $vcf" >&2
+		return 2
+	}
+	[[ -z $bad_record ]] || {
+		echo "ERROR: chrX.male VCF violates the pure haploid-X contract: $bad_record" >&2
+		return 2
+	}
+	for region in "$contig:$p1s-$p1e" "$contig:$p2s-$p2e"; do
+		# bcftools -r uses record-overlap semantics and can return a non-PAR SV
+		# whose POS is outside PAR but INFO/END crosses the boundary. PLINK2 pfile
+		# chromosome partitioning and --extract bed0 are POS-based, so test POS.
+		first=$(bcftools query -r "$region" -f '%POS\n' "$vcf" | awk -F '[:-]' -v r="$region" '
+      BEGIN{split(r,a,/[:-]/);lo=a[2]+0;hi=a[3]+0}$1>=lo&&$1<=hi{print;exit}')
+		[[ -z $first ]] || {
+			echo "ERROR: chrX.male VCF contains a PAR variant in $region" >&2
+			return 2
+		}
+	done
+
+	work=$(mktemp -d "${TMPDIR:-/tmp}/gu-x-vcf-check.XXXXXX")
+	bcftools query -l "$vcf" | sort -u >"$work/vcf.samples"
+	awk 'BEGIN{FS="[[:space:]]+"}
+    NR==1{for(i=1;i<=NF;i++){x=tolower($i);sub(/^#/,"",x);if(x=="sample"||x=="iid")id=i;if(x=="sex")sex=i};next}
+    NF{v=tolower($sex);if(v=="1"||v=="m"||v=="male")print $id}' "$panel" | sort -u >"$work/male.samples"
+	bad=$(comm -3 "$work/vcf.samples" "$work/male.samples" | sed -n '1p')
+	if [[ -n $bad || ! -s $work/vcf.samples ]]; then
+		echo "ERROR: chrX.male VCF samples are not exactly the male sample set from $panel" >&2
+		rm -rf -- "$work"
+		return 2
+	fi
+	local samples
+	samples=$(awk 'END{print NR+0}' "$work/vcf.samples")
+	rm -rf -- "$work"
+	printf 'chrX.male VCF validation=PASS build=GRCh%s variants=%s male_samples=%s PAR_variants=0 source=%s\n' \
+		"$build" "$variants" "$samples" "$vcf"
+}
+
+
+# 🚩 UKB resource planning
+# UKB workers share one cgroup. PLINK --memory only budgets its workspace;
+# Python, metadata, compression and the downstream caller also need RAM.
+gu_plan_ukb_resources() {
+	local cap=${1^^} requested_jobs=$2 number cap_mb reserve_mb usable_mb max_plink_mb memory_mb jobs
+	[[ $cap =~ ^([1-9][0-9]{0,5})(G|GB|GIB)$ ]] || {
+		echo 'ERROR: --memory-cap requires a positive whole number of GiB.' >&2
+		return 2
+	}
+	number=${BASH_REMATCH[1]}
+	cap_mb=$((10#$number * 1024))
+	# Reserve 25% of the group (at least 1 GiB), plus 2 GiB per worker
+	# outside PLINK. This is scheduling headroom, not a per-process RSS cap.
+	reserve_mb=$((cap_mb / 4))
+	((reserve_mb >= 1024)) || reserve_mb=1024
+	usable_mb=$((cap_mb - reserve_mb))
+	max_plink_mb=$((usable_mb - 2048))
+	if [[ -n ${GU_PREP_MEMORY_MB:-} ]]; then
+		[[ $GU_PREP_MEMORY_MB =~ ^[0-9]{1,9}$ ]] || {
+			echo 'ERROR: GU_PREP_MEMORY_MB must be an integer number of MiB.' >&2
+			return 2
+		}
+		memory_mb=$((10#$GU_PREP_MEMORY_MB))
+	else
+		# Divide the default workspace across requested workers before capping
+		# concurrency. 32G / four workers => 4096 MiB PLINK + 2048 MiB overhead
+		# each, with 8192 MiB shared reserve. Explicit overrides remain binding.
+		memory_mb=$((usable_mb / requested_jobs - 2048))
+		((memory_mb >= 640)) || memory_mb=640
+		((memory_mb <= 8192)) || memory_mb=8192
+		((memory_mb <= max_plink_mb)) || memory_mb=$max_plink_mb
+	fi
+	if ((memory_mb < 640 || memory_mb > max_plink_mb)); then
+		echo "ERROR: UKB PLINK workspace must be at least 640 MiB and fit with process overhead under --memory-cap $cap; use a cap of at least 4G and unset or reduce GU_PREP_MEMORY_MB." >&2
+		return 2
+	fi
+	jobs=$((usable_mb / (memory_mb + 2048)))
+	((jobs <= requested_jobs)) || jobs=$requested_jobs
+	GU_UKB_EFFECTIVE_JOBS=$jobs
+	GU_PREP_MEMORY_MB=$memory_mb
+	export GU_PREP_MEMORY_MB
+	if [[ ${GU_CMD_WORKER:-0} != 1 ]]; then
+		echo "[GU MEMORY] UKB cap=$cap requested_jobs=$requested_jobs effective_jobs=$jobs plink_memory_mb=$memory_mb reserve_mb=$reserve_mb worker_overhead_mb=2048"
+	fi
+}
+
+
+# 🚩 Cached genome-build validation
+# Share successful reference checks across workers. Fingerprints include the
+# actual source, sentinel list and validator code; changed inputs are rechecked.
+gu_build_check_key() {
+	python3 - "$1" "$2" "$3" "${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}" \
+		"$(declare -f check_GRCH phe_zcat phe_check_grch_tabix_rows gu_check_grch_pvar_positions)" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+source, build, kind, gold, code = sys.argv[1:]
+def stamp(name):
+    p = Path(name).resolve(strict=True)
+    if not p.is_file():
+        raise ValueError('build-check caching requires a regular file')
+    s = p.stat()
+    return [str(p), s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns]
+request = [1, build, kind, stamp(source), stamp(gold), hashlib.sha256(Path(gold).read_bytes()).hexdigest(), code]
+print(hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest())
+PY
+}
+
+gu_check_build_uncached() {
+	local input=$1 expected=$2 format=$3
+	if check_GRCH "$input" "$expected"; then
+		return 0
+	elif [[ $format == pfile ]] && gu_check_grch_pvar_positions "$input" "$expected"; then
+		printf '[GU CHECK] rsID sentinels unavailable; strict coordinate-sentinel fallback passed\n'
+		return 0
+	fi
+	return 1
+}
+
+gu_check_build_cached() (
+	local input=$1 expected=$2 format=$3 key after detail cache fd
+	# Directories/legacy prefixes retain the uncached validation path.
+	if [[ ! -f $input ]]; then
+		gu_check_build_uncached "$input" "$expected"; return $?
+	fi
+	cache=${GU_BUILD_CHECK_CACHE_DIR:-/tmp/gu-build-check-cache-$UID}
+	mkdir -p "$cache" || return
+	key=$(gu_build_check_key "$input" "$expected" "$format") || return
+	exec {fd}>"$cache/$key.lock" || return
+	flock -x "$fd" || return
+	# The source may have changed while this worker was waiting for the lock.
+	after=$(gu_build_check_key "$input" "$expected" "$format") || return
+	if [[ $key != "$after" ]]; then
+		flock -u "$fd"
+		gu_check_build_cached "$input" "$expected" "$format"; return $?
+	fi
+	if [[ -s $cache/$key.pass ]]; then
+		printf '[GU CHECK] GRCH cache=HIT build=%s source=%s\n' "$expected" "$input"
+		return 0
+	fi
+	detail=$(mktemp "$cache/$key.XXXXXX") || return
+	trap 'rm -f -- "$detail"' EXIT
+	printf '[GU CHECK] GRCH cache=MISS build=%s source=%s\n' "$expected" "$input"
+	if ! gu_check_build_uncached "$input" "$expected" "$format" >"$detail" 2>&1; then
+		cat "$detail"; return 1
+	fi
+	cat "$detail"
+	after=$(gu_build_check_key "$input" "$expected" "$format") || return
+	[[ $key == "$after" ]] || { echo 'ERROR: reference changed during build validation' >&2; return 1; }
+	printf 'PASS\n' >>"$detail"
+	mv -f "$detail" "$cache/$key.pass"
+)

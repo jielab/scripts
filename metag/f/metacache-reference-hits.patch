@@ -1,0 +1,108 @@
+--- a/src/options.hpp
++++ b/src/options.hpp
+@@ -345,6 +345,8 @@
+     bool showTopHits = false;
+     // show all k-mer-hash hits in database for each given read
+     bool showAllHits = false;
++    // metag: retain reference identity without changing species classification.
++    bool showReferenceHits = false;
+     // show candidate position(s) in reference sequence(s)
+     bool showLocations = false;
+ 
+--- a/src/options.cpp
++++ b/src/options.cpp
+@@ -1047,6 +1047,10 @@
+             option("-allhits", "-all-hits").set(opt.showAllHits)
+                 %("For each query, print all feature hits in database.\n"
+                   "default: "s + (opt.showAllHits ? "on" : "off"))
++            ,
++            option("-refhits").set(opt.showReferenceHits).set(opt.showAllHits)
++                %("Print retained reference feature hits as JSON, preserving source files.\n"
++                  "Does not change the taxonomic classification rank.\n")
+             ,
+             option("-locations").set(opt.showLocations).set(opt.showTopHits)
+                 %("Show locations in candidate reference sequences.\n"
+--- a/src/classification.cpp
++++ b/src/classification.cpp
+@@ -450,7 +450,7 @@
+         os << colsep;
+     }
+ 
+-    if (opt.analysis.showAllHits) os << "all_hits" << colsep;
++    if (opt.analysis.showAllHits) os << (opt.analysis.showReferenceHits ? "reference_hits" : "all_hits") << colsep;
+     if (opt.analysis.showTopHits) os << "top_hits" << colsep;
+     if (opt.analysis.showLocations) os << "candidate_locations" << colsep;
+ 
+@@ -504,7 +504,8 @@
+         os << colsep;
+     }
+     if (opt.analysis.showAllHits) {
+-        show_matches(os, db.taxa(), allhits, fmt.lowestRank);
++        if (opt.analysis.showReferenceHits) show_reference_hits(os, db.taxa(), allhits);
++        else show_matches(os, db.taxa(), allhits, fmt.lowestRank);
+         os << colsep;
+     }
+     if (opt.analysis.showTopHits) {
+--- a/src/printing.hpp
++++ b/src/printing.hpp
+@@ -70,6 +70,8 @@
+ /**
+  * @brief prints top classification candidates
+  */
++void show_reference_hits (std::ostream&, const taxonomy_cache&, const span<const location>);
++
+ void show_candidates (std::ostream&,
+                       const taxonomy_cache&,
+                       const span<const match_candidate>,
+--- a/src/printing.cpp
++++ b/src/printing.cpp
+@@ -37,6 +37,7 @@
+ #include <utility>
+ #include <iomanip>
+ #include <cmath>
++#include <map>
+ 
+ 
+ namespace mc {
+@@ -280,6 +281,41 @@
+ 
+ 
+ //-------------------------------------------------------------------
++// metag: ASCII JSON strings also escape the outer table separator.
++static void reference_json_string (std::ostream& os, const std::string& text)
++{
++    const char hex[] = "0123456789abcdef";
++    os << '"';
++    for (unsigned char c : text) {
++        if (c == '"' || c == '\\') os << '\\' << char(c);
++        else if (c < 32 || c == '|') os << "\\u00" << hex[c >> 4] << hex[c & 15];
++        else os << char(c);
++    }
++    os << '"';
++}
++
++void show_reference_hits (std::ostream& os, const taxonomy_cache& taxonomy,
++                          const span<const location> matches)
++{
++    std::map<target_id, std::size_t> counts;
++    for (const auto& hit : matches) ++counts[hit.tgt];
++    os << '[';
++    bool first = true;
++    for (const auto& entry : counts) {
++        const auto* tax = taxonomy.cached_taxon_of_target(entry.first);
++        if (!tax) continue;
++        if (!first) os << ',';
++        first = false;
++        os << '[';
++        reference_json_string(os, tax->name());
++        os << ',';
++        reference_json_string(os, tax->source().filename);
++        const auto* species = taxonomy.cached_ancestor(entry.first, taxon_rank::Species);
++        os << ',' << (species ? species->id() : 0) << ',' << entry.second << ']';
++    }
++    os << ']';
++}
++
+ void show_candidates (std::ostream& os,
+                       const taxonomy_cache& taxonomy,
+                       const span<const match_candidate> cand,

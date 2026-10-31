@@ -1,0 +1,176 @@
+test_default_explicit_all_and_help (test_global_all.AllStagesTests.test_default_explicit_all_and_help) ... ok
+test_default_runs_all_stages_and_all_selected_samples_in_order (test_global_all.AllStagesTests.test_default_runs_all_stages_and_all_selected_samples_in_order) ... ok
+test_every_failure_stops_downstream_work (test_global_all.AllStagesTests.test_every_failure_stops_downstream_work) ... ok
+test_explicit_installation_is_verified_without_default_install (test_global_all.AllStagesTests.test_explicit_installation_is_verified_without_default_install) ... ok
+test_changed_committed_chunk_is_never_treated_as_complete (test_global_build.BuildFixture.test_changed_committed_chunk_is_never_treated_as_complete) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_changed_inventory_is_rejected (test_global_build.BuildFixture.test_changed_inventory_is_rejected) ... ok
+test_chunks_preserve_every_35mer_and_do_not_split_short_records (test_global_build.BuildFixture.test_chunks_preserve_every_35mer_and_do_not_split_short_records) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_completed_database_reuses_native_work_and_keeps_source_unchanged (test_global_build.BuildFixture.test_completed_database_reuses_native_work_and_keeps_source_unchanged) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-4mnk068b/db; active references=2
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+REUSE completed global Kraken2 database: /tmp/metag-global-build-4mnk068b/db
+ok
+test_hard_kill_with_all_native_files_rebuilds_uncommitted_hash (test_global_build.BuildFixture.test_hard_kill_with_all_native_files_rebuilds_uncommitted_hash) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-bmk3grbw/db; active references=2
+ok
+test_inspect_failure_keeps_chunks_but_rebuilds_native_files_on_retry (test_global_build.BuildFixture.test_inspect_failure_keeps_chunks_but_rebuilds_native_files_on_retry) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-qpw3lnu1/db; active references=2
+ok
+test_interrupted_add_reuses_committed_chunk_without_duplicate_append (test_global_build.BuildFixture.test_interrupted_add_reuses_committed_chunk_without_duplicate_append) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+REUSE reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-79_szp5f/db; active references=2
+ok
+test_memory_failure_happens_before_output_mutation (test_global_build.BuildFixture.test_memory_failure_happens_before_output_mutation) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_missing_taxid_is_rejected_after_valid_inventory_receipt (test_global_build.BuildFixture.test_missing_taxid_is_rejected_after_valid_inventory_receipt) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_no_masking_is_only_an_explicit_option (test_global_build.BuildFixture.test_no_masking_is_only_an_explicit_option) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-cj26cy5b/db; active references=2
+ok
+test_only_validated_active_references_and_taxids_are_used (test_global_build.BuildFixture.test_only_validated_active_references_and_taxids_are_used) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+[reference check] Validating 2 reference file states
+ok
+test_plan_reports_insufficient_resources_without_native_execution (test_global_build.BuildFixture.test_plan_reports_insufficient_resources_without_native_execution) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_snapshot_detects_changed_frozen_taxonomy (test_global_build.BuildFixture.test_snapshot_detects_changed_frozen_taxonomy) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ADDED reference chunk 1: 100 original bases
+ADDED reference chunk 2: 100 original bases
+ADDED reference chunk 3: 66 original bases
+ADDED reference chunk 4: 39 original bases
+[reference check] Validating 2 reference file states
+[reference check] 2/2
+PASS global Kraken2 database: /tmp/metag-global-build-2wu72ab0/db; active references=2
+ok
+test_unowned_directory_is_not_adopted (test_global_build.BuildFixture.test_unowned_directory_is_not_adopted) ... [reference check] Validating 2 reference file states
+[reference check] 2/2
+ok
+test_actual_official_wrapper_and_complete_installation_receipt (test_global_cli.CliTests.test_actual_official_wrapper_and_complete_installation_receipt) ... ok
+test_benchmark_rejects_multiple_samples_before_query (test_global_cli.CliTests.test_benchmark_rejects_multiple_samples_before_query) ... ok
+test_cli_defaults_and_invalid_resource_or_classifier_values (test_global_cli.CliTests.test_cli_defaults_and_invalid_resource_or_classifier_values) ... ok
+test_explicit_incomplete_directory_cannot_fall_back_to_path (test_global_cli.CliTests.test_explicit_incomplete_directory_cannot_fall_back_to_path) ... ok
+test_modified_binary_is_rejected_before_wrapper_execution (test_global_cli.CliTests.test_modified_binary_is_rejected_before_wrapper_execution) ... ok
+test_pinned_tag_accepts_official_old_version_label_and_records_both (test_global_cli.CliTests.test_pinned_tag_accepts_official_old_version_label_and_records_both) ... ok
+test_plain_2171_without_pinned_receipt_is_rejected (test_global_cli.CliTests.test_plain_2171_without_pinned_receipt_is_rejected) ... ok
+test_public_shell_plan_is_read_only_and_uses_requested_chunk_size (test_global_cli.CliTests.test_public_shell_plan_is_read_only_and_uses_requested_chunk_size) ... ok
+test_split_dispatch_passes_matching_installation_and_separate_targets (test_global_cli.CliTests.test_split_dispatch_passes_matching_installation_and_separate_targets) ... ok
+test_tool_plan_does_not_execute_wrapper_or_change_path (test_global_cli.CliTests.test_tool_plan_does_not_execute_wrapper_or_change_path) ... ok
+test_version_receipt_and_executable_permissions_must_match (test_global_cli.CliTests.test_version_receipt_and_executable_permissions_must_match) ... ok
+test_wrong_source_missing_manifest_entry_and_extra_file_are_rejected (test_global_cli.CliTests.test_wrong_source_missing_manifest_entry_and_extra_file_are_rejected) ... ok
+test_exact_available_memory_passes_and_one_byte_less_fails (test_global_cli.ResourceBoundaryTests.test_exact_available_memory_passes_and_one_byte_less_fails) ... ok
+test_malformed_cgroup_limit_cannot_be_treated_as_unlimited (test_global_cli.ResourceBoundaryTests.test_malformed_cgroup_limit_cannot_be_treated_as_unlimited) ... ok
+test_v1_unlimited_parent_does_not_hide_finite_child (test_global_cli.ResourceBoundaryTests.test_v1_unlimited_parent_does_not_hide_finite_child) ... ok
+test_memory_oom_is_confined_and_child_inherits_limit (test_global_e2e.PublicEndToEndTests.test_memory_oom_is_confined_and_child_inherits_limit) ... ok
+test_no_module_builds_benchmarks_splits_two_datasets_and_reuses (test_global_e2e.PublicEndToEndTests.test_no_module_builds_benchmarks_splits_two_datasets_and_reuses) ... 
+E2E default route verified: native masking/build, quick query, 2 GiB process-tree limit, 2 datasets, lean species output and exact FASTQ preservation
+ok
+test_budget_cannot_exceed_scope (test_global_limits.ScopeTests.test_budget_cannot_exceed_scope) ... ok
+test_forged_guard_and_missing_kernel_limit_are_rejected (test_global_limits.ScopeTests.test_forged_guard_and_missing_kernel_limit_are_rejected) ... ok
+test_low_host_headroom_refuses_before_launch (test_global_limits.ScopeTests.test_low_host_headroom_refuses_before_launch) ... ok
+test_missing_systemd_never_falls_back_to_unlimited (test_global_limits.ScopeTests.test_missing_systemd_never_falls_back_to_unlimited) ... ok
+test_watchdog_stops_only_owned_scope (test_global_limits.ScopeTests.test_watchdog_stops_only_owned_scope) ... ok
+
+Real native fixture: Kraken version 2.17.1
+Copyright 2013-2023, Derrick Wood (dwood@cs.jhu.edu)
+test_benchmark_prefix_does_not_publish_species_output (test_global_native.NativeGlobalIntegrationTests.test_benchmark_prefix_does_not_publish_species_output) ... PASS global benchmark: 17 fragments in 0.01s; 1,301 fragments/s including database load. /tmp/metag-global-native-4ja9dtc3/test_benchmark_prefix_does_not_publish_species_output/work/benchmarks/native_fixture-20261031-000648-2796493/benchmark.json
+ok
+test_global_builder_real_native_add_mask_build_inspect_and_query (test_global_native.NativeGlobalIntegrationTests.test_global_builder_real_native_add_mask_build_inspect_and_query)
+Exercise the public builder against the same actual native programs. ... [reference check] Validating 4 reference file states
+[reference check] 4/4
+ADDED reference chunk 1: 4,096 original bases
+ADDED reference chunk 2: 547 original bases
+ADDED reference chunk 3: 4,096 original bases
+ADDED reference chunk 4: 547 original bases
+ADDED reference chunk 5: 4,096 original bases
+ADDED reference chunk 6: 4,096 original bases
+[reference check] Validating 4 reference file states
+[reference check] 4/4
+PASS global Kraken2 database: /tmp/metag-global-native-4ja9dtc3/test_global_builder_real_native_add_mask_build_inspect_and_query/database; active references=4
+[reference check] Validating 4 reference file states
+[reference check] 4/4
+REUSE completed global Kraken2 database: /tmp/metag-global-native-4ja9dtc3/test_global_builder_real_native_add_mask_build_inspect_and_query/database
+ok
+test_native_numeric_ids_cross_thread_blocks_and_species_normalization (test_global_native.NativeGlobalIntegrationTests.test_native_numeric_ids_cross_thread_blocks_and_species_normalization) ... ok
+test_quick_sampled_database_is_thread_consistent_and_keeps_all_pairs (test_global_native.NativeGlobalIntegrationTests.test_quick_sampled_database_is_thread_consistent_and_keeps_all_pairs) ... ok
+test_sampled_database_native_regression_and_thread_consistency (test_global_native.NativeGlobalIntegrationTests.test_sampled_database_native_regression_and_thread_consistency) ... ok
+test_single_end_native_mode_and_counts (test_global_native.NativeGlobalIntegrationTests.test_single_end_native_mode_and_counts) ... ok
+test_split_counts_original_fastq_bytes_and_completed_reuse (test_global_native.NativeGlobalIntegrationTests.test_split_counts_original_fastq_bytes_and_completed_reuse) ... [global] native_fixture: one Kraken 2 query of the whole sample
+PASS split: 61 fragments -> /tmp/metag-global-native-4ja9dtc3/test_split_counts_original_fastq_bytes_and_completed_reuse/split
+SKIP completed global sample: native_fixture -> /tmp/metag-global-native-4ja9dtc3/test_split_counts_original_fastq_bytes_and_completed_reuse/split
+ok
+test_benchmark_queries_prefix_without_publishing_species_bins (test_global_query.GlobalQueryTests.test_benchmark_queries_prefix_without_publishing_species_bins) ... PASS global benchmark: 2 fragments in 0.07s; 30 fragments/s including database load. /tmp/tmpa0k4vlme/runs_global/benchmarks/Ready__RUN__kraken2-20261031-000655-2796493/benchmark.json
+ok
+test_completed_query_resumes_failed_split_then_skips_completed_sample (test_global_query.GlobalQueryTests.test_completed_query_resumes_failed_split_then_skips_completed_sample) ... [global] Ready__RUN__kraken2: one Kraken 2 query of the whole sample
+Reuse complete global query: 3 fragments
+PASS split: 3 fragments -> /tmp/tmpikefk635/output__kraken2
+SKIP completed global sample: Ready__RUN__kraken2 -> /tmp/tmpikefk635/output__kraken2
+ok
+test_duplicate_missing_out_of_range_and_bad_lengths_never_publish (test_global_query.GlobalQueryTests.test_duplicate_missing_out_of_range_and_bad_lengths_never_publish) ... ok
+test_out_of_order_paired_ids_normalize_strain_and_preserve_count (test_global_query.GlobalQueryTests.test_out_of_order_paired_ids_normalize_strain_and_preserve_count) ... ok
+test_pair_mismatch_cannot_publish (test_global_query.GlobalQueryTests.test_pair_mismatch_cannot_publish) ... ok
+test_sigterm_handler_stops_native_group_without_publishing (test_global_query.GlobalQueryTests.test_sigterm_handler_stops_native_group_without_publishing) ... ok
+test_single_end_input_uses_no_paired_flag (test_global_query.GlobalQueryTests.test_single_end_input_uses_no_paired_flag) ... ok
+test_truncated_gzip_cannot_publish_even_when_native_exits_zero (test_global_query.GlobalQueryTests.test_truncated_gzip_cannot_publish_even_when_native_exits_zero) ... ok
+test_grows_bounded_arrays_and_accepts_reversed_output (test_global_query.OrdinalStoreTests.test_grows_bounded_arrays_and_accepts_reversed_output) ... ok
+test_bad_memory_values_are_rejected (test_global_resources.MemoryTests.test_bad_memory_values_are_rejected) ... ok
+test_cgroup_parent_limits_availability (test_global_resources.MemoryTests.test_cgroup_parent_limits_availability) ... ok
+test_host_available_is_a_bound (test_global_resources.MemoryTests.test_host_available_is_a_bound) ... ok
+test_insufficient_memory_never_shrinks_budget (test_global_resources.MemoryTests.test_insufficient_memory_never_shrinks_budget) ... ok
+
+----------------------------------------------------------------------
+Ran 60 tests in 22.674s
+
+OK

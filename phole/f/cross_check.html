@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proteome · cis cross-check</title>
+<style>
+:root{font-family:system-ui,"Segoe UI",sans-serif;color:#19354a;background:#edf3f7;font-size:14px}body{margin:0}header{background:#102d45;color:white;padding:26px 32px}h1{margin:0 0 10px;font-size:27px}header p{color:#c9dce8;margin:0;line-height:1.7}main{max-width:1500px;margin:auto;padding:22px}.card{background:white;border:1px solid #d5e0e9;border-radius:10px;padding:20px;margin-bottom:18px}.controls{display:flex;gap:18px;align-items:center;flex-wrap:wrap}label{font-weight:600}select,input,button{font:inherit;border:1px solid #bfced8;border-radius:6px;padding:8px;background:#f8fbfd;color:#19354a}button{background:#146c94;color:white;border:0;cursor:pointer}button:disabled{opacity:.4;cursor:default}input[type=search]{width:260px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}.stat{background:#eff5f8;padding:15px;border-radius:6px}.stat b{display:block;font-size:23px;margin:5px 0}.note{color:#597185;font-size:13px;line-height:1.7}.tablewrap{overflow:auto;max-height:650px;border:1px solid #dbe5ec;margin-top:15px}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;text-align:center}th{position:sticky;top:0;background:#eaf2f6;z-index:1;padding:12px}td{padding:8px;border-top:1px solid #edf1f5}td:first-child,th:first-child{text-align:left;position:sticky;left:0;background:#f9fbfd;min-width:145px}th:first-child{z-index:2}tbody tr{cursor:pointer}tbody tr:hover td{background:#e9f4fa}tr.selected td{background:#dceff8}td.yes{color:#c83344;font-weight:700}td.unavailable{color:#94a1ad;background:#f1f3f5;text-decoration:underline dotted}.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px}.plothead{display:flex;align-items:center;gap:16px;flex-wrap:wrap}h2{font-size:20px;margin:0}.legend{margin-left:auto}.red{color:#dc4b52}.green{color:#15976b}canvas{width:100%;display:block;cursor:crosshair}#slider{width:100%;box-sizing:border-box;accent-color:#146c94;padding:0}#signalDetail{min-height:24px;white-space:pre-wrap}.empty{text-align:center;padding:35px;color:#657f92}a{color:#146c94}.foot{padding:0 4px 20px}@media(max-width:750px){main{padding:10px}header{padding:20px}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:12px}th,td{padding:8px}.legend{margin-left:0}}
+</style></head><body>
+<header><h1>Proteome · cis cross-check</h1><p>以 primary 中存在 cis 显著信号的蛋白为起点，对照四个数据的 cis / trans 信号位置。</p></header>
+<main><section class="card"><div class="controls">
+<label>Primary <select id="primary"><option value="ukb">UKB</option><option value="ckb">CKB</option><option value="decode">DECODE</option><option value="scot">SCOT</option></select></label>
+<label>查找蛋白 <input id="search" type="search" placeholder="蛋白或数据中的检测名称"></label>
+<button id="export">导出当前筛选 TSV</button><span id="count"></span></div><div id="stats" class="stats"></div>
+<p class="note">cis：1 = 存在，0 = 未观察到；trans：信号数量。按原文件 CLASS 分类，不重新筛选 P-value。多个检测按 CHR + POS + CLASS 合并去重；原始检测来源保留在信号提示和 signals.tsv 中。灰色带点下划线的数值表示结果不完整，悬停可查看状态。</p></section>
+<section class="card"><h2>Primary cis 蛋白表</h2><div class="note">每页 50 行 · 点击任意一行，在下方查看该蛋白的四个 panel。</div>
+<div class="tablewrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
+<div class="pager"><button id="prev">← Previous</button><span id="page"></span><button id="next">Next →</button></div></section>
+<section class="card"><div class="plothead"><h2 id="plotTitle"></h2><label>染色体 <select id="chrom"><option value="all">全基因组</option></select></label><button id="png">下载当前 PNG</button><span class="legend"><span class="red">┃ cis</span>　<span class="green">┃ trans</span></span></div>
+<p class="note">四个 panel 共用横轴，仅展示原始 CHR/POS；柱高固定，无 P-value 含义。全基因组的染色体跨度取本次全部信号的最大 POS；未做坐标版本转换。可选择单条染色体放大查看。</p>
+<canvas id="plot" width="1600" height="650" aria-label="四个数据的 cis trans 基因组位置图"></canvas>
+<div id="signalDetail" class="note">悬停信号柱查看位置、SNP 和检测来源。</div>
+<input id="slider" type="range" min="0" max="0" value="0" step="1" aria-label="选择蛋白"><div class="pager"><button id="protPrev">← 上一个蛋白</button><span id="selection"></span><button id="protNext">下一个蛋白 →</button></div>
+</section><div class="foot note" id="footer"></div></main>
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+'use strict';
+const DATA=JSON.parse(document.getElementById('payload').textContent), datasets=['ukb','ckb','decode','scot'];
+const $=id=>document.getElementById(id), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const statuses={complete:'全部检测结果已读取',partial:'部分检测结果缺失或未完成',missing:'尚无 sig.txt',invalid:'sig.txt 未完成或格式有误',not_mapped:'该数据没有此蛋白'};
+let filtered=[],page=0,selected=0,hits=[];
+const fields=['prot',...['cis','trans'].flatMap(k=>datasets.map(d=>k+'-'+d))];
+$('head').innerHTML='<tr>'+fields.map(f=>'<th>'+esc(f)+'</th>').join('')+'</tr>';
+$('primary').value=DATA.primary;
+for(const a of DATA.axes){const option=document.createElement('option');option.value=a.chr;option.textContent='CHR '+a.chr;$('chrom').append(option)}
+function values(p){return [p.prot,...['cis','trans'].flatMap(k=>datasets.map(d=>p.data[d][k]))]}
+function save(blob,name){const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function refresh(){
+ const primary=$('primary').value,q=$('search').value.trim().toLowerCase();
+ filtered=DATA.proteins.filter(p=>p.data[primary].cis && (!q || [p.prot,...datasets.flatMap(d=>p.data[d].aliases)].some(x=>x.toLowerCase().includes(q))));
+ page=0;selected=0;
+ $('count').textContent=filtered.length.toLocaleString()+' 个蛋白';
+ $('stats').innerHTML=datasets.map(d=>{const n=filtered.filter(p=>p.data[d].cis).length,complete=filtered.filter(p=>p.data[d].status==='complete').length;return '<div class="stat">'+d.toUpperCase()+(d===primary?' · PRIMARY':' · VALIDATION')+'<b>'+n.toLocaleString()+'</b>有 cis / '+filtered.length.toLocaleString()+'<div class="note">结果齐备 '+complete.toLocaleString()+'</div></div>'}).join('');
+ renderTable();draw();
+}
+function renderTable(){
+ const start=page*50;
+ $('body').innerHTML=filtered.slice(start,start+50).map((p,i)=>'<tr data-index="'+(start+i)+'" class="'+(start+i===selected?'selected':'')+'"><td>'+esc(p.prot)+'</td>'+['cis','trans'].flatMap(k=>datasets.map(d=>{const v=p.data[d];const positions=v.signals.filter(s=>s.kind===k).map(s=>s.chr+':'+s.pos).join(', ');return '<td class="'+(v.status!=='complete'?'unavailable':k==='cis'&&v.cis?'yes':'')+'" title="'+esc(statuses[v.status]+' | '+v.aliases.join(';')+' | '+positions)+'">'+v[k]+'</td>'})).join('')+'</tr>').join('') || '<tr><td colspan="9" class="empty">当前 primary 没有符合条件的 cis 蛋白。</td></tr>';
+ $('page').textContent=filtered.length?'第 '+(page+1)+' / '+Math.ceil(filtered.length/50)+' 页 · '+(start+1)+'–'+Math.min(start+50,filtered.length):'0 / 0';
+ $('prev').disabled=page===0;$('next').disabled=(page+1)*50>=filtered.length;
+}
+function choose(index){selected=Math.max(0,Math.min(index,filtered.length-1));page=Math.floor(selected/50);renderTable();draw()}
+function draw(){
+ const canvas=$('plot'),ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
+ ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);hits=[];
+ const p=filtered[selected];$('slider').max=Math.max(0,filtered.length-1);$('slider').value=selected;
+ $('slider').disabled=!p;$('png').disabled=!p;$('protPrev').disabled=!p||selected===0;$('protNext').disabled=!p||selected===filtered.length-1;
+ $('plotTitle').textContent=p?p.prot+' · 信号位置':'没有可展示的蛋白';$('selection').textContent=p?(selected+1)+' / '+filtered.length+' · '+p.prot:'';
+ $('signalDetail').textContent='悬停信号柱查看位置、SNP 和检测来源。';
+ if(!p){ctx.fillStyle='#70879a';ctx.font='22px sans-serif';ctx.fillText('No primary cis proteins available',100,150);return}
+ const mode=$('chrom').value,axes=mode==='all'?DATA.axes:DATA.axes.filter(a=>a.chr===mode);
+ const left=120,right=W-35,top=66,ph=122,plotWidth=right-left;
+ const total=mode==='all'?DATA.axes.reduce((n,a)=>n+a.span,0):(axes[0]?.span||1);
+ const coord=s=>(mode==='all'?DATA.axes.find(a=>a.chr===s.chr).offset:0)+s.pos;
+ const x=position=>left+position/(total||1)*plotWidth;
+ ctx.font='bold 22px sans-serif';ctx.fillStyle='#19354a';ctx.fillText(p.prot+' | primary '+$('primary').value.toUpperCase()+' | red: cis, green: trans',left,30);
+ datasets.forEach((d,i)=>{
+  const y=top+i*ph,v=p.data[d];
+  ctx.fillStyle=i%2?'#f7fafc':'#f0f5f8';ctx.fillRect(left,y,plotWidth,88);
+  ctx.font='bold 18px sans-serif';ctx.fillStyle='#19354a';ctx.fillText(d.toUpperCase(),12,y+45);
+  ctx.font='14px sans-serif';ctx.fillStyle='#607b8e';ctx.fillText('cis '+v.cis+' | trans '+v.trans+' | '+v.status,left,y-9);
+  for(const a of axes){const pos=mode==='all'?a.offset:0;ctx.strokeStyle='#d4dfe8';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x(pos),y);ctx.lineTo(x(pos),y+88);ctx.stroke()}
+  for(const kind of ['trans','cis'])for(const s of v.signals.filter(s=>s.kind===kind&&(mode==='all'||s.chr===mode))){const sx=x(coord(s));ctx.strokeStyle=kind==='cis'?'#dc4b52':'#15976b';ctx.lineWidth=kind==='cis'?3:2;ctx.beginPath();ctx.moveTo(sx,y+12);ctx.lineTo(sx,y+82);ctx.stroke();hits.push({x:sx,y:y+12,s,d})}
+  if(!v.signals.length){ctx.fillStyle='#899cab';ctx.font='16px sans-serif';ctx.fillText(v.status==='complete'?'No significant signals':statuses[v.status],left+18,y+50)}
+ });
+ ctx.fillStyle='#49677c';ctx.font='16px sans-serif';ctx.textAlign='center';
+ if(mode==='all'){for(const a of axes)ctx.fillText(a.chr,x(a.offset+a.span/2),top+3*ph+112)}
+ else{for(let i=0;i<=8;i++)ctx.fillText((total*i/8/1e6).toFixed(1),x(total*i/8),top+3*ph+112)}
+ ctx.fillText(mode==='all'?'Chromosome · original CHR / POS':'CHR '+mode+' · position (Mb)',(left+right)/2,H-30);ctx.textAlign='left';
+}
+$('body').onclick=e=>{const row=e.target.closest('tr[data-index]');if(row)choose(Number(row.dataset.index))};
+$('prev').onclick=()=>choose((page-1)*50);$('next').onclick=()=>choose((page+1)*50);
+$('slider').oninput=()=>choose(Number($('slider').value));$('protPrev').onclick=()=>choose(selected-1);$('protNext').onclick=()=>choose(selected+1);
+$('primary').onchange=refresh;$('search').oninput=refresh;$('chrom').onchange=draw;
+$('export').onclick=()=>save(new Blob(['\uFEFF'+[fields,...filtered.map(values)].map(row=>row.map(v=>String(v)).join('\t')).join('\n')+'\n'],{type:'text/tab-separated-values;charset=utf-8'}),'primary-'+$('primary').value+'.tsv');
+$('png').onclick=()=>{const p=filtered[selected];if(p)$('plot').toBlob(blob=>save(blob,p.prot+'.'+$('chrom').value+'.png'))};
+$('plot').onmousemove=e=>{const rect=$('plot').getBoundingClientRect(),x=(e.clientX-rect.left)*1600/rect.width,y=(e.clientY-rect.top)*650/rect.height;const near=hits.filter(h=>Math.abs(h.x-x)<7&&y>=h.y&&y<=h.y+70).sort((a,b)=>Math.abs(a.x-x)-Math.abs(b.x-x));$('signalDetail').textContent=near.length?near.slice(0,8).map(h=>h.d.toUpperCase()+' | '+h.s.kind+' | CHR '+h.s.chr+':'+h.s.pos.toLocaleString()+' | '+h.s.snp+' | '+h.s.assays.join(';')).join('\n'):'悬停信号柱查看位置、SNP 和检测来源。'};
+$('footer').textContent='生成时间 '+DATA.generated+' · 来源 '+DATA.root+' · 仅读取 mplot/*.sig.txt 中 magma: 之前的结果。报告为离线快照；新结果生成后重新运行 cross-check 更新。cis 同时存在表示信号存在性复现，不代表同一 causal variant 或共定位。';
+refresh();
+</script></body></html>

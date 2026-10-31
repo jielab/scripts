@@ -1,0 +1,10 @@
+{
+  "version": "LE8-C1-sensitivity-2026-10-26-v1",
+  "description": "Exploratory/sensitivity methods only",
+  "methods": [
+    "abm_legacy",
+    "molecular_deviation",
+    "abm_deep"
+  ],
+  "overrides": {}
+}

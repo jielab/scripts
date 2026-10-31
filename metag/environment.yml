@@ -1,0 +1,17 @@
+name: metag
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - sourmash>=4.9
+  - sourmash_plugin_branchwater
+  - kraken2>=2.1
+  - fastp>=0.23
+  - seqkit
+  - pigz
+  - aria2
+  - zlib
+  - curl
+  - wget

@@ -1,0 +1,111 @@
+{
+  "schema_version": "grid.abm.final.1",
+  "purpose": "FINAL GRID ABM pipeline; exploratory frozen-roster protocol",
+  "analysis_version": "FINAL",
+  "traits": [
+    "height",
+    "ldl",
+    "t2dm"
+  ],
+  "score_source": "csx",
+  "baseline_predictor": "csx-linear",
+  "candidate_predictor": "csx-blocknet",
+  "benchmark_predictors": [
+    "csx-moe"
+  ],
+  "side_feature_contract": "shared_current_18_columns_with_source_manifest",
+  "support": {
+    "representation": "csx_ldblocks_fixed",
+    "include_pcs": false,
+    "include_clinical": false,
+    "map_weighting": "equal_map_mean_squared_distance",
+    "sd_floor_quantile_within_map": 0.1,
+    "donor_policy": "all_build_genotype_qc_pass_and_trait_label_observed",
+    "outcome_residual_pruning": false,
+    "radius_role": "tune_model_X_only",
+    "radius_k_ref": 64,
+    "radius_quantile": 0.9,
+    "k_used": 128,
+    "min_count": 20,
+    "min_group_ess": 15.0
+  },
+  "execution": {
+    "device": "auto",
+    "distance_backend": "blocked_exact",
+    "reference_dtype": "float64",
+    "query_batch": 128,
+    "donor_batch": 4096,
+    "reuse_support_across_predictors": true
+  },
+  "calibration_fit_partition_by_group": {
+    "prediction_calibration": 0.5,
+    "head_calibration": 0.25,
+    "policy_calibration": 0.25
+  },
+  "head_options": {
+    "n_bins": 8,
+    "risk_bins": 10,
+    "prior_strength": 20.0,
+    "min_calibration_groups": 20,
+    "n_boot": 1000,
+    "seed": 20261020
+  },
+  "primary_loss": {
+    "height": "mse",
+    "ldl": "mse",
+    "t2dm": "brier"
+  },
+  "primary_coverage": 0.5,
+  "coverages": [
+    0.2,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "min_gain": 0.0,
+  "evaluation": {
+    "control_pool": "supported_and_assessment_available",
+    "matching": "frozen_risk_bin_disjoint_group_exclusion",
+    "min_matched_pairs": 20,
+    "min_matched_groups_each_side": 10,
+    "bootstrap_unit": "original_family_or_declared_group",
+    "bootstrap_replicates": 1000
+  },
+  "residual_correction": false,
+  "validation_status": "exploratory_previously_inspected_test",
+  "groups_status": "derive_from_verified_source_do_not_assume",
+  "gwas_overlap_status": "derive_from_source_provenance_do_not_assume",
+  "block_config": "/mnt/d/scripts/grid/config/abm.blocks.json",
+  "predictors": {
+    "moe_clusters": [
+      4,
+      8,
+      16
+    ],
+    "moe_min_n": 100,
+    "moe_min_class": 10,
+    "ridge_grid": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "logistic_c_grid": [
+      0.01,
+      0.1,
+      1.0
+    ]
+  },
+  "prsformer": {
+    "lr": 0.0001,
+    "amp": "bf16",
+    "epochs": 30,
+    "patience": 5,
+    "batch_size": 1,
+    "accumulation_steps": 64,
+    "seed": 20261020
+  },
+  "count_only": true
+}

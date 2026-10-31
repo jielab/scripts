@@ -1,0 +1,51 @@
+usage: ./3.global.sh all [-h] [--db DB] [--threads THREADS]
+                         [--kraken-dir KRAKEN_DIR]
+                         [--min-free-gib MIN_FREE_GIB]
+                         [--memory-reserve-gib MEMORY_RESERVE_GIB]
+                         [--memory-limit-gib MEMORY_LIMIT_GIB]
+                         [--db-gib DB_GIB] [--chunk-mib CHUNK_MIB]
+                         [--no-masking] [--dat-list DAT_LIST]
+                         [--sample SAMPLE] [--output-suffix OUTPUT_SUFFIX]
+                         [--confidence CONFIDENCE] [--quick | --no-quick]
+                         [--read-reports | --no-read-reports]
+                         [--minimum-hit-groups MINIMUM_HIT_GROUPS]
+                         [--minimum-base-quality 0..93]
+                         [--work-root WORK_ROOT] [--keep-work]
+                         [--benchmark-fragments BENCHMARK_FRAGMENTS]
+
+options:
+  -h, --help            show this help message and exit
+  --db DB
+  --threads THREADS
+  --kraken-dir KRAKEN_DIR
+                        Complete Kraken 2 2.17.2 installation directory
+  --min-free-gib MIN_FREE_GIB
+  --memory-reserve-gib MEMORY_RESERVE_GIB
+                        Additional internal available-memory reserve; default
+                        8 GiB
+  --memory-limit-gib MEMORY_LIMIT_GIB
+                        Hard cgroup memory limit for this job and all
+                        children; default 40 GiB; no swap
+  --db-gib DB_GIB       Hash table budget in GiB; may downsample minimizers;
+                        default 24
+  --chunk-mib CHUNK_MIB
+                        Derived FASTA chunk size in MiB of bases; default 512
+  --no-masking          Explicitly disable low-complexity masking (changes the
+                        method)
+  --dat-list DAT_LIST   Comma-separated datasets under DIR_RAW
+  --sample SAMPLE       Unique dataset/run or run ID
+  --output-suffix OUTPUT_SUFFIX
+                        Separate output version suffix; default kraken2
+  --confidence CONFIDENCE
+                        Confidence threshold; speed-oriented default 0
+  --quick, --no-quick   Stop native search once minimum hit groups are found;
+                        default enabled
+  --read-reports, --no-read-reports
+                        Write per-read assignment tables; default off to save
+                        CPU and I/O
+  --minimum-hit-groups MINIMUM_HIT_GROUPS
+  --minimum-base-quality 0..93
+  --work-root WORK_ROOT
+  --keep-work           Keep compact taxids after complete output/benchmark
+  --benchmark-fragments BENCHMARK_FRAGMENTS
+                        Fragment/pair prefix; default 1,000,000

@@ -1,0 +1,19 @@
+{
+  "transitions": [
+    {
+      "from": "ded76536c7f8da418b935bafe22d719ba128914d72429033ed6b807d81f4535a",
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Reviewed runtime/resume bookkeeping update. Model, losses, sampling and optimizer algorithm unchanged. Permit microbatch changes only at fixed subjects per optimizer step; floating-point and dropout trajectories may differ. Public-entry help/docstring renaming only in the final cleanup. Preparation-only change: verify phenotype-equivalent cohort values before reusing unchanged frozen cache; training and resume algorithms unchanged."
+    },
+    {
+      "from": "417660a18bdb13585514769fc4144d271987a42867bc2378e7fb61947f74c5a7",
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Verified AST differs only in public-entry docstring and missing-roster help text; all scientific code and parameters unchanged. Preparation-only change: verify phenotype-equivalent cohort values before reusing unchanged frozen cache; training and resume algorithms unchanged."
+    },
+    {
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Preparation-only phenotype equivalence verification; frozen cache files and all training/model/optimizer code unchanged.",
+      "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb"
+    }
+  ]
+}

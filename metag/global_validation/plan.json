@@ -1,0 +1,97 @@
+{
+  "workflow": "global Kraken 2",
+  "classifier_is_changed": true,
+  "tools": {
+    "executable": "/home/huangj/.cache/metag/tools/kraken2/2.17.2/bin/kraken2",
+    "preferred_pinned_directory": "/home/huangj/.cache/metag/tools/kraken2/2.17.2/bin",
+    "required_source_tag": "2.17.2",
+    "required_source_commit": "8c190b1b668825935dbf6dee5f969227dc8269bb",
+    "installation_receipt_required": true
+  },
+  "memory": {
+    "mem_total_bytes": 75877146624,
+    "mem_available_bytes": 59773419520,
+    "effective_available_bytes": 59773419520,
+    "cgroups": [],
+    "note": "Preflight only; hash budget is not a peak process memory limit."
+  },
+  "resource_limits": {
+    "memory_limit_gib": 40,
+    "swap_limit_gib": 0,
+    "outside_headroom_gib": 8
+  },
+  "build": {
+    "schema": "metag-kraken2-global-v1",
+    "path": "/mnt/f/annot/metag/lib/kraken2_global/db",
+    "reference": {
+      "inventory": "/mnt/f/annot/metag/lib/reference/inventory.tsv",
+      "inventory_sha256": "0b96d97e66d564272b54a1cd3a3784f79655f9c88e0b338a9edc4097acd90242",
+      "active_references": 35401,
+      "source_bytes": 610149083298,
+      "reference_states_sha256": "b1e7b0a83b1c48c49585258a51ce141a9db71174cbd5f7026dcd9618944fa495",
+      "taxonomy_path": "/mnt/f/annot/metag/lib/metacache/taxonomy",
+      "taxonomy_states": {
+        "nodes.dmp": [
+          232649475,
+          1793237793000000000,
+          1793271630422463500
+        ],
+        "names.dmp": [
+          317752826,
+          1793237790000000000,
+          1793271637666277300
+        ],
+        "merged.dmp": [
+          1932463,
+          1793237786000000000,
+          1793271637741193800
+        ]
+      },
+      "excluded_references_are_not_added": true
+    },
+    "parameters": {
+      "hash_cap_bytes": 25769803776,
+      "db_gib": 24.0,
+      "kmer_len": 35,
+      "minimizer_len": 31,
+      "minimizer_spaces": 7,
+      "masking": true,
+      "chunk_bases": 536870912,
+      "overlap_bases": 34
+    },
+    "memory": {
+      "mem_total_bytes": 75877146624,
+      "mem_available_bytes": 59700178944,
+      "effective_available_bytes": 59700178944,
+      "cgroups": [],
+      "note": "Preflight only; hash budget is not a peak process memory limit."
+    },
+    "required_available_memory_bytes": 34359738368,
+    "memory_fits": true,
+    "free_disk_bytes": 7836625321984,
+    "initial_disk_headroom_bytes": 51539607552,
+    "initial_disk_fits": true,
+    "disk_note": "The permanent uncompressed native library is retained in addition to hash/taxonomy/opts. Its final size is unknown until streaming completes; free space is checked continuously.",
+    "budget_note": "db_gib caps the Kraken2 hash table, not peak RAM. If minimizers exceed the cap, native Kraken2 downsamples them; all active references are supplied."
+  },
+  "samples": {
+    "count": 466,
+    "datasets": {
+      "changj": 204,
+      "Ndesert": 10,
+      "Wxiamen": 252
+    },
+    "input_file_bytes": 1190601346935,
+    "fragment_counts": "not counted; compressed bytes cannot establish total fragment count",
+    "output_suffix": "kraken2",
+    "first_sample": {
+      "name": "changj__SRR21290127__kraken2",
+      "dataset": "changj",
+      "run": "SRR21290127",
+      "r1": "/mnt/f/metag/raw/changj/SRR21290127_1.fastq.gz",
+      "r2": "/mnt/f/metag/raw/changj/SRR21290127_2.fastq.gz",
+      "target": "/mnt/f/metag/split/changj/SRR21290127__kraken2"
+    }
+  },
+  "plan_complete": true
+}

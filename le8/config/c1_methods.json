@@ -1,0 +1,12 @@
+{
+  "version": "LE8-C1-primary-2026-10-26-v1",
+  "description": "Primary C1 methods",
+  "methods": [
+    "glmnet",
+    "lightgbm",
+    "abm_case_preserving",
+    "abm_profile",
+    "abm_prevalent"
+  ],
+  "overrides": {}
+}
