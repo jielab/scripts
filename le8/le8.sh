@@ -170,7 +170,7 @@ le8_main() {
 	export LE8_GRCH=${LE8_GRCH:-auto}
 	# Pool capacity coordinates concurrent runs; each phase requests only its own budget.
 	export LE8_TOTAL_CORES=${LE8_TOTAL_CORES:-16}
-	export LE8_RESOURCE_MEMORY_GIB=${LE8_RESOURCE_MEMORY_GIB:-32}
+	export LE8_RESOURCE_MEMORY_GIB=${LE8_RESOURCE_MEMORY_GIB:-64}
 	export RUN_MRlink2=${RUN_MRlink2:-Top} RUN_Dandelion=${RUN_Dandelion:-Top}
 	export MRLINK2_EIGH_BACKEND=${MRLINK2_EIGH_BACKEND:-auto}
 	export RUN_GPU_COLOC=${RUN_GPU_COLOC:-TRUE} FINAL_NESTED_CV=${FINAL_NESTED_CV:-FALSE}

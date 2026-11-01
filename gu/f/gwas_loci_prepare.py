@@ -103,10 +103,10 @@ def cojo_loci_main():
 	ap.add_argument("--chr-column", default="Chr")
 	ap.add_argument("--pos-column", default="bp")
 	ap.add_argument("--p-column", default="pJ")
-	ap.add_argument("--helper", type=Path, default=Path("/mnt/d/scripts/0f/phenotype.R"))
-	ap.add_argument("--chain", type=Path, default=Path("/mnt/d/files/liftOver/hg38ToHg19.over.chain.gz"))
+	ap.add_argument("--helper", type=Path, default=Path(__file__).resolve().parent / "phenotype.R")
+	ap.add_argument("--chain", type=Path, default=Path(os.environ.get("GU_COJO_CHAIN", str(Path.home() / "files/liftOver/hg38ToHg19.over.chain.gz"))))
 	# PATH may contain an older UCSC executable with different multi-map behavior.
-	ap.add_argument("--liftover", default=os.environ.get("GU_LIFTOVER", "/mnt/d/software/bin/liftOver"))
+	ap.add_argument("--liftover", default=os.environ.get("GU_LIFTOVER", shutil.which("liftOver") or str(Path.home() / ".local/bin/liftOver")))
 	a = ap.parse_args()
 	a.output.mkdir(parents=True, exist_ok=True)
 	lines = [line.split() for line in a.input.read_text().splitlines() if line.strip()]

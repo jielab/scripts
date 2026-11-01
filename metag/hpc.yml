@@ -1,0 +1,96 @@
+# Usage example: two separate entry points, no submit_library.sh command needed.
+# cd /work/sph-huangj/scripts/metag
+# 1. Submit setup:
+# ./install.sh setup --metadata-source /data/sph-huangj/annot/metag/0.meta --submit
+# 2. After setup is DONE, submit the library workflow:
+# ./1.library.sh --queue short --submit
+# Do not repeat either submission while its jobs are already queued or running.
+
+schema: 1
+root: "{dir_data}"
+reference_raw: annot/metag/raw
+metadata_dir: "{scratch_analysis}/metag/metadata_hpc"
+library_dir: "{scratch_analysis}/metag/lib_hpc"
+reads_raw: "{scratch_root}/metag/raw"
+output_dir: "{scratch_analysis}/metag/split_hpc"
+work_dir: "{scratch_analysis}/metag"
+tools_dir: tools/metag
+reference_taxid_map: null
+prepare_target_gib: 2
+prepare_max_files: 1000
+prepare_threads: 8
+prepare_concurrency: 16
+prepare_queue: short
+prepare_cores: 40
+prepare_memory_gib: 32
+prepare_hours: 72
+setup_queue: ser
+setup_cores: 8
+setup_memory_gib: 16
+setup_hours: 24
+build_queue: smp
+build_cores: 96
+build_threads: 96
+build_memory_gib: 4096
+build_hours: 168
+classify_queue: smp
+classify_cores: 96
+classify_threads: 8
+classify_workers: 4
+classify_memory_gib: 4096
+classify_hours: 168
+classify_concurrency: 2
+sample_batch_size: 16
+worker_memory_gib: 8
+system_reserve_gib: 64
+memory_accounting: conservative
+pilot_fragments: 100000
+masking: true
+confidence: 0.1
+minimum_hit_groups: 2
+minimum_base_quality: 0
+output_format: tar
+min_free_gib: 100
+lsf_memory_scope: site_host
+lsf_resource_reserve_per_task: false
+max_array_size: 100
+classifier_engine: kraken
+kunpeng_install_mode: binary
+kunpeng_binary: null
+kunpeng_cargo: null
+kunpeng_hash_capacity: 1073741824
+kunpeng_input_compression: gzip
+kunpeng_buffer_bytes: 16777216
+kunpeng_batch_size: 4
+kunpeng_max_work_gib: 256
+convert_queue: ser
+convert_cores: 2
+convert_memory_gib: default  # MEMORY_DEFAULT_GIB from 0f/0os.sh
+convert_hours: 72
+kunpeng_full_queue: smp
+kunpeng_full_cores: 72
+kunpeng_full_threads: 64
+kunpeng_full_workers: 1
+kunpeng_full_memory_gib: 4096
+kunpeng_full_hours: 168
+kunpeng_full_concurrency: 2
+kunpeng_memory_queue: ser
+kunpeng_memory_cores: 24
+kunpeng_memory_threads: 16
+kunpeng_memory_workers: 1
+kunpeng_memory_memory_gib: 128
+kunpeng_memory_hours: 72
+kunpeng_memory_concurrency: 8
+kunpeng_memory_reserve_gib: 16
+compare_threads: 16
+compare_cores: 24
+compare_repeats: 2
+compare_fragments: 1000000
+compare_concurrency_full: 2
+compare_concurrency_memory: 4
+compare_summary_queue: ser
+compare_summary_cores: 2
+compare_summary_memory_gib: 16
+compare_summary_hours: 24
+compare_placement: matched
+build_kunpeng: true

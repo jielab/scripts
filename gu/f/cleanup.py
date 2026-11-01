@@ -122,7 +122,7 @@ def cleanup(analysis, work=None, apply=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--analysis-root', default='/mnt/f/analysis/gu')
+    parser.add_argument('--analysis-root', default=os.environ.get('GU_ANALYSIS_BASE'))
     parser.add_argument('--work', help='Only clean this completed result scope')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--report')

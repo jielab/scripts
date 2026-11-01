@@ -211,11 +211,18 @@ struct Input {
         return s.substr(0, end);
     }
 };
+static void check_output(const ostream& out, const string& path, const string& action) {
+    if (!out) {
+        int error = errno;
+        throw runtime_error(action + ": " + path +
+                            (error ? ": " + string(strerror(error)) : ": stream failure"));
+    }
+}
 static void pack(const string& source, const string& dest) {
     require(!filesystem::exists(dest), "Refusing to overwrite packed output");
     ifstream in(source, ios::binary); require(bool(in), "Cannot open compression input");
-    ofstream out(dest, ios::binary); require(bool(out), "Cannot create compression output");
-    string header = "LDZST001"; put64(header, block_size); out.write(header.data(), header.size());
+    ofstream out(dest, ios::binary); check_output(out, dest, "Cannot create compression output");
+    string header = "LDZST001"; put64(header, block_size); out.write(header.data(), header.size()); check_output(out, dest, "LD compressed header write failure");
     unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> ctx(ZSTD_createCCtx(), ZSTD_freeCCtx);
     require(bool(ctx), "Cannot allocate Zstandard context");
     zcheck(ZSTD_CCtx_setParameter(ctx.get(), ZSTD_c_compressionLevel, 1));
@@ -227,14 +234,14 @@ static void pack(const string& source, const string& dest) {
         require(!in.bad() && (in.eof() || !in.fail()), "LD compression input read failure");
         if (!n) break;
         size_t c = ZSTD_compress2(ctx.get(), packed.data(), packed.size(), raw.data(), n); zcheck(c);
-        out.write(packed.data(), c); require(bool(out), "LD compressed output write failure");
+        out.write(packed.data(), c); check_output(out, dest, "LD compressed output write failure");
         put64(index, offset); put64(index, c); put64(index, n);
         offset += c; total += n; ++count;
     }
     string footer = "LDZEND01"; put64(footer, offset); put64(footer, count); put64(footer, total);
     put64(footer, hash_bytes(footer, hash_bytes(index, hash_bytes(header))));
     out.write(index.data(), index.size()); out.write(footer.data(), footer.size()); out.close();
-    require(bool(out), "LD compressed output close failure");
+    check_output(out, dest, "LD compressed output close failure");
 }
 static void unpack(const string& source, const string& dest) {
     Input input(source); require(input.compressed, "Expected LDZ input");

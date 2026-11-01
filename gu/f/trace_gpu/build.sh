@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
 
 # Direct CLI help must return before setup, downloads or analysis.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -30,9 +23,10 @@ HELP
 fi
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-out=${TRACE_GPU_HOME:-/mnt/d/software/gu/trace-gpu}
-nvcc=${GU_NVCC:-/home/huangj/anaconda3/envs/as3_mamba/bin/nvcc}
-python=${GU_PYTHON:-/home/huangj/anaconda3/envs/gu/bin/python}
+out=${TRACE_GPU_HOME:-${GU_SOFT:-$HOME/.local/share/gu}/trace-gpu}
+nvcc=${GU_NVCC:-$(command -v nvcc || true)}
+python=${GU_PYTHON:-$(command -v python3 || true)}
+[[ -n $nvcc && -x $nvcc && -n $python && -x $python ]] || { echo "ERROR: CUDA nvcc and Python are required; set GU_NVCC and GU_PYTHON" >&2; exit 2; }
 mkdir -p "$out"
 "$nvcc" -O3 -std=c++17 --fmad=false -arch=native --shared -Xcompiler=-fPIC \
   "$here/kernels.cu" -o "$out/libtrace_gpu.so.part"

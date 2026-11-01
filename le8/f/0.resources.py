@@ -404,8 +404,8 @@ def phase_main(argv):
     while slot is None:
         slot=pool.acquire(a.cores,reservation,gpu=a.gpu,hard_limit_gib=a.memory_gib,label=a.label)
         if slot is None:
-            if time.monotonic()-started<.5:print('[LE8] Waiting for shared resources: '+a.label+' (retry every 10 seconds)',flush=True)
-            time.sleep(10)
+            if time.monotonic()-started<.5:print('[LE8] Waiting for shared resources: '+a.label+' (retry every 5 minutes)',flush=True)
+            time.sleep(300)
     token,cpus=slot
     env=dict(os.environ,LE8_POOL_CPUS=','.join(map(str,pool.cpus)),LE8_PHASE_MEMORY_GIB=str(a.memory_gib),
         LE8_PHASE_CORES=str(a.cores),LE8_PHASE_ADMITTED='1',LE8_TOTAL_CORES=str(pool.cores),

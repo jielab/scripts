@@ -28,14 +28,33 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from importlib.util import module_from_spec, spec_from_file_location
 
 sys.dont_write_bytecode = True
+
+if "gu_0_common" not in sys.modules:
+	_spec = spec_from_file_location("gu_0_common", Path(__file__).with_name("0.common.py"))
+	_common = module_from_spec(_spec)
+	sys.modules[_spec.name] = _common
+	try:
+		_spec.loader.exec_module(_common)
+	except BaseException:
+		sys.modules.pop(_spec.name, None)
+		raise
+from gu_0_common import DEFAULT_ARCHAIC_REFERENCES, SUPPORTED_ARCHAIC_REFERENCES
 
 
 # 🚩 Input and sample contracts
 
 def fail(message):
 	raise ValueError(message)
+
+
+def runtime_directory(name):
+	value = os.environ.get(name)
+	if not value:
+		fail(f"{name} is unset; use gu.sh or load f/runtime.env before running this helper")
+	return Path(value).expanduser()
 
 
 def boolean(value):
@@ -93,9 +112,6 @@ def permanent_path(value):
 	for root in map(Path, ["/tmp", "/var/tmp", "/dev/shm", "/run"]):
 		if path == root or root in path.parents:
 			fail(f"scientific results need a permanent directory: {path}")
-	legacy = Path("/mnt/f/analysis/gu")
-	if path == legacy:
-		fail("UKB results require a dataset subdirectory, e.g. /mnt/f/analysis/gu/ukb003")
 	return path
 
 
@@ -602,7 +618,7 @@ def audit_vcf(path, expected_samples, chrom, require_phase = False, max_records 
 					if "/" in gt:
 						counts["unphased_heterozygous_genotypes"] += number
 						if require_phase:
-							fail("unphased heterozygous GT found: AS3/TRACE require genuinely phased dense data; never replace / with |")
+							fail("unphased heterozygous GT found: PhyML/TRACE require genuinely phased dense data; never replace / with |")
 			max_site_missing = max(max_site_missing, missing_here)
 			if max_records is not None and counts["records_checked"] >= max_records:
 				break
@@ -799,7 +815,7 @@ def export_vcf(args):
 	out = temporary_path(args.ukb_vcf_out or args.work / "vcf")
 	if out != args.work and args.work not in out.parents:
 		fail("--ukb-vcf-out must be inside --ukb-work so its cohort identity and preparation lock are shared")
-	results_root = permanent_path(args.ukb_results_root or f"/mnt/f/analysis/gu/ukb-{args.ukb_source}-pilot")
+	results_root = permanent_path(args.ukb_results_root or runtime_directory("GU_ANALYSIS_BASE") / f"ukb-{args.ukb_source}-pilot")
 	env = args.work / "gu-target.env"
 	env.unlink(missing_ok = True)
 	metadata_path = metadata_psam(args)
@@ -825,9 +841,10 @@ def export_vcf(args):
 		full_samples = attach_panel(read_psam(paths[1]), args.sample_panel)
 		chrom_keep = [x["sample"] for x in all_samples if x["sex"] == "male"] if chrom == "X" else [x["sample"] for x in all_samples]
 		missing_x = sorted(set(chrom_keep) - {x['sample'] for x in full_samples}) if args.existing_pgen and chrom == 'X' else []
+		missing_x_set = set(missing_x)
 		if missing_x:
 			print(f'chrX: {len(missing_x)} requested males absent from source PSAM; excluded on X only and recorded in preparation QC', flush=True)
-		samples = selected_samples(full_samples, [x for x in chrom_keep if x not in set(missing_x)], chrom)
+		samples = selected_samples(full_samples, [x for x in chrom_keep if x not in missing_x_set], chrom)
 		validate_cohort(samples, args)
 		compare_sample_metadata(all_samples, samples)
 		write_panel(args.work / f'chr{chrom}.samples.txt', samples)
@@ -866,7 +883,7 @@ def export_vcf(args):
 			if args.ukb_source == "imp" and info["dosages_present"] is not True and not args.ukb_trust_hardcalls and not args.existing_pgen:
 				fail("imputed PGEN has no verified dosages; the original GT threshold cannot be reconstructed. Inspect the conversion, then explicitly use --ukb-trust-hardcalls true if its hardcalls are suitable")
 			if args.ukb_require_phase and chrom != "X" and info["phased_hardcalls_present"] is False and info["phased_dosages_present"] is not True:
-				fail("PGEN has no phased hardcalls: IBDmix can use unphased data; PhyML/AS3/TRACE require real phase; recover dense phased data before requesting phase")
+				fail("PGEN has no phased hardcalls: IBDmix can use unphased data; PhyML/TRACE require real phase; recover dense phased data before requesting phase")
 			ids = stage / "selected.snps.txt"
 			indexed_pvar = stage / 'source.indexed.pvar' if args.existing_pgen else None
 			selection = select_variants(paths[2], chrom, args, ids, indexed_pvar)
@@ -925,7 +942,7 @@ def export_vcf(args):
 				"purpose": "existing_PGEN_subset" if args.existing_pgen else "sparse_array_control" if args.ukb_source != "imp" else "imputed_dense_pilot",
 				"cohort": cohort, "quality_selection": selection, "pgen": info, "genotype_audit": audit, **missingness,
 				"modern_indel_mask": "unavailable_after_SNP_only_export",
-				"ibdmix_interpretation": {"status": "ukb_exploratory_not_cell2020", "reference_affinity_only": True, "strict_evidence_eligible": False},
+				"ibdmix_interpretation": {"status": "ukb_exploratory_reference_affinity", "reference_affinity_only": True, "strict_evidence_eligible": False},
 				"hardcall_uncertainty": "DS distance is not an original genotype posterior probability" if info["dosages_present"] else "existing hardcalls explicitly accepted",
 				"sample_selection": {"requested": len(chrom_keep), "retained": len(samples), "missing_from_chromosome_psam": missing_x},
 				"ploidy_preparation": ploidy_qc,
@@ -1089,24 +1106,24 @@ def validate_result_cohort(root, dataset, expected = None, expected_method = Non
 			fail(f"UKB {method} results mix PGEN sources/builds/quality contracts; use a separate results root")
 		method_identities[method] = observed
 		identity = observed
-	for method in ["ibdmix", "trace", "as3", "phyml"]:
-		for base in [root / method, root / "ukb" / method]:
-			native_runs = set()
-			for path in sorted(base.glob("**/inputs/ukb.preparation.qc.json")):
-				try:
-					observed = archived_preparation_identity(path)
-				except ValueError:
-					if path.exists():
-						raise
-					# Compaction publishes its archive before removing native
-					# files. The archive pass below covers that transition.
-					continue
-				compare(observed, path, method)
-				native_runs.add(path.parent.parent)
-			for archive in sorted(base.glob("**/*.raw.tar.gz")):
-				if archive.parent in native_runs:
-					continue
-				compare(_native_archive_preparation_identity(archive), archive, method)
+	for method in ["ibdmix", "trace", "phyml"]:
+		base = root / method
+		native_runs = set()
+		for path in sorted(base.glob("**/inputs/ukb.preparation.qc.json")):
+			try:
+				observed = archived_preparation_identity(path)
+			except ValueError:
+				if path.exists():
+					raise
+				# Compaction publishes its archive before removing native
+				# files. The archive pass below covers that transition.
+				continue
+			compare(observed, path, method)
+			native_runs.add(path.parent.parent)
+		for archive in sorted(base.glob("**/*.raw.tar.gz")):
+			if archive.parent in native_runs:
+				continue
+			compare(_native_archive_preparation_identity(archive), archive, method)
 	return identity
 
 
@@ -1143,7 +1160,7 @@ def stage_qc(args):
 	payload = {"cohort_scope": "fixed UKB pilot; IBDmix frequencies are not frozen across different sample batches", "chromosomes": rows}
 	identity = _preparation_identity(payload)
 	dataset = os.environ.get("GU_TARGET") or f"ukb-{identity['source']}-pilot"
-	results_root = permanent_path(args.ukb_results_root or f"/mnt/f/analysis/gu/ukb-{identity['source']}-pilot")
+	results_root = permanent_path(args.ukb_results_root or runtime_directory("GU_ANALYSIS_BASE") / f"ukb-{identity['source']}-pilot")
 	content = json.dumps(payload, indent = 2, sort_keys = True) + "\n"
 	with _result_cohort_lock(results_root):
 		validate_result_cohort(results_root, dataset, identity, run_dir.relative_to(results_root).parts[0])
@@ -1200,7 +1217,14 @@ def _ukb_scoring_source(root, ref, chrom):
 def _ukb_scoring_sites(modern, chrom, build, destination, expected_sha256=None):
 	"""Stream just four fields; never materialize all modern GTs in Python."""
 	blocks = [{'start': lo, 'end': hi, 'name': f'UKB_X_NP{i + 1}', 'modern_sites': 0} for i, (lo, hi) in enumerate(_ukb_scoring_blocks(chrom, build))]
-	process = subprocess.Popen(['bcftools', 'query', '-f', '%CHROM\t%POS\t%REF\t%ALT\n', str(modern)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+	# Warnings on a whole UKB chromosome must not fill an unread stderr pipe
+	# and deadlock the streaming stdout reader.
+	errors = tempfile.TemporaryFile(mode='w+t')
+	try:
+		process = subprocess.Popen(['bcftools', 'query', '-f', '%CHROM\t%POS\t%REF\t%ALT\n', str(modern)], stdout=subprocess.PIPE, stderr=errors, text=True)
+	except BaseException:
+		errors.close()
+		raise
 	count, previous = 0, 0
 	digest = hashlib.sha256()
 	try:
@@ -1225,16 +1249,16 @@ def _ukb_scoring_sites(modern, chrom, build, destination, expected_sha256=None):
 				digest.update(canonical.encode())
 				previous = position
 				count += 1
-		stderr = process.stderr.read()
 		if process.wait():
-			raise ValueError('bcftools failed while reading post-QC sites: ' + stderr[-2000:])
+			errors.seek(0)
+			raise ValueError('bcftools failed while reading post-QC sites: ' + errors.read()[-2000:])
 	except BaseException:
 		process.kill()
 		process.wait()
 		raise
 	finally:
 		process.stdout.close()
-		process.stderr.close()
+		errors.close()
 	if not count:
 		raise ValueError('No post-QC modern scoring sites')
 	value = digest.hexdigest()
@@ -1372,10 +1396,10 @@ def prepare_archaic(args):
 		fallback_mask_root = None
 	if not source_root.is_dir() or not mask_root.is_dir():
 		raise ValueError('Original archaic root and original mask root must exist')
-	canonical = {x.lower(): x for x in ('Altai', 'Chagyr', 'Vindija', 'Denisova', 'Denisova25')}
-	names = str(args.ukb_archaic_refs or 'Altai Chagyr Denisova Denisova25 Vindija').replace(',', ' ').split()
+	canonical = {x.lower(): x for x in SUPPORTED_ARCHAIC_REFERENCES}
+	names = str(args.ukb_archaic_refs or ' '.join(DEFAULT_ARCHAIC_REFERENCES)).replace(',', ' ').split()
 	if not names or any(x.lower() not in canonical for x in names):
-		raise ValueError('UKB scoring accepts only Altai,Chagyr,Denisova,Denisova25,Vindija; .2013 replication references are retired')
+		raise ValueError('UKB scoring references: ' + ','.join(SUPPORTED_ARCHAIC_REFERENCES))
 	refs = list(dict.fromkeys(canonical[x.lower()] for x in names))
 	vcf_root = Path(args.ukb_vcf_out or args.work / 'vcf').resolve()
 	for chrom in args.chroms:
@@ -1444,7 +1468,7 @@ def prepare_archaic(args):
 					'original_fallback_mask_root': str(fallback_mask_root) if fallback_mask_root else None,
 					'nonpar_bed': str(bed) if bed else None, 'modern_vcf': str(modern), 'scope': 'UKB_postqc_observed_sites',
 					'modern_indel_mask': 'unavailable_after_SNP_only_export',
-					'status': 'ukb_exploratory_not_cell2020', 'reference_affinity_only': True, 'strict_evidence_eligible': False,
+					'status': 'ukb_exploratory_reference_affinity', 'reference_affinity_only': True, 'strict_evidence_eligible': False,
 					'supported_nonpar_block_bp': sum(b['end'] - b['start'] for b in qc['blocks'] if b['status'] == 'eligible_separate_call_unit') if chrom == 'X' else None,
 					'unknown_sites': 'Not scored; absent modern or archaic records are never filled with reference genotype',
 					'x_call_state': 'Each informative non-PAR block is a separate caller unit; no-information blocks are declared, not called',
@@ -1519,7 +1543,10 @@ def context(prefix, keep=None, male=False, panel=None, dataset="ukb"):
 	write_panel(work / 'samples.txt', samples)
 	ids = '#IID\n' + ''.join(s['sample'] + '\n' for s in samples)
 	if not (work / 'cohort.keep').exists() or (work / 'cohort.keep').read_text() != ids:
-		(work / 'cohort.keep').write_text(ids)
+		fd, staged = tempfile.mkstemp(prefix='.cohort-', suffix='.keep', dir=work)
+		with os.fdopen(fd, 'w') as handle:
+			handle.write(ids)
+		os.replace(staged, work / 'cohort.keep')
 	source = prefix.parent.name if prefix.parent.name in ('imp', 'hap', 'typ') else 'imp'
 	if dataset != 'ukb':
 		return {'GU_FILTERED_TARGET': '1', 'TARGET_INPUT': dataset + '-subset-' + key, 'GU_KEEP': str(Path(keep).resolve()) if keep else str(work / 'cohort.keep'), 'GU_SAMPLE_PANEL': str(work / 'samples.txt'), 'SAMPLE_PANEL_INPUT': str(work / 'samples.txt')}
@@ -1566,7 +1593,7 @@ def parser():
 	ap.add_argument("--ukb-results-root", type = Path, default = os.environ.get("UKB_RESULTS_ROOT") or os.environ.get("GU_UKB_RESULTS_ROOT") or None)
 	ap.add_argument("--ukb-run-dir", type = Path, help = "internal stage-qc native method-run destination")
 	ap.add_argument("--ukb-archaic-root", type = Path, help = "internal prepare-archaic original reference VCF directory")
-	ap.add_argument("--ukb-archaic-refs", default = "Altai Chagyr Denisova Denisova25 Vindija", help = "internal prepare-archaic reference names, separated by commas or spaces")
+	ap.add_argument("--ukb-archaic-refs", default = " ".join(DEFAULT_ARCHAIC_REFERENCES), help = "internal prepare-archaic reference names, separated by commas or spaces")
 	ap.add_argument("--ukb-mask-root", type = Path, help = "original archaic quality-mask directory; filtering VCFs does not redefine quality masks")
 	ap.add_argument("--ukb-vcf-out", type = Path, default = os.environ.get("UKB_VCF_OUT") or None)
 	ap.add_argument("--ukb-ref-fasta", type = Path, default = os.environ.get("UKB_REF_FASTA") or None)
@@ -1601,7 +1628,7 @@ def main(argv = None):
 		return target_main(argv[1:])
 	args = parser().parse_args(argv)
 	args.chroms = chromosomes(args.chr)
-	args.root = (args.ukb_pgen_root or Path(f"/mnt/f/gen/ukb/{args.grch}/{args.ukb_source}")).expanduser().resolve()
+	args.root = (args.ukb_pgen_root or runtime_directory("GU_REF_ROOT") / f"ukb/{args.grch}/{args.ukb_source}").expanduser().resolve()
 	args.work = temporary_path(args.ukb_work or Path("/tmp/gu-ukb") / args.ukb_source)
 	for name in ["ukb_threads", "ukb_memory_mb", "ukb_pilot_n", "ukb_max_export_samples"]:
 		if getattr(args, name) <= 0:

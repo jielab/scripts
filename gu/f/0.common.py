@@ -35,17 +35,9 @@ import tempfile
 
 
 def resolve_tsv_path(path: Path) -> Path:
-	"""Prefer compressed unfiltered inventories, with legacy plain TSV fallback."""
+	"""Unfiltered inventories use the current gzip representation."""
 	path = Path(path)
-	if path.name.endswith("unfiltered.tsv.gz"):
-		plain, compressed = path.with_suffix(""), path
-	elif path.name.endswith("unfiltered.tsv"):
-		plain, compressed = path, path.with_name(path.name + ".gz")
-	else:
-		return path
-	if compressed.is_file():
-		return compressed
-	return plain if plain.is_file() else path
+	return path.with_name(path.name + ".gz") if path.name.endswith("unfiltered.tsv") else path
 
 
 def read_tsv_rows(path: Path) -> list[dict[str, str]]:
@@ -77,10 +69,6 @@ def write_tsv_rows(path: Path, fieldnames, rows) -> None:
 			for row in rows:
 				writer.writerow({key: row.get(key, "") for key in fields})
 		tmp.replace(path)
-		if path.name.endswith("unfiltered.tsv.gz"):
-			# Retire a previous plain output only after the new gzip is closed
-			# and atomically published. Failed writes preserve both old forms.
-			path.with_suffix("").unlink(missing_ok=True)
 	finally:
 		tmp.unlink(missing_ok=True)
 
@@ -152,30 +140,26 @@ CHROM_LENGTHS = {
 }
 
 
-# Reference purpose is independent of lineage. Historical calls remain available
-# to the IBDmix reproduction tables, but never contribute cross-method evidence.
-SCIENTIFIC_REFERENCES = ("Altai", "Chagyr", "Vindija", "Denisova", "Denisova25")
-REPRODUCTION_REFERENCES = ("Altai.2013", "Denisova.2013")
+# All automatic runs use these five references. Additional references require
+# an explicit --archaic-gen selection and participate only when actually tested.
+DEFAULT_ARCHAIC_REFERENCES = ("Altai", "Chagyr", "Denisova", "Denisova25", "Vindija")
+SUPPORTED_ARCHAIC_REFERENCES = DEFAULT_ARCHAIC_REFERENCES + ("Altai.2013", "Denisova.2013")
+SCIENTIFIC_REFERENCES = SUPPORTED_ARCHAIC_REFERENCES
 
 
 def reference_role(source):
-	source = {"Chagyrskaya": "Chagyr"}.get(str(source), str(source))
-	if source in REPRODUCTION_REFERENCES:
-		return "ibdmix_reproduction_only"
-	return "scientific_reference" if source in SCIENTIFIC_REFERENCES else "unclassified"
+	return "scientific_reference" if str(source) in SUPPORTED_ARCHAIC_REFERENCES else "unclassified"
 
 
 def scientific_segment(row):
 	source = row.get("source", row.get("anc", ""))
-	if reference_role(source) == "ibdmix_reproduction_only":
-		return False
 	return row.get("method") != "ibdmix" or reference_role(source) == "scientific_reference"
 
 
 def evidence_sql(alias=""):
 	prefix = alias + "." if alias else ""
-	refs = ",".join("'" + ref + "'" for ref in (*SCIENTIFIC_REFERENCES, "Chagyrskaya"))
-	return f"({prefix}source NOT IN ('Altai.2013','Denisova.2013') AND ({prefix}method!='ibdmix' OR {prefix}source IN ({refs})))"
+	refs = ",".join("'" + ref + "'" for ref in SUPPORTED_ARCHAIC_REFERENCES)
+	return f"({prefix}method!='ibdmix' OR {prefix}source IN ({refs}))"
 
 
 def x_nonpar_intervals(build, length=None):
@@ -506,7 +490,7 @@ def vcf_gt_fix_main() -> None:
 		sys.stdout.write("\t".join(fields) + "\n")
 	if args.require_phased and n_unphased_het:
 		raise SystemExit(
-			f"Found {n_unphased_het} unphased heterozygous GT calls; AS3 requires phased target haplotypes"
+			f"Found {n_unphased_het} unphased heterozygous GT calls; this analysis requires phased target haplotypes"
 		)
 	print(f"records={n_records} calls={n_calls} haploid_duplicated_or_seen={n_haploid}", file=sys.stderr)
 
@@ -525,19 +509,19 @@ RESULT_NAMES = {
 	"phyml": "phyml.haplotypes.xlsx",
 	"ibdmix": "ibdmix.tracts.xlsx",
 	"trace": "trace.segments.xlsx",
-	"as3": "as3.tracts.xlsx",
 }
-LEGACY_RESULT_NAMES = {method: str(Path(name).with_suffix(".rds")) for method, name in RESULT_NAMES.items()}
 
 
 def gu_method_directory(method):
-	"""Resolve the module directory while retaining the native result schema."""
+	"""IBDmix uses one directory for both CPU and CUDA."""
+	if method == "ibdmix":
+		return method
 	return method + "-GPU" if os.getenv(method.upper() + "_BACKEND") == "cuda" else method
 
 
 def gu_final_relative():
 	module = os.getenv("GU_RESULT_MODULE", "")
-	return "final/" + module if module in ("phyml-GPU", "ibdmix-GPU", "trace-GPU") else "final"
+	return "final/" + module if module in ("phyml-GPU", "trace-GPU") else "final"
 
 
 def gu_is_result_run(path, method):
@@ -555,7 +539,6 @@ def gu_is_result_run(path, method):
 				".complete",
 				method + ".raw.tar.gz",
 				RESULT_NAMES[method],
-				LEGACY_RESULT_NAMES[method],
 				path.name + ".cmd",
 			)
 		)
@@ -563,21 +546,9 @@ def gu_is_result_run(path, method):
 
 
 def gu_method_runs(work, method):
-	"""Read both <method>/<unit> and historical <method>/<target>/<unit>."""
+	"""Discover the current <method>/<unit> layout."""
 	root = Path(work) / gu_method_directory(method)
-	if not root.is_dir():
-		return []
-	runs = []
-	for child in sorted(root.iterdir()):
-		if gu_is_result_run(child, method):
-			runs.append(child)
-		elif (
-			child.is_dir()
-			and not child.name.startswith(".")
-			and child.name not in ("inputs", "tmp", "log", "logs")
-		):
-			runs.extend(run for run in sorted(child.iterdir()) if gu_is_result_run(run, method))
-	return runs
+	return [p for p in sorted(root.iterdir()) if gu_is_result_run(p, method)] if root.is_dir() else []
 
 
 def gu_dataset_from_path(path, method, default="1kg"):
@@ -585,18 +556,6 @@ def gu_dataset_from_path(path, method, default="1kg"):
 	import shlex
 
 	path = Path(path)
-	parts = path.parts
-	indexes = [i for i, part in enumerate(parts) if part.lower() in (method.lower(), method.lower() + "-gpu")]
-	if indexes:
-		i = indexes[-1]
-		if i + 1 < len(parts):
-			unit = Path(*parts[: i + 2])
-			if (
-				not gu_is_result_run(unit, method)
-				and not re.match(r"^chr(?:[0-9]+|X)(?:$|[_.-])", unit.name)
-				and unit.name != "genome"
-			):
-				return unit.name  # historical target namespace
 	for parent in path.parents:
 		context = parent / "gu-target.env"
 		if context.is_file():
@@ -606,7 +565,7 @@ def gu_dataset_from_path(path, method, default="1kg"):
 					tokens = tokens[1:]
 				if len(tokens) == 1 and tokens[0].startswith("GU_TARGET="):
 					return tokens[0].split("=", 1)[1]
-	return "ukb" if "ukb" in (part.lower() for part in parts) else default
+	return default
 
 
 def gu_result_digest(path):
@@ -658,7 +617,7 @@ def gu_result_r(*arguments):
 		for source in (
 			Path(__file__).with_suffix(".R"),
 			Path(__file__).with_name("phyml.R"),
-			Path(__file__).parents[2] / "0f/results.R",
+			Path(__file__).parent / "results.R",
 		):
 			shutil.copy2(source, stage / source.name)
 		environment["GU_RESULTS_R"] = str(stage / "results.R")
@@ -763,18 +722,6 @@ def gu_review_specs(work, output):
 		"phyml_haplotype_report.tsv",
 		"phyml_copy_validation.tsv",
 		"phyml_lineage_trees.tsv",
-		"loci_review.tsv",
-		"population_concordance.tsv",
-		"candidate_copy_support.tsv",
-		"strict_support_summary.tsv",
-		"selected_ibdmix_calls.tsv",
-		"locus_tag_summary.tsv",
-		"lead_comparison.tsv",
-		"haplotype_tag_candidates.tsv",
-		"tag_population_metrics.tsv",
-		"best_tag_by_population.tsv",
-		"best_haplotypes.tsv",
-		"gwas_lookup.tsv",
 	):
 		path = directory / name
 		if path.is_file():
@@ -803,8 +750,8 @@ def gu_export_signature():
 			for p in (
 				Path(__file__).with_name("phyml.R"),
 				Path(__file__).with_suffix(".R"),
-				Path(__file__).parents[2] / "0f/results.py",
-				Path(__file__).parents[2] / "0f/results.R",
+				Path(__file__).parent / "results.py",
+				Path(__file__).parent / "results.R",
 			)
 		)
 	).hexdigest()
@@ -919,7 +866,7 @@ def gu_publish_results(work, output, methods, run_only=None):
 def gu_publish_summary(work, stage):
 	# Final summary tables contain substantial overlap with the participant RDS.
 	# Publish only independent aggregate evidence needed for inspection.
-	module = spec_from_file_location("gu_shared_results", Path(__file__).parents[2] / "0f/results.py")
+	module = spec_from_file_location("gu_shared_results", Path(__file__).parent / "results.py")
 	results = module_from_spec(module)
 	module.loader.exec_module(results)
 	import pandas as pd
@@ -1017,8 +964,6 @@ def gu_restore_results(published, method="all", run_only=None):
 	work.mkdir(parents=True, exist_ok=True, mode=0o700)
 	with gu_result_lock(work).open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
-		jobs = []
-		markers = []
 		for archive_method in RESULT_NAMES:
 			if method not in ("all", "final", archive_method):
 				continue
@@ -1033,54 +978,6 @@ def gu_restore_results(published, method="all", run_only=None):
 				if not marker.exists():
 					gu_extract_native(archive, archive.parent, archive.parent, work)
 					marker.touch()
-		for legacy_method, name in LEGACY_RESULT_NAMES.items():
-			for source in (run / name for run in gu_method_runs(published, legacy_method)):
-				if not source.is_file():
-					continue
-				if run_only and source.parent != run_only:
-					continue
-				if (source.parent / (legacy_method + ".raw.tar.gz")).is_file():
-					continue
-				stat = source.stat()
-				key = f"{stat.st_size}:{stat.st_mtime_ns}"
-				target = work / source.parent.relative_to(published)
-				marker = target / ".published-result"
-				# Native files are authoritative, including partially completed
-				# analyses. RDS is a recovery/export format, never a rollback.
-				if not (target / ".result-restoring").exists() and any(
-					(target / name).exists()
-					for name in ("run.meta.tsv", "loci", "final", "results", "extract")
-				):
-					continue
-				jobs.append({"source": str(source), "target": str(target)})
-				markers.append((marker, key))
-		review = published / gu_final_relative() / "gu.validation.rds"
-		if review.is_file():
-			stat = review.stat()
-			key = f"{stat.st_size}:{stat.st_mtime_ns}"
-			target = work / gu_final_relative() / "review"
-			marker = target / ".published-result"
-			if (target / ".result-restoring").exists() or not (target / "phyml_locus_report.tsv").is_file():
-				jobs.append({"source": str(review), "target": str(target)})
-				markers.append((marker, key))
-		with tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir="/tmp") as handle:
-			json.dump(jobs, handle)
-			handle.flush()
-			if jobs:
-				for job in jobs:
-					target = Path(job["target"])
-					target.mkdir(parents=True, exist_ok=True)
-					(target / ".result-restoring").write_text(job["source"])
-				gu_result_r("restore", handle.name)
-		for job in jobs:
-			target = Path(job["target"])
-			origin = target / ".result-source-root"
-			gu_rebase_paths(target, Path(origin.read_text().strip()) if origin.is_file() else published, work)
-			gu_rebase_result_paths(target, work)
-			(target / ".result-restoring").unlink(missing_ok=True)
-
-		for marker, key in markers:
-			marker.write_text(key)
 		source = published / gu_final_relative() / "gu.results.rds"
 		if source.is_file():
 			stat = source.stat()
@@ -1109,7 +1006,7 @@ def gu_rebase_paths(target, published, work):
 	for directory, folders, names in os.walk(target, followlinks=False):
 		for name in [*names, *[name for name in folders if (Path(directory) / name).is_symlink()]]:
 			path = Path(directory) / name
-			if name in (".result-source-root", ".gu-path-relocations.json", "run.meta.tsv", "cache.meta.tsv"):
+			if name == "run.meta.tsv":
 				continue
 			if path.is_symlink():
 				link = os.readlink(path)
@@ -1126,44 +1023,6 @@ def gu_rebase_paths(target, published, work):
 					stat = path.stat()
 					path.write_bytes(rebased)
 					os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-
-
-def gu_relocated_path(path, work):
-	"""Resolve historical artifact paths without rewriting stored provenance."""
-	path, work = Path(path), Path(work)
-	relocations = work / ".gu-path-relocations.json"
-	if relocations.is_file():
-		for relocation in json.loads(relocations.read_text()):
-			old = Path(relocation if isinstance(relocation, str) else relocation["source"])
-			new = work if isinstance(relocation, str) else work / relocation["relative_destination"]
-			if path.is_relative_to(old) and not (new.is_relative_to(old) and path.is_relative_to(new)):
-				path = new / path.relative_to(old)
-	return path
-
-
-def gu_rebase_result_paths(target, work):
-	"""Reapply dataset and layout moves to recovered files; archives stay intact."""
-	receipt = target / ".phyml.locus.complete.json"
-	verified = {}
-	if receipt.is_file():
-		for name, digest in json.loads(receipt.read_text()).get("outputs", {}).items():
-			path = target / name
-			if path.is_file() and gu_result_digest(path).hex() == digest:
-				verified[name] = digest
-	relocations = work / ".gu-path-relocations.json"
-	if relocations.is_file():
-		for relocation in json.loads(relocations.read_text()):
-			if isinstance(relocation, str):
-				gu_rebase_paths(target, Path(relocation), work)
-			else:
-				gu_rebase_paths(target, Path(relocation["source"]), work / relocation["relative_destination"])
-	if verified:
-		data = json.loads(receipt.read_text())
-		for name in verified:
-			data["outputs"][name] = gu_result_digest(target / name).hex()
-		stat = receipt.stat()
-		receipt.write_text(json.dumps(data, indent=2) + "\n")
-		os.utime(receipt, ns=(stat.st_atime_ns, stat.st_mtime_ns))
 
 
 def gu_link_phyml(work, target=None):
@@ -1244,9 +1103,6 @@ def gu_extract_native(archive, destination, run, work, replace=False):
 					os.utime(p, ns=(row["mtime_ns"], row["mtime_ns"]))
 				finally:
 					Path(temporary).unlink(missing_ok=True)
-	# Keep original archives and their checksums intact when a dataset moves.
-	# Only recovered working files receive the new operational paths.
-	gu_rebase_result_paths(destination, work)
 	return manifest
 
 
@@ -1360,7 +1216,7 @@ def _gu_compact_results(work, methods, run_only=None):
 				for p in list(run.iterdir()):
 					if (
 						p.name.startswith(method + ".")
-						or p.name in ("run.meta.tsv", "cache.meta.tsv", ".published-content", "logs")
+						or p.name in ("run.meta.tsv", ".published-content", "logs")
 						or ".part." in p.name
 					):
 						continue
@@ -1414,7 +1270,6 @@ def results_cli():
 			"publish",
 			"compact",
 			"refresh-plots",
-			"upgrade-workbooks",
 		],
 	)
 	parser.add_argument("--published", type=Path, required=True)
@@ -1422,7 +1277,7 @@ def results_cli():
 	parser.add_argument("--run", type=Path)
 	parser.add_argument(
 		"--method",
-		choices=[*RESULT_NAMES, "phyml-GPU", "ibdmix-GPU", "trace-GPU", "final", "all", "shiny", "ukb"],
+		choices=[*RESULT_NAMES, "phyml-GPU", "trace-GPU", "final", "all", "shiny", "ukb"],
 		default="all",
 	)
 	args = parser.parse_args()
@@ -1436,13 +1291,6 @@ def results_cli():
 		print(gu_run_read_view(args.published, args.run, args.method))
 	elif args.action == "refresh-plots":
 		gu_refresh_phyml_exports(args.published, args.run)
-	elif args.action == "upgrade-workbooks":
-		spec = spec_from_file_location("gu_results_upgrade", Path(__file__).parents[2] / "0f/results.py")
-		module = module_from_spec(spec)
-		spec.loader.exec_module(module)
-		for path in sorted((args.run or args.published).rglob("*.xlsx")):
-			if module.upgrade_workbook(path):
-				print("Re-exported", path)
 	elif args.action == "work-root":
 		print(gu_work_root(args.published))
 	elif args.action == "restore":

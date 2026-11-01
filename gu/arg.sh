@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
-source /mnt/d/scripts/0f/console.sh
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/scratch.sh"
+source "$ROOT/f/0.common.sh"
+gu_load_config
+source "$ROOT/f/console.sh"
 
 
 # 🚩 Command-line help
@@ -20,17 +16,22 @@ Modules:
     build / check  Build and validate ARG outputs
 
 Main options:
-    --dir-gen DIR  Reference genotype root [/mnt/f/gen/1kg/GRCH]
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; pass the original date to resume
+    --dir-gen DIR  Reference genotype root [$GU_REF_ROOT/1kg/GRCH]
     --method NAME --format NAME  Inference/output mode [needle / native]
     --threads N --jobs N  Resources [8 / 1]
+    --chr 1-22,X --grch 37|38
+    --dir-arg DIR --dir-gen4arg DIR  Isolated ARG and preparation outputs
+    --resource-guard auto|systemd|scheduler|ulimit  Resource control [auto]
+    --memory-limit-gb N --memory-swap-gb N  Local limits [32 / 4]
     -h, --help  Help; details: 0.README.md
 
 Example:
-    cd /mnt/d/scripts/gu
+    cd gu
 
     ./install.sh --arg
-    ./arg.sh build --dir-gen /mnt/f/gen/1kg/37 --method threads --format trace --threads 8 --jobs 1
-    ./arg.sh check --dir-gen /mnt/f/gen/1kg/37 --method threads --format trace
+    ./arg.sh build --dir-gen $GU_REF_ROOT/1kg/37 --method threads --format trace --threads 8 --jobs 1
+    ./arg.sh check --dir-gen $GU_REF_ROOT/1kg/37 --method threads --format trace
 
     Threads keeps one chromosome job. Each build writes log/arg.timing.chrN.json
     with prepare/infer/convert/check times, cache hits, and sampled process-tree RSS.

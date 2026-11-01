@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize method results into SQLite, cache reference callsets, and export introgression density."""
+"""Normalize current method results into SQLite and export introgression density."""
 
 from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
@@ -16,7 +16,7 @@ if "gu_0_common" not in sys.modules:
 	except BaseException:
 		sys.modules.pop(_spec.name, None)
 		raise
-from gu_0_common import load_module, reference_role, evidence_sql, x_nonpar_intervals, gu_dataset_from_path, gu_relocated_path, gu_method_runs, gu_is_result_run, gu_method_directory
+from gu_0_common import load_module, reference_role, evidence_sql, x_nonpar_intervals, gu_dataset_from_path, gu_method_runs, gu_method_directory
 
 
 # 🚩 normalize_results
@@ -28,13 +28,12 @@ clustering. This gives each participant 0-N stable-ish tract codes analogous to 
 ICD event table, while preserving the original calls for sensitivity analyses.
 """
 
-import argparse, bisect, fcntl, gzip, hashlib, json, math, os, re, shutil, sqlite3, tempfile
-from contextlib import contextmanager
+import argparse, bisect, gzip, hashlib, json, math, os, re, shutil, sqlite3, tempfile
 from pathlib import Path
 import pandas as pd
 
 load_module("0.common.py")
-from gu_0_common import resolve_tsv_path
+from gu_0_common import resolve_tsv_path, DEFAULT_ARCHAIC_REFERENCES, SUPPORTED_ARCHAIC_REFERENCES
 
 SEG_COLS = [
 	"dataset_id",
@@ -57,18 +56,6 @@ SEG_COLS = [
 	"batch_id",
 	"raw_file",
 ]
-REFERENCE_COLS = [
-	"dataset_id",
-	"population",
-	"genome_build",
-	"chr",
-	"start",
-	"end",
-	"source_class",
-	"reference_role",
-	"raw_file",
-]
-REFERENCE_RAW_COLS = REFERENCE_COLS + ["reference_sample_id", "reference_super_population"]
 POPS_1KG = {
 	"ACB",
 	"ASW",
@@ -163,7 +150,7 @@ def finish(df, method, build, raw, batch="", dataset=None):
 
 
 def is_transient_output(path):
-	"""Return True for AS3 atomic-work directories such as .chr22.run.<pid>."""
+	"""Return True for atomic-work directories such as .chr22.run.<pid>."""
 	return any(part.startswith(".") and (".run." in part or ".old." in part) for part in path.parts)
 
 
@@ -185,7 +172,7 @@ def package_core_results(analysis_root, output_dir):
 		if link.resolve() != target:
 			link.unlink()
 	elif link.exists():
-		raise ValueError('Remove the obsolete copied PhyML cache before normalization: ' + str(link))
+		raise ValueError('Expected a shared PhyML result symlink, but a directory already exists: ' + str(link))
 	if not link.is_symlink():
 		link.symlink_to(target, target_is_directory = True)
 	return {'phyml': 'shared method results'}
@@ -214,52 +201,27 @@ def portable_paths(df, package_root, columns):
 
 
 def phyml_artifact_in_run(value, run_dir):
-	"""Map an absolute path recorded by the raw run to its packaged counterpart."""
+	"""Resolve the current run's explicitly recorded artifact path."""
 	if value is None or pd.isna(value) or not str(value):
 		return ""
 	path = Path(str(value))
-	parts = path.parts
-	for marker in ("loci", "final"):
-		indexes = [i for i, x in enumerate(parts) if x == marker]
-		if indexes:
-			candidate = run_dir.joinpath(*parts[indexes[-1] :])
-			if candidate.is_file():
-				return str(candidate)
-	hits = list((run_dir / "loci").rglob(path.name)) if (run_dir / "loci").is_dir() else []
-	return str(hits[0]) if len(hits) == 1 else str(value)
-
-
-def batch_from_path(f, method):
-	"""Infer batch ID from UKB batch layout; return empty string for ordinary single-run outputs."""
-	parts = list(f.parts)
-	indexes = [i for i, part in enumerate(parts) if part in (method, method+"-GPU")]
-	if indexes and indexes[-1] + 1 < len(parts):
-		unit = Path(*parts[:indexes[-1] + 2])
-		if gu_is_result_run(unit, method) or re.match(r'^chr(?:[0-9]+|X)(?:$|[_.-])', unit.name):
-			return ""
-	try:
-		i = parts.index("ukb")
-		if i + 2 < len(parts) and parts[i + 1] == method:
-			return parts[i + 2]
-	except ValueError:
-		pass
-	try:
-		i = parts.index(method)
-		if i + 2 < len(parts) and parts[i + 1] == "ukb":
-			return parts[i + 2]
-	except ValueError:
-		pass
-	return ""
-
+	return str(path if path.is_absolute() else run_dir / path)
 
 
 def active_ibdmix_run(run):
-	"""MAC2/3 are independent sensitivity runs; prefer completed v2 MAC1 to legacy X."""
-	if re.search(r"[.]nonpar-v2[.]mac[23]$", run.name):
-		return False
-	if not run.name.endswith(".nonpar-v2.mac1") and (run.with_name(run.name + ".nonpar-v2.mac1") / ".complete").exists():
-		return False
-	return True
+	"""MAC2/3 are separate X sensitivity runs, excluded from the primary summary."""
+	return not re.search(r"[.]nonpar-v2[.]mac[23]$", run.name)
+
+
+def require_ibdmix_metadata(meta, path):
+	if not meta.get("pipeline_version"):
+		raise ValueError(f"IBDmix result lacks pipeline_version: {path}")
+	if meta.get("coordinate_system") != "0-based-half-open":
+		raise ValueError(f"IBDmix result requires coordinate_system=0-based-half-open: {path}")
+	refs = meta.get("refs", "").split()
+	if not refs or len(refs) != len(set(refs)):
+		raise ValueError(f"IBDmix result requires a unique nonempty refs record: {path}")
+	summary_references(refs)
 
 
 def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=None, audits=None):
@@ -270,7 +232,6 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 		root,
 		[
 			"ibdmix/**/final/all_archaic_refs*.segments.tsv.gz",
-			"ukb/ibdmix/**/final/all_archaic_refs*.segments.tsv.gz",
 		],
 	)
 	for f in files:
@@ -279,22 +240,20 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 		if completed_runs is not None and f.parent.parent not in completed_runs:
 			continue  # jobs finishing after this final snapshot belong to the next one
 		meta = read_run_meta(f.parent.parent / "run.meta.tsv")
-		if not meta.get("pipeline_version"):
-			print(f"IBDMIX legacy result excluded; rerun required: {f}", flush=True)
-			continue  # a corrected chromosome must never union with old calls
-		if meta.get("pipeline_version") and not (f.parent.parent / ".complete").exists():
-			continue  # never integrate an interrupted or partially replaced run
-		batch = batch_from_path(f, "ibdmix")
+		if not (f.parent.parent / ".complete").exists():
+			continue
+		require_ibdmix_metadata(meta, f.parent.parent)
+		batch = meta.get("batch_id", "")
 		ukb_candidate = dataset_from_path(f, "ibdmix").startswith("ukb-")
 		if ukb_candidate:
 			# Imputed/site-restricted UKB calls have a different ascertainment
 			# and no AFR5 background panel. Keep their native candidate calls;
-			# the frozen Cell 2020 postprocessing remains the non-UKB branch.
+			# reference/background filtering requires the matching 1KG cohort.
 			if not (f.parent.parent / "inputs/ukb.preparation.qc.json").is_file():
 				raise ValueError(f"UKB preparation QC is missing: {f.parent.parent}")
 			filtered = f
 			chrom_match = re.search(r"(?:^|[/_.-])chr([0-9]+|X)(?:$|[/_.-])", str(f), re.I)
-			audit = {"status": "ukb_exploratory_not_cell2020", "daf": {"status": "not_applied_ukb_pilot"},
+			audit = {"status": "ukb_exploratory_reference_affinity", "daf": {"status": "not_applied_ukb_pilot"},
 				"chrom": chrom_norm(chrom_match.group(1)) if chrom_match else "",
 				"reference_affinity_only": True, "strict_evidence_eligible": False}
 		else:
@@ -313,7 +272,7 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 				)
 			)
 		print(f"[GU FINAL] IBDmix {f.parent.parent.name}: {audit['status']}; DAF={audit['daf']['status']}", flush=True)
-		read_options = {"dtype": {"ID": str, "sample_id": str}} if ukb_candidate else {}
+		read_options = {"dtype": {"ID": str, "sample_id": str}}
 		for d in pd.read_csv(filtered, sep="\t", compression="infer", chunksize=200000, **read_options):
 			ren = {}
 			for a, b in [
@@ -326,12 +285,8 @@ def iter_ibdmix(root, build, completed_runs=None, filter_output=None, daf_mask=N
 				if a in d:
 					ren[a] = b
 			d = d.rename(columns=ren)
-			if "sample_id" not in d or "chr" not in d:
-				continue
-			if meta.get("coordinate_system") != "0-based-half-open":
-				# Legacy wrapper retained native 1-based half-open coordinates.
-				d["start"] = pd.to_numeric(d["start"], errors="coerce") - 1
-				d["end"] = pd.to_numeric(d["end"], errors="coerce") - 1
+			if not {"sample_id", "chr", "start", "end", "source", "score"} <= set(d.columns):
+				raise ValueError(f"Invalid IBDmix final segment columns: {filtered}")
 			d["haplotype"] = pd.NA
 			d["posterior"] = pd.NA
 			d["trait"] = pd.NA
@@ -347,15 +302,12 @@ def iter_trace(root, build):
 		root,
 		[
 			"trace/**/final/trace_haplotype_segments.tsv.gz",
-			"ukb/trace/**/final/trace_haplotype_segments.tsv.gz",
 		],
 	)
 	for f in files:
-		batch = batch_from_path(f, "trace")
-		for d in pd.read_csv(f, sep="\t", compression="infer", chunksize=200000):
+		batch = read_run_meta(find_parent_file(f, "run.meta.tsv")).get("batch_id", "")
+		for d in pd.read_csv(f, sep="\t", compression="infer", chunksize=200000, dtype={"sample": str}):
 			d = d.rename(columns={"sample": "sample_id", "chrom": "chr", "mean_posterior": "posterior"})
-			if "chr" not in d and "chromosome" in d:
-				d = d.rename(columns={"chromosome": "chr"})
 			d["source"] = "TRACE_ghost_or_unknown"
 			d["score"] = pd.NA
 			d["trait"] = pd.NA
@@ -372,137 +324,6 @@ def find_parent_file(f, name):
 	return None
 
 
-def as3_build(f, fallback):
-	meta = find_parent_file(f, "run.meta.tsv")
-	if not meta:
-		return fallback
-	try:
-		d = pd.read_csv(meta, sep="\t", dtype=str)
-		row = d.loc[d.iloc[:, 0].eq("genome_build")]
-		return build_norm(row.iloc[0, 1], fallback) if not row.empty else fallback
-	except Exception:
-		return fallback
-
-
-def clip_to_loci(df, bed):
-	if not bed or df.empty:
-		return df
-	try:
-		loci = pd.read_csv(
-			bed,
-			sep="\t",
-			comment="#",
-			header=None,
-			usecols=[0, 1, 2, 3],
-			names=["chr", "locus_start", "locus_end", "clip_locus_id"],
-		)
-	except Exception:
-		return df
-	loci["chr"] = loci["chr"].map(chrom_norm)
-	loci["locus_start"] = pd.to_numeric(loci.locus_start, errors="coerce")
-	loci["locus_end"] = pd.to_numeric(loci.locus_end, errors="coerce")
-	z = df.copy()
-	z["chr"] = z["chr"].map(chrom_norm)
-	z["start"] = pd.to_numeric(z.start, errors="coerce")
-	z["end"] = pd.to_numeric(z.end, errors="coerce")
-	z = z.merge(loci, on="chr", how="inner")
-	z = z[(z.end > z.locus_start) & (z.start < z.locus_end)].copy()
-	if z.empty:
-		return z
-	z["start"] = z[["start", "locus_start"]].max(axis=1)
-	z["end"] = z[["end", "locus_end"]].min(axis=1)
-	z["locus_id"] = z["clip_locus_id"]
-	return z.drop(columns=["locus_start", "locus_end", "clip_locus_id"])
-
-
-def parse_as3_file(f, build):
-	# Official AS3.1-Mamba output is BED-like but Start/End are VCF positions:
-	# both are 1-based inclusive. Convert once to the internal 0-based half-open
-	# convention so interval lengths and clipping agree with every other method.
-	first = ""
-	skiprows = 0
-	with open(f, "rt", errors="replace") as h:
-		for line in h:
-			if line.strip() and not line.startswith("#"):
-				first = line.rstrip("\n")
-				break
-			skiprows += 1
-	toks = [x.strip().lower() for x in first.split("\t")]
-	has_header = any(x in {"chr", "chrom", "chromosome"} for x in toks) and any(x == "start" for x in toks)
-	# Do not use pandas comment='#': the official header names include #SNP,
-	# #SNP_A1, and #SNP_A2, which would otherwise truncate the header itself.
-	d = pd.read_csv(f, sep="\t", skiprows=skiprows, header=0 if has_header else None)
-	low = {str(c).lower(): c for c in d.columns}
-
-	def col(*names):
-		for n in names:
-			if n.lower() in low:
-				return low[n.lower()]
-		return None
-
-	cc = col("Chr", "chrom", "chr")
-	ss = col("Start", "start")
-	ee = col("End", "end")
-	if cc is None and d.shape[1] >= 3:
-		d.columns = list(range(d.shape[1]))
-		cc, ss, ee = 0, 1, 2
-	if cc is None:
-		return empty_segments()
-	out = pd.DataFrame(
-		{"chr": d[cc], "start": pd.to_numeric(d[ss], errors="coerce") - 1, "end": pd.to_numeric(d[ee], errors="coerce")}
-	)
-	hc = col("Haplotype", "haplotype")
-	ac = col("Archaic", "archaic")
-	sc = col("Score", "score")
-	idc = col("SampleID_HapID", "sampleid_hapid", "sample", "SampleID")
-	# Headerless official order: Chr Start End Haplotype Archaic #SNP Score #SNP_A1 #SNP_A2 SampleID_HapID
-	if isinstance(cc, int) and d.shape[1] >= 10:
-		hc, ac, sc, idc = 3, 4, 6, 9
-	# Derive stable haplotype 1/2 from SampleID_HapID.
-	out["method_haplotype_index"] = d[hc].astype(str) if hc is not None else pd.NA
-	archaic = d[ac].astype(str) if ac is not None else pd.Series(["unknown"] * len(d))
-	amap = {
-		"1": "Denisovan",
-		"2": "Neanderthal",
-		"3": "Mosaic",
-		"1.0": "Denisovan",
-		"2.0": "Neanderthal",
-		"3.0": "Mosaic",
-	}
-	out["source"] = archaic.map(lambda x: amap.get(str(x), str(x)))
-	out["score"] = pd.to_numeric(d[sc], errors="coerce") if sc is not None else pd.NA
-	sid = d[idc].astype(str) if idc is not None else pd.Series([""] * len(d))
-
-	def split_id(x):
-		m = re.match(r"^(.*?)(?:[_:.-](?:hap)?)([12])$", x, re.I)
-		return (m.group(1), m.group(2)) if m else (x, None)
-
-	sp = [split_id(x) for x in sid]
-	out["sample_id"] = [x[0] for x in sp]
-	out.loc[out.sample_id.eq(""), "sample_id"] = pd.NA
-	out["haplotype"] = [x[1] for x in sp]
-	out["posterior"] = pd.NA
-	out["trait"] = pd.NA
-	out["locus_id"] = pd.NA
-	out = clip_to_loci(out, find_parent_file(f, "input.loci.bed"))
-	return finish(out, "as3", as3_build(f, build), f, batch="", dataset=dataset_from_path(f, "as3"))
-
-
-def iter_as3(root, build):
-	files = find_first(
-		root,
-		[
-			"as3/**/introgression.bed",
-			"ukb/as3/**/introgression.bed",
-		],
-	)
-	for f in files:
-		d = parse_as3_file(f, build)
-		if not d.empty:
-			batch = batch_from_path(f, "as3")
-			if batch:
-				d["batch_id"] = batch
-			yield d
 
 
 def read_run_meta(path):
@@ -512,7 +333,7 @@ def read_run_meta(path):
 	try:
 		with Path(path).open(errors="replace") as handle:
 			for line in handle:
-				fields = line.rstrip("\n").replace("\\t", "\t").split("\t", 1)
+				fields = line.rstrip("\n").split("\t", 1)
 				if len(fields) == 2 and fields[0] not in values:
 					values[fields[0]] = fields[1]
 	except OSError:
@@ -538,38 +359,25 @@ def discover_method_runs(root, fallback_build):
 		note = "completed native analysis"
 		if method == "ibdmix":
 			meta = read_run_meta(path)
-			if not meta.get("pipeline_version"):
-				status = "legacy_invalid"
-				eligible = 0
-				note = "legacy IBDmix: invalid SNP-only archaic preparation / pooled populations; rerun required"
-			else:
-				note = "audited IBDmix " + meta["pipeline_version"] + "; profile=" + meta.get("profile", "unknown")
-		if method == "ibdmix" and not any(reference_role(ref) == "scientific_reference" for ref in meta.get("refs", "").split()):
-			eligible = 0
-			note = "IBDmix reproduction-only references; no cross-method evidence"
+			require_ibdmix_metadata(meta, path)
+			note = "audited IBDmix " + meta["pipeline_version"] + "; profile=" + meta.get("profile", "unknown")
 		if chrom == "X" and method == "ibdmix":
 			eligible = 0
 			note = "experimental male-X pseudo-diploid adaptation; excluded from GU evidence score"
-		elif chrom == "X" and method == "as3":
-			eligible = 0
-			note = "AS3 Ref1028/model is autosomes-only; chrX is unsupported"
 		elif method == "trace":
 			note = "haplotype-node call; validity depends on the full-chromosome ARG backend and calibration"
 		if method == "ibdmix" and dataset_from_path(path, method).startswith("ukb-"):
 			eligible = 0
-			qualification = "experimental UKB reference-affinity candidates; imputation and site ascertainment require calibration; no Cell 2020 AFR5 background subtraction"
+			qualification = "experimental UKB reference-affinity candidates; imputation and site ascertainment require calibration; no AFR5 background subtraction"
 			if chrom == "X":
 				qualification += "; male non-PAR X pseudo-diploid LOD model is uncalibrated"
-			if meta.get("pipeline_version"):
-				note = "audited IBDmix " + meta["pipeline_version"] + "; " + qualification + "; profile=" + meta.get("profile", "unknown")
-			else:
-				note += "; " + qualification
+			note = "audited IBDmix " + meta["pipeline_version"] + "; " + qualification + "; profile=" + meta.get("profile", "unknown")
 		key = (dataset_from_path(path, method), build, chrom, method)
 		if key in rows and rows[key][4] == "complete" and status != "complete":
 			return
 		rows[key] = (*key, status, eligible, note, str(path))
 
-	for marker in sorted(root.glob(gu_method_directory("ibdmix")+"/**/.complete")) + sorted(root.glob("ukb/"+gu_method_directory("ibdmix")+"/**/.complete")):
+	for marker in sorted(root.glob(gu_method_directory("ibdmix")+"/**/.complete")):
 		if not active_ibdmix_run(marker.parent):
 			continue
 		meta = marker.parent / "run.meta.tsv"
@@ -583,7 +391,7 @@ def discover_method_runs(root, fallback_build):
 			add("ibdmix", meta if meta.is_file() else marker, build, chrom)
 
 	trace_files = find_first(
-		root, ["trace/**/final/trace_haplotype_segments.tsv.gz", "ukb/trace/**/final/trace_haplotype_segments.tsv.gz"]
+		root, ["trace/**/final/trace_haplotype_segments.tsv.gz"]
 	)
 	for output in trace_files:
 		meta = find_parent_file(output, "run.meta.tsv")
@@ -592,124 +400,15 @@ def discover_method_runs(root, fallback_build):
 			if chrom:
 				add("trace", meta or output, values.get("build", fallback_build), chrom)
 
-	for marker in sorted(root.glob("as3/**/results/**/chr*/.complete")) + sorted(
-		root.glob("ukb/as3/**/results/**/chr*/.complete")
-	):
-		meta = find_parent_file(marker, "run.meta.tsv")
-		values = read_run_meta(meta)
-		match = re.search(r"^chr([0-9]+|X)", marker.parent.name, flags=re.I)
-		if match:
-			add("as3", meta or marker, values.get("genome_build", fallback_build), match.group(1))
 	return list(rows.values())
 
 
-def population_from_text(text):
-	toks = {x for x in re.split(r"[^A-Za-z0-9]+", str(text).upper()) if x}
-	hit = sorted(toks & POPS_1KG)
-	return hit[0] if len(hit) == 1 else None
 
 
-def reference_build_from_text(text, fallback="GRCh38"):
-	s = str(text).lower()
-	if any(x in s for x in ("chm13", "t2t")):
-		return "CHM13"
-	if any(x in s for x in ("grch38", "hg38", "b38")):
-		return "GRCh38"
-	if any(x in s for x in ("grch37", "hg19", "b37")):
-		return "GRCh37"
-	return fallback
 
 
-def parse_reference_handle(handle, raw_name, dataset_id="AS3_1KG", fallback_build="GRCh38", chunksize=100000):
-	"""Parse BED-like population callsets without treating them as sample calls."""
-	path_pop = population_from_text(raw_name)
-	build = reference_build_from_text(raw_name, fallback_build)
-	header = None
-	rows = []
-	for raw in handle:
-		if isinstance(raw, bytes):
-			raw = raw.decode("utf-8", "replace")
-		line = raw.strip()
-		if not line or line.startswith(("#", "track ", "browser ")):
-			continue
-		fields = line.split("\t") if "\t" in line else line.split()
-		if len(fields) < 3:
-			continue
-		if header is None and not (re.fullmatch(r"-?\d+", fields[1]) and re.fullmatch(r"-?\d+", fields[2])):
-			header = {re.sub(r"[^a-z0-9]+", "_", x.strip().lower()).strip("_"): i for i, x in enumerate(fields)}
-			continue
-		if header:
-			ci = next((header[x] for x in ("chr", "chrom", "chromosome") if x in header), 0)
-			si = next((header[x] for x in ("start", "start0", "chromstart") if x in header), 1)
-			ei = next((header[x] for x in ("end", "stop", "chromend") if x in header), 2)
-			pi = next((header[x] for x in ("population", "pop", "population_id") if x in header), None)
-			spi = next((header[x] for x in ("super_population", "super_pop", "superpopulation") if x in header), None)
-			idi = next(
-				(header[x] for x in ("individual_id", "sample_id", "sample", "individual", "iid") if x in header), None
-			)
-		else:
-			ci, si, ei, pi, spi, idi = 0, 1, 2, None, None, None
-		try:
-			chrom = chrom_norm(fields[ci])
-			start = int(float(fields[si]))
-			end = int(float(fields[ei]))
-		except (ValueError, IndexError):
-			continue
-		if end <= start:
-			continue
-		pop = path_pop
-		if pi is not None and pi < len(fields) and fields[pi].upper() in POPS_1KG:
-			pop = fields[pi].upper()
-		if pop is None:
-			for value in fields[3:]:
-				if value.upper() in POPS_1KG:
-					pop = value.upper()
-					break
-		super_pop = fields[spi].upper() if spi is not None and spi < len(fields) else None
-		reference_sample = fields[idi] if idi is not None and idi < len(fields) else None
-		# Official database_introgression_call headerless order is:
-		# chr,start,end,LOD,length,population,super_population,individual_id.
-		if header is None and len(fields) >= 8 and fields[5].upper() in POPS_1KG:
-			pop = fields[5].upper()
-			super_pop = fields[6].upper()
-			reference_sample = fields[7]
-		rows.append(
-			(
-				dataset_id,
-				pop or "ALL",
-				build,
-				chrom,
-				start,
-				end,
-				"Neanderthal",
-				"external_reference",
-				raw_name,
-				reference_sample,
-				super_pop,
-			)
-		)
-		if len(rows) >= chunksize:
-			yield pd.DataFrame(rows, columns=REFERENCE_RAW_COLS)
-			rows = []
-	if rows:
-		yield pd.DataFrame(rows, columns=REFERENCE_RAW_COLS)
 
 
-def iter_reference_callsets(path, dataset_id="AS3_1KG"):
-	if not path:
-		return
-	path = Path(path)
-	if not path.is_dir():
-		raise ValueError(f"reference callset directory is missing: {path}")
-	files = sorted(
-		x
-		for x in path.rglob("*")
-		if x.is_file() and re.search(r"\.(bed|tsv)(\.gz)?$", x.name, re.I) and x.stat().st_size > 0
-	)
-	for f in files:
-		opener = gzip.open if f.name.lower().endswith(".gz") else open
-		with opener(f, "rt", encoding="utf-8", errors="replace") as h:
-			yield from parse_reference_handle(h, str(f), dataset_id)
 
 
 def sample_population_table(path, dataset_id="1kg", analysis_root=None):
@@ -720,7 +419,7 @@ def sample_population_table(path, dataset_id="1kg", analysis_root=None):
 		if not path or not Path(path).is_file():
 			panels = []
 			if analysis_root and re.fullmatch(r"[A-Za-z0-9_.-]+", dataset_id):
-				for method in ("ibdmix", "trace", "as3", "phyml"):
+				for method in ("ibdmix", "trace", "phyml"):
 					for run in gu_method_runs(analysis_root, method):
 						if dataset_from_path(run / 'run.meta.tsv', method) == dataset_id:
 							panels.extend(p for name in ('ukb.samples.tsv', 'sample.panel.tsv') if (p := run / 'inputs' / name).is_file())
@@ -774,43 +473,26 @@ def iter_phyml_carriers(root, fallback_build):
 	for hp in sorted((root / gu_method_directory("phyml")).glob("**/final/haplotypes.tsv")):
 		if not hp.is_file() or not hp.stat().st_size:
 			continue
-		try:
-			haps = pd.read_csv(hp, sep="\t", dtype=str)
-		except Exception:
-			continue
-		if not {"locus_id", "hap_id"}.issubset(haps.columns):
-			continue
+		haps = pd.read_csv(hp, sep="\t", dtype=str)
+		if not {"locus_id", "hap_id", "copies"} <= set(haps.columns):
+			raise ValueError(f"Invalid current PhyML haplotype columns: {hp}")
 		dataset = dataset_from_path(hp, "phyml")
 		# The copies column records every tested sample/haplotype and is the
 		# prevalence denominator.  A header-only table is a valid result for a
 		# locus with no selected haplotypes (for example, low LD information).
-		if "copies" not in haps:
-			raise ValueError(f"PhyML haplotypes table lacks required copies column: {hp}")
 		if haps.empty:
 			continue
 		if not haps["copies"].notna().any():
 			raise ValueError(f"PhyML haplotypes table has no populated copies values: {hp}")
 		tree_tips = {}
-		tree_lineages = {}
 		tree_pass = {}
-		trees = hp.parent / "trees.tsv"
-		if trees.is_file() and trees.stat().st_size:
-			try:
-				for _, row in pd.read_csv(trees, sep="\t", dtype=str, keep_default_na=False).iterrows():
-					lid = str(row.get("locus_id", ""))
-					tips = {x for x in str(row.get("candidate_clade_tips", "")).split(",") if x.startswith("H")}
-					tree_tips[lid] = tips
-					tree_lineages[lid] = str(row.get("candidate_lineage", ""))
-					tree_pass[lid] = truth_int(row.get("candidate_clade_pass", pd.NA))
-			except Exception:
-				tree_tips = {}
-				tree_lineages = {}
-				tree_pass = {}
 		# Keep carriers from every passing candidate-focused lineage tree.
 		# trees.tsv is only the representative topology for the locus display.
 		hap_lineages = {}
 		evidence_trees = hp.parent / "evidence_trees.tsv"
-		if evidence_trees.is_file() and evidence_trees.stat().st_size:
+		if not evidence_trees.is_file():
+			raise ValueError(f"Current PhyML lineage results are missing: {evidence_trees}")
+		if evidence_trees.stat().st_size:
 			ed = pd.read_csv(evidence_trees, sep="\t", dtype=str, keep_default_na=False)
 			for lid in ed["locus_id"].astype(str).unique():
 				tree_tips[lid] = set()
@@ -847,8 +529,7 @@ def iter_phyml_carriers(root, fallback_build):
 						"hap_id": hap_id,
 						"best_archaic": hap.get("best_archaic", pd.NA),
 						"best_lineage": hap.get("best_lineage", pd.NA),
-						"candidate_lineage": ",".join(sorted(hap_lineages.get((lid, hap_id), set())))
-						or tree_lineages.get(lid, ""),
+						"candidate_lineage": ",".join(sorted(hap_lineages.get((lid, hap_id), set()))),
 						"n_compared": pd.to_numeric(hap.get("n_compared", pd.NA), errors="coerce"),
 						"n_match": pd.to_numeric(hap.get("n_match", pd.NA), errors="coerce"),
 						"prop_match": pd.to_numeric(hap.get("prop_match", pd.NA), errors="coerce"),
@@ -890,10 +571,10 @@ def loci_tables(root, fallback_build):
 			for f in base.glob(pat):
 				if not f.is_file() or f.stat().st_size == 0:
 					continue
-				try:
-					d = pd.read_csv(f, sep="\t")
-				except Exception:
-					continue
+				d = pd.read_csv(f, sep="\t")
+				required = {"locus_id", "chr", "core_start", "core_end", "analysis_start", "analysis_end", "genome_build", "lineage", "selection_method"}
+				if not required <= set(d.columns):
+					raise ValueError(f"Invalid current PhyML locus columns: {f}")
 				if d.empty:
 					continue
 				trees = {}
@@ -906,26 +587,15 @@ def loci_tables(root, fallback_build):
 						pass
 				dataset = dataset_from_path(f, "phyml")
 				for _, r in d.iterrows():
-					chrom = r.get("lead_chr", r.get("CHR", r.get("chr", "")))
-					input_st = scalar_int(
-						r.get("core_start", r.get("region_start", r.get("start", r.get("POS", None))))
-					)
-					input_en = scalar_int(r.get("core_end", r.get("region_end", r.get("end", r.get("POS", None)))))
-					if input_st is None or input_en is None:
-						continue
-					if input_en <= input_st:
-						input_en = input_st + 1
-					ast = scalar_int(r.get("analysis_start", r.get("region_start", input_st)))
-					aen = scalar_int(r.get("analysis_end", r.get("region_end", input_en)))
-					if ast is None or aen is None or aen <= ast:
-						ast, aen = input_st, input_en
-					st = scalar_int(r.get("selected_start", input_st))
-					en = scalar_int(r.get("selected_end", input_en))
-					if st is None or en is None or en <= st:
-						st, en = input_st, input_en
+					chrom = r["chr"]
+					input_st, input_en = scalar_int(r["core_start"]), scalar_int(r["core_end"])
+					ast, aen = scalar_int(r["analysis_start"]), scalar_int(r["analysis_end"])
+					if any(value is None for value in (input_st, input_en, ast, aen)) or input_st < 0 or input_en <= input_st or ast < 0 or aen <= ast:
+						raise ValueError(f"Invalid PhyML interval coordinates: {f}")
+					st, en = input_st, input_en
 					method = "phyml"
-					lid = r.get("locus_id", r.get("name", None))
-					genome_build = build_norm(r.get("genome_build", None), fallback_build)
+					lid = r["locus_id"]
+					genome_build = build_norm(r["genome_build"], fallback_build)
 					key = (dataset, method, genome_build, str(lid), chrom, st, en)
 					if key in seen:
 						continue
@@ -933,14 +603,7 @@ def loci_tables(root, fallback_build):
 					tree = trees.get(str(lid), {})
 					run_dir = f.parent.parent
 					candidate_lineage = scalar_text(tree.get("candidate_lineage", None))
-					source = candidate_lineage or next(
-						(
-							v
-							for v in (r.get("best_lineage"), r.get("matched_archaics"), r.get("asnp_lineage"))
-							if not pd.isna(v) and str(v).strip()
-						),
-						"archaic_map",
-					)
+					source = candidate_lineage or scalar_text(r["lineage"]) or "unknown"
 					audit = {k: None if pd.isna(v) else v for k, v in r.items()}
 					if r.get("selection_method") == "gwas_lead_ld_core":
 						audit.update(load_module("phyml.py").saved_locus_audit(f, audit))
@@ -974,7 +637,7 @@ def loci_tables(root, fallback_build):
 						"analysis_start": ast,
 						"analysis_end": aen,
 						"flank_bp": max(0, max(input_st - ast, aen - input_en)),
-						"anchor_pos": scalar_int(r.get("anchor_pos", None)),
+						"anchor_pos": scalar_int(r.get("lead_pos", None)),
 						"selection_method": scalar_text(r.get("selection_method", None)),
 						"ld_r2_threshold": scalar_float(r.get("ld_r2_threshold", None)),
 						"n_search_sites": scalar_int(r.get("n_search_sites", None)),
@@ -1019,22 +682,19 @@ def loci_tables(root, fallback_build):
 
 def init_db(con):
 	con.executescript("""
-    PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE;
+    PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE; PRAGMA user_version=2026;
     DROP VIEW IF EXISTS segments_evidence;
     DROP TABLE IF EXISTS segments_raw; DROP TABLE IF EXISTS loci; DROP TABLE IF EXISTS coord_catalog;
     DROP TABLE IF EXISTS segment_catalog; DROP TABLE IF EXISTS segments; DROP TABLE IF EXISTS carriers;
-    DROP TABLE IF EXISTS reference_callsets; DROP TABLE IF EXISTS reference_callset_overlaps; DROP TABLE IF EXISTS database_summary;
+    DROP TABLE IF EXISTS database_summary;
     DROP TABLE IF EXISTS phyml_haplotype_carriers; DROP TABLE IF EXISTS locus_sample_support;
     DROP TABLE IF EXISTS locus_method_support; DROP TABLE IF EXISTS locus_trajectory; DROP TABLE IF EXISTS locus_evidence;
     DROP TABLE IF EXISTS method_runs;
     DROP TABLE IF EXISTS sample_populations; DROP TABLE IF EXISTS sample_burden; DROP TABLE IF EXISTS burden_union_chr;
-    DROP TABLE IF EXISTS temp.reference_callsets_raw;
     CREATE TABLE segments_raw(dataset_id TEXT,sample_id TEXT,method TEXT,source TEXT,source_class TEXT,reference_role TEXT,chr TEXT,start INTEGER,end INTEGER,length_bp INTEGER,haplotype TEXT,method_haplotype_index TEXT,score REAL,posterior REAL,trait TEXT,locus_id TEXT,genome_build TEXT,batch_id TEXT,raw_file TEXT);
     CREATE TABLE loci(dataset_id TEXT,method TEXT,trait TEXT,locus_id TEXT,chr TEXT,start INTEGER,end INTEGER,input_start INTEGER,input_end INTEGER,analysis_start INTEGER,analysis_end INTEGER,flank_bp INTEGER,anchor_pos INTEGER,selection_method TEXT,ld_r2_threshold REAL,n_search_sites INTEGER,n_ld_sites INTEGER,n_ancestral_sites INTEGER,n_sites INTEGER,best_archaic TEXT,best_lineage TEXT,n_compared INTEGER,n_match INTEGER,prop_match REAL,source TEXT,source_class TEXT,status TEXT,direct_match_pass INTEGER,n_carriers INTEGER,genome_build TEXT,tree_status TEXT,tree_file TEXT,stats_file TEXT,plot_file TEXT,n_bootstrap_nodes INTEGER,bootstrap_min REAL,bootstrap_median REAL,bootstrap_max REAL,candidate_lineage TEXT,tree_has_ancestral_outgroup INTEGER,candidate_clade_pass INTEGER,candidate_clade_rule TEXT,candidate_clade_bootstrap REAL,candidate_clade_node TEXT,candidate_clade_side TEXT,candidate_clade_n_tips INTEGER,candidate_clade_modern_tips INTEGER,candidate_clade_archaic_tips INTEGER,candidate_clade_specificity REAL,candidate_clade_tips TEXT,tree_newick TEXT,n_panel INTEGER,n_panel_copies INTEGER,n_lead_called INTEGER,n_lead_called_copies INTEGER,n_recurrent_copies INTEGER,n_singleton_copies INTEGER,input_status TEXT,ld_status TEXT,alignment_status TEXT,tree_run_status TEXT,topology_status TEXT,sequence_qc TEXT,lead_retained_for_tree INTEGER,high_ld_sites_retained_for_tree INTEGER,unique_archaic_sequences INTEGER,high_ld_max_gap_bp INTEGER,site_missingness_audit TEXT,raw_file TEXT);
     CREATE TABLE coord_catalog(dataset_id TEXT,genome_build TEXT,source_class TEXT,chr TEXT,start INTEGER,end INTEGER,segment_code TEXT);
     CREATE TABLE segment_catalog(segment_code TEXT PRIMARY KEY,dataset_id TEXT,source_class TEXT,chr TEXT,start INTEGER,end INTEGER,length_bp INTEGER,n_distinct_boundaries INTEGER,genome_build TEXT);
-    CREATE TABLE reference_callsets(dataset_id TEXT,population TEXT,genome_build TEXT,chr TEXT,start INTEGER,end INTEGER,source_class TEXT,reference_role TEXT,raw_file TEXT);
-    CREATE TEMP TABLE reference_callsets_raw(dataset_id TEXT,population TEXT,genome_build TEXT,chr TEXT,start INTEGER,end INTEGER,source_class TEXT,reference_role TEXT,raw_file TEXT,reference_sample_id TEXT,reference_super_population TEXT);
     CREATE TABLE sample_populations(dataset_id TEXT,sample_id TEXT,population TEXT,super_population TEXT,raw_file TEXT,PRIMARY KEY(dataset_id,sample_id));
     CREATE TABLE phyml_haplotype_carriers(dataset_id TEXT,genome_build TEXT,locus_id TEXT,sample_id TEXT,haplotype TEXT,hap_id TEXT,best_archaic TEXT,best_lineage TEXT,candidate_lineage TEXT,n_compared INTEGER,n_match INTEGER,prop_match REAL,direct_match_pass INTEGER,tree_candidate_pass INTEGER,raw_file TEXT);
     CREATE TABLE method_runs(dataset_id TEXT,genome_build TEXT,chr TEXT,method TEXT,status TEXT,evidence_eligible INTEGER,availability_note TEXT,raw_file TEXT);
@@ -1049,14 +709,6 @@ def insert_df(con, table, df):
 	return len(df)
 
 
-def insert_reference_df(con, df):
-	if df is None or df.empty:
-		return 0
-	con.executemany(
-		"INSERT INTO temp.reference_callsets_raw VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-		df[REFERENCE_RAW_COLS].itertuples(index=False, name=None),
-	)
-	return len(df)
 
 
 def reciprocal(a, b, c, d):
@@ -1157,125 +809,8 @@ def build_catalog(con, build, threshold):
 	con.commit()
 
 
-def build_reference_overlaps(con, raw_table="temp.reference_callsets_raw"):
-	if raw_table not in ("temp.reference_callsets_raw", "refcache.reference_callsets_raw"):
-		raise ValueError(f"unsupported reference raw table: {raw_table}")
-	con.executescript("""
-      CREATE INDEX IF NOT EXISTS idx_reference_callsets_region ON reference_callsets(genome_build,source_class,chr,start,end);
-      CREATE INDEX IF NOT EXISTS idx_reference_callsets_population ON reference_callsets(dataset_id,population,genome_build);
-      CREATE INDEX IF NOT EXISTS idx_reference_callsets_build_population ON reference_callsets(genome_build,population);
-      CREATE INDEX IF NOT EXISTS idx_reference_callsets_shiny_region ON reference_callsets(genome_build,chr,start,end,population);
-      DROP TABLE IF EXISTS reference_callset_overlaps;
-      CREATE TABLE reference_callset_overlaps(
-        result_rowid INTEGER,result_dataset_id TEXT,sample_id TEXT,sample_population TEXT,method TEXT,source_class TEXT,segment_code TEXT,
-        dataset_id TEXT,reference_population TEXT,reference_sample_id TEXT,genome_build TEXT,chr TEXT,
-        segment_start INTEGER,segment_end INTEGER,reference_start INTEGER,reference_end INTEGER,
-        overlap_bp INTEGER,result_overlap REAL,reference_overlap REAL,reciprocal_overlap REAL,
-        reference_role TEXT,result_raw_file TEXT,reference_raw_file TEXT
-      );
-    """)
-	n_results = con.execute(
-		"SELECT COUNT(*) FROM segments_evidence WHERE method='as3' AND source_class='Neanderthal'"
-	).fetchone()[0]
-	has_reference_samples = con.execute(
-		f"SELECT COUNT(*) FROM {raw_table} WHERE reference_sample_id IS NOT NULL AND reference_sample_id!=''"
-	).fetchone()[0]
-	if n_results and has_reference_samples:
-		if raw_table.startswith("temp."):
-			con.execute(
-				"CREATE INDEX temp.idx_reference_raw_sample_region ON reference_callsets_raw(reference_sample_id,genome_build,source_class,chr,start,end)"
-			)
-		con.execute(f"""
-          INSERT INTO reference_callset_overlaps
-          SELECT s.rowid,s.dataset_id,s.sample_id,COALESCE(p.population,r.population),s.method,s.source_class,s.segment_code,
-                 r.dataset_id,r.population,r.reference_sample_id,s.genome_build,s.chr,
-                 s.start,s.end,r.start,r.end,
-                 MIN(s.end,r.end)-MAX(s.start,r.start) AS overlap_bp,
-                 CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,s.end-s.start) AS result_overlap,
-                 CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start) AS reference_overlap,
-                 MIN(
-                   CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,s.end-s.start),
-                   CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start)
-                 ) AS reciprocal_overlap,
-                 r.reference_role,s.raw_file,r.raw_file
-          FROM segments_evidence s
-          JOIN {raw_table} r
-            ON r.reference_sample_id=s.sample_id
-           AND r.genome_build=s.genome_build AND r.source_class=s.source_class AND r.chr=s.chr
-           AND r.end>s.start AND r.start<s.end
-          LEFT JOIN sample_populations p ON p.dataset_id=s.dataset_id AND p.sample_id=s.sample_id
-          WHERE s.method='as3' AND s.source_class='Neanderthal'
-            AND (p.population IS NULL OR r.population='ALL' OR r.population=p.population)
-        """)
-	elif n_results and con.execute("SELECT COUNT(*) FROM reference_callsets").fetchone()[0]:
-		# Generic population callsets without individual IDs still support a
-		# population-matched comparison against the unioned overlay table.
-		con.execute("""
-          INSERT INTO reference_callset_overlaps
-          SELECT s.rowid,s.dataset_id,s.sample_id,p.population,s.method,s.source_class,s.segment_code,
-                 r.dataset_id,r.population,NULL,s.genome_build,s.chr,
-                 s.start,s.end,r.start,r.end,
-                 MIN(s.end,r.end)-MAX(s.start,r.start),
-                 CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,s.end-s.start),
-                 CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start),
-                 MIN(
-                   CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,s.end-s.start),
-                   CAST(MIN(s.end,r.end)-MAX(s.start,r.start) AS REAL)/MAX(1,r.end-r.start)
-                 ),
-                 r.reference_role,s.raw_file,r.raw_file
-          FROM segments_evidence s
-          JOIN reference_callsets r
-            ON r.genome_build=s.genome_build AND r.source_class=s.source_class AND r.chr=s.chr
-           AND r.end>s.start AND r.start<s.end
-          LEFT JOIN sample_populations p ON p.dataset_id=s.dataset_id AND p.sample_id=s.sample_id
-          WHERE s.method='as3' AND s.source_class='Neanderthal'
-            AND (r.population='ALL' OR r.population=p.population)
-        """)
-	con.executescript("""
-      CREATE INDEX idx_reference_overlaps_region ON reference_callset_overlaps(genome_build,chr,segment_start,segment_end);
-      CREATE INDEX idx_reference_overlaps_population ON reference_callset_overlaps(dataset_id,reference_population,method);
-      CREATE INDEX idx_reference_overlaps_sample ON reference_callset_overlaps(result_dataset_id,sample_id);
-    """)
-	if raw_table.startswith("temp."):
-		con.execute("DELETE FROM temp.reference_callsets_raw")
-	con.commit()
 
 
-def collapse_reference_callsets(con):
-	"""Union carrier-level official calls into population callset intervals.
-
-	The published BED contains individual IDs, while the requested external
-	reference schema is population-level and intentionally has no individual
-	carrier column.  Collapsing overlapping/touching rows here avoids storing
-	millions of anonymous duplicate carrier intervals or multiplying every
-	GU-AS3 overlap by the number of reference individuals.
-	"""
-	con.executescript("""
-      DELETE FROM reference_callsets;
-      INSERT INTO reference_callsets
-      WITH preceding AS (
-        SELECT *,
-          MAX(end) OVER (
-            PARTITION BY dataset_id,population,genome_build,chr,source_class,reference_role
-            ORDER BY start,end ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-          ) AS preceding_max_end
-        FROM reference_callsets_raw
-      ), marked AS (
-        SELECT *,CASE WHEN preceding_max_end IS NULL OR start>preceding_max_end THEN 1 ELSE 0 END AS new_island
-        FROM preceding
-      ), islands AS (
-        SELECT *,
-          SUM(new_island) OVER (
-            PARTITION BY dataset_id,population,genome_build,chr,source_class,reference_role
-            ORDER BY start,end ROWS UNBOUNDED PRECEDING
-          ) AS island_id
-        FROM marked
-      )
-      SELECT dataset_id,population,genome_build,chr,MIN(start),MAX(end),source_class,reference_role,MIN(raw_file)
-      FROM islands
-      GROUP BY dataset_id,population,genome_build,chr,source_class,reference_role,island_id;
-    """)
-	con.commit()
 
 
 def interval_summary(intervals, weighted=False):
@@ -1361,7 +896,7 @@ def build_burden(con):
         n_input_segments INTEGER,n_merged_intervals INTEGER,total_bp INTEGER,dosage_bp INTEGER
       );
     """)
-	# The biological source_class collapses Altai/Chagyrskaya/Vindija support,
+	# The biological source_class merges support across Neanderthal references,
 	# preventing the same Neanderthal tract from being counted repeatedly.
 	insert_interval_burden(
 		con,
@@ -1418,7 +953,7 @@ def build_locus_support(con, trajectory_bins=120):
       CREATE TABLE locus_sample_support(
         dataset_id TEXT,genome_build TEXT,locus_id TEXT,chr TEXT,source_class TEXT,
         sample_id TEXT,population TEXT,super_population TEXT,
-        phyml INTEGER,ibdmix INTEGER,trace INTEGER,as3 INTEGER,n_methods INTEGER,
+        phyml INTEGER,ibdmix INTEGER,trace INTEGER,n_methods INTEGER,
         methods_support TEXT,matched_haplotypes INTEGER,best_lineages TEXT,matched_source_classes TEXT,max_prop_match REAL,
         max_segment_score REAL,max_posterior REAL
       );
@@ -1445,7 +980,7 @@ def build_locus_support(con, trajectory_bins=120):
         GROUP BY pc.dataset_id,pc.genome_build,pc.locus_id,l.chr,l.source_class,pc.sample_id,p.population,p.super_population
       ), flags AS (
         SELECT t.dataset_id,t.genome_build,t.locus_id,t.sample_id,
-               MAX(s.method='ibdmix') AS ibdmix,MAX(s.method='trace') AS trace,MAX(s.method='as3') AS as3,
+               MAX(s.method='ibdmix') AS ibdmix,MAX(s.method='trace') AS trace,
                MAX(s.score) AS max_segment_score,MAX(s.posterior) AS max_posterior
         FROM tested t
         JOIN loci l ON l.dataset_id=t.dataset_id AND l.genome_build=t.genome_build AND l.locus_id=t.locus_id
@@ -1456,17 +991,16 @@ def build_locus_support(con, trajectory_bins=120):
                          OR (t.phyml=0 AND s.source_class=l.source_class)
                        )
                        AND s.end>l.start AND s.start<l.end
-                       AND s.method IN ('ibdmix','trace','as3')
+                       AND s.method IN ('ibdmix','trace')
         GROUP BY t.dataset_id,t.genome_build,t.locus_id,t.sample_id
       )
       INSERT INTO locus_sample_support
       SELECT t.dataset_id,t.genome_build,t.locus_id,t.chr,t.source_class,t.sample_id,t.population,t.super_population,
-             t.phyml,COALESCE(f.ibdmix,0),COALESCE(f.trace,0),COALESCE(f.as3,0),
-             t.phyml+COALESCE(f.ibdmix,0)+COALESCE(f.trace,0)+COALESCE(f.as3,0),
+             t.phyml,COALESCE(f.ibdmix,0),COALESCE(f.trace,0),
+             t.phyml+COALESCE(f.ibdmix,0)+COALESCE(f.trace,0),
              TRIM((CASE WHEN t.phyml=1 THEN 'phyml,' ELSE '' END)||
                   (CASE WHEN COALESCE(f.ibdmix,0)=1 THEN 'ibdmix,' ELSE '' END)||
-                  (CASE WHEN COALESCE(f.trace,0)=1 THEN 'trace,' ELSE '' END)||
-                  (CASE WHEN COALESCE(f.as3,0)=1 THEN 'as3,' ELSE '' END),','),
+                  (CASE WHEN COALESCE(f.trace,0)=1 THEN 'trace,' ELSE '' END),','),
              t.matched_haplotypes,t.best_lineages,t.matched_source_classes,t.max_prop_match,f.max_segment_score,f.max_posterior
       FROM tested t LEFT JOIN flags f USING(dataset_id,genome_build,locus_id,sample_id);
       CREATE UNIQUE INDEX idx_locus_sample_support_pk ON locus_sample_support(dataset_id,genome_build,locus_id,sample_id);
@@ -1494,7 +1028,7 @@ def build_locus_support(con, trajectory_bins=120):
 	available = {
 		(d, b, c, m)
 		for d, b, c, m in con.execute(
-			"SELECT DISTINCT dataset_id,genome_build,chr,method FROM segments_evidence WHERE method IN ('ibdmix','trace','as3') UNION SELECT dataset_id,genome_build,chr,method FROM method_runs"
+			"SELECT DISTINCT dataset_id,genome_build,chr,method FROM segments_evidence WHERE method IN ('ibdmix','trace') UNION SELECT dataset_id,genome_build,chr,method FROM method_runs"
 		)
 	}
 	run_info = {
@@ -1505,19 +1039,19 @@ def build_locus_support(con, trajectory_bins=120):
 	}
 	aggregate_sql = """
       SELECT dataset_id,genome_build,locus_id,chr,source_class,'ALL' AS population,COUNT(*) AS n_tested,
-             SUM(phyml),SUM(ibdmix),SUM(trace),SUM(as3),
-             SUM(phyml*ibdmix),SUM(phyml*trace),SUM(phyml*as3)
+             SUM(phyml),SUM(ibdmix),SUM(trace),
+             SUM(phyml*ibdmix),SUM(phyml*trace)
       FROM locus_sample_support GROUP BY dataset_id,genome_build,locus_id,chr,source_class
       UNION ALL
       SELECT dataset_id,genome_build,locus_id,chr,source_class,population,COUNT(*),
-             SUM(phyml),SUM(ibdmix),SUM(trace),SUM(as3),
-             SUM(phyml*ibdmix),SUM(phyml*trace),SUM(phyml*as3)
+             SUM(phyml),SUM(ibdmix),SUM(trace),
+             SUM(phyml*ibdmix),SUM(phyml*trace)
       FROM locus_sample_support WHERE population IS NOT NULL AND population!=''
       GROUP BY dataset_id,genome_build,locus_id,chr,source_class,population
     """
 	support_rows = []
-	for d, b, lid, chrom, src, pop, n, phy, ibd, trc, a3, phy_ibd, phy_trc, phy_a3 in con.execute(aggregate_sql):
-		values = {"phyml": (phy, phy), "ibdmix": (ibd, phy_ibd), "trace": (trc, phy_trc), "as3": (a3, phy_a3)}
+	for d, b, lid, chrom, src, pop, n, phy, ibd, trc, phy_ibd, phy_trc in con.execute(aggregate_sql):
+		values = {"phyml": (phy, phy), "ibdmix": (ibd, phy_ibd), "trace": (trc, phy_trc)}
 		for method, (carriers, intersection) in values.items():
 			carriers = int(carriers or 0)
 			intersection = int(intersection or 0)
@@ -1533,8 +1067,6 @@ def build_locus_support(con, trajectory_bins=120):
 				eligible, note = run_info[key]
 			elif chrom == "X" and method == "ibdmix":
 				eligible, note = 0, "experimental male-X pseudo-diploid adaptation; excluded from GU evidence score"
-			elif chrom == "X" and method == "as3":
-				eligible, note = 0, "AS3 Ref1028/model is autosomes-only; chrX is unsupported"
 			elif method == "ibdmix":
 				eligible, note = 0, "IBDmix completion/provenance unavailable; excluded from GU evidence score"
 			elif method == "trace":
@@ -1652,7 +1184,7 @@ def build_locus_support(con, trajectory_bins=120):
               OR (ls.phyml=1 AND INSTR(','||COALESCE(ls.matched_source_classes,'')||',',','||s.source_class||',')>0)
               OR (ls.phyml=0 AND s.source_class=?)
             )
-            AND s.method IN ('ibdmix','trace','as3') AND s.end>? AND s.start<?
+            AND s.method IN ('ibdmix','trace') AND s.end>? AND s.start<?
           ORDER BY s.method,s.sample_id,s.start,s.end
         """
 		for method, sample, pop, is_phyml, start, end in con.execute(query, (lid, d, b, chrom, src, ast, aen)):
@@ -1752,7 +1284,7 @@ def build_locus_evidence(con):
         best_archaic TEXT,best_lineage TEXT,n_compared INTEGER,n_match INTEGER,prop_match REAL,
         sequence_information TEXT,candidate_clade_bootstrap REAL,candidate_clade_specificity REAL,
         independent_methods_available INTEGER,independent_methods_supporting INTEGER,independent_method_names TEXT,
-        tract_support_mean REAL,ibdmix_max_lod REAL,trace_max_posterior REAL,as3_max_score REAL,
+        tract_support_mean REAL,ibdmix_max_lod REAL,trace_max_posterior REAL,
         evidence_score REAL,evidence_completeness REAL,evidence_tier TEXT,
         probability_calibrated INTEGER,score_interpretation TEXT,
         candidate_clade_pass INTEGER,region_coverage_fraction REAL,phyml_qc TEXT,evidence_state TEXT,evidence_summary TEXT
@@ -1814,8 +1346,7 @@ def build_locus_evidence(con):
 		native = con.execute(
 			"""
           SELECT MAX(CASE WHEN method='ibdmix' THEN score END),
-                 MAX(CASE WHEN method='trace' THEN posterior END),
-                 MAX(CASE WHEN method='as3' THEN score END)
+                 MAX(CASE WHEN method='trace' THEN posterior END)
           FROM segments_evidence WHERE dataset_id=? AND genome_build=? AND chr=? AND end>? AND start<?
             AND (method='trace' OR source_class=?)
         """,
@@ -1897,7 +1428,7 @@ def build_locus_evidence(con):
 			)
 		)
 	con.executemany(
-		"INSERT INTO locus_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows
+		"INSERT INTO locus_evidence VALUES(" + ",".join("?" for _ in range(32)) + ")", rows
 	)
 	con.execute("ALTER TABLE locus_evidence ADD COLUMN n_panel INTEGER")
 	con.execute("UPDATE locus_evidence SET n_panel=(SELECT n_panel FROM loci l WHERE l.dataset_id=locus_evidence.dataset_id AND l.genome_build=locus_evidence.genome_build AND l.locus_id=locus_evidence.locus_id AND l.method='phyml')")
@@ -1951,12 +1482,12 @@ def build_database_summary(con):
       INSERT INTO database_summary
         SELECT dataset_id,genome_build,'methods',COUNT(DISTINCT method) FROM (
           SELECT dataset_id,genome_build,method FROM segments UNION ALL SELECT dataset_id,genome_build,method FROM loci
+          UNION ALL SELECT dataset_id,genome_build,method FROM method_runs WHERE status='complete'
         ) GROUP BY dataset_id,genome_build;
       INSERT INTO database_summary
-        SELECT dataset_id,genome_build,'phyml_loci',COUNT(*) FROM loci WHERE method='phyml' GROUP BY dataset_id,genome_build;
+        SELECT dataset_id,genome_build,'completed_method_units',COUNT(*) FROM method_runs WHERE status='complete' GROUP BY dataset_id,genome_build;
       INSERT INTO database_summary
-        SELECT 'reference',genome_build,'external_reference_intervals',COUNT(*) FROM reference_callsets
-        WHERE reference_role='external_reference' GROUP BY genome_build;
+        SELECT dataset_id,genome_build,'phyml_loci',COUNT(*) FROM loci WHERE method='phyml' GROUP BY dataset_id,genome_build;
     """)
 	con.commit()
 
@@ -1985,31 +1516,18 @@ def normalize_results_main():
 	ap.add_argument("--reciprocal-overlap", type=float, default=0.5)
 	ap.add_argument("--trajectory-bins", type=int, default=120)
 	ap.add_argument("--database", type=Path, help="SQLite destination; defaults to <analysis-root>/final/gu.sqlite")
-	ap.add_argument(
-		"--reference-callsets",
-		type=Path,
-		help="Extracted database_introgression_call directory; external validation only",
-	)
-	ap.add_argument("--reference-cache", type=Path, help="Prepared persistent published-callset SQLite cache")
-	ap.add_argument("--reference-dataset-id", default="AS3_1KG")
 	ap.add_argument("--sample-panel", type=Path, help="Sample metadata with sample/pop/super_pop columns")
 	ap.add_argument("--sample-panel-dataset", default="1kg", help="Dataset owning this sample panel; default preserves the 1KG interface")
 	ap.add_argument(
 		"--ibdmix-daf-mask",
 		type=Path,
 		default=os.environ.get("GU_IBDMIX_DAF_MASK"),
-		help="Altai GRCh37 top-0.1%% DAF exclusion BED with .json provenance sidecar",
+		help="Altai or Altai.2013 GRCh37 top-0.1%% DAF exclusion BED with exact-reference .json provenance sidecar",
 	)
 	args = ap.parse_args()
 	if args.trajectory_bins < 20 or args.trajectory_bins > 1000:
 		ap.error("--trajectory-bins must be between 20 and 1000")
-	if args.reference_callsets and args.reference_cache:
-		ap.error("use --reference-cache or --reference-callsets, not both")
 	args.output_dir.mkdir(parents=True, exist_ok=True)
-	for obsolete in ("README.txt", "manifest.tsv"):
-		path = args.output_dir / obsolete
-		if path.exists():
-			path.unlink()
 	if args.sample_panel_dataset.startswith("ukb-"):
 		# The shared PhyML summary link needs a directory even when this UKB
 		# pilot has only IBDmix calls. An empty directory certifies no method.
@@ -2024,9 +1542,6 @@ def normalize_results_main():
 	db_part = db.with_name(f".{db.name}.part.{os.getpid()}")
 	con = None
 	loci = []
-	reference_raw_table = "temp.reference_callsets_raw"
-	reference_cache_attached = False
-	local_reference_cache = None
 	try:
 		con = sqlite3.connect(tmp_db)
 		init_db(con)
@@ -2045,32 +1560,6 @@ def normalize_results_main():
 		populations = sample_population_table(args.sample_panel, args.sample_panel_dataset, args.analysis_root)
 		if not populations.empty:
 			insert_df(con, "sample_populations", populations)
-		nref = 0
-		if args.reference_cache:
-			if not args.reference_cache.is_file():
-				raise ValueError(f"reference cache is missing: {args.reference_cache}")
-			cache_fd, cache_name = tempfile.mkstemp(prefix="gu-reference-cache-", suffix=".sqlite")
-			os.close(cache_fd)
-			local_reference_cache = Path(cache_name)
-			shutil.copy2(args.reference_cache, local_reference_cache)
-			con.execute("ATTACH DATABASE ? AS refcache", (str(local_reference_cache),))
-			reference_cache_attached = True
-			required = {"metadata", "reference_callsets", "reference_callsets_raw"}
-			tables = {row[0] for row in con.execute("SELECT name FROM refcache.sqlite_master WHERE type='table'")}
-			if not required.issubset(tables):
-				raise ValueError(f"invalid reference cache schema: {args.reference_cache}")
-			nref = con.execute("SELECT COUNT(*) FROM refcache.reference_callsets_raw").fetchone()[0]
-			con.execute("INSERT INTO reference_callsets SELECT * FROM refcache.reference_callsets")
-			reference_raw_table = "refcache.reference_callsets_raw"
-			con.commit()
-		elif args.reference_callsets:
-			for d in iter_reference_callsets(args.reference_callsets, args.reference_dataset_id):
-				nref += insert_reference_df(con, d)
-		counts["external_reference_raw"] = nref
-		con.commit()
-		if not args.reference_cache:
-			collapse_reference_callsets(con)
-		counts["external_reference"] = con.execute("SELECT COUNT(*) FROM reference_callsets").fetchone()[0]
 		completed_ibdmix = {Path(row[7]).parent for row in method_runs if row[3] == "ibdmix" and row[4] == "complete"}
 		ibdmix_audits = []
 		if any(not dataset_from_path(path, "ibdmix").startswith("ukb-") for path in completed_ibdmix) and args.ibdmix_daf_mask is None:
@@ -2091,7 +1580,6 @@ def normalize_results_main():
 				),
 			),
 			("trace", iter_trace(args.analysis_root, args.build)),
-			("as3", iter_as3(args.analysis_root, args.build)),
 		]:
 			n = 0
 			if it is not None:
@@ -2118,10 +1606,6 @@ def normalize_results_main():
 		con.execute("CREATE INDEX idx_loci_region ON loci(dataset_id,genome_build,chr,start,end)")
 		con.commit()
 		build_catalog(con, args.build, args.reciprocal_overlap)
-		build_reference_overlaps(con, reference_raw_table)
-		if reference_cache_attached:
-			con.execute("DETACH DATABASE refcache")
-			reference_cache_attached = False
 		build_burden(con)
 		build_locus_support(con, args.trajectory_bins)
 		build_locus_evidence(con)
@@ -2171,16 +1655,6 @@ def normalize_results_main():
 		)
 		export_query(
 			con,
-			"SELECT * FROM reference_callsets ORDER BY genome_build,population,chr,start,end",
-			summary / "reference_callsets.tsv.gz",
-		)
-		export_query(
-			con,
-			"SELECT * FROM reference_callset_overlaps ORDER BY genome_build,reference_population,chr,segment_start,sample_id",
-			summary / "reference_callset_overlaps.tsv.gz",
-		)
-		export_query(
-			con,
 			"SELECT * FROM sample_populations ORDER BY dataset_id,population,sample_id",
 			summary / "sample_populations.tsv.gz",
 		)
@@ -2194,7 +1668,7 @@ def normalize_results_main():
 			"SELECT dataset_id,genome_build,chr,native_file,filtered_file,status,daf_status FROM ibdmix_filter_runs",
 			summary / "ibdmix_filters.tsv",
 		)
-		for method in ("as3", "trace", "ibdmix"):
+		for method in ("trace", "ibdmix"):
 			export_query(
 				con,
 				f"SELECT * FROM segments WHERE method='{method}' ORDER BY dataset_id,genome_build,chr,start,end,sample_id",
@@ -2221,166 +1695,11 @@ def normalize_results_main():
 			tmp_db.unlink()
 		if db_part.exists():
 			db_part.unlink()
-		if local_reference_cache is not None and local_reference_cache.exists():
-			local_reference_cache.unlink()
 	print("Normalized:", counts, "loci=", len(loci), "packaged_files=", packaged, "database=", db)
 
 
 def normalize_results_cli():
 	normalize_results_main()
-
-
-# 🚩 reference_callset_cache
-"""Build and validate GU's persistent normalized published-callset database."""
-
-
-import argparse
-import os
-import shutil
-import sqlite3
-import tempfile
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-CACHE_FORMAT = "1"
-
-
-def callset_files(source):
-	return sorted(
-		path
-		for path in source.rglob("*")
-		if path.is_file()
-		and path.stat().st_size > 0
-		and (path.name.lower().endswith((".bed", ".tsv", ".bed.gz", ".tsv.gz")))
-	)
-
-
-def require_callset_files(source):
-	files = callset_files(source)
-	if not files:
-		raise ValueError(f"no BED/TSV callsets found under {source}")
-	return files
-
-
-def inspect_cache(cache, quiet=False, full=True):
-	try:
-		if not cache.is_file():
-			raise ValueError(f"cache is missing: {cache}")
-		con = sqlite3.connect(f"file:{cache}?mode=ro", uri=True)
-		try:
-			meta = dict(con.execute("SELECT key,value FROM metadata"))
-			if meta.get("cache_format") != CACHE_FORMAT:
-				raise ValueError("cache format changed")
-			raw = con.execute("SELECT COUNT(*) FROM reference_callsets_raw").fetchone()[0]
-			union = con.execute("SELECT COUNT(*) FROM reference_callsets").fetchone()[0]
-			if full:
-				check = con.execute("PRAGMA quick_check").fetchone()
-				if not check or check[0] != "ok":
-					raise ValueError(f"SQLite quick_check failed: {check}")
-			if raw < 1 or union < 1:
-				raise ValueError(f"cache tables are empty: raw={raw} union={union}")
-		finally:
-			con.close()
-		if not quiet:
-			print(f"Reference callset database OK: raw={raw} union={union} database={cache}")
-		return True
-	except (OSError, sqlite3.Error, ValueError) as exc:
-		if not quiet:
-			print(f"ERROR: missing or invalid reference callset database: {exc}", file=os.sys.stderr)
-		return False
-
-
-def build_cache(source, cache, dataset_id):
-	files = require_callset_files(source)
-	cache.parent.mkdir(parents=True, exist_ok=True)
-	fd, tmp_name = tempfile.mkstemp(prefix="gu-reference-callsets-", suffix=".sqlite")
-	os.close(fd)
-	tmp = Path(tmp_name)
-	staged = cache.with_name(f".{cache.name}.part.{os.getpid()}")
-	con = None
-	raw = 0
-	try:
-		con = sqlite3.connect(tmp)
-		con.executescript("""
-          PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA temp_store=FILE;
-          CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-          CREATE TABLE reference_callsets_raw(
-            dataset_id TEXT,population TEXT,genome_build TEXT,chr TEXT,start INTEGER,end INTEGER,
-            source_class TEXT,reference_role TEXT,raw_file TEXT,reference_sample_id TEXT,reference_super_population TEXT
-          );
-          CREATE TABLE reference_callsets(
-            dataset_id TEXT,population TEXT,genome_build TEXT,chr TEXT,start INTEGER,end INTEGER,
-            source_class TEXT,reference_role TEXT,raw_file TEXT
-          );
-        """)
-		insert_sql = "INSERT INTO reference_callsets_raw VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-		for frame in iter_reference_callsets(source, dataset_id):
-			con.executemany(insert_sql, frame[REFERENCE_RAW_COLS].itertuples(index=False, name=None))
-			raw += len(frame)
-		con.commit()
-		collapse_reference_callsets(con)
-		con.executescript("""
-          CREATE INDEX idx_reference_raw_sample_region ON reference_callsets_raw(reference_sample_id,genome_build,source_class,chr,start,end);
-          CREATE INDEX idx_reference_callsets_region ON reference_callsets(genome_build,source_class,chr,start,end);
-          CREATE INDEX idx_reference_callsets_population ON reference_callsets(dataset_id,population,genome_build);
-          ANALYZE;
-        """)
-		union = con.execute("SELECT COUNT(*) FROM reference_callsets").fetchone()[0]
-		metadata = {
-			"cache_format": CACHE_FORMAT,
-			"dataset_id": dataset_id,
-			"source_dir": str(source.resolve()),
-			"source_files": str(len(files)),
-			"raw_rows": str(raw),
-			"union_rows": str(union),
-			"created_utc": datetime.now(timezone.utc).isoformat(),
-		}
-		con.executemany("INSERT INTO metadata(key,value) VALUES(?,?)", metadata.items())
-		con.commit()
-		check = con.execute("PRAGMA quick_check").fetchone()
-		if not check or check[0] != "ok":
-			raise RuntimeError(f"SQLite quick_check failed: {check}")
-		con.close()
-		con = None
-		if staged.exists():
-			staged.unlink()
-		shutil.copy2(tmp, staged)
-		os.replace(staged, cache)
-	finally:
-		if con is not None:
-			con.close()
-		if tmp.exists():
-			tmp.unlink()
-		if staged.exists():
-			staged.unlink()
-	print(f"Reference callset database built: files={len(files)} raw={raw} union={union} database={cache}")
-
-
-def reference_callset_cache_main():
-	ap = argparse.ArgumentParser()
-	ap.add_argument("action", choices=("prepare", "check"))
-	ap.add_argument("--source", required=True, type=Path)
-	ap.add_argument("--cache", required=True, type=Path)
-	ap.add_argument("--dataset-id", default="AS3_1KG")
-	ap.add_argument(
-		"--fast", action="store_true", help="Skip the full SQLite page scan; schema and row counts are still checked"
-	)
-	args = ap.parse_args()
-	if args.action == "check":
-		raise SystemExit(0 if inspect_cache(args.cache, full=not args.fast) else 2)
-	if inspect_cache(args.cache, quiet=True, full=False):
-		inspect_cache(args.cache)
-		return
-	if not args.source.is_dir():
-		raise SystemExit(f"ERROR: published callset directory is missing: {args.source}")
-	build_cache(args.source, args.cache, args.dataset_id)
-	if not inspect_cache(args.cache):
-		raise SystemExit(2)
-
-
-def reference_callset_cache_cli():
-	reference_callset_cache_main()
 
 
 # 🚩 introgression_density
@@ -2398,16 +1717,17 @@ import numpy as np
 load_module("0.common.py")
 from gu_0_common import CHROM_LENGTHS, write_tsv_rows
 
-SCHEMA = 15
-SUMMARY_REFERENCES = ("Altai", "Altai.2013", "Chagyr", "Vindija", "Denisova", "Denisova.2013", "Denisova25")
-SUMMARY_GROUPS = {ref: (ref,) for ref in SUMMARY_REFERENCES}
-SUMMARY_GROUPS.update(
-	{
-		"Altai + Denisova": ("Altai", "Denisova"),
-		"All Five": ("Altai", "Chagyr", "Vindija", "Denisova", "Denisova25"),
-		"2013 Pair": ("Altai.2013", "Denisova.2013"),
-	}
-)
+SCHEMA = 2026
+SUMMARY_REFERENCES = tuple(DEFAULT_ARCHAIC_REFERENCES)
+
+
+def summary_references(references):
+	"""Order only references explicitly recorded by completed runs."""
+	actual = set(references)
+	unknown = actual - set(SUPPORTED_ARCHAIC_REFERENCES)
+	if unknown:
+		raise ValueError("Unsupported archaic references in completed run: " + ", ".join(sorted(unknown)))
+	return tuple(ref for ref in SUMMARY_REFERENCES if ref in actual) + tuple(sorted(actual - set(SUMMARY_REFERENCES)))
 
 
 def density_input_stat(path):
@@ -2421,45 +1741,17 @@ def density_input_stat(path):
 
 
 def density_run_path(raw, database):
-	"""Locate restored run metadata without changing its recorded provenance."""
+	"""Resolve current provenance paths relative to the result database."""
 	path = Path(raw)
-	if not path.is_absolute():
-		path = database.parent / path
-	path = gu_relocated_path(path, database.parent.parent)
-	if density_input_stat(path):
-		return path
-	# Older databases can retain a former absolute analysis root. Resolve the
-	# original method/target/scope tree under the current permanent root.
-	# Keep the entire run suffix, including the legacy ukb namespace; never
-	# search by chromosome or basename, which could select another cohort.
-	parts = path.parts
-	if "ibdmix" not in parts:
-		return path
-	index = parts.index("ibdmix")
-	if index and parts[index - 1] == "ukb":
-		index -= 1
-	roots = [database.parent.parent]
-	if os.environ.get("GU_ANALYSIS_ROOT"):
-		roots.insert(0, Path(os.environ["GU_ANALYSIS_ROOT"]))
-	for root in roots:
-		candidate = root.joinpath(*parts[index:])
-		if density_input_stat(candidate):
-			return candidate
-	return path
+	return path if path.is_absolute() else database.parent / path
 
 
 def density_run_signature(paths):
-	"""Invalidate missing-data caches when restored metadata/rosters change."""
+	"""Include exact saved calling rosters in the cache identity."""
 	inputs = set(paths)
 	for path in paths:
-		# Include missing roster paths so restoring one also changes the key.
-		inputs.update(path.parent / "samples" / name for name in ("ALL.txt", "male.txt", "X_MALE/ALL.txt", "X_PAR/ALL.txt"))
+		inputs.update(path.parent / "samples" / name / "ALL.txt" for name in ("X_MALE", "X_PAR"))
 		inputs.update(path.parent / "samples" / ("C" + str(chrom)) / "ALL.txt" for chrom in range(1, 23))
-		if density_input_stat(path):
-			for line in path.read_text().splitlines():
-				fields = line.replace("\\t", "\t").split("\t")
-				if "psam" in fields and fields.index("psam") + 1 < len(fields):
-					inputs.add(Path(fields[fields.index("psam") + 1].rsplit(":", 2)[0]))
 	records = []
 	for path in sorted(inputs):
 		stat = density_input_stat(path)
@@ -2469,7 +1761,7 @@ def density_run_signature(paths):
 
 def whole_chromosome_run(text, chrom):
 	"""Recognize both native-VCF and cached modern_source run records."""
-	records = [line.replace("\\t", "\t").split("\t") for line in text.splitlines()]
+	records = [line.split("\t") for line in text.splitlines()]
 	if any(row[0] in {"loci_file", "loci"} for row in records):
 		return False
 	if any(row[0] == "modern_vcf" for row in records):
@@ -2482,12 +1774,6 @@ def whole_chromosome_run(text, chrom):
 	return any(row[:2] == ["format", "vcf"] for row in source)
 
 
-def neanderthal_summary(con, dataset, build, samples, lengths, targets):
-	"""Keep the Altai cache used by the map and Cell 2020 comparison."""
-	return [
-		dict(row, neanderthal_bp=row["archaic_bp"])
-		for row in reference_summary(con, dataset, build, samples, lengths, targets, "Altai")
-	]
 
 
 def shared_reference_targets(reference_targets, references, chromosomes=tuple(map(str, range(1, 23)))):
@@ -2501,7 +1787,7 @@ def shared_reference_targets(reference_targets, references, chromosomes=tuple(ma
 
 
 def reference_summary(con, dataset, build, samples, lengths, targets, reference, x_male=False):
-	"""Exact reference/group union on autosomes or male non-PAR X.
+	"""Exact per-reference interval union on autosomes or male non-PAR X.
 
 	Targets certify whole-chromosome runs.
 
@@ -2515,10 +1801,7 @@ def reference_summary(con, dataset, build, samples, lengths, targets, reference,
 		for ch in chromosomes
 		if ch in lengths
 	}
-	references = SUMMARY_GROUPS.get(reference, (reference,))
-	sources = tuple(
-		source for ref in references for source in (("Chagyr", "Chagyrskaya") if ref == "Chagyr" else (ref,))
-	)
+	sources = (reference,)
 	placeholders = ",".join("?" for _ in sources)
 	scope_sql = "chr='X'" if x_male else "chr IN (" + ",".join("'" + ch + "'" for ch in chromosomes) + ")"
 	rows = con.execute(
@@ -2542,6 +1825,7 @@ def reference_summary(con, dataset, build, samples, lengths, targets, reference,
 				haploid_bp=physical,
 				archaic_bp=burden[sample] if denominator else "",
 				coverage_pct=100 * burden[sample] / denominator if denominator else "",
+				coordinate_coverage_pct=100 * burden[sample] / physical if physical else "",
 			)
 		)
 	return result
@@ -2594,10 +1878,12 @@ def population_burdens(rows, metadata, dataset, build, scope, population_samples
 			denoms = [r["tested_bp"] for r in measured]
 			total = sum(r["archaic_bp"] for r in measured)
 			result.append(dict(dataset_id=dataset, genome_build=build, scope=scope, group=group, reference=ref,
-				reference_role="ibdmix_reproduction_only" if ref == "2013 Pair" else reference_role(ref) if ref in SUMMARY_REFERENCES else "scientific_reference_group",
+				reference_role=reference_role(ref),
 				n_panel=len(members), n_tested=n, n_positive=sum(r["archaic_bp"] > 0 for r in measured), n_zero=sum(r["archaic_bp"] == 0 for r in measured), n_untested=len(members)-n,
 				total_union_bp=total if n else None, mean_mb=total/n/1e6 if n else None,
 				coverage_pct=sum(r["coverage_pct"] for r in measured)/n if n else None,
+				coordinate_coverage_pct=sum(100*r["archaic_bp"]/r["haploid_bp"] for r in measured)/n if n else None,
+				coordinate_coverage_definition="interval_union_bp / physical_haploid_span; not ancestry dosage or callable fraction",
 				physical_denominator_bp=denoms[0] if denoms and len(set(denoms)) == 1 else None,
 				denominator_min_bp=min(denoms) if denoms else None, denominator_max_bp=max(denoms) if denoms else None,
 				chromosomes=";".join(chroms), comparable_scope=int(len(chroms) == 1),
@@ -2620,12 +1906,21 @@ def paired_male_burdens(x_rows, auto_rows, metadata, dataset, build):
 		pop, sp = metadata.get(x["sample_id"], ("UNKNOWN", "UNKNOWN"))
 		for group in set(("ALL", pop, sp)) | ({"AFR (5)"} if pop in {"ESN", "GWD", "LWK", "MSL", "YRI"} else set()):
 			groups.setdefault((x["reference"], group), []).append((x, a))
-	return [dict(dataset_id=dataset, genome_build=build, reference=ref, group=group, n_same_males=len(rr),
-		x_mean_mb=sum(x["archaic_bp"] for x,a in rr)/len(rr)/1e6, autosome_mean_mb=sum(a["archaic_bp"] for x,a in rr)/len(rr)/1e6,
-		x_coverage_pct=sum(x["coverage_pct"] for x,a in rr)/len(rr), autosome_coverage_pct=sum(a["coverage_pct"] for x,a in rr)/len(rr),
-		x_physical_bp=rr[0][0]["tested_bp"], autosome_diploid_bp=rr[0][1]["tested_bp"],
-		definition="same_men;22_autosomes_and_nonPAR_X;union_physical_coverage_not_ancestry_dosage;X_LOD_uncalibrated")
-		for (ref, group), rr in groups.items()]
+	result = []
+	for (ref, group), rr in groups.items():
+		x_pct = sum(x["coverage_pct"] for x,a in rr)/len(rr)
+		a_pct = sum(a["coverage_pct"] for x,a in rr)/len(rr)
+		x_coord = sum(100*x["archaic_bp"]/x["haploid_bp"] for x,a in rr)/len(rr)
+		a_coord = sum(100*a["archaic_bp"]/a["haploid_bp"] for x,a in rr)/len(rr)
+		result.append(dict(dataset_id=dataset, genome_build=build, reference=ref, group=group, n_same_males=len(rr),
+			x_mean_mb=sum(x["archaic_bp"] for x,a in rr)/len(rr)/1e6, autosome_mean_mb=sum(a["archaic_bp"] for x,a in rr)/len(rr)/1e6,
+			x_coverage_pct=x_pct, autosome_coverage_pct=a_pct,
+			x_coordinate_coverage_pct=x_coord, autosome_coordinate_coverage_pct=a_coord,
+			x_to_autosome_reported_coverage_ratio=x_pct/a_pct if a_pct else None,
+			x_to_autosome_coordinate_coverage_ratio=x_coord/a_coord if a_coord else None,
+			x_physical_bp=rr[0][0]["tested_bp"], autosome_diploid_bp=rr[0][1]["tested_bp"],
+			definition="same_men;22_autosomes_and_nonPAR_X;coordinate_coverage=union/one_physical_span;reported_autosome_coverage=union/two_spans;not_ancestry_dosage;X_LOD_uncalibrated;filters_differ"))
+	return result
 
 
 def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
@@ -2703,52 +1998,27 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 		tested = {r[0] for r in runs}
 		x_male = False
 		targets = {}
-		psam_cache = {}
-		summary_targets = {}
-		summary_refs = set()
 		neanderthal_tested = set()
 		lineage_targets = {"Neanderthal": {}, "Denisovan": {}}
-		reference_targets = {ref: {} for ref in SUMMARY_REFERENCES}
+		reference_targets = {}
 		# Use the database's provenance snapshot. Raw metadata may already have
 		# changed during a rerun while this database still contains old calls.
-		legacy_chromosomes = sorted({r[0] for r in runs if not str(r[3]).startswith("audited IBDmix ")})
 		profiles = sorted({str(r[3]).split("profile=", 1)[1] for r in runs if "profile=" in str(r[3])})
 		for chrom, _, raw, note in runs:
 			p = run_paths[raw]
 			if not density_input_stat(p):
 				print(f"DENSITY WARNING {dataset} {build} chr{chrom}: run metadata missing: {p}; coverage remains N/A", flush=True)
 				continue
-			text = p.read_text().replace("\\t", "\t")
+			text = p.read_text()
 			run_targets = set()
 			if chrom == "X" and "male_haploid_nonpar" in text:
 				x_male = True
 			# Saved caller rosters survive relocation and include zero-call people.
 			# Prefer them over external input files, which may no longer exist.
 			unit = ("X_MALE" if "male_haploid_nonpar" in text else "X_PAR") if chrom == "X" else "C" + chrom
-			actual_roster = p.parent / "samples" / unit / "ALL.txt"
-			roster = p.parent / "samples" / ("male.txt" if chrom == "X" and "male_haploid_nonpar" in text else "ALL.txt")
-			saved_roster = actual_roster if actual_roster.is_file() else roster
-			has_roster = saved_roster.is_file()
-			if has_roster:
-				run_targets = set(saved_roster.read_text().split())
-			for line in text.splitlines():
-				if has_roster:
-					break
-				fields = line.replace("\\t", "\t").split("\t")
-				if "psam" not in fields:
-					continue
-				i = fields.index("psam")
-				if i + 1 >= len(fields):
-					continue
-				psam = Path(fields[i + 1].rsplit(":", 2)[0])
-				if not density_input_stat(psam):
-					continue
-				if psam not in psam_cache:
-					with psam.open() as f:
-						header = f.readline().split()
-						ix = header.index("IID") if "IID" in header else header.index("#IID")
-						psam_cache[psam] = {r[ix] for r in (line.split() for line in f) if len(r) > ix}
-				run_targets.update(psam_cache[psam])
+			roster = p.parent / "samples" / unit / "ALL.txt"
+			if roster.is_file():
+				run_targets = set(roster.read_text().split())
 			if run_targets:
 				targets.setdefault(chrom, set()).update(run_targets)
 			if not run_targets:
@@ -2756,7 +2026,7 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 			refs = next((line.split("\t", 1)[1].split() for line in text.splitlines() if line.startswith("refs\t")), [])
 			# Locus-only calls cannot certify an entire chromosome denominator.
 			whole = whole_chromosome_run(text, chrom)
-			neand_refs = set(refs) & {"Altai", "Altai.2013", "Chagyr", "Chagyrskaya", "Vindija"}
+			neand_refs = {ref for ref in summary_references(refs) if source_class(ref) == "Neanderthal"}
 			if neand_refs:
 				neanderthal_tested.add(chrom)
 			# Background-only Denisova runs export no Denisovan ancestry calls.
@@ -2769,20 +2039,16 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 				and run_targets
 				and (chrom in map(str, range(1, 23)) or (chrom == "X" and "male_haploid_nonpar" in text))
 			):
-				for ref in refs:
-					ref = "Chagyr" if ref == "Chagyrskaya" else ref
-					if ref not in reference_targets or (background_only and ref.startswith("Denisova")):
+				for ref in summary_references(refs):
+					if background_only and ref.startswith("Denisova"):
 						continue
-					reference_targets[ref].setdefault(chrom, set()).update(run_targets)
+					reference_targets.setdefault(ref, {}).setdefault(chrom, set()).update(run_targets)
 			for lineage, has_refs in [
 				("Neanderthal", bool(neand_refs)),
 				("Denisovan", not background_only and any("denis" in ref.lower() for ref in refs)),
 			]:
 				if has_refs and whole and run_targets:
 					lineage_targets[lineage].setdefault(chrom, set()).update(run_targets)
-			if chrom in map(str, range(1, 23)) and whole and "Altai" in neand_refs and run_targets:
-				summary_targets.setdefault(chrom, set()).update(run_targets)
-				summary_refs.add("Altai")
 		tested &= neanderthal_tested  # a Denisova-only run did not test Neanderthal ancestry
 		# Use the actual caller target, not the larger annotation panel.
 		samples = sorted(
@@ -2850,18 +2116,21 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 			],
 		)
 		write_tsv_rows(stage / "bins.tsv", ["bin_index", "chr", "start", "end", "tested", "physical_bp"], bins)
-		print(f"DENSITY summarizing Neanderthal autosomes: {len(summary_targets)}/22 chromosomes", flush=True)
 		reference_rows = []
-		for ref, members in SUMMARY_GROUPS.items():
-			group_targets = shared_reference_targets(reference_targets, members)
+		for ref in summary_references(reference_targets):
+			group_targets = shared_reference_targets(reference_targets, (ref,))
+			if not group_targets:
+				continue
 			print(f"DENSITY summarizing {ref} autosomes: {len(group_targets)}/22 chromosomes", flush=True)
 			reference_rows.extend(
 				dict(row, reference=ref)
 				for row in reference_summary(con, dataset, build, samples, lengths, group_targets, ref)
 			)
 		x_rows = []
-		for ref, members in SUMMARY_GROUPS.items():
-			group_targets = shared_reference_targets(reference_targets, members, ("X",))
+		for ref in summary_references(reference_targets):
+			group_targets = shared_reference_targets(reference_targets, (ref,), ("X",))
+			if not group_targets:
+				continue
 			x_rows.extend(
 				dict(row, reference=ref)
 				for row in reference_summary(con, dataset, build, samples, lengths, group_targets, ref, x_male=True)
@@ -2877,6 +2146,7 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 				"haploid_bp",
 				"archaic_bp",
 				"coverage_pct",
+				"coordinate_coverage_pct",
 			],
 			x_rows,
 		)
@@ -2891,13 +2161,9 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 				"haploid_bp",
 				"archaic_bp",
 				"coverage_pct",
+				"coordinate_coverage_pct",
 			],
 			reference_rows,
-		)
-		write_tsv_rows(
-			stage / "neanderthal_summary.tsv",
-			["sample_id", "chromosomes", "n_chromosomes", "tested_bp", "haploid_bp", "neanderthal_bp", "coverage_pct"],
-			[dict(row, neanderthal_bp=row["archaic_bp"]) for row in reference_rows if row["reference"] == "Altai"],
 		)
 		filters = []
 		if con.execute("SELECT 1 FROM sqlite_master WHERE name='ibdmix_filter_runs'").fetchone():
@@ -2924,17 +2190,14 @@ def prepare(database, output, sample_panel=None, bin_bp=5_000_000):
 					n_bins=len(bins),
 					union_intervals=unions,
 					x_male_only=x_male,
-					legacy_chromosomes=legacy_chromosomes,
 					profiles=profiles,
 					diploid_autosome_bp=2 * sum(lengths.get(str(ch), 0) for ch in range(1, 23)),
 					lineages=["Neanderthal", "Denisovan"],
 					definition="Per-lineage union bp / diploid bin span (male non-PAR X: haploid); percent; untested entries are missing",
-					summary_definition="Altai-only union bp / (2 x physical length of certified whole autosomes); percent; unphased calls cannot resolve homozygous dosage",
-					summary_references=sorted(summary_refs),
-					archaic_summary_references=list(SUMMARY_REFERENCES),
-					archaic_summary_groups=SUMMARY_GROUPS,
-					x_summary_definition="Male non-PAR X only; exact interval union / haploid physical non-PAR span; untested samples missing; experimental calls, not Cell 2020 autosomal final filters",
-					archaic_summary_definition="Per-individual interval union within each reference/group on autosomes certified for all group members; overlapping bp counted once; untested entries are missing",
+					coordinate_coverage_definition="Exact per-individual interval union / haploid physical span; available for both autosomes and X; not ancestry dosage",
+					archaic_summary_references=list(summary_references(reference_targets)),
+					x_summary_definition="Male non-PAR X only; exact interval union / haploid physical non-PAR span; untested samples missing; experimental calls; chromosome-specific reference and background filters",
+					archaic_summary_definition="Per-individual interval union within each explicitly tested reference on certified autosomes; overlapping bp counted once; untested entries are missing",
 					ibdmix_filters=filters,
 				),
 				indent=2,
@@ -2961,7 +2224,6 @@ def introgression_density_cli():
 
 
 SUBCOMMANDS = {
-	"reference-cache": reference_callset_cache_cli,
 	"density": introgression_density_cli,
 }
 

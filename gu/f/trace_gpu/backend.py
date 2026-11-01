@@ -14,7 +14,7 @@ def library():
     global _lib
     if _lib is not None:
         return _lib
-    home=Path(os.environ.get('TRACE_GPU_HOME','/mnt/d/software/gu/trace-gpu'))
+    home=Path(os.environ.get('TRACE_GPU_HOME', str(Path(os.environ.get('GU_SOFT', Path.home()/'.local/share/gu'))/'trace-gpu')))
     import tracehmm.trace as upstream
     import trace_utils
     manifest=json.loads((home/'build-manifest.json').read_text())
@@ -60,7 +60,7 @@ def cache_emissions(self,z=1,alpha=1e-2):
     out=np.empty_like(x)
     lib.checked(lib.gu_trace_emissions(x.size,x,mask,out,
         a1,b1,a1*math.log(b1),math.lgamma(a1),a2,b2,a2*math.log(b2),math.lgamma(a2),
-        cp,left,right,float(np.log(self.scale_factor))))
+        cp,left,right,0.0))
     if not np.isfinite(out).all():
         raise FloatingPointError('Non-finite TRACE GPU emissions')
     return out
@@ -83,5 +83,25 @@ def update_oneind_cython(alphas,betas,emissions,p,q):
 def install():
     library()
     import tracehmm.trace as upstream
+    # Check the actually installed upstream equations before replacing them.
+    # This runs on the requested device and checks the pinned 2026 equations.
+    rng=np.random.default_rng(8191)
+    probe=upstream.TRACE()
+    probe.ncoal=np.geomspace(1e-3,2e5,257)
+    probe.m=probe.ncoal.size
+    probe.mask=np.ones(probe.m)
+    probe.mask[::11]=0
+    probe.emi2_a1,probe.emi2_b1=2.3,0.002
+    probe.emi2_a2,probe.emi2_b2=3.1,0.0003
+    for z in (0,1):
+        expected=upstream.TRACE.cache_emissions(probe,z=z)
+        actual=cache_emissions(probe,z=z)
+        if not np.allclose(expected,actual,atol=1e-8,rtol=1e-10):
+            raise RuntimeError('TRACE CUDA emission parity check failed for installed upstream')
+    arrays=[np.ascontiguousarray(rng.normal(-2,1,size=(2,257))) for _ in range(3)]
+    expected=upstream.update_oneind_cython(*arrays,0.07,0.13)
+    actual=update_oneind_cython(*arrays,0.07,0.13)
+    if not all(np.allclose(x,y,atol=1e-10,rtol=1e-10) for x,y in zip(expected,actual)):
+        raise RuntimeError('TRACE CUDA transition parity check failed for installed upstream')
     upstream.TRACE.cache_emissions=cache_emissions
     upstream.update_oneind_cython=update_oneind_cython

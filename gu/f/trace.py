@@ -22,10 +22,12 @@ from gu_0_common import load_module
 # 🚩 trace_output
 """Publish TRACE NPZ outputs only after successful execution and ZIP validation."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -52,6 +54,28 @@ def valid_npz(path):
 		return False
 
 
+def valid_output(path):
+    if str(path).endswith('.npz'):
+        return valid_npz(path)
+    if str(path).endswith('.summary.txt'):
+        import csv
+        import math
+        try:
+            with Path(path).open() as handle:
+                reader = csv.DictReader(handle, delimiter='\t')
+                required = {'chromosome', 'start', 'end', 'mean_posterior', 'length(bp)', 'length(cM)'}
+                if not required <= set(reader.fieldnames or []):
+                    return False
+                for row in reader:
+                    start,end,pp,length,cm = map(float, (row[k] for k in ('start','end','mean_posterior','length(bp)','length(cM)')))
+                    if not all(map(math.isfinite,(start,end,pp,length,cm))) or not (0<=start<end and 0<=pp<=1 and length>0 and cm>=0):
+                        return False
+            return True
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+    return False
+
+
 def signature(paths):
 	return [[str(p), p.stat().st_size, p.stat().st_mtime_ns] for p in paths]
 
@@ -69,11 +93,7 @@ def reusable(paths, receipt):
 			return True
 	except (OSError, ValueError):
 		pass
-	# Adopt complete pre-existing outputs after validating every ZIP member.
-	if not all(valid_npz(p) for p in paths):
-		return False
-	seal(paths, receipt)
-	return True
+	return False
 
 
 def seal(paths, receipt):
@@ -90,13 +110,27 @@ def run(prefix, suffixes, command):
 		print(f"[GU TRACE] SKIP verified={prefix}", flush=True)
 		return 0
 	receipt.unlink(missing_ok=True)
-	# Delete invalid legacy files so a failed replacement cannot be adopted.
+	# Remove unverified files before publishing a new completed result.
 	for p in paths:
 		p.unlink(missing_ok=True)
 	with tempfile.TemporaryDirectory(prefix=".trace-part-", dir=prefix.parent) as tmp:
 		staged = Path(tmp) / prefix.name
+		command = list(command)
+		if command and Path(command[0]).name == 'trace-summarize':
+			# Upstream trace-summarize rewrites its input NPZs to append states.
+			# Work on copies so interrupted summaries cannot corrupt verified
+			# inference checkpoints (nor invalidate another concurrent reader).
+			for option in ('-f', '--files'):
+				if option in command:
+					index = command.index(option) + 1
+					copies = []
+					for i, name in enumerate(command[index].split(',')):
+						copy = Path(tmp) / f'input{i}.xss.npz'
+						shutil.copy2(name, copy)
+						copies.append(str(copy))
+					command[index] = ','.join(copies)
 		print(f"[GU TRACE] START output={prefix}", flush=True)
-		guard = Path(__file__).resolve().parents[2] / "0f/process_lifetime.py"
+		guard = Path(__file__).resolve().parent / "process_lifetime.py"
 		proc = subprocess.Popen([sys.executable, str(guard), "--parent-pid", str(os.getpid()), "--",
 		                         *command, "-o", str(staged)], stdin=subprocess.DEVNULL, start_new_session=False)
 		try:
@@ -112,8 +146,8 @@ def run(prefix, suffixes, command):
 		if rc:
 			return rc if rc > 0 else 128 - rc
 		outputs = [Path(str(staged) + s) for s in suffixes]
-		if not all(valid_npz(p) for p in outputs):
-			print(f"ERROR: invalid TRACE NPZ output (missing/corrupt/non-finite or unnormalized posterior): {prefix}", flush=True)
+		if not all(valid_output(p) for p in outputs):
+			print(f"ERROR: invalid TRACE output (missing/corrupt/non-finite or unnormalized posterior): {prefix}", flush=True)
 			return 1
 		for source, target in zip(outputs, paths):
 			source.replace(target)
@@ -153,38 +187,21 @@ import argparse, re
 from pathlib import Path
 
 
-def first(cols, names):
-	low = {str(c).lower(): c for c in cols}
-	return next((low[n.lower()] for n in names if n.lower() in low), None)
-
-
-def norm_one(path: Path, node: str) -> pd.DataFrame:
+def norm_one(path, node):
 	import pandas as pd
 
-	try:
-		d = pd.read_csv(path, sep="\t")
-	except pd.errors.EmptyDataError:
-		return pd.DataFrame()
-	if d.empty:
-		return d
-	c = first(d.columns, ["chrom", "chromosome", "chr"])
-	s = first(d.columns, ["start", "start_bp", "left", "begin"])
-	e = first(d.columns, ["end", "end_bp", "right", "stop"])
-	p = first(d.columns, ["mean_posterior", "posterior", "posterior_mean", "prob", "probability"])
-	cm = first(d.columns, ["length(cM)", "length_cM", "length_cm", "genetic_length_cm"])
-	if c is None or s is None or e is None:
-		raise SystemExit(f"Unrecognized TRACE columns in {path}: {list(d.columns)}")
-	out = pd.DataFrame(
-		{
-			"tree_node_id": str(node),
-			"chr": d[c].astype(str).str.replace("chr", "", regex=False),
-			"start": pd.to_numeric(d[s], errors="coerce"),
-			"end": pd.to_numeric(d[e], errors="coerce"),
-		}
-	)
-	out["posterior"] = pd.to_numeric(d[p], errors="coerce") if p else pd.NA
-	out["length_cM"] = pd.to_numeric(d[cm], errors="coerce") if cm else pd.NA
-	return out[(out.start.notna()) & (out.end > out.start)].copy()
+	if not valid_output(path):
+		raise SystemExit(f"Invalid current TRACE summary: {path}")
+	d = pd.read_csv(path, sep="\t")
+	out = pd.DataFrame({
+		"tree_node_id": str(node),
+		"chr": d["chromosome"].astype(str).str.replace("chr", "", regex=False),
+		"start": pd.to_numeric(d["start"], errors="raise"),
+		"end": pd.to_numeric(d["end"], errors="raise"),
+		"posterior": pd.to_numeric(d["mean_posterior"], errors="raise"),
+		"length_cM": pd.to_numeric(d["length(cM)"], errors="raise"),
+	})
+	return out
 
 
 def clip_loci(data: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -208,12 +225,21 @@ def trace_combine_main():
 	ap.add_argument("--sample-map", required=True, type=Path)
 	ap.add_argument("--build", default="GRCh37")
 	ap.add_argument("--loci", type=Path)
+	ap.add_argument("--filename", default="trace_haplotype_segments.tsv.gz")
 	args = ap.parse_args()
-	sample_map = pd.read_csv(args.sample_map, sep="\t", dtype={"tree_node_id": str})
+	if Path(args.filename).name != args.filename:
+		ap.error("--filename must be a filename without directories")
+	sample_map = pd.read_csv(args.sample_map, sep="\t", dtype={"tree_node_id": str, "sample": str})
+	if sample_map.tree_node_id.duplicated().any() or sample_map[["sample", "haplotype"]].duplicated().any():
+		raise SystemExit("TRACE sample map contains duplicate nodes or biological haplotypes")
+	wanted_file = args.root / "samples" / "tree_nodes.txt"
+	wanted = set(wanted_file.read_text().split()) if wanted_file.is_file() else None
 	pieces = []
 	for path in sorted((args.root / "calls").glob("hap*.summary.txt")):
 		match = re.match(r"hap(.+)\.summary\.txt$", path.name)
 		if match:
+			if wanted is not None and match.group(1) not in wanted:
+				continue
 			part = norm_one(path, match.group(1))
 			pieces.extend([part] if not part.empty else [])
 	cols = ["tree_node_id", "chr", "start", "end", "posterior", "length_cM"]
@@ -246,38 +272,93 @@ def trace_combine_main():
 		order.insert(5, "locus_id")
 	final = args.root / "final"
 	final.mkdir(parents=True, exist_ok=True)
-	hap[order].to_csv(final / "trace_haplotype_segments.tsv.gz", sep="\t", index=False, compression="gzip")
-	print(f"TRACE segments: {len(hap)} -> {final / 'trace_haplotype_segments.tsv.gz'}")
+	destination = final / args.filename
+	stage = destination.with_name(destination.name + ".part")
+	hap[order].to_csv(stage, sep="\t", index=False, compression="gzip")
+	stage.replace(destination)
+	print(f"TRACE segments: {len(hap)} -> {destination}")
 
 
 def trace_combine_cli():
 	trace_combine_main()
 
 
-# 🚩 Shared CPU/CUDA inference; correct upstream Gamma scale without modifying its package.
-import inspect
-import textwrap
+def validate_map_cli():
+    """Validate authoritative ARG export maps against every posterior tree."""
+    import csv
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--tree', required=True, type=Path)
+    ap.add_argument('--sample-map', required=True, type=Path)
+    a = ap.parse_args()
+    ts = _common.load_ts(a.tree)
+    with a.sample_map.open() as handle:
+        rows = list(csv.DictReader(handle, delimiter='\t'))
+    nodes = [int(r['tree_node_id']) for r in rows]
+    identities = [(r['sample'], int(r['haplotype'])) for r in rows]
+    if len(nodes) != len(set(nodes)) or set(nodes) != set(map(int, ts.samples())) or len(identities) != len(set(identities)):
+        raise SystemExit(f'ERROR: sample map is not a bijection of tree samples: {a.tree}')
+    by_node = dict(zip(nodes, identities))
+    counts = {}
+    keys = ('variant_data_sample_id', 'sample', 'sample_id', 'name')
+    for node_id in ts.samples():
+        node = ts.node(node_id)
+        metadata = _common.meta(node)
+        if node.individual >= 0:
+            metadata = {**_common.meta(ts.individual(node.individual)), **metadata}
+        name = next((str(metadata[k]) for k in keys if metadata.get(k) is not None), None)
+        if name is not None:
+            counts[name] = counts.get(name, 0) + 1
+            hap = int(metadata.get('haplotype', counts[name]))
+            if by_node[int(node_id)] != (name, hap):
+                raise SystemExit(f'ERROR: ARG metadata disagrees with sample map for node {node_id}: {a.tree}')
+    print(f'TRACE tree/map check PASS: {a.tree} samples={len(nodes)}')
 
-RUNTIME_VERSION='gu-trace-gamma-scale-v1'
 
-def install_scale_fix():
-    import tracehmm.trace as upstream
-    original=upstream.TRACE.init_ncoal_gamma_params
-    if getattr(original,'_gu_scale_fixed',False):
-        return
-    source=textwrap.dedent(inspect.getsource(original))
-    wrong='gamma_sp.pdf(subncoal, self.emi2_a1, 1 / self.emi2_b1)'
-    right='gamma_sp.pdf(subncoal, a=self.emi2_a1, scale=1 / self.emi2_b1)'
-    if source.count(wrong)!=1:
-        raise RuntimeError('TRACE initialization source changed; revalidate the GU scale adapter')
-    namespace={}
-    exec(compile(source.replace(wrong,right),'<GU TRACE gamma scale fix>','exec'),vars(upstream),namespace)
-    fixed=namespace['init_ncoal_gamma_params']
-    fixed._gu_scale_fixed=True
-    upstream.TRACE.init_ncoal_gamma_params=fixed
+def normalize_map_cli():
+    """Convert the common 3/4-column genetic map layouts to TRACE's format."""
+    import gzip
+    import math
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--input', required=True, type=Path)
+    ap.add_argument('--output', required=True, type=Path)
+    ap.add_argument('--chr', required=True)
+    a = ap.parse_args()
+    opener = gzip.open if a.input.suffix == '.gz' else open
+    rows = []
+    with opener(a.input, 'rt') as handle:
+        for line in handle:
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.split()
+            if len(fields) not in (3, 4):
+                raise SystemExit(f'ERROR: expected position/rate/cM or chrom/position/rate/cM: {a.input}')
+            values = fields[-3:]
+            try:
+                pos, rate, cm = map(float, values)
+            except ValueError:
+                if not rows and any(x.lower() in ('position', 'pos', 'bp', 'rate', 'genetic_map', 'map', 'gen_dist', 'genetic_position') or 'cm' in x.lower() or 'rate' in x.lower() for x in values):
+                    continue
+                raise SystemExit(f'ERROR: nonnumeric genetic map row: {line.strip()}')
+            if len(fields) == 4 and fields[0].removeprefix('chr').upper() != a.chr.upper():
+                raise SystemExit(f'ERROR: genetic map chromosome does not match chr{a.chr}: {a.input}')
+            if not all(map(math.isfinite, (pos, rate, cm))) or min(pos, rate, cm) < 0 or not pos.is_integer():
+                raise SystemExit(f'ERROR: invalid genetic map position/rate/distance: {a.input}')
+            if rows and (pos <= rows[-1][0] or cm < rows[-1][2]):
+                raise SystemExit(f'ERROR: map requires strictly increasing positions and nondecreasing cM: {a.input}')
+            rows.append((int(pos), rate, cm))
+    if len(rows) < 2:
+        raise SystemExit(f'ERROR: genetic map needs at least two positions: {a.input}')
+    a.output.parent.mkdir(parents=True, exist_ok=True)
+    text = 'chrom\tpos\trate\tgen_dist\n' + ''.join(f'chr{a.chr}\t{p}\t{r:.12g}\t{c:.12g}\n' for p,r,c in rows)
+    if not a.output.is_file() or a.output.read_text() != text:
+        a.output.write_text(text)
+
+
+# Shared CPU/CUDA inference uses the pinned official 2026 TRACE initializer.
+RUNTIME_VERSION='gu-trace-2026-v1'
+
 
 def trace_infer_main():
-    install_scale_fix()
     backend=os.environ.get('TRACE_BACKEND','cpu')
     if backend=='cuda':
         sys.path.insert(0,str(Path(__file__).with_name('trace_gpu')))
@@ -297,6 +378,8 @@ SUBCOMMANDS = {
 	"infer": trace_infer_main,
 	"output": trace_output_cli,
 	"combine": trace_combine_cli,
+	"validate-map": validate_map_cli,
+	"normalize-map": normalize_map_cli,
 }
 
 

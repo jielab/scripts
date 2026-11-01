@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
+# The public CLI normalizes directory options in gu.sh. This internal driver
+# must also be usable for native builds without a particular workstation tree.
 
 # Direct CLI help must return before setup, downloads or analysis.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -17,7 +12,7 @@ Modules:
     Default  Internal IBDmix driver; public entry: gu.sh ibdmix
 
 Main options:
-    Use ./gu.sh ibdmix or ./gu.sh ibdmix-GPU; see ../0.README.md.
+    Use ./gu.sh ibdmix --GPU TRUE|FALSE; see ../0.README.md.
     -h, --help  Show help
 
 Example:
@@ -35,14 +30,16 @@ set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 F=$ROOT/f
+source "$F/0.common.sh"
+gu_load_config
 
 # 🚩 Native IBDmix builds
 case "${1:-}" in
 	build-prepare)
 		shift
 		here=$F
-		prefix=${IBDMIX_HTSLIB_PREFIX:-${CONDA_PREFIX:-/home/huangj/anaconda3/envs/gu}}
-		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-/mnt/d/software/gu}/ibdmix-prepare/prepare}
+		prefix=${IBDMIX_HTSLIB_PREFIX:-${CONDA_PREFIX:-/usr}}
+		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-prepare/prepare}
 		compiler=${CXX:-g++}
 		[[ -s $prefix/include/htslib/vcf.h ]] || { echo "ERROR: HTSlib headers missing under $prefix" >&2; exit 2; }
 		mkdir -p "$(dirname -- "$out")"
@@ -60,11 +57,13 @@ case "${1:-}" in
 	build-gpu)
 		shift
 		here=$F
-		upstream=${IBDMIX_RUNTIME:-/mnt/d/software/gu/ibdmix}
-		nvcc=${IBDMIX_NVCC:-/home/huangj/anaconda3/envs/as3_mamba/bin/nvcc}
-		out=${IBDMIX_GPU_BIN:-/mnt/d/software/gu/ibdmix-gpu/ibdmix-gpu}
+		upstream=${IBDMIX_RUNTIME:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix}
+		nvcc=${IBDMIX_NVCC:-$(command -v nvcc || true)}
+		out=${IBDMIX_GPU_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-gpu/ibdmix-gpu}
 		[[ -x $nvcc ]] || { echo "ERROR: set IBDMIX_NVCC to a CUDA compiler" >&2; exit 2; }
 		mkdir -p "$(dirname -- "$out")"
+		exec 8>"$out.build.lock"
+		flock 8
 		tmp=$out.build.$$
 		trap 'rm -f "$tmp"' EXIT
 		"$nvcc" -O3 -std=c++17 --fmad=false -arch=native \
@@ -94,14 +93,6 @@ esac
 
 # 🚩 IBDmix analysis
 
-PHE_F=${PHE_F:-$ROOT/../0f/phenotype.sh}
-[[ -s $PHE_F ]] || {
-	echo "ERROR: missing $PHE_F" >&2
-	exit 1
-}
-# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
-source "$PHE_F"
-
 action=${GU_ACTION:-ibdmix_run}
 case "$action" in ibdmix_run | ibdmix_check) ;; *)
 	echo "ERROR: unsupported IBDmix action: $action" >&2
@@ -113,22 +104,19 @@ for cmd in awk bcftools gzip python3 sort comm find stat cmp grep samtools sha25
 	exit 1
 }; done
 
-dir0=${dir0:-/mnt/d}
-dir_ref=${dir_ref:-/mnt/f/gen}
+dir_ref=${dir_ref:-$GU_REF_ROOT}
 dirmod=${dirmod:-${GU_TARGET_ROOT:-$dir_ref/1kg/${GRCH:-37}}}
 dirarch=${dirarch:-${GU_ARCHAIC_ROOT:-$dir_ref/archaic/${GRCH:-37}/vcf}}
 sample_file=${sample_file:-$dirmod/samples.txt}
 target_vcf_dir=${GU_TARGET_VCF_DIR:-$dirmod/vcf}
-dirsoft=${dirsoft:-$dir0/software/gu/IBDmix}
-IBDMIX_RESULT_MODULE=ibdmix
-[[ ${IBDMIX_BACKEND:-cpu} != cuda ]] || IBDMIX_RESULT_MODULE=ibdmix-GPU
-dirout=${dirout:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/1kg}/${IBDMIX_RESULT_MODULE:-ibdmix}/${GU_SCOPE_ID:-genome}}
+GU_SOFT=${GU_SOFT:-$HOME/.local/share/gu/software}
+dirsoft=${dirsoft:-${IBDMIX_RUNTIME:-$GU_SOFT/ibdmix}}
+dirout=${dirout:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}/ibdmix/${GU_SCOPE_ID:-genome}}
 genome_build=${genome_build:-b${GRCH:-37}}
 loci_file=${GU_LOCI_FILE:-}
 chrs_arg=${chrs:-${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}}
 profile=${IBDMIX_PROFILE:-multi_reference}
 default_refs="Altai Chagyr Denisova Denisova25 Vindija"
-[[ $profile == multi_reference ]] || default_refs="Altai Denisova"
 refs_arg=${refs:-$default_refs}
 refs_arg=$(python3 "$F/ibdmix.py" normalize-refs "$refs_arg")
 read -r -a refs <<<"$refs_arg"
@@ -139,7 +127,7 @@ emit_lod_cut=${emit_lod_cut:-$lod_cut}
 minor_allele_count=${minor_allele_count:-1}
 IBDMIX_X_PROFILE=${IBDMIX_X_PROFILE:-nonpar-v2}
 IBDMIX_X_MINOR_ALLELE_COUNT=${IBDMIX_X_MINOR_ALLELE_COUNT:-1}
-[[ $IBDMIX_X_PROFILE == nonpar-v2 || $IBDMIX_X_PROFILE == legacy ]] || { echo "ERROR: X profile must be nonpar-v2 or legacy" >&2; exit 2; }
+[[ $IBDMIX_X_PROFILE == nonpar-v2 ]] || { echo "ERROR: X profile must be nonpar-v2" >&2; exit 2; }
 [[ $IBDMIX_X_MINOR_ALLELE_COUNT =~ ^[123]$ ]] || { echo "ERROR: X MAC sensitivity must be 1, 2 or 3" >&2; exit 2; }
 archaic_error=${archaic_error:-0.01}
 modern_error_max=${modern_error_max:-0.002}
@@ -151,13 +139,13 @@ IBDMIX_LOCUS_FLANK_BP=${IBDMIX_LOCUS_FLANK_BP:-100000}
 IBDMIX_REPLACE=${IBDMIX_REPLACE:-0}
 GU_CHRX_PAR_DIPLOID=${GU_CHRX_PAR_DIPLOID:-0}
 
-prepare_bin=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-$dir0/software/gu}/ibdmix-prepare/prepare}
+prepare_bin=${IBDMIX_PREPARE_BIN:-$GU_SOFT/ibdmix-prepare/prepare}
 ibdmix_bin=$dirsoft/build/src/ibdmix
 ibdmix_options=()
 case "${IBDMIX_BACKEND:-cpu}" in
 	cpu) ;;
 	cuda)
-		ibdmix_bin=${IBDMIX_GPU_BIN:-$dir0/software/gu/ibdmix-gpu/ibdmix-gpu}
+		ibdmix_bin=${IBDMIX_GPU_BIN:-$GU_SOFT/ibdmix-gpu/ibdmix-gpu}
 		ibdmix_options=(--gpu-device "${IBDMIX_GPU_DEVICE:-0}" --gpu-nodes "${IBDMIX_GPU_NODES:-2048}"
 			--gpu-max-nodes "${IBDMIX_GPU_MAX_NODES:-131072}" --gpu-batch-sites "${IBDMIX_GPU_BATCH_SITES:-2048}" --gpu-events "${IBDMIX_GPU_EVENTS:-1048576}")
 		job_of_chr=1
@@ -168,13 +156,9 @@ esac
 helper=$F/ibdmix.py
 # Semantic reuse contract: bump for changes to genotype preparation, calling,
 # filtering or output meaning; path/log/comment edits do not change it.
-pipeline_version=2026-10-12.shared-hts-v1
+pipeline_version=2026-10-31.shared-hts-v1
 [[ ${IBDMIX_BACKEND:-cpu} != cuda ]] || pipeline_version=$pipeline_version.cuda-segment-v1
 # Published resources only; generated masks are disposable scratch data.
-[[ -z ${IBDMIX_MASK_CACHE:-} ]] || {
-	echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT" >&2
-	exit 2
-}
 mask_root=${IBDMIX_MASK_ROOT:-$(dirname -- "$dirarch")/mask}
 custom_masks=${IBDMIX_MASK_DIR:-}
 ref_fasta=${IBDMIX_REFERENCE_FASTA:-$dir_ref/1hgp/37/GRCH37.fasta.gz}
@@ -185,16 +169,6 @@ case "$background_filter" in 0 | 1) ;; *)
 	;;
 esac
 case "$profile" in
-	cell2020)
-		[[ $genome_build == b37 && $refs_arg == 'Altai Denisova' && $background_filter == 1 ]] || {
-			echo "ERROR: cell2020 requires GRCh37, refs='Altai Denisova', and African Denisovan filtering; .2013 replication references are retired" >&2
-			exit 2
-		}
-		[[ -z $custom_masks ]] || {
-			echo "ERROR: supplied masks require IBDMIX_PROFILE=custom; the default profile builds the documented Cell masks" >&2
-			exit 2
-		}
-		;;
 	custom)
 		[[ -n $custom_masks ]] || {
 			echo "ERROR: custom IBDmix requires IBDMIX_MASK_DIR with excluded-site BED files <ref>/chrN.bed" >&2
@@ -206,16 +180,18 @@ case "$profile" in
 			echo "ERROR: multi_reference masks require GRCh37" >&2
 			exit 2
 		}
+		[[ -z $custom_masks ]] || {
+			echo "ERROR: supplied masks require IBDMIX_PROFILE=custom" >&2
+			exit 2
+		}
 		;;
 	*)
-		echo "ERROR: IBDMIX_PROFILE must be cell2020, multi_reference or custom" >&2
+		echo "ERROR: IBDMIX_PROFILE must be multi_reference or custom" >&2
 		exit 2
 		;;
 esac
-export_denisovan=0
-[[ $profile != multi_reference ]] || export_denisovan=1
-denisovan_args=()
-[[ $export_denisovan == 0 ]] || denisovan_args=(--export-denisovan)
+export_denisovan=1
+denisovan_args=(--export-denisovan)
 if [[ $background_filter == 1 && " $refs_arg " == *' Altai.2013 '* && " $refs_arg " != *' Denisova.2013 '* ]]; then
 	echo "ERROR: Altai.2013 background filtering requires Denisova.2013" >&2
 	exit 2
@@ -260,8 +236,9 @@ IBDMIX_PREPARE_BIN="$prepare_bin" bash "$F/ibdmix.sh" build-prepare --if-needed
 }
 mkdir -p "$dirout"/{samples,genotype,raw,segments,final}
 ibdmix_cache_key=$(printf '%s' "$dirout" | sha256sum | cut -c1-16)
-mkdir -p /tmp/gu-locks
-exec 9>"/tmp/gu-locks/$ibdmix_cache_key.lock"
+# The output lock must be on shared storage: node-local /tmp locks cannot stop
+# duplicate LSF jobs on different hosts from writing the same result directory.
+exec 9>"$dirout/.ibdmix.lock"
 flock -n 9 || {
 	echo "ERROR: another IBDmix run is using $dirout" >&2
 	exit 1
@@ -275,6 +252,9 @@ mkdir -p "$ibdmix_mask_root" "$ibdmix_log_root"
 exec > >(tee "$ibdmix_log_root/run.log") 2>&1
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 log "CONFIG profile=$profile refs=$refs_arg export_denisovan=$export_denisovan background_filter=$background_filter"
+if [[ -n ${GU_KEEP_PSAM:-} ]]; then
+	log "NOTE fixed sample chunk: frequencies are estimated within each selected population in this chunk; separately scored chunks are not an exact full-cohort run"
+fi
 gzip_ok() { [[ -s $1 ]] && gzip -t "$1" >/dev/null 2>&1; }
 
 declare -a analysis_units=()
@@ -329,14 +309,12 @@ else
 		fi
 	done
 fi
-if [[ $profile == cell2020 ]]; then
-	for u in "${analysis_units[@]}"; do
-		[[ ${unit_chr[$u]} =~ ^([1-9]|1[0-9]|2[0-2]|X)$ ]] || {
-			echo "ERROR: unsupported IBDmix chromosome: ${unit_chr[$u]}" >&2
-			exit 2
-		}
-	done
-fi
+for u in "${analysis_units[@]}"; do
+	[[ ${unit_chr[$u]} =~ ^([1-9]|1[0-9]|2[0-2]|X)$ ]] || {
+		echo "ERROR: unsupported IBDmix chromosome: ${unit_chr[$u]}" >&2
+		exit 2
+	}
+done
 ((${#analysis_units[@]})) || {
 	echo "ERROR: no IBDmix analysis units" >&2
 	exit 1
@@ -347,7 +325,7 @@ unit_region() {
 	((unit_start[$u] > 0)) && printf '%s:%s-%s\n' "${unit_chr[$u]}" "${unit_start[$u]}" "${unit_end[$u]}" || printf '\n'
 }
 modern_vcf() { printf '%s/chr%s.vcf.gz\n' "$target_vcf_dir" "$1"; }
-ref_dir() { case "${1,,}" in altai) printf '%s/Altai\n' "$dirarch" ;; denisova | denisovan) printf '%s/Denisova\n' "$dirarch" ;; *) printf '%s/%s\n' "$dirarch" "$1" ;; esac }
+ref_dir() { printf '%s/%s\n' "$dirarch" "$1"; }
 archaic_vcf() {
 	local ref=$1 chr=$2 d f
 	for d in "$(ref_dir "$ref")" "$dirarch/avcf/$(basename "$(ref_dir "$ref")")"; do
@@ -388,7 +366,7 @@ prepare_samples() {
 		bcftools query -l "$vcf" >"$d/actual.txt"
 		python3 "$helper" samples --panel "$sample_file" --actual "$d/actual.txt" --output "$d" "${background_args[@]}"
 	done
-	# Compatibility roster for downstream read-only population summaries.
+	# Whole-run sample roster for downstream read-only population summaries.
 	cp "$dirout/samples/${analysis_units[0]}/ALL.txt" "$dirout/samples/ALL.txt"
 	if [[ ${unit_sex[${analysis_units[0]}]} == male ]]; then cp "$dirout/samples/ALL.txt" "$dirout/samples/male.txt"; fi
 }
@@ -448,15 +426,19 @@ run_record() {
 		[[ ${unit_chr[$u]} != X ]] || x_mode=$([[ ${unit_sex[$u]} == male ]] && printf male_haploid_nonpar || printf par_diploid_chrxy)
 	done
 	printf 'pipeline_version\t%s\nprofile\t%s\ncoordinate_system\t0-based-half-open\npopulation_mode\tpopulation\nbackground_filter\t%s\nmask_root\t%s\ncustom_masks\t%s\n' "$pipeline_version" "$profile" "$background_filter" "$mask_root" "$custom_masks"
+	if [[ -n ${GU_BATCH_ID:-${GU_POSTFIX:-}} ]]; then
+		printf 'batch_id\t%s\n' "${GU_BATCH_ID:-$GU_POSTFIX}"
+	fi
 	printf 'export_denisovan\t%s\ndenisovan_call_definition\tnative_reference_matching_no_African_Denisova_subtraction\n' "$export_denisovan"
 	printf 'genome_build\t%s\nx_mode\t%s\nloci_flank_bp\t%s\nrefs\t%s\nlod_cut\t%s\nlen_cut\t%s\nemit_lod_cut\t%s\nminor_allele_count\t%s\narchaic_error\t%s\nmodern_error_max\t%s\nmodern_error_proportion\t%s\n' \
 		"$genome_build" "$x_mode" "$IBDMIX_LOCUS_FLANK_BP" "$refs_arg" "$lod_cut" "$len_cut" "$emit_lod_cut" "$minor_allele_count" "$archaic_error" "$modern_error_max" "$modern_error_proportion"
-	if [[ $x_mode == male_haploid_nonpar && $IBDMIX_X_PROFILE != legacy ]]; then
+	if [[ $x_mode == male_haploid_nonpar ]]; then
 		printf 'x_scoring_profile\t%s\nx_minor_allele_count\t%s\nx_calling_cohort_sha256\t%s\n' "$IBDMIX_X_PROFILE" "$IBDMIX_X_MINOR_ALLELE_COUNT" "$(for u in "${analysis_units[@]}"; do [[ ${unit_chr[$u]} != X ]] || cat "$dirout/samples/$u/ALL.txt"; done | sort -u | sha256sum | cut -d' ' -f1)"
+		printf 'x_likelihood\tupstream_diploid_on_duplicated_male_haploid_experimental\nx_mac_units\tpseudo_diploid_allele_copies_male_singleton_equals_2\n'
 	fi
-	stat -c 'sample_file\t%n:%s:%Y' "$sample_file"
-	[[ -z $loci_file ]] || stat -c 'loci_file\t%n:%s:%Y' "$loci_file"
-	stat -c 'software\t%n:%s:%Y' "$prepare_bin" "$ibdmix_bin" "$helper" "$F/0.common.py" "$F/ibdmix.sh"
+	stat -c $'sample_file\t%n:%s:%Y' "$sample_file"
+	[[ -z $loci_file ]] || stat -c $'loci_file\t%n:%s:%Y' "$loci_file"
+	stat -c $'software\t%n:%s:%Y' "$prepare_bin" "$ibdmix_bin" "$helper" "$F/0.common.py" "$F/ibdmix.sh"
 	printf 'genotype_preparation\tshared-hts-v1\ngenotype_binary_sha256\t%s\n' "$(sha256sum "$prepare_bin" | cut -d' ' -f1)"
 	if [[ ${IBDMIX_BACKEND:-cpu} == cuda ]]; then
 		printf 'calling_backend\tcuda-segment-v1\ngpu_binary_sha256\t%s\n' "$(sha256sum "$ibdmix_bin" | cut -d' ' -f1)"
@@ -467,7 +449,7 @@ run_record() {
 			printf 'excluded_mask_sha256\t%s\t%s\t%s\n' "$u" "$ref" "$(sha256sum "$ibdmix_mask_root/$u/$ref.exclude.bed" | cut -d' ' -f1)"
 		done
 	done
-	[[ ! -f $ref_fasta ]] || stat -Lc 'reference_fasta\t%n:%s:%Y' "$ref_fasta"
+	[[ ! -f $ref_fasta ]] || stat -Lc $'reference_fasta\t%n:%s:%Y' "$ref_fasta"
 	declare -A seen=()
 	for u in "${analysis_units[@]}"; do
 		chr=${unit_chr[$u]}
@@ -481,22 +463,20 @@ run_record() {
 			while IFS= read -r line; do printf 'modern_source\tchr%s\t%s\n' "$chr" "$line"; done <"$meta"
 		else
 			# A native VCF has no conversion record and remains the source input.
-			stat -c 'modern_vcf\t%n:%s:%Y' "$vcf"
-			for index in "$vcf.tbi" "$vcf.csi"; do [[ -s $index ]] && stat -c 'modern_index\t%n:%s:%Y' "$index"; done
+			stat -c $'modern_vcf\t%n:%s:%Y' "$vcf"
+			for index in "$vcf.tbi" "$vcf.csi"; do [[ -s $index ]] && stat -c $'modern_index\t%n:%s:%Y' "$index"; done
 		fi
 		for ref in "${refs[@]}"; do
 			vcf=$(archaic_vcf "$ref" "$chr")
-			stat -c 'archaic_vcf\t%n:%s:%Y' "$vcf"
-			[[ -z $custom_masks ]] || stat -Lc 'excluded_mask\t%n:%s:%Y' "$custom_masks/$ref/chr$chr.bed"
+			stat -c $'archaic_vcf\t%n:%s:%Y' "$vcf"
+			[[ -z $custom_masks ]] || stat -Lc $'excluded_mask\t%n:%s:%Y' "$custom_masks/$ref/chr$chr.bed"
 		done
 	done
 }
 check_run_provenance() {
-	local current=$dirout/run.meta.tsv candidate=$ibdmix_tmp_root/run.meta.current.tsv cached=$dirout/cache.meta.tsv comparison
-	comparison=$current
-	[[ ! -s $cached ]] || comparison=$cached
+	local current=$dirout/run.meta.tsv candidate=$ibdmix_tmp_root/run.meta.current.tsv
 	run_record >"$candidate"
-	if [[ $IBDMIX_X_PROFILE != legacy && $IBDMIX_X_MINOR_ALLELE_COUNT != 1 ]] && grep -q '^x_scoring_profile' "$candidate"; then
+	if [[ $IBDMIX_X_MINOR_ALLELE_COUNT != 1 ]] && grep -q '^x_scoring_profile' "$candidate"; then
 		local baseline=${IBDMIX_X_BASELINE_DIR:-${dirout%.mac[123]}.mac1}
 		if [[ ( ! -s $baseline/run.meta.tsv || ! -e $baseline/.complete ) && -s $baseline/ibdmix.raw.tar.gz ]]; then
 			baseline=$(python3 "$F/0.common.py" results read-view --published "$(dirname -- "$baseline")" --run "$baseline" --method ibdmix) || return 1
@@ -506,27 +486,20 @@ check_run_provenance() {
 			echo "ERROR: X sensitivity calling cohort differs from MAC1 baseline" >&2; return 1;
 		}
 	fi
-	if [[ -s $comparison ]] && ! python3 "$F/ibdmix.py" resume provenance "$comparison" "$candidate" --run "$dirout"; then
+	if [[ -s $current ]] && ! python3 "$F/ibdmix.py" resume provenance "$current" "$candidate" --run "$dirout"; then
 		if [[ $IBDMIX_REPLACE != 1 ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f ! -name '*.part*' -print -quit) ]]; then
 			echo "ERROR: IBDmix inputs, profile or implementation changed; old results cannot be reused. Rerun with --replace-ibdmix TRUE." >&2
 			return 1
 		fi
 	fi
 	if [[ $IBDMIX_REPLACE == 1 ]]; then
-		rm -f "$dirout/.complete" "$cached"
+		rm -f "$dirout/.complete"
 		rm -rf -- "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final"
 		mkdir -p "$dirout"/{genotype,raw,segments,final,mask}
 	elif [[ ! -s $current ]] && [[ -e $dirout/.complete || -n $(find "$dirout/genotype" "$dirout/raw" "$dirout/segments" "$dirout/final" -type f -print -quit) ]]; then
 		echo "ERROR: cached IBDmix files have no provenance; rerun with --replace-ibdmix TRUE" >&2
 		return 1
 	fi
-	if [[ -s $current ]] && ! cmp -s <(awk '$1=="refs"{print}' "$current") <(awk '$1=="refs"{print}' "$candidate"); then
-		rm -f "$dirout/.complete"
-	fi
-	# Preserve per-reference input contracts so a later re-selection can reuse
-	# its raw calls only after those same inputs have been checked again.
-	if [[ ! -s $cached && -s $current && $IBDMIX_REPLACE != 1 ]]; then cp "$current" "$cached"; fi
-	python3 "$F/ibdmix.py" provenance --write-cache "$cached" "$candidate"
 	mv -f "$candidate" "$current"
 }
 completed_output_ok() {
@@ -553,7 +526,7 @@ prepare_unit_genotypes() {
 		adapted=$(adapt_region "$vcf" "$region")
 		args+=(--archaic "$ref" "$vcf" "$adapted")
 	done
-	if [[ $chr == X && ${unit_sex[$u]} == male && $IBDMIX_X_PROFILE != legacy ]]; then
+	if [[ $chr == X && ${unit_sex[$u]} == male ]]; then
 		python3 - "$F/0.common.py" "${genome_build#b}" "$tmp/nonpar.bed" <<'PYNONPAR'
 import importlib.util,sys
 from pathlib import Path
@@ -623,8 +596,7 @@ with open(source) as handle:
 if len(rows)!=1: raise ValueError('Missing mask QC reference')
 row=rows[0]
 row['manifest_source']=str(Path(target).with_suffix('.preparation.json')) if Path(source).with_name('manifest.json').is_file() else ''
-row['execution_scope']='new_population_calls' if reused == '0' else 'mixed_reused_population_calls;historical_component_execution_unknown'
-if reused == '1': row.update(cpg_status='unknown',strict_status='unknown')
+row['execution_scope']='new_population_calls' if reused == '0' else 'verified_partial_run_resume'
 with open(target,'w') as handle:
  writer=csv.DictWriter(handle,fieldnames=list(row),delimiter='\t',lineterminator='\n');writer.writeheader();writer.writerow(row)
 PYQC
@@ -655,7 +627,7 @@ run_population() {
 	raw=$dirout/raw/$u/$ref.$pop.raw.txt.gz
 	if gzip_ok "$raw"; then return 0; fi
 	log "CALL unit=$u ref=$ref population=$pop"
-	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male && $IBDMIX_X_PROFILE != legacy ]]; then
+	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male ]]; then
 		local part part_raw count=0
 		: >"$tmp/$ref.$pop.raw.txt"
 		for part in "$gt".nonpar.*.gz; do
@@ -697,11 +669,12 @@ run_ref_unit() {
 	gt=$tmp/$ref.$u.gt.txt.gz
 	if ref_calls_complete "$u" "$ref"; then
 		log "REUSE unit=$u ref=$ref population_calls=complete genotype=SKIP"
+		persist_mask_qc "$u" "$ref" 1
 		return 0
 	fi
 	[[ -s $gt && -s $tmp/$ref.$u.qc.json ]] || { log "ERROR missing prepared genotype unit=$u ref=$ref"; return 1; }
 
-	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male && $IBDMIX_X_PROFILE != legacy ]]; then
+	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male ]]; then
 		python3 "$helper" split-x-genotypes --path "$gt" --output "$gt.nonpar" --build "$genome_build"
 	fi
 	mkdir -p "$dirout/raw/$u"
@@ -748,6 +721,9 @@ run_unit() {
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	log "START unit=$u chr=${unit_chr[$u]} region=$(unit_region "$u") sex=${unit_sex[$u]}"
+	if [[ ${unit_chr[$u]} == X && ${unit_sex[$u]} == male ]]; then
+		log "NOTE chrX uses the upstream diploid likelihood with duplicated male haploid calls; this is an experimental X extension, not the female diploid-X analysis in Science 2026"
+	fi
 	rm -rf "$tmp"
 	mkdir -p "$tmp"
 	prepare_unit_genotypes "$u" "$tmp"

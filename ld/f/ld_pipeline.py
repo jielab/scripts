@@ -7,9 +7,11 @@ implementation choices, not a claim of identity to restricted author outputs.
 """
 from __future__ import annotations
 import argparse
+from datetime import date
 import contextlib
 import csv
 import fcntl
+import grp
 import hashlib
 import json
 import math
@@ -146,6 +148,17 @@ def sha(path):
             digest.update(block)
     return digest.hexdigest()
 
+def relocated_output_stamp(record):
+    """Resolve verified output receipts after the /data-to-scratch migration."""
+    path = Path(record['path'])
+    previous = Path('/data/sph-huangj/analysis/ld')
+    if path.is_relative_to(previous):
+        base = Path(os.environ.get('SCRATCH_ANALYSIS_ROOT',
+                    f"/scratch/{os.environ.get('DATE_SCRATCH', '2026-10-31')}/sph-huangj/analysis")) / 'ld'
+        path = base / path.relative_to(previous)
+    return dict(record, path=str(path.resolve()))
+
+
 def stamp(path):
     path = Path(path).resolve()
     st = path.stat()
@@ -239,7 +252,7 @@ class Pipeline:
         if self.input_format not in ('vcf', 'pgen'):
             raise Stop('INPUT_FORMAT must be vcf or pgen')
         self.pfile_dir = Path(os.environ.get('PFILE_DIR', f'/data/sph-huangj/gen/1kg/{self.genome_build}/pfile')).expanduser().resolve()
-        self.out = Path(os.environ.get('OUT', f'/data/sph-huangj/analysis/ld/{self.genome_build}')).expanduser().resolve()
+        self.out = Path(os.environ.get('OUT', f'/scratch/{os.environ.get("DATE_SCRATCH", "2026-10-31")}/sph-huangj/analysis/ld/{self.genome_build}')).expanduser().resolve()
         self.work = self.out / 'rebuild_v2'
         self.tmp_parent = Path(os.environ.get('LD_TMP_DIR', str(self.out / 'tmp'))).expanduser().resolve()
         self.resume_dir = (Path(os.environ['LD_RESUME_DIR']).expanduser().resolve()
@@ -265,7 +278,7 @@ class Pipeline:
             self.grid.append(min(2 * self.grid[-1], cap))
         if len(self.grid) > 64:
             raise Stop('D_GRID_KB has too many states (maximum 64)')
-        self.min_free = float(os.environ.get('MIN_FREE_GB', '5')) * 10**9
+        self.min_free = float(os.environ.get('MIN_FREE_GB', '100')) * 10**9
         self.reference_tolerance = float(os.environ.get('REFERENCE_MAX_REL_DEVIATION', '0.10'))
         self.reference_policy = os.environ.get('REFERENCE_COUNT_POLICY', 'off')
         if self.reference_policy not in ('warn', 'error', 'off'):
@@ -355,13 +368,46 @@ class Pipeline:
 
     def check_free_space(self, disk_path):
         free = shutil.disk_usage(disk_path).free
+        path = Path(disk_path).resolve()
+        filesystem = path.parts[1] if len(path.parts) > 1 else ""
+        if filesystem in ("data", "scratch"):
+            group = grp.getgrgid(path.stat().st_gid).gr_name
+            key = (filesystem, group)
+            cache = getattr(self, "_quota_cache", {})
+            now = time.monotonic()
+            if key not in cache or now - cache[key][0] > 60:
+                try:
+                    result = subprocess.run(
+                        ["/usr/lpp/mmfs/bin/mmlsquota", "-Y", "-g", group, filesystem],
+                        capture_output=True, text=True, check=True, timeout=15)
+                    header, found, remaining = None, False, []
+                    for line in result.stdout.splitlines():
+                        values = line.split(":")
+                        if len(values) > 2 and values[2] == "HEADER":
+                            header = values
+                        elif header and values[:2] == header[:2]:
+                            row = dict(zip(header, values))
+                            if row.get("filesystemName") != filesystem:
+                                continue
+                            found = True
+                            limits = [int(row[k]) for k in ("blockQuota", "blockLimit") if int(row[k]) > 0]
+                            if limits:
+                                remaining.append(max(0, min(limits) - int(row["blockUsage"]) -
+                                                     int(row.get("blockInDoubt", 0))) * 1024)
+                    if not found:
+                        raise ValueError("missing GPFS quota record")
+                    cache[key] = (now, min(remaining) if remaining else float("inf"))
+                    self._quota_cache = cache
+                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                    raise Stop(f"Cannot verify {filesystem} quota for group {group}: {exc}") from exc
+            free = min(free, cache[key][1])
         if free < self.min_free:
             detail = ''
             with contextlib.suppress(OSError):
                 size = sum(p.stat().st_size for p in Path(disk_path).glob('*.vcor') if not p.is_symlink())
                 detail = f'; temporary .vcor size={size / 1e9:.3f} GB'
             raise Stop(f'Free disk below MIN_FREE_GB={self.min_free / 1e9:g}: '
-                       f'{disk_path} had {free / 1e9:.3f} GB free before cleanup{detail}. '
+                       f'{disk_path} had {free / 1e9:.3f} GB available (filesystem/group quota) before cleanup{detail}. '
                        'Deleting temporary files releases space, so free space after stopping can be much higher. '
                        'Set LD_TMP_DIR to a filesystem with more free space and rerun.')
         return free
@@ -578,7 +624,7 @@ class Pipeline:
         record = read_json(ready)
         valid = False
         try:
-            valid = bool(record and record.get('spec') == spec and record.get('files') == [stamp(p) for p in files]
+            valid = bool(record and record.get('spec') == spec and [relocated_output_stamp(item) for item in record.get('files', [])] == [stamp(p) for p in files]
                          and record.get('qc', {}).get('missing_genotypes') == 0 and record.get('qc', {}).get('phase_check_passed'))
         except OSError:
             pass

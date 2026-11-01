@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
 # Internal ARG workflow; public options live in ../arg.sh.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -214,27 +207,27 @@ arg_cli() (
 				dir_gen=${2%/}
 				shift 2
 				;;
-			--arg-dir)
+			--dir-arg)
 				need "$@"
 				arg_dir=${2%/}
 				shift 2
 				;;
-			--dir-pfile | --hap-dir | --arg-hap-dir)
+			--dir-pfile)
 				need "$@"
 				dir_pfile=${2%/}
 				shift 2
 				;;
-			--dir-vcf | --target-vcf-dir)
+			--dir-vcf)
 				need "$@"
 				dir_vcf=${2%/}
 				shift 2
 				;;
-			--map-dir | --arg-map-dir)
+			--dir-map)
 				need "$@"
 				map_dir=${2%/}
 				shift 2
 				;;
-			--map-pattern | --arg-map-pattern)
+			--map-pattern)
 				need "$@"
 				map_pattern=$2
 				shift 2
@@ -244,17 +237,17 @@ arg_cli() (
 				ancestry_file=$2
 				shift 2
 				;;
-			--sample-file | --sample-panel)
+			--sample-panel)
 				need "$@"
 				sample_file=$2
 				shift 2
 				;;
-			--scratch | --arg-scratch)
+			--scratch)
 				need "$@"
 				scratch=${2%/}
 				shift 2
 				;;
-			--keep | --arg-keep)
+			--keep)
 				need "$@"
 				custom_keep=$2
 				shift 2
@@ -264,7 +257,7 @@ arg_cli() (
 				arg_needle_home=${2%/}
 				shift 2
 				;;
-			--chr | --chrs)
+			--chr)
 				need "$@"
 				chrs=$2
 				shift 2
@@ -274,42 +267,42 @@ arg_cli() (
 				grch=${2,,}
 				shift 2
 				;;
-			--replace | --replace-arg)
+			--replace)
 				need "$@"
 				replace=$(bool "$2")
 				shift 2
 				;;
-			--full | --arg-full)
+			--full)
 				need "$@"
 				full=$(bool "$2")
 				shift 2
 				;;
-			--affinity | --arg-affinity)
+			--affinity)
 				need "$@"
 				affinity=$(bool "$2")
 				shift 2
 				;;
-			--max-individuals | --arg-max-individuals)
+			--max-individuals)
 				need "$@"
 				max_individuals=$2
 				shift 2
 				;;
-			--seed-haplotypes | --arg-seed-haplotypes)
+			--seed-haplotypes)
 				need "$@"
 				seed_haplotypes=$2
 				shift 2
 				;;
-			--anchors-per-pop | --arg-anchors-per-pop)
+			--anchors-per-pop)
 				need "$@"
 				anchors_per_pop=$2
 				shift 2
 				;;
-			--threads | --arg-threads)
+			--threads)
 				need "$@"
 				threads=$2
 				shift 2
 				;;
-			--jobs | --arg-jobs)
+			--jobs)
 				need "$@"
 				jobs=$2
 				shift 2
@@ -330,12 +323,12 @@ arg_cli() (
 				sample_match_min_work=$2
 				shift 2
 				;;
-			--gen4arg-dir)
+			--dir-gen4arg)
 				need "$@"
 				gen4arg_dir=${2%/}
 				shift 2
 				;;
-			--keep-snv | --extract)
+			--keep-snv)
 				need "$@"
 				extract=$2
 				shift 2
@@ -416,20 +409,20 @@ arg_cli() (
 	done
 	((threads > 0 && jobs > 0 && seed_haplotypes > 0)) || die "--threads, --jobs and --seed-haplotypes must be positive"
 
-	dir_gen=${dir_gen:-/mnt/f/gen/1kg/$grch}
+	dir_gen=${dir_gen:-$GU_REF_ROOT/1kg/$grch}
 	[[ -d $dir_gen ]] || die "--dir-gen does not exist: $dir_gen"
 	base=${dir_gen##*/}
 	case "$base" in pfile | hap | typ | vcf | imp | gen) gen_root=$(dirname -- "$dir_gen") ;; *) gen_root=$dir_gen ;; esac
 	if [[ -z $arg_dir ]]; then
-		arg_dir=$gen_root/arg.$method
+		arg_dir=$GU_ANALYSIS_BASE/$(basename -- "$(dirname -- "$gen_root")")/$grch/arg.$method
 	fi
-	map_dir=${map_dir:-/mnt/f/gen/hm3/$grch/gmap}
+	map_dir=${map_dir:-$GU_REF_ROOT/hm3/$grch/gmap}
 	sample_file=${sample_file:-$gen_root/samples.txt}
 	if [[ -z $ancestry_file ]]; then
-		if [[ -s $gen_root/samples.txt ]]; then
-			ancestry_file=$gen_root/samples.txt
+		if [[ -s $sample_file ]]; then
+			ancestry_file=$sample_file
 		else
-			ancestry_file=/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+			ancestry_file=$GU_REF_ROOT/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
 		fi
 	fi
 	if [[ -z $dir_pfile ]]; then
@@ -448,16 +441,14 @@ arg_cli() (
 	arg_dir=$(realpath -m "$arg_dir")
 	dataset=$(basename -- "$(dirname -- "$gen_root")")
 	identity=$(printf '%s\n' "$gen_root" "$dir_pfile" "$arg_dir" | sha256sum | cut -c1-16)
-	scratch=${scratch:-/tmp/refgen_arg_scratch-${UID}/${dataset}.b${grch}.${identity}}
+	scratch=${scratch:-$GU_ANALYSIS_BASE/tmp/${dataset}.b${grch}.${identity}}
 	scratch=$(realpath -m "$scratch")
 	if [[ -z $gen4arg_dir ]]; then
-		if [[ $method == threads ]]; then
-			gen4arg_dir=${dir_pfile}.4arg.threads
-		elif [[ $method == needle ]]; then gen4arg_dir=${dir_pfile}.4arg.needle; else gen4arg_dir=${dir_vcf}.4arg.tsinfer; fi
+		gen4arg_dir=${arg_dir}.prepared
 	fi
 	gen4arg_dir=$(realpath -m "$gen4arg_dir")
 	[[ $gen4arg_dir != "$dir_pfile" && $gen4arg_dir != "$dir_vcf" && $gen4arg_dir != "$arg_dir" ]] || die 'prepared, source and ARG directories must be distinct'
-	[[ -z $extract || -s $extract ]] || die "missing --keep-snv file: $extract (use /mnt/d/... in WSL)"
+	[[ -z $extract || -s $extract ]] || die "missing --keep-snv file: $extract"
 	case "$needle_mode" in auto | array | sequence) ;; *) die '--needle-mode must be auto, array or sequence' ;; esac
 	if [[ $needle_mode == auto ]]; then
 		if [[ ${dataset,,} == 1kg && -z $extract ]]; then needle_mode=sequence; else needle_mode=array; fi
@@ -582,9 +573,9 @@ arg_needle() (
 
 	HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 	SCRIPTS_ROOT=$(cd -- "$HERE/../.." && pwd -P)
-	GRID_ROOT=${REFGEN_GRID_ROOT:-$SCRIPTS_ROOT/grid}
-	GRID_F=$GRID_ROOT/f
-	[[ -s $GRID_F/0.common.sh ]] || {
+	GRID_ROOT=$(cd -- "$HERE/.." && pwd -P)
+	GRID_F=${GU_ARG_HELPERS:-$HERE}
+	[[ -s $GRID_F/grid.common.sh ]] || {
 		echo "ERROR: GRID helpers are missing: $GRID_F" >&2
 		exit 2
 	}
@@ -629,7 +620,7 @@ arg_needle() (
 	export GRID_ARG_WINDOW_BP=${REFGEN_ARG_WINDOW_BP:-1000000}
 
 	# shellcheck source=/dev/null
-	source "$GRID_F/0.common.sh"
+	source "$GRID_F/grid.common.sh"
 	grid_configure
 	grid_run() {
 		printf '[REFGEN ARG]'
@@ -724,7 +715,7 @@ PY
 	if [[ -e $WORK/owner.txt ]]; then
 		[[ $(cat "$WORK/owner.txt") == "$owner" ]] || _grid_die "scratch belongs to a different dataset/output; choose another --scratch: $WORK"
 	elif find "$INF" -type f -print -quit | grep -q . || [[ -d $WORK/prepare ]]; then
-		_grid_die "unverified legacy scratch; choose a NEW --scratch directory: $WORK"
+		_grid_die "unverified scratch; choose a NEW --scratch directory: $WORK"
 	fi
 	printf '%s\n' "$owner" >"$WORK/owner.txt"
 	if [[ $GRID_ARG_ACTION != prepare ]]; then mkdir -p "$GRID_ARG_TREES_DIR" "$GRID_ARG_OUT/log"; fi
@@ -1043,7 +1034,7 @@ PY
 	fi
 	cat >"$GRID_ARG_OUT/ARG_NEEDLE_BUILD.txt" <<META
 created=$(date -Is)
-producer=/mnt/d/scripts/gu/arg.sh build
+producer=$HERE/../arg.sh build
 method=needle
 build=GRCh${REFGEN_GRCH:-37}
 genotype_dir=$GRID_ARG_HAP_DIR
@@ -1203,7 +1194,7 @@ PY
 			run_parallel build_chr "${CHR_ARRAY[@]}"
 			cat >"$OUT_DIR/ARG_TSINFER_BUILD.txt" <<META
 created=$(date -Is)
-producer=/mnt/d/scripts/gu/arg.sh build
+producer=$HERE/../arg.sh build
 method=tsinfer
 build=GRCh${REFGEN_GRCH:-37}
 vcf_dir=$IN_DIR
@@ -1488,7 +1479,7 @@ arg_trace_check() (
 	ARG_SH=${GU_ARG_SH:-$ROOT/arg.sh}
 	ACTION=${1:-check}
 	[[ $ACTION == check ]] || {
-		echo "ERROR: internal ARG validation is check-only; build ARG data with /mnt/d/scripts/gu/arg.sh build" >&2
+		echo "ERROR: internal ARG validation is check-only; build ARG data with gu/arg.sh build" >&2
 		exit 2
 	}
 	[[ -s $ARG_SH ]] || {
@@ -1533,12 +1524,12 @@ arg_trace_check() (
 	chrs=${GU_CHRS:-1-22,X}
 
 	args=(check --method "$method" --format "$format" --action "$ref_action"
-		--dir-gen "${GU_TARGET_ROOT:?}" --arg-dir "${GU_ARG_DIR:-$GU_TARGET_ROOT/arg.$method}"
+		--dir-gen "${GU_TARGET_ROOT:?}" --dir-arg "${GU_ARG_DIR:-$GU_TARGET_ROOT/arg.$method}"
 		--chr "$chrs" --grch "${GU_BUILD:-37}" --replace "$replace"
 		--threads "${GU_ARG_THREADS:-8}" --jobs "${GU_UNIT_JOBS:-1}"
 		--sample-match-min-work "${GU_ARG_SAMPLE_MATCH_MIN_WORK:-50000000}")
 	[[ -z ${GU_TARGET_VCF_DIR:-} ]] || args+=(--dir-vcf "$GU_TARGET_VCF_DIR")
-	[[ -z ${GU_SAMPLE_PANEL:-} ]] || args+=(--sample-file "$GU_SAMPLE_PANEL")
+	[[ -z ${GU_SAMPLE_PANEL:-} ]] || args+=(--sample-panel "$GU_SAMPLE_PANEL")
 	if [[ ($method == needle || $method == threads) && -n ${GU_TARGET_GEN_PREFIX:-} ]]; then
 		args+=(--dir-pfile "$(dirname -- "$GU_TARGET_GEN_PREFIX")")
 	fi
@@ -1566,13 +1557,13 @@ arg_logged() (
 	for ((i = 0; i < ${#args[@]}; i++)); do
 		case "${args[i]}" in
 			--dir-gen) dir_gen=${args[i + 1]:-} ;;
-			--arg-dir) arg_dir=${args[i + 1]:-} ;;
+			--dir-arg) arg_dir=${args[i + 1]:-} ;;
 			--grch) grch=${args[i + 1]:-37} ;;
 			--method) method=${args[i + 1]:-needle} ;;
 		esac
 	done
 	case "${grch,,}" in 38 | b38 | grch38 | hg38) grch=38 ;; *) grch=37 ;; esac
-	dir_gen=${dir_gen:-/mnt/f/gen/1kg/$grch}
+	dir_gen=${dir_gen:-$GU_REF_ROOT/1kg/$grch}
 	dir_gen=${dir_gen%/}
 	case "${dir_gen##*/}" in pfile | hap | typ | vcf | imp | gen) gen_root=$(dirname -- "$dir_gen") ;; *) gen_root=$dir_gen ;; esac
 	method=${method,,}
@@ -1581,7 +1572,7 @@ arg_logged() (
 		exit 2
 		;;
 	esac
-	if [[ -z $arg_dir ]]; then arg_dir=$gen_root/arg.$method; fi
+	if [[ -z $arg_dir ]]; then arg_dir=$GU_ANALYSIS_BASE/$(basename -- "$(dirname -- "$gen_root")")/$grch/arg.$method; fi
 	log_dir=$arg_dir/log
 	mkdir -p "$log_dir"
 	log_dir=$(cd -- "$log_dir" && pwd -P)
@@ -1621,13 +1612,21 @@ arg_run_guarded() {
 	shift
 	local ram=${ARG_MEMORY_LIMIT_GB:-32} swap=${ARG_MEMORY_SWAP_GB:-4}
 	local value state status features_set=0 method=needle previous= option
+	local guard=${ARG_RESOURCE_GUARD:-${GU_RESOURCE_GUARD:-auto}}
 	for option in "$@"; do
 		if [[ $previous == --method ]]; then method=$option; fi
+		if [[ $previous == --resource-guard ]]; then guard=${option,,}; fi
 		previous=$option
 	done
+	case "$guard" in auto | systemd | scheduler | ulimit) ;; *) echo "ERROR: --resource-guard must be auto, systemd, scheduler or ulimit" >&2; return 2 ;; esac
+	if [[ $guard == auto && -n ${LSB_JOBID:-} ]]; then guard=scheduler; fi
 	local -a args=()
 	while (($#)); do
 		case "$1" in
+			--resource-guard)
+				[[ $# -ge 2 ]] || { echo "ERROR: --resource-guard requires a value" >&2; return 2; }
+				shift 2
+				;;
 			--memory-limit-gb | --memory-swap-gb)
 				[[ $# -ge 2 && $2 =~ ^[0-9]{1,6}$ ]] || {
 					echo "ERROR: $1 requires an integer between 0 and 999999." >&2
@@ -1636,7 +1635,7 @@ arg_run_guarded() {
 				if [[ $1 == --memory-limit-gb ]]; then ram=$2; else swap=$2; fi
 				shift 2
 				;;
-			--jobs | --arg-jobs)
+			--jobs)
 				[[ $# -ge 2 && $2 =~ ^[0-9]{1,6}$ ]] || {
 					echo "ERROR: $1 requires a positive integer." >&2
 					return 2
@@ -1646,7 +1645,7 @@ arg_run_guarded() {
 					echo "ERROR: $1 must be positive." >&2
 					return 2
 				}
-				if [[ $action == build && $method != singer ]] && ((value > 1)); then
+				if [[ $action == build && $method != singer && $guard != scheduler ]] && ((value > 1)); then
 					echo "ARG memory guard: reducing build --jobs $value to 1; full-chromosome inference can exceed 20 GiB per worker." >&2
 					value=1
 				fi
@@ -1676,37 +1675,50 @@ arg_run_guarded() {
 		echo "ERROR: ARG RAM cap must be positive; unguarded runs are disabled." >&2
 		return 2
 	}
-	[[ -f /sys/fs/cgroup/cgroup.controllers ]] || {
-		echo "ERROR: ARG requires cgroup v2 memory control; refusing an unguarded run." >&2
-		return 2
-	}
-	state=$(systemctl --user is-system-running 2>/dev/null || true)
-	if ! command -v systemd-run >/dev/null 2>&1 || [[ $state != running && $state != degraded ]]; then
-		echo "ERROR: user systemd is unavailable; refusing an unguarded ARG run." >&2
-		return 2
-	fi
 	export ARG_MEMORY_LIMIT_GB=$ram
-	# Set native-library threads before any Python, NumPy or external tool starts.
 	export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
-	[[ $action != check ]] || args+=(--action check)
-	if [[ $action == build && $method != singer ]]; then
-		echo "ARG memory guard: $ram GiB RAM + $swap GiB swap for the entire task tree; build concurrency is limited to 1." >&2
-	else
-		echo "ARG memory guard: $ram GiB RAM + $swap GiB swap for the entire task tree." >&2
+	if [[ $action == check ]]; then
+		# Validation reads the saved ARG and does not need a systemd user session.
+		bash "$ROOT/f/arg.sh" cli "${args[@]}" --action check
+		return $?
 	fi
-	# Launch the internal driver directly: no environment flag can bypass the
-	# guard, and the calling terminal stays outside this scope.
+	if [[ $guard == scheduler ]]; then
+		[[ -n ${LSB_JOBID:-} ]] || { echo "ERROR: scheduler resource guard requires an allocated LSF job (LSB_JOBID)" >&2; return 2; }
+		echo "ARG resources: LSF job $LSB_JOBID; configured internal memory budget ${ram} GiB. Set LSF -M/-R reservations to cover the job." >&2
+		bash "$ROOT/f/arg.sh" logged "$action" "${args[@]}"
+		return $?
+	fi
+	state=$(systemctl --user is-system-running 2>/dev/null || true)
+	if [[ $guard == auto ]]; then
+		if [[ -f /sys/fs/cgroup/cgroup.controllers ]] && command -v systemd-run >/dev/null 2>&1 && [[ $state == running || $state == degraded ]]; then
+			guard=systemd
+		else
+			guard=ulimit
+		fi
+	fi
+	if [[ $guard == ulimit ]]; then
+		if [[ $method == tsinfer ]]; then
+			echo "ERROR: tsinfer reserves a 1 TiB LMDB virtual mapping; a RAM-sized ulimit -v would prevent inference. Use --resource-guard systemd locally or scheduler inside LSF." >&2
+			return 2
+		fi
+		local ceiling_kib=$(((ram + swap) * 1048576))
+		echo "ARG resources: per-process virtual-address limit $((ram + swap)) GiB via ulimit; this is not a task-tree RSS cap. Build concurrency is limited to 1." >&2
+		bash -c 'ulimit -v "$1" || exit; shift; exec "$@"' gu-arg-limit "$ceiling_kib" \
+			bash "$ROOT/f/arg.sh" logged "$action" "${args[@]}"
+		return $?
+	fi
+	if [[ ! -f /sys/fs/cgroup/cgroup.controllers ]] || ! command -v systemd-run >/dev/null 2>&1 || [[ $state != running && $state != degraded ]]; then
+		echo "ERROR: systemd resource guard requires cgroup v2 and a working user systemd session; use --resource-guard auto or ulimit on other Linux systems" >&2
+		return 2
+	fi
+	echo "ARG memory guard: $ram GiB RAM + $swap GiB swap for the entire task tree." >&2
 	if systemd-run --user --scope --quiet --collect \
 		-p "MemoryMax=${ram}G" -p "MemorySwapMax=${swap}G" -p OOMPolicy=kill \
 		bash "$ROOT/f/arg.sh" logged "$action" "${args[@]}"; then
 		return 0
 	else
 		status=$?
-		echo "ERROR: ARG exited with status $status (configured RAM cap: $ram GiB)." >&2
-		if ((status == 137)); then
-			echo "SIGKILL: check kernel logs for a cgroup OOM, global OOM, or external kill; this exit code alone does not identify the cause." >&2
-		fi
-		echo "Inspect journalctl -k -b --no-pager; after a WSL restart use -b -1. Verified checkpoints remain reusable." >&2
+		echo "ERROR: ARG exited with status $status (configured RAM cap: $ram GiB). Verified checkpoints remain reusable." >&2
 		return "$status"
 	fi
 }

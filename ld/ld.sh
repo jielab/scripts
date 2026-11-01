@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/f/scratch.sh"
 
 #  Help
 usage() {
@@ -12,9 +14,10 @@ Modules:
     --check-env  Print Python version, paths and selected chromosomes; do not compute
 
 Main options:
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; retain the same date to resume
     --grch 37|38  Coordinate build [38]; also accepts grch=38 or GRCH=38 environment
     INPUT_FORMAT=pgen|vcf  Input format [pgen]
-    OUT=DIR  Analysis output [/data/sph-huangj/analysis/ld/38]
+    OUT=DIR  Analysis output [/scratch/DATE/sph-huangj/analysis/ld/38]
     PFILE_DIR=DIR  chrN.pgen + chrN.pvar[.zst] + chrN.psam [/data/sph-huangj/gen/1kg/38/pfile]
     VCF_DIR=DIR  Only used with INPUT_FORMAT=vcf
     PANEL=FILE  Sample panel [/data/sph-huangj/gen/1kg/38/samples.txt]; all four-population samples
@@ -32,15 +35,32 @@ Main options:
     LD_RESUME_DIR=DIR  Reuse a preserved complete LD table; empty disables this checkpoint
     OUT/ld.runtime.env  Optional analysis-specific launch defaults; explicit environment wins
     OUT/rebuild_v2/logs/  Run status/STOP, partition errors and native PLINK logs
-    MIN_FREE_GB=N  Keep this free-space reserve, in decimal GB [5]; LD tables need additional space
+    MIN_FREE_GB=N  Filesystem/group-quota reserve, decimal GB [100]
+    LD_QUEUE=short|spec  Submission queue [short]
     -h, --help  Help; details: 0.README.md beside this script
 
-Example:
-    # HPC: validate after copying inputs, then submit (do not run LD on login node)
+Usage examples:
     cd /work/sph-huangj/scripts/ld
-    ./ld.sh --chr 10-22
-    ./ld.sh --grch 38 --chr 10-22 --write-cmd
-    ./ld.sh --check-env --chr 10-22  # Inspect runtime without starting LD
+
+    # Fresh GRCh38: all autosomes plus automatic dependent merge.
+    LD_QUEUE=short ./ld.sh --grch 38 --chr 1-22
+
+    # Alternative queue only; do not submit both copies.
+    LD_QUEUE=spec ./ld.sh --grch 38 --chr 1-22
+
+    # Inspect paths without submitting or computing.
+    ./ld.sh --check-env --grch 38 --chr 1-22
+
+    # Write command files only; no submission.
+    ./ld.sh --grch 38 --chr 1-22 --write-cmd
+
+    # Default output: /scratch/2026-10-31/sph-huangj/analysis/ld/38
+    # Each chromosome uses chrN/ and compressed temporary files in chrN/tmp/.
+    # Inputs: /data/sph-huangj/gen/1kg/38/pfile (never removed).
+    # Use --date-scratch YYYY-MM-DD only to select a different scratch date.
+    # Merge waits for done("ld38.step1.chr*") and requires chr1-22 completion.
+    # Empty bjobs is not proof of success: check completion records and logs.
+
 EOF
 }
 
@@ -127,7 +147,7 @@ export REFERENCE_COUNT_POLICY="${REFERENCE_COUNT_POLICY:-off}"
 export COINCIDENT_POLICY="${COINCIDENT_POLICY:-group}"
 export LD_STORAGE="${LD_STORAGE:-blocked-zstd}"
 export LD_TMP_DIR="${LD_TMP_DIR:-$OUT/tmp}"
-export MIN_FREE_GB="${MIN_FREE_GB:-5}"
+export MIN_FREE_GB="${MIN_FREE_GB:-100}"
 export CHRS="${CHR_ARG:-${CHRS:-1-22}}"
 export LD_TARGETS="${LD_TARGETS:-}"
 

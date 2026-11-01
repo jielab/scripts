@@ -1,0 +1,36 @@
+- name: kraken_c10
+  classifier_engine: kraken
+  parameters:
+    confidence: 0.1
+    minimum_hit_groups: 2
+    minimum_base_quality: 0
+- name: kunpeng_full_c10
+  classifier_engine: kunpeng_full
+  parameters:
+    confidence: 0.1
+    minimum_hit_groups: 2
+    minimum_base_quality: 0
+- name: kunpeng_memory_c10
+  classifier_engine: kunpeng_memory
+  parameters:
+    confidence: 0.1
+    minimum_hit_groups: 2
+    minimum_base_quality: 0
+- name: kraken_c30
+  classifier_engine: kraken
+  parameters:
+    confidence: 0.3
+    minimum_hit_groups: 2
+    minimum_base_quality: 0
+- name: kunpeng_full_c30
+  classifier_engine: kunpeng_full
+  parameters:
+    confidence: 0.3
+    minimum_hit_groups: 2
+    minimum_base_quality: 0
+- name: kunpeng_memory_c30
+  classifier_engine: kunpeng_memory
+  parameters:
+    confidence: 0.3
+    minimum_hit_groups: 2
+    minimum_base_quality: 0

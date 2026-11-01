@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
-
 # Direct CLI help must return before setup, downloads or analysis.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	case "${1:-}" in
@@ -34,6 +26,8 @@ fi
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 F=$ROOT/f
+source "$F/0.common.sh"
+gu_load_config
 need() { command -v "$1" >/dev/null 2>&1 || {
 	echo "ERROR: missing command: $1" >&2
 	exit 1
@@ -48,7 +42,7 @@ ARG_DIR=${GU_ARG_DIR:-${GU_TARGET_ROOT:-.}/arg.tsinfer}
 TARGET_VCF_DIR=${GU_TARGET_VCF_DIR:-}
 TRACE_RESULT_MODULE=trace
 [[ ${TRACE_BACKEND:-cpu} != cuda ]] || TRACE_RESULT_MODULE=trace-GPU
-OUT=${TRACE_OUT:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/1kg}/${TRACE_RESULT_MODULE:-trace}/${GU_SCOPE_ID:-genome}}
+OUT=${TRACE_OUT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}/${TRACE_RESULT_MODULE:-trace}/${GU_SCOPE_ID:-genome}}
 BUILD=GRCh${GU_BUILD:-37}
 CHRS=${TRACE_CHRS:-${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}}
 LOCI_FILE=${TRACE_LOCI_FILE:-${GU_LOCI_FILE:-}}
@@ -69,6 +63,7 @@ MINCM=${TRACE_GENETIC_DISTANCE_THRESHOLD:-0.05}
 WIN=${TRACE_WINDOW_SIZE:-1000}
 SAMPLE_MAP=${TRACE_SAMPLE_MAP:-$OUT/samples/trace_sample_map.tsv}
 TARGET_SAMPLES=${TRACE_TARGET_SAMPLES:-}
+FINAL_NAME=${TRACE_FINAL_NAME:-trace_haplotype_segments.tsv.gz}
 export TRACE_BACKEND=${TRACE_BACKEND:-cpu}
 TRACE_SEED=${TRACE_SEED:-42}
 INFER_CMD=(python3 "$F/trace.py" infer)
@@ -95,20 +90,92 @@ REPLACE=${TRACE_REPLACE:-0}
 	echo "ERROR: internal replace-trace state must be 0 or 1" >&2
 	exit 2
 }
-TRACE_FINAL=$OUT/final/trace_haplotype_segments.tsv.gz
-for x in python3 bcftools awk sort find gzip stat cmp grep diff comm flock; do need "$x"; done
+TRACE_FINAL=$OUT/final/$FINAL_NAME
+python3 - "$TARC" "$POST" "$MINBP" "$MINCM" "$WIN" "$TRACE_SEED" <<'PYVALID'
+import math,sys
+t,p,b,c,w,seed=map(float,sys.argv[1:])
+if not all(map(math.isfinite,(t,p,b,c,w,seed))) or not (t>0 and 0<p<=1 and b>=0 and c>=0 and w>=1 and seed>=0 and b.is_integer() and w.is_integer() and seed.is_integer()):
+    raise SystemExit('ERROR: invalid TRACE thresholds/window/seed')
+PYVALID
+for x in python3 awk sort find gzip stat cmp grep diff comm flock pgrep; do need "$x"; done
 if [[ $ACTION != check ]]; then for x in trace-extract trace-infer trace-summarize; do need "$x"; done; fi
 TRACE_LOG_DIR=/tmp/gu-logs/trace/$(printf '%s' "$OUT" | sha256sum | cut -c1-16)
-mkdir -p "$OUT"/{manifest,samples/groups,regions,extract,datafiles,infer,calls,final} "$TRACE_LOG_DIR"
-mkdir -p /tmp/gu-locks
-exec 9>"/tmp/gu-locks/$(printf '%s' "$OUT" | sha256sum | cut -c1-16).lock"
+mkdir -p "$OUT"/{manifest,samples/groups,regions,maps,extract,datafiles,infer,calls,final} "$TRACE_LOG_DIR"
+# A persistent lock in the shared result directory also protects jobs on
+# different HPC nodes. Never unlink a live flock inode.
+exec 9>"$OUT/.trace.lock"
 flock -n 9 || {
 	echo "ERROR: another TRACE run is using $OUT" >&2
 	exit 1
 }
+trace_children=()
+trace_stop_tree() {
+	local pid=$1 child
+	while read -r child; do [[ -z $child ]] || trace_stop_tree "$child"; done < <(pgrep -P "$pid" 2>/dev/null || true)
+	kill -TERM "$pid" 2>/dev/null || true
+}
+trace_exit() {
+	local status=$? pid
+	trap - EXIT
+	if ((status != 0)); then
+		for pid in "${trace_children[@]}"; do trace_stop_tree "$pid"; done
+		for pid in "${trace_children[@]}"; do wait "$pid" 2>/dev/null || true; done
+	fi
+	exit "$status"
+}
+trap trace_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Autosome and male non-PAR X sample nodes are different biological copies.
+# Keep joint autosomal HMM training, and fit X separately with its own map.
+# Internal final filenames are deliberately distinct to avoid double import
+# by the recursive Shiny result collector.
+autosomes=()
+has_x=0
+for c in $CHRS; do
+	if [[ $c == X ]]; then has_x=1; else autosomes+=("$c"); fi
+done
+if ((has_x && ${#autosomes[@]})); then
+	[[ $ACTION == check ]] || rm -f -- "$TRACE_FINAL"
+	for class in autosomes chrX; do
+		if [[ $class == autosomes ]]; then class_chrs="${autosomes[*]}"; else class_chrs=X; fi
+		env TRACE_CHRS="$class_chrs" TRACE_OUT="$OUT/chromosome_classes/$class" TRACE_SAMPLE_MAP= \
+			TRACE_FINAL_NAME=trace_haplotype_segments.internal.tsv.gz bash "$F/trace.sh" "$ACTION" &
+		trace_children=("$!")
+		wait "${trace_children[0]}"
+		trace_children=()
+	done
+	if [[ $ACTION == run || $ACTION == infer || $ACTION == segments ]]; then
+		python3 - "$OUT" "$FINAL_NAME" <<'PYSPLIT'
+from pathlib import Path
+import pandas as pd, sys
+root=Path(sys.argv[1])
+frames=[]
+for kind in ('autosomes','chrX'):
+    f=root/'chromosome_classes'/kind/'final/trace_haplotype_segments.internal.tsv.gz'
+    d=pd.read_csv(f,sep='\t',dtype={'sample':str,'tree_node_id':str})
+    d['trace_chromosome_class']=kind
+    frames.append(d)
+stage=root/'final'/(sys.argv[2]+'.part')
+pd.concat(frames,ignore_index=True).to_csv(stage,sep='\t',index=False,compression='gzip')
+stage.replace(root/'final'/sys.argv[2])
+PYSPLIT
+	fi
+	{
+		printf 'build\t%s\nchromosomes\t%s\nchromosome_classes\tautosomes,chrX\nbackend\t%s\n' "$BUILD" "$CHRS" "$TRACE_BACKEND"
+		printf 'runtime\tgu-trace-split-nonPAR-X-v2\n'
+		for class in autosomes chrX; do sha256sum "$OUT/chromosome_classes/$class/run.meta.tsv"; done
+	} >"$OUT/run.meta.tsv.next"
+	mv -f "$OUT/run.meta.tsv.next" "$OUT/run.meta.tsv"
+	echo "TRACE $ACTION completed with joint autosomes and a separate male non-PAR X model: $OUT"
+	exit 0
+fi
 if [[ $ACTION != check && $REPLACE == 1 ]]; then
 	rm -rf -- "$OUT/extract" "$OUT/datafiles" "$OUT/infer" "$OUT/calls" "$OUT/final"
 	mkdir -p "$OUT"/{extract,datafiles,infer,calls,final}
+	if [[ $SAMPLE_MAP == "$OUT/samples/trace_sample_map.tsv" ]]; then rm -f -- "$SAMPLE_MAP"; fi
 fi
 
 # GU TRACE consumes mutation-bearing, TRACE-formatted trees stored directly in
@@ -130,6 +197,8 @@ if tree.suffix == ".tsz":
 else:
     import tskit
     ts = tskit.load(tree)
+if ts.time_units != 'generations':
+    raise SystemExit(f'ERROR: TRACE requires ARG node times in generations; got {ts.time_units!r}: {tree}')
 if isinstance(ts.metadata, dict) and ts.metadata.get('method') == 'singer' and ts.metadata.get('regional'):
     raise SystemExit('ERROR: regional SINGER test ARG cannot be used as full-chromosome TRACE evidence')
 positions = [site.position for site in ts.sites()]
@@ -166,43 +235,52 @@ write_manifest() {
 	done
 }
 prepare_regions() {
-	local c out
-	if [[ $TRACE_ARG_METHOD == singer ]]; then
-		for c in $CHRS; do
-			out=$OUT/regions/chr$c.bed
-			python3 - "$ARG_DIR/chr$c.inferred.bed" "$LOCI_FILE" "$LOCI_MODE" "$c" "$out" <<'PYMASK'
+	local c tree
+	for c in $CHRS; do
+		tree=$(awk -F'\t' -v c="$c" 'NR>1&&$1==c{print $3;exit}' "$OUT/manifest/tree_files.tsv")
+		python3 - "$TRACE_ARG_METHOD" "$ARG_DIR" "$LOCI_FILE" "$LOCI_MODE" "$c" "${GU_BUILD:-37}" "$tree" "$OUT/regions/chr$c.bed" "${TRACE_INCLUDE_REGIONS:-}" <<'PYMASK'
 import sys
 from pathlib import Path
-mask,loci,mode,c,out=sys.argv[1:]
+method,root,loci,mode,c,build,tree,out,include=sys.argv[1:]
 def read(path):
     rows=[]
     for line in Path(path).read_text().splitlines():
         if not line.strip() or line.startswith('#'):continue
         r=line.split()
-        if r[0].removeprefix('chr')==c:rows.append((int(r[1]),int(r[2])))
+        if r[0].removeprefix('chr')==c:
+            a,b=int(r[1]),int(r[2])
+            if a<0 or b<=a:raise SystemExit(f'ERROR: invalid BED interval in {path}: {line}')
+            rows.append((a,b))
     return rows
-regions=read(mask)
+def intersect(a,b):
+    return [(max(x,l),min(y,r)) for x,y in a for l,r in b if max(x,l)<min(y,r)]
+regions=None
+if method=='singer':regions=read(Path(root)/f'chr{c}.inferred.bed')
+if c=='X':
+    start,end={'37':(2699520,154931043),'38':(2781479,155701382)}[build]
+    x=[(start,end)]
+    regions=x if regions is None else intersect(regions,x)
+if include:
+    mask=read(include)
+    regions=mask if regions is None else intersect(regions,mask)
 if mode=='extract' and loci:
-    regions=[(max(a,x),min(b,y)) for a,b in regions for x,y in read(loci) if max(a,x)<min(b,y)]
-if not regions:raise SystemExit('ERROR: no SINGER inferred windows overlap requested regions')
-Path(out).write_text(''.join(f'chr{c}\t{a}\t{b}\n' for a,b in sorted(regions)))
+    mask=read(loci)
+    regions=mask if regions is None else intersect(regions,mask)
+if regions is None:
+    Path(out).unlink(missing_ok=True)
+else:
+    if not regions:raise SystemExit(f'ERROR: no accessible TRACE intervals for chr{c}')
+    merged=[]
+    for a,b in sorted(regions):
+        if merged and a<=merged[-1][1]:merged[-1]=(merged[-1][0],max(b,merged[-1][1]))
+        else:merged.append((a,b))
+    Path(out).write_text(''.join(f'chr{c}\t{a}\t{b}\n' for a,b in merged))
 PYMASK
-		done
-		return
-	fi
-	[[ -n $LOCI_FILE && $LOCI_MODE == extract ]] || return 0
-	[[ -s $LOCI_FILE ]] || {
-		echo "ERROR: TRACE loci file missing: $LOCI_FILE" >&2
-		exit 1
-	}
-	for c in $CHRS; do
-		out=$OUT/regions/chr$c.bed
-		awk -F'\t' -v c="$c" 'BEGIN{OFS="\t"}$1==c{print "chr"c,$2,$3}' "$LOCI_FILE" >"$out"
-		[[ -s $out ]] || return 1
 	done
 }
+
 prepare_sample_map() {
-	local tree chr vcf arg_map chr_map work first=1 validate_all=${TRACE_VALIDATE_ALL_TREES:-0}
+	local tree chr vcf arg_map chr_map work first=1 validate_all=${TRACE_VALIDATE_ALL_TREES:-1}
 	work=$OUT/samples/map_check
 	rm -rf "$work"
 	mkdir -p "$work" "$(dirname "$SAMPLE_MAP")"
@@ -215,13 +293,18 @@ prepare_sample_map() {
 		}
 		arg_map=$ARG_DIR/chr${chr}.sample_map.tsv
 		chr_map=$work/chr${chr}.sample_map.tsv
-		[[ -n $TARGET_VCF_DIR && -s $TARGET_VCF_DIR/chr${chr}.vcf.gz ]] && vcf=$TARGET_VCF_DIR/chr${chr}.vcf.gz
+		if [[ $chr == X && -n $TARGET_VCF_DIR && -s $TARGET_VCF_DIR/chrX.male.vcf.gz ]]; then
+			vcf=$TARGET_VCF_DIR/chrX.male.vcf.gz
+		elif [[ -n $TARGET_VCF_DIR && -s $TARGET_VCF_DIR/chr${chr}.vcf.gz ]]; then
+			vcf=$TARGET_VCF_DIR/chr${chr}.vcf.gz
+		fi
 		if [[ -s $arg_map ]]; then
 			cp "$arg_map" "$chr_map"
 		else
 			python3 "$F/0.common.py" sample-map --tree "$tree" --out "$chr_map"
 		fi
 		if [[ -n $vcf ]]; then
+			need bcftools
 			bcftools query -l "$vcf" | sort -u >"$work/chr${chr}.target.samples"
 			awk -F'\t' 'NR>1&&NF>=2{print $2}' "$chr_map" | sort -u >"$work/chr${chr}.arg.samples"
 			if [[ $TRACE_ARG_METHOD == needle || $TRACE_ARG_METHOD == threads || $TRACE_ARG_METHOD == singer ]]; then
@@ -255,12 +338,8 @@ prepare_sample_map() {
 		if [[ $validate_all == 1 ]]; then
 			while IFS=$'\t' read -r _ _ tree; do
 				[[ $tree == tree_file ]] && continue
-				python3 "$F/0.common.py" sample-map --tree "$tree" --out "$work/posterior.sample_map.tsv"
-				awk -F'\t' 'NR>1{print $1"\t"$2"\t"$3}' "$work/posterior.sample_map.tsv" | sort >"$work/posterior.tsv"
-				cmp -s "$work/canonical.tsv" "$work/posterior.tsv" || {
-					echo "ERROR: TRACE posterior tree node map differs: $tree" >&2
-					return 1
-				}
+				python3 "$F/trace.py" validate-map --tree "$tree" --sample-map "$SAMPLE_MAP"
+
 			done < <(awk -F'\t' -v c="$chr" 'NR==1||$1==c' "$OUT/manifest/tree_files.tsv")
 		fi
 	done
@@ -287,48 +366,84 @@ split_groups() {
 		awk -v b="$b" '{print $1"\t"b}' "$g" >>"$OUT/samples/node_group.tsv"
 	done
 }
+gmap_for_chr() {
+	local c=$1 d=${TRACE_GENETIC_MAP_DIR:-}
+	[[ -n $d ]] || return 1
+	[[ -d $d ]] || { echo "ERROR: missing TRACE genetic-map directory: $d" >&2; return 2; }
+	python3 - "$d" "$c" <<'PYGMAP'
+from pathlib import Path
+import re,sys
+root,chrom=Path(sys.argv[1]),sys.argv[2]
+pat=re.compile(r'(?:^|[^A-Za-z0-9])(?:chr)?'+re.escape(chrom)+r'(?:[^A-Za-z0-9]|$)',re.I)
+files=sorted(p for p in root.iterdir() if p.is_file() and pat.search(p.name) and not p.name.endswith(('.tbi','.csi','.md5','.sha256')))
+if len(files)!=1:
+    raise SystemExit(f'ERROR: expected exactly one genetic map for chr{chrom} in {root}; found {len(files)}: '+', '.join(p.name for p in files))
+print(files[0])
+PYGMAP
+}
+prepare_maps() {
+	local c source
+	if [[ -z ${TRACE_GENETIC_MAP_DIR:-} ]]; then
+		echo "TRACE genetic map: constant 1 cM/Mb (set TRACE_GENETIC_MAP_DIR for build-matched maps)"
+		return
+	fi
+	for c in $CHRS; do
+		source=$(gmap_for_chr "$c") || return 2
+		python3 "$F/trace.py" normalize-map --input "$source" --output "$OUT/maps/chr$c.txt" --chr "$c"
+	done
+}
 run_record() {
-	local c post tree cmd
+	local c post tree cmd source
 	printf 'build\t%s\nchromosomes\t%s\nloci_mode\t%s\nt_archaic\t%s\nposterior_threshold\t%s\nphysical_length_threshold\t%s\ngenetic_distance_threshold\t%s\nwindow_size\t%s\ngroup_size\t%s\n' \
 		"$BUILD" "$CHRS" "$LOCI_MODE" "$TARC" "$POST" "$MINBP" "$MINCM" "$WIN" "$GROUP_SIZE"
-	printf 'backend\t%s\nseed\t%s\n' "$TRACE_BACKEND" "$TRACE_SEED"
-	printf 'runtime\tgu-trace-gamma-scale-v1\n'
-	sha256sum "$F/trace.py"
-	if [[ $TRACE_BACKEND == cuda ]]; then sha256sum "$F/trace_gpu/backend.py" "${TRACE_GPU_HOME:-/mnt/d/software/gu/trace-gpu}/libtrace_gpu.so"; fi
-	[[ -z $LOCI_FILE ]] || stat -c 'loci\t%n:%s:%Y' "$LOCI_FILE"
-	stat -c 'sample_map\t%n:%s:%Y' "$SAMPLE_MAP"
-	[[ -z $TARGET_SAMPLES ]] || stat -c 'target_samples\t%n:%s:%Y' "$TARGET_SAMPLES"
+	printf 'backend\t%s\nseed\t%s\nruntime\tgu-trace-input-provenance-v2\n' "$TRACE_BACKEND" "$TRACE_SEED"
+	printf 'genetic_map_mode\t%s\n' "${TRACE_GENETIC_MAP_DIR:-constant_1_cM_per_Mb}"
+	sha256sum "$F/trace.py" "$F/trace.sh" "$F/0.common.py"
+	if [[ $TRACE_BACKEND == cuda ]]; then
+		sha256sum "$F/trace_gpu/backend.py" "${TRACE_GPU_HOME:-${GU_SOFT:-$HOME/.local/share/gu}/trace-gpu}/libtrace_gpu.so"
+	fi
+	[[ -z $LOCI_FILE ]] || sha256sum "$LOCI_FILE"
+	sha256sum "$SAMPLE_MAP"
+	[[ -z $TARGET_SAMPLES ]] || sha256sum "$TARGET_SAMPLES"
+	[[ -z ${TRACE_INCLUDE_REGIONS:-} ]] || sha256sum "$TRACE_INCLUDE_REGIONS"
+	for c in $CHRS; do
+		[[ ! -s $ARG_DIR/chr$c.sample_map.tsv ]] || sha256sum "$ARG_DIR/chr$c.sample_map.tsv"
+		[[ ! -s $OUT/regions/chr$c.bed ]] || sha256sum "$OUT/regions/chr$c.bed"
+		if [[ -n ${TRACE_GENETIC_MAP_DIR:-} ]]; then
+			source=$(gmap_for_chr "$c") || return 2
+			sha256sum "$source" "$OUT/maps/chr$c.txt"
+		fi
+	done
 	while IFS=$'\t' read -r c post tree; do
 		[[ $c == chr ]] && continue
-		stat -c "tree_chr${c}_p${post}\\t%n:%s:%Y" "$tree"
+		stat -Lc "tree_chr${c}_p${post}\\t%n:%s:%y" "$tree"
 	done <"$OUT/manifest/tree_files.tsv"
 	for cmd in trace-extract trace-infer trace-summarize; do
-		command -v "$cmd" >/dev/null 2>&1 && stat -c 'software\t%n:%s:%Y' "$(command -v "$cmd")"
+		command -v "$cmd" >/dev/null 2>&1 && sha256sum "$(command -v "$cmd")"
 	done
-	stat -c 'software\t%n:%s:%Y' "$F/trace.sh" "$F/trace.py" "$F/0.common.py"
+	python3 - <<'PYSOURCE'
+import hashlib,importlib.util
+for name in ('tracehmm','tracehmm.trace','tracehmm.infer_cli','tracehmm.extract_cli','tracehmm.summarize_cli','trace_utils'):
+    try: spec=importlib.util.find_spec(name)
+    except ModuleNotFoundError: spec=None
+    if spec is not None and spec.origin:
+        from pathlib import Path
+        p=Path(spec.origin)
+        print('software_sha256\t'+name+'\t'+hashlib.sha256(p.read_bytes()).hexdigest())
+PYSOURCE
 }
 check_run_provenance() {
-	local current=$OUT/run.meta.tsv
-	local candidate=$OUT/run.meta.next.tsv
+	local current=$OUT/run.meta.tsv candidate=$OUT/run.meta.next.tsv
 	run_record >"$candidate"
-	# Resource settings may change on resume; scientific settings and group
-	# size may not. Historical records also contain literal \t stat lines.
-	if [[ -s $current && $REPLACE == 0 ]]; then
-		if ! diff -q <(head -9 "$current") <(head -9 "$candidate") >/dev/null; then
-			rm -f "$candidate"
-			echo "ERROR: TRACE parameters changed; use --replace-trace TRUE or restore the original settings" >&2
-			return 1
-		fi
-		local old_backend old_seed
-		old_backend=$(awk -F'\t' '$1=="backend"{print $2}' "$current")
-		old_seed=$(awk -F'\t' '$1=="seed"{print $2}' "$current")
-		if [[ ${old_backend:-cpu} != "$TRACE_BACKEND" || ${old_seed:-42} != "$TRACE_SEED" ]] ||
-			! diff -q <(head -13 "$current" | tail -2) <(head -13 "$candidate" | tail -2) >/dev/null ||
-			{ [[ $TRACE_BACKEND == cuda ]] && ! diff -q <(head -15 "$current" | tail -2) <(head -15 "$candidate" | tail -2) >/dev/null; }; then
-			rm -f "$candidate"
-			echo 'ERROR: TRACE backend/seed/runtime changed (includes Gamma scale correction); use a fresh output or --replace-trace TRUE' >&2
-			return 1
-		fi
+	if [[ ! -s $current && $REPLACE == 0 ]] && find "$OUT/extract" "$OUT/infer" "$OUT/calls" -type f \( -name '*.npz' -o -name '*.summary.txt' \) -print -quit | grep -q .; then
+		rm -f "$candidate"
+		echo "ERROR: cached TRACE outputs have no scientific provenance; use a fresh output or --replace-trace TRUE" >&2
+		return 1
+	fi
+	if [[ -s $current && $REPLACE == 0 ]] && ! cmp -s "$current" "$candidate"; then
+		rm -f "$candidate"
+		echo "ERROR: TRACE scientific settings, ARG inputs, sample map/selection, genetic map, mask or runtime changed; use a fresh output directory or --replace-trace TRUE" >&2
+		return 1
 	fi
 	mv "$candidate" "$current"
 }
@@ -337,8 +452,10 @@ prepare_run() {
 	prepare_regions
 	prepare_sample_map
 	split_groups
+	prepare_maps
 	check_run_provenance
 }
+
 extract_one() {
 	local c=$1 gf=$2 group=$3 post=$4 tree=$5 prefix ids npost
 	local -a opts=()
@@ -346,7 +463,7 @@ extract_one() {
 	ids=$(paste -sd, "$gf")
 	npost=$(awk -v c="$c" 'NR>1&&$1==c{n++}END{print n+0}' "$OUT/manifest/tree_files.tsv")
 	((npost > 1)) && opts+=(--window-size "$WIN")
-	[[ $TRACE_ARG_METHOD == singer || (-n $LOCI_FILE && $LOCI_MODE == extract) ]] && opts+=(--include-regions "$OUT/regions/chr$c.bed" --chrom "chr$c")
+	[[ ! -s $OUT/regions/chr$c.bed ]] || opts+=(--include-regions "$OUT/regions/chr$c.bed" --chrom "chr$c")
 	python3 "$F/trace.py" output --prefix "$prefix" --suffix .npz -- trace-extract --tree-file "$tree" -t "$TARC" --individuals "$ids" "${opts[@]}" 2>&1 | tee "$TRACE_LOG_DIR/extract.${group}.chr${c}.p${post}.log"
 }
 run_extract() {
@@ -358,24 +475,23 @@ run_extract() {
 			[[ $c == chr ]] && continue
 			extract_one "$c" "$gf" "$group" "$post" "$tree" &
 			pids+=("$!")
+			trace_children=("${pids[@]}")
 			if ((${#pids[@]} >= JEX)); then
-				wait "${pids[0]}" || status=1
+				wait "${pids[0]}" || return 1
 				pids=("${pids[@]:1}")
+				trace_children=("${pids[@]}")
 			fi
 		done <"$OUT/manifest/tree_files.tsv"
 	done
 	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	trace_children=()
 	((status == 0)) || exit 1
 	for gf in "$OUT"/samples/groups/*.nodes; do
 		group=$(basename "$gf" .nodes)
 		for c in $CHRS; do find "$OUT/extract" -maxdepth 1 -name "${group}.chr${c}.p*.npz" -print | sort >"$OUT/datafiles/${group}.chr${c}.txt"; done
 	done
 }
-gmap_for_chr() {
-	local c=$1 d=${TRACE_GENETIC_MAP_DIR:-}
-	[[ -n $d && -d $d ]] || return 1
-	find "$d" -maxdepth 1 -type f \( -iname "*chr${c}*" -o -iname "*_${c}.*" \) -print | sort | head -1
-}
+
 infer_one() {
 	local node=$1 group=$2 c npost gmap C D G out any_multi=0
 	local -a chroms=() datafiles=() npzs=() gmaps=() opt=()
@@ -386,7 +502,7 @@ infer_one() {
 		((npost > 1)) && any_multi=1
 		datafiles+=("$OUT/datafiles/${group}.chr${c}.txt")
 		npzs+=("$(head -1 "$OUT/datafiles/${group}.chr${c}.txt")")
-		if gmap=$(gmap_for_chr "$c"); then gmaps+=("$gmap"); fi
+		if [[ -n ${TRACE_GENETIC_MAP_DIR:-} ]]; then gmaps+=("$OUT/maps/chr$c.txt"); fi
 	done
 	# A prior run may have produced only the final chromosome before failing.
 	# Reuse is valid only when every requested chromosome output exists.
@@ -425,19 +541,21 @@ run_infer() {
 	while IFS=$'\t' read -r node group; do
 		infer_one "$node" "$group" &
 		pids+=("$!")
+		trace_children=("${pids[@]}")
 		if ((${#pids[@]} >= JIN)); then
-			wait "${pids[0]}" || status=1
+			wait "${pids[0]}" || return 1
 			pids=("${pids[@]:1}")
+			trace_children=("${pids[@]}")
 		fi
 	done <"$OUT/samples/node_group.tsv"
 	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	trace_children=()
 	((status == 0)) || exit 1
 }
 summarize_one() {
 	local node=$1 c f out FSTR CSTR
 	local -a files=() chroms=()
 	out=$OUT/calls/hap$node
-	[[ -s $out.summary.txt ]] && return 0
 	for c in $CHRS; do
 		f=$OUT/infer/hap${node}.chr${c}.xss.npz
 		[[ -s $f ]] || return 1
@@ -452,7 +570,7 @@ summarize_one() {
 		IFS=,
 		echo "${chroms[*]}"
 	)
-	trace-summarize -f "$FSTR" -c "$CSTR" --posterior-threshold "$POST" --physical-length-threshold "$MINBP" --genetic-distance-threshold "$MINCM" -o "$out.part" 2>&1 | tee "$TRACE_LOG_DIR/summarize.hap${node}.log" && [[ -s $out.part.summary.txt ]] && mv "$out.part.summary.txt" "$out.summary.txt"
+	python3 "$F/trace.py" output --prefix "$out" --suffix .summary.txt -- trace-summarize -f "$FSTR" -c "$CSTR" --posterior-threshold "$POST" --physical-length-threshold "$MINBP" --genetic-distance-threshold "$MINCM" 2>&1 | tee "$TRACE_LOG_DIR/summarize.hap${node}.log"
 }
 run_segments() {
 	[[ -s $OUT/samples/tree_nodes.txt ]] || run_extract
@@ -461,14 +579,17 @@ run_segments() {
 	while read -r node; do
 		summarize_one "$node" &
 		pids+=("$!")
+		trace_children=("${pids[@]}")
 		if ((${#pids[@]} >= JSUM)); then
-			wait "${pids[0]}" || status=1
+			wait "${pids[0]}" || return 1
 			pids=("${pids[@]:1}")
+			trace_children=("${pids[@]}")
 		fi
 	done <"$OUT/samples/tree_nodes.txt"
 	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	trace_children=()
 	((status == 0)) || exit 1
-	local -a args=(--root "$OUT" --sample-map "$SAMPLE_MAP" --build "$BUILD")
+	local -a args=(--root "$OUT" --sample-map "$SAMPLE_MAP" --build "$BUILD" --filename "$FINAL_NAME")
 	[[ -n $LOCI_FILE ]] && args+=(--loci "$LOCI_FILE")
 	python3 "$F/trace.py" combine "${args[@]}"
 }

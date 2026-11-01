@@ -1,4 +1,9 @@
-source(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R"))
+# Locate this file whether sourced or run through Rscript.
+.gu_ofiles <- Filter(function(x) !is.null(x), lapply(sys.frames(), function(x) x$ofile))
+.gu_this <- if(length(.gu_ofiles)) tail(.gu_ofiles, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value=TRUE)[1L])
+.gu_f <- dirname(normalizePath(.gu_this, mustWork=TRUE))
+Sys.setenv(RESULTS_PY=Sys.getenv("RESULTS_PY", file.path(.gu_f, "results.py")))
+source(Sys.getenv("GU_RESULTS_R", file.path(.gu_f, "results.R")))
 
 
 # 🚩 phyml Circular phylogeny adapted from Bald/archaic introgression/Fig2.R, panel B.  Shared by the batch exporter

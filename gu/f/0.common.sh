@@ -21,46 +21,46 @@ HELP
 fi
 
 
-# Validated local runtime defaults; shell exports may override each setting.
-# Called by the public GU and installer entry points.
+# Deployment defaults are supplied by this package's runtime.env. Every setting
+# respects an explicit shell export. All public entry points call this loader.
 gu_load_config() {
-	export GU_CONDA_BASE=${GU_CONDA_BASE:-/home/huangj/anaconda3}
-	export AS3_PYTHON=${AS3_PYTHON:-$GU_CONDA_BASE/envs/as3_mamba/bin/python}
-	export AS3_PYTHON_VERSION=${AS3_PYTHON_VERSION:-3.11}
-	export AS3_TORCH_VERSION=${AS3_TORCH_VERSION:-2.8.0}
-	export AS3_CUDA_VERSION=${AS3_CUDA_VERSION:-12.8}
-	export AS3_TORCHVISION_VERSION=${AS3_TORCHVISION_VERSION:-0.23.0}
-	export AS3_TARGET_CHUNK_SIZE=${AS3_TARGET_CHUNK_SIZE:-64}
-	export AS3_MEMORY_HIGH=${AS3_MEMORY_HIGH:-20G}
-	export AS3_MEMORY_MAX=${AS3_MEMORY_MAX:-24G}
-	export AS3_MEMORY_SWAP_MAX=${AS3_MEMORY_SWAP_MAX:-8G}
-	export GU_ARCHAIC37_ROOT=${GU_ARCHAIC37_ROOT:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/37/vcf}
-	export AS3_REFERENCE_PANEL_DIR=${AS3_REFERENCE_PANEL_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/vcf}
-	export AS3_REFERENCE_MAP=${AS3_REFERENCE_MAP:-$AS3_REFERENCE_PANEL_DIR/Ref_Panel.map.txt}
-	export AS3_MASK_DIR=${AS3_MASK_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/mask}
-	export AS3_MODEL_DIR=${AS3_MODEL_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/models}
-	export AS3_PUBLISHED_CALLS_DIR=${AS3_PUBLISHED_CALLS_DIR:-${GU_REF_ROOT:-/mnt/f/gen}/archaic/38/database_introgression_call}
+	local config=${GU_RUNTIME_ENV:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/runtime.env}
+	[[ -r $config ]] || { echo "ERROR: GU runtime configuration is missing: $config" >&2; return 2; }
+	source "$config"
+	export GU_CONDA_BASE=${GU_CONDA_BASE:-${CONDA_EXE:+$(dirname "$(dirname "$CONDA_EXE")")}}
+	GU_CONDA_BASE=${GU_CONDA_BASE:-$HOME/anaconda3}
+	export GU_CONDA_BASE GU_SOFT=${GU_SOFT:-$HOME/.local/share/gu}
+	export GU_ARCHAIC37_ROOT=${GU_ARCHAIC37_ROOT:-$GU_REF_ROOT/archaic/37/vcf}
 }
 
 # 🚩 0.common
 # Shared GU region parsing. BED coordinates are 0-based, half-open.
 
 gu_normalize_chrs() {
-	local raw=${1:-} token
+	local raw=${1:-} token first last n
+	local -a normalized=()
 	raw=${raw//,/ }
 	for token in $raw; do
 		token=${token#chr}
 		token=${token#CHR}
 		token=${token^^}
 		[[ $token == 23 ]] && token=X
+		if [[ $token =~ ^([1-9]|1[0-9]|2[0-2])-([1-9]|1[0-9]|2[0-2])$ ]]; then
+			first=${BASH_REMATCH[1]}; last=${BASH_REMATCH[2]}
+			((first <= last)) || { echo "ERROR: reversed chromosome range: $token" >&2; return 2; }
+			for ((n=first;n<=last;n++)); do normalized+=("$n"); done
+			continue
+		fi
 		case "$token" in
-			[1-9] | 1[0-9] | 2[0-2] | X) printf '%s\n' "$token" ;;
+			[1-9] | 1[0-9] | 2[0-2] | X) normalized+=("$token") ;;
 			*)
 				echo "ERROR: unsupported chromosome in --chr: $token" >&2
 				return 2
 				;;
 		esac
-	done | awk '!seen[$0]++' | paste -sd' ' -
+	done
+	((${#normalized[@]})) || return 0
+	printf '%s\n' "${normalized[@]}" | awk '!seen[$0]++' | paste -sd' ' -
 }
 
 gu_normalize_loci() {
@@ -152,7 +152,7 @@ gu_result_root() {
 		return 2
 	}
 	if [[ -z $directory ]]; then
-		directory=/mnt/f/analysis/gu/$target
+		directory=${GU_ANALYSIS_BASE:?runtime configuration required}/$target
 	fi
 	# Strip trailing slashes without losing the root-directory check.
 	while [[ $directory == */ && $directory != / ]]; do directory=${directory%/}; done
@@ -162,6 +162,7 @@ gu_result_root() {
 
 gu_method_directory() {
 	local method=$1 variable
+	[[ $method != ibdmix ]] || { printf 'ibdmix\n'; return; }
 	case "$method" in *-GPU) printf '%s\n' "$method"; return ;; esac
 	variable=${method^^}_BACKEND
 	if [[ ${!variable:-cpu} == cuda ]]; then printf '%s-GPU\n' "$method"; else printf '%s\n' "$method"; fi
@@ -169,9 +170,7 @@ gu_method_directory() {
 
 gu_chr_result_dir() {
 	local analysis_root=${1:?} method=${2:?} unit_label=${3:?}
-	# Argument 4 remains accepted for callers using the historical API. The
-	# selected analysis root already identifies the dataset/cohort.
-	local override=${5:-} request_unit_count=${6:-1} out
+	local override=${4:-} request_unit_count=${5:-1} out
 	if [[ -n $override ]]; then
 		out=$override
 		((request_unit_count <= 1)) || out=$out/$unit_label
@@ -607,7 +606,7 @@ gu_plan_ukb_resources() {
 # Share successful reference checks across workers. Fingerprints include the
 # actual source, sentinel list and validator code; changed inputs are rechecked.
 gu_build_check_key() {
-	python3 - "$1" "$2" "$3" "${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}" \
+	python3 - "$1" "$2" "$3" "${CHECK_GRCH_SNP_LIST:?runtime configuration required}" \
 		"$(declare -f check_GRCH phe_zcat phe_check_grch_tabix_rows gu_check_grch_pvar_positions)" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
@@ -636,7 +635,7 @@ gu_check_build_uncached() {
 
 gu_check_build_cached() (
 	local input=$1 expected=$2 format=$3 key after detail cache fd
-	# Directories/legacy prefixes retain the uncached validation path.
+	# Directory inputs use the uncached validation path.
 	if [[ ! -f $input ]]; then
 		gu_check_build_uncached "$input" "$expected"; return $?
 	fi

@@ -79,6 +79,8 @@ def read_sexes(path: Path) -> dict[str, str]:
 			fail(f"{path} must contain tab-separated sample and sex columns")
 		out = {}
 		for row in reader:
+			if row["sample"] in out:
+				fail(f"duplicate sample in sex metadata: {row['sample']}")
 			sex = str(row["sex"]).strip().lower()
 			if sex in {"1", "m", "male"}:
 				sex = "male"
@@ -134,14 +136,16 @@ def archaic_vcf(root: Path, ref: str, chrom: str) -> Path:
 	dirs = []
 	for alias in aliases:
 		dirs += [root / alias, root / "avcf" / alias]
-	patterns = [f"*chr{chrom}_*.vcf.gz", f"*chr{chrom}.*.vcf.gz", f"*chr{chrom}.vcf.gz", f"*{chrom}.vcf.gz"]
+	patterns = [f"*chr{chrom}_*.vcf.gz", f"*chr{chrom}.*.vcf.gz", f"*chr{chrom}.vcf.gz", f"*.{chrom}.mod.vcf.gz", f"{chrom}.vcf.gz"]
 	for directory in dirs:
 		if not directory.is_dir():
 			continue
-		for pattern in patterns:
-			found = sorted(x for x in directory.glob(pattern) if x.is_file() and x.stat().st_size)
-			if found:
-				return found[0]
+		found = sorted({x for pattern in patterns for x in directory.glob(pattern)
+			if x.is_file() and x.stat().st_size and not Path(str(x) + ".aria2").exists()})
+		if len(found) > 1:
+			fail(f"ambiguous archaic VCF ref={ref} chr={chrom}: provide one version in {directory}")
+		if found:
+			return found[0]
 	fail(f"archaic VCF ref={ref} chr={chrom} not found under {root}")
 
 
@@ -313,6 +317,7 @@ def archaic_calls(
 	_, rows = query_rows(vcf, f"{contig}:{locus['start'] + 1}-{locus['end']}")
 	wanted = {x["pos"]: x for x in modern_sites}
 	calls: dict[int, str] = {}
+	seen = set()
 	for fields in rows:
 		if len(fields) < 6:
 			continue
@@ -320,6 +325,14 @@ def archaic_calls(
 		pos_i = int(pos)
 		if pos_i not in wanted:
 			continue
+		# Split multiallelic or duplicate records cannot use a last-row-wins
+		# rule: a later 0/0 record can otherwise erase a heterozygous call.
+		if pos_i in seen:
+			calls[pos_i] = "N"
+			if audit is not None:
+				audit[pos_i] = "duplicate_archaic_position"
+			continue
+		seen.add(pos_i)
 		observed = []
 		for gt in gts:
 			observed.extend(called_base(ref.upper(), alt.upper(), gt, phased_required=False))
@@ -557,7 +570,7 @@ def prepare(a):
 		search_flank_bp=a.window,
 	)
 	if a.build == "38" and leads:
-		binary = Path(os.environ.get("GU_LIFTOVER", "/mnt/d/software/bin/liftOver"))
+		binary = Path(os.environ.get("GU_LIFTOVER", shutil.which("liftOver") or str(Path(os.environ.get("GU_SOFT", str(Path.home()/".local/share/gu"))) / "bin/liftOver")))
 		print(
 			f"[GU GWAS] liftOver={binary.resolve()} sha256={hashlib.sha256(binary.read_bytes()).hexdigest()}",
 			flush=True,
@@ -631,7 +644,7 @@ def phyml_gwas_input_cli():
 	p.add_argument("--output", type=Path, required=True)
 	p.add_argument("--build", choices=["37", "38"], required=True)
 	p.add_argument("--window", type=int, default=500000)
-	p.add_argument("--chain", type=Path, default=Path("/mnt/d/files/liftOver/hg38ToHg19.over.chain.gz"))
+	p.add_argument("--chain", type=Path, default=Path(os.environ.get("GU_COJO_CHAIN", str(Path(os.environ.get("GU_FILES_ROOT", str(Path.home()/"files"))) / "liftOver/hg38ToHg19.over.chain.gz"))))
 	args = p.parse_args()
 	args.output.mkdir(parents=True, exist_ok=True)
 	with (args.output / ".prepare.lock").open("w") as lock:
@@ -734,7 +747,7 @@ def seal(phy, req, execution=None):
 	q.replace(p)
 
 
-def reusable(phy, req, adopt=True):
+def reusable(phy, req):
 	why = completion_error(phy, req["bootstrap"])
 	if why:
 		return False, why
@@ -751,29 +764,7 @@ def reusable(phy, req, adopt=True):
 		except (OSError, ValueError, KeyError):
 			return False, "invalid completion receipt"
 		return True, "verified completion receipt"
-	# Adopt historical results only when their own full log proves completion
-	# and the input predates the main tree. Subsequent reuse uses content hashes.
-	log = Path(str(phy) + ".phyml.log").read_text(errors="replace")
-	import shlex
-
-	command = re.search(r"\. Command line:\s*(.*)", log)
-	try:
-		args = shlex.split(command.group(1)) if command else []
-	except ValueError:
-		args = []
-	if not args or Path(args[0]).name != Path(req["binary"]).name:
-		return False, "historical executable does not match"
-	options = [("-i", str(phy)), ("-m", "HKY85"), ("-c", "4"), ("-a", "e"), ("-v", "e"), ("-b", str(req["bootstrap"]))]
-	if "seed" in req:
-		options.append(("--r_seed", str(req["seed"])))
-	for key, val in options:
-		if key not in args or args.index(key) + 1 >= len(args) or args[args.index(key) + 1] != val:
-			return False, "historical command does not match requested input/options"
-	if phy.stat().st_mtime_ns > Path(str(phy) + "_phyml_tree.txt").stat().st_mtime_ns:
-		return False, "input newer than historical tree"
-	if adopt:
-		seal(phy, req)
-	return True, "verified complete historical bootstrap"
+	return False, "completion receipt missing"
 
 
 def protected_result(phy, boot=100):
@@ -883,7 +874,7 @@ def run_attempt(phy, cmd, deadline):
 				f.write("[GU PHYML] Timeout budget exhausted before starting this attempt\n")
 				return 124
 			# MPI otherwise consumes the caller's remaining task-list lines.
-			guard = Path(__file__).resolve().parents[2] / "0f/process_lifetime.py"
+			guard = Path(__file__).resolve().parent / "process_lifetime.py"
 			proc = subprocess.Popen(
 				[sys.executable, str(guard), "--parent-pid", str(os.getpid()), "--", *cmd],
 				stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT, start_new_session=False,
@@ -936,7 +927,7 @@ def phyml_run_main():
 	mpi = shutil.which("phyml-mpi")
 	mpirun = shutil.which("mpirun")
 	if os.environ.get("PHYML_BACKEND") == "cuda":
-		serial = os.environ.get("PHYML_GPU_BIN", "/mnt/d/software/gu/phyml-gpu/phyml-gpu")
+		serial = os.environ.get("PHYML_GPU_BIN", str(Path(os.environ.get("GU_SOFT", Path.home()/".local/share/gu"))/"phyml-gpu/phyml-gpu"))
 		if not os.access(serial, os.X_OK):
 			raise RuntimeError("PhyML GPU binary unavailable; run bash f/phyml_gpu/build.sh")
 		mpi = mpirun = None
@@ -953,7 +944,7 @@ def run_locked(a, phy, serial, mpi, mpirun):
 	# Changing the execution CPU count alone must not replace a complete tree.
 	for binary in dict.fromkeys(x for x in (serial, mpi) if x):
 		req = phyml_run_request(phy, a.bootstrap, Path(binary).resolve(), a.seed)
-		ok, why = reusable(phy, req, adopt=not a.verify_only)
+		ok, why = reusable(phy, req)
 		if ok and not force:
 			if not a.verify_only:
 				state(phy, a.scope, "COMPLETE_VERIFIED", 0)
@@ -1087,7 +1078,7 @@ def phyml_run_cli():
 """Validate whole-locus completion before launching a GU worker.
 
 Large reference files use path/size/mtime fingerprints; small results use SHA256.
-Historical runs require an explicit successful worker footer, never just TSVs.
+Reuse requires a matching completion receipt and verified output hashes.
 """
 import argparse
 import csv
@@ -1126,11 +1117,11 @@ def command(path):
 		raise ValueError("not a phyml worker")
 	env["PHYML_BACKEND"] = "cuda" if argv[1] == "phyml-GPU" else "cpu"
 	args = argv[2:]
-	if args[:1] == ["run"]:
-		args = args[1:]
 	for flag in ("--keep-males",):
 		if flag in args:
-			args.insert(args.index(flag) + 1, "TRUE")
+			i = args.index(flag) + 1
+			if i == len(args) or args[i].startswith("--"):
+				args.insert(i, "TRUE")
 	if len(args) % 2 or any(not k.startswith("--") for k in args[::2]):
 		raise ValueError("unsupported worker arguments")
 	opts = dict(zip(args[::2], args[1::2]))
@@ -1145,7 +1136,7 @@ def phyml_locus_cache_request(cmd, archaic_root):
 	lead = [r for r in rows(Path(env["GU_PHYML_LEAD_TABLE"])) if r["locus_id"] == bed[3]]
 	if len(lead) != 1:
 		raise ValueError("missing original lead")
-	prefix = Path(opts["--target-dir"])
+	prefix = Path(opts["--dir-target"])
 	ch = bed[0].removeprefix("chr")
 	sources = [
 		p
@@ -1167,7 +1158,7 @@ def phyml_locus_cache_request(cmd, archaic_root):
 	if opts.get("--keep"): sources.append(Path(opts["--keep"]))
 	if opts.get("--keep-psam"): sources.append(Path(opts["--keep-psam"].rsplit(',', 2)[0]))
 	if opts.get("--target", "").startswith("ukb-"):
-		aa_root = Path(env.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf")
+		aa_root = Path(env.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("PHYML_ANCESTRAL_VCF_DIR") or os.environ.get("GU_REF_ROOT", str(Path.home()/"gen")) + "/1kg/37/vcf")
 		aa_source = vcf_path(aa_root, ch)
 		sources += [aa_source, Path(str(aa_source) + '.tbi'), Path(str(aa_source) + '.csi')]
 	root = Path(archaic_root)
@@ -1192,7 +1183,7 @@ def phyml_locus_cache_request(cmd, archaic_root):
 	}
 	code = {name: phyml_locus_cache_digest(Path(__file__).with_name(name)) for name in ("phyml.py", "phyml.R")}
 	backend = env.get("PHYML_BACKEND", "cpu")
-	gpu_binary = Path(env.get("PHYML_GPU_BIN", "/mnt/d/software/gu/phyml-gpu/phyml-gpu"))
+	gpu_binary = Path(env.get("PHYML_GPU_BIN", str(Path(env.get("GU_SOFT", Path.home()/".local/share/gu"))/"phyml-gpu/phyml-gpu")))
 	return dict(
 		schema=1,
 		workflow=WORKFLOW,
@@ -1254,7 +1245,7 @@ def successful(cmd, req, evidence_log=None):
 		raise ValueError("lead changed")
 	params = json.loads((out / "final/gwas_parameters.json").read_text())
 	if params["workflow"] != WORKFLOW:
-		raise ValueError("historical workflow changed")
+		raise ValueError("workflow changed")
 	summaries = rows(out / "final/gwas_loci.tsv")
 	timed_out = len(summaries) == 2 and all(r['status'] == 'tree_failed' and r['reason'] == 'tree_timeout' for r in summaries)
 	if timed_out:
@@ -1288,47 +1279,16 @@ def successful(cmd, req, evidence_log=None):
 
 def process(mode, cmd, archaic_root):
 	receipt = cmd.parent / ".phyml.locus.complete.json"
-	if mode == "adopt" and receipt.exists():
-		return False
-	if mode == 'check':
-		if command(cmd)[1].get('--replace-phyml', 'FALSE') == 'TRUE':
+	if mode == "check":
+		if command(cmd)[1].get("--replace-phyml", "FALSE") == "TRUE" or not receipt.is_file():
 			return False
-		if not receipt.is_file():
-			# Pending/interrupted loci have no success evidence. Reject them
-			# before enumerating reference files for every unscheduled worker.
-			return process('adopt', cmd, archaic_root)
-	if mode == "adopt":
-		# Reject interrupted historical workers before scanning references.
-		log = cmd.with_suffix(".log").read_text()
-		if cmd.with_suffix(".err").exists() or f"analysis_unit={cmd.stem} status=complete" not in log:
-			raise ValueError("no successful worker completion")
 	req = phyml_locus_cache_request(cmd, archaic_root)
 	if mode == "check":
 		data = json.loads(receipt.read_text())
-		params = json.loads((cmd.parent / "final/gwas_parameters.json").read_text())
-		if params.get("lead_matching_rule") != LEAD_MATCHING_RULE and any(
-			r.get("status") == "lead_absent_or_ambiguous" for r in rows(cmd.parent / "final/gwas_loci.tsv")
-		):
-			# These skipped loci have no fitted tree to preserve. Recheck the
-			# old ordered-allele rejection once under the corrected matcher.
+		if data.get("outcome") == "timeout" and os.environ.get("PHYML_RETRY_TIMEOUTS") == "TRUE":
 			return False
-		if data.get('outcome') == 'timeout' and os.environ.get('PHYML_RETRY_TIMEOUTS') == 'TRUE':
-			return False
-		# Code hashes record provenance, not permission to replace completed
-		# analyses. Actual inputs/options and output integrity still must match.
-		saved = {k: v for k, v in data["request"].items() if k != "code"}
-		current = {k: v for k, v in req.items() if k != "code"}
-		outputs = {name: value for name, value in data["outputs"].items() if phyml_scientific_output(name)}
-		return saved == current and outputs == phyml_locus_cache_outputs(cmd.parent)
+		return data["request"] == req and data["outputs"] == phyml_locus_cache_outputs(cmd.parent)
 	outcome = successful(cmd, req)
-	if mode == "adopt":
-		# Old runs have no source fingerprints. Only adopt sources older than
-		# their successful log, with the original command and exact saved lead.
-		finished = cmd.with_suffix(".log").stat().st_mtime_ns
-		if any(stamp[1] > finished for stamp in req["sources"].values()):
-			return False
-		if cmd.stat().st_mtime_ns > finished:
-			return False
 	data = dict(request=req, outputs=phyml_locus_cache_outputs(cmd.parent), outcome=outcome)
 	tmp = receipt.with_name(receipt.name + f".{os.getpid()}.tmp")
 	tmp.write_text(json.dumps(data, indent=2) + "\n")
@@ -1338,7 +1298,7 @@ def process(mode, cmd, archaic_root):
 
 def phyml_locus_cache_main():
 	p = argparse.ArgumentParser(description=__doc__)
-	p.add_argument("mode", choices=("check", "seal", "adopt", "partition"))
+	p.add_argument("mode", choices=("check", "seal", "partition"))
 	p.add_argument("cmd", type=Path)
 	p.add_argument("--pending", type=Path)
 	p.add_argument("--archaic-root", required=True)
@@ -1563,7 +1523,7 @@ def run_verified_tree(command):
 
 
 def annotate_ukb_ancestor(sites, chrom, locus):
-	root = Path(os.environ.get("PHYML_ANCESTRAL_VCF_DIR", os.environ.get("GU_REF_ROOT", "/mnt/f/gen") + "/1kg/37/vcf"))
+	root = Path(os.environ.get("PHYML_ANCESTRAL_VCF_DIR", os.environ.get("GU_REF_ROOT", str(Path.home()/"gen")) + "/1kg/37/vcf"))
 	source = vcf_path(root, chrom)
 	contig = vcf_contig(source, chrom)
 	wanted = {(s["pos"], s["ref"], s["alt"]) for s in sites}
@@ -2152,9 +2112,8 @@ def phyml_gwas_main():
 		print("[GU PHYML] original lead, " + ("selected UKB cohort" if a.dataset.startswith("ukb-") else "1KG EUR") + " LD and recurrent-haplotype workflow configured")
 		return
 	a.out.mkdir(parents=True, exist_ok=True)
-	lock_root = Path("/tmp/gu-locks")
-	lock_root.mkdir(parents=True, exist_ok=True)
-	with (lock_root / (hashlib.sha256(str(a.out.resolve()).encode()).hexdigest()[:16] + ".lock")).open("a") as lock:
+	# Shared output storage also serializes duplicate jobs on different HPC nodes.
+	with (a.out / ".phyml.locus.lock").open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		raise SystemExit(run_locus(a, rows[0]))
 
@@ -2189,7 +2148,7 @@ def validate(copies, con, threshold=0.8):
 	"""Same sample and actual tract; TRACE supports unknown ancestry, not lineage."""
 	con.row_factory = sqlite3.Row
 	runs = {
-		(r["dataset_id"], r["genome_build"], dl.dual_lead_chrom(r["chr"]), r["method"]): dict(r)
+		(r["dataset_id"], r["genome_build"], dl.chrom(r["chr"]), r["method"]): dict(r)
 		for r in con.execute("SELECT * FROM method_runs")
 	}
 	for unit, run in runs.items():
@@ -2205,7 +2164,7 @@ def validate(copies, con, threshold=0.8):
 			if bed.is_file():
 				for line in bed.read_text().splitlines():
 					fields = line.split()
-					if len(fields) >= 3 and dl.dual_lead_chrom(fields[0]) == unit[2]:
+					if len(fields) >= 3 and dl.chrom(fields[0]) == unit[2]:
 						run["_scope"].append((int(fields[1]), int(fields[2])))
 		if unit[3] == "ibdmix":
 			meta = dict(line.split("\t", 1) for line in text.splitlines() if "\t" in line)
@@ -2267,7 +2226,7 @@ def validate(copies, con, threshold=0.8):
 				and (method != "ibdmix" or c["lineage"] in run.get("_tested_lineages", set()))
 			)
 			compared = complete and in_scope and in_panel
-			eligible = compared and dl.dual_lead_truth(run.get("evidence_eligible"))
+			eligible = compared and dl.truth(run.get("evidence_eligible"))
 			pool = segments.get((*unit, c["sample_id"], method), [])
 			pool = [s for s in pool if method == "trace" or s["source_class"] == c["lineage"]]
 			samephase = [s for s in pool if str(s.get("haplotype")) == str(c["haplotype"])] if method == "trace" else []
@@ -2327,7 +2286,7 @@ def attach_validation(rows, validation, runs, by_hap=False):
 				else "not_evaluable_scope_or_panel"
 				if not vv
 				else "exploratory"
-				if not dl.dual_lead_truth(run.get("evidence_eligible"))
+				if not dl.truth(run.get("evidence_eligible"))
 				else "overlap_detected"
 				if passing
 				else "partial_overlap"
@@ -2405,31 +2364,8 @@ def saved_locus_audit(path, row):
 	lineage = row.get("lineage", "Neanderthal")
 	lineage = "Denisovan" if lineage == "Denisova" else lineage
 	saved_trees = read_saved(path.parent / "evidence_trees.tsv")
-	tree = next((t for t in saved_trees if t.get("expected_lineage", t.get("candidate_lineage")) == lineage), {})
+	tree = next((t for t in saved_trees if t.get("expected_lineage") == lineage), {})
 	result.update(allele_topology_audit(tree.get("tree_newick", ""), haps, lineage, tree.get("tree_status") == "complete"))
-	receipt = path.parent.parent / '.phyml.locus.complete.json'
-	if receipt.is_file() and not row.get('n_panel') and str(row.get('chr')) != 'X':
-		request = json.loads(receipt.read_text()).get('request', {})
-		male = str(request.get('environment', {}).get('GU_CHRX_MALE_ONLY', '')).upper() in ('1', 'TRUE')
-		wanted = ('chrX.male' if str(row.get('chr')) == 'X' and male else 'chr' + str(row.get('chr'))) + '.psam'
-		for filename, stamp in request.get('sources', {}).items():
-			original = Path(filename)
-			if original.name != wanted: continue
-			candidates = [original]
-			if '/1kg/' in filename:
-				candidates.append(Path(os.environ.get('GU_REF_ROOT', '/mnt/f/gen')) / '1kg' / filename.split('/1kg/', 1)[1])
-			for source in candidates:
-				try:
-					stat = source.stat()
-				except OSError:
-					continue
-				if [stat.st_size, stat.st_mtime_ns] != stamp: continue
-				with source.open() as handle:
-					header = handle.readline().split()
-					ids = [line.split()[header.index('IID') if 'IID' in header else header.index('#IID')] for line in handle if line.strip()]
-				result.update(n_panel=len(set(ids)), n_panel_copies=len(set(ids)) * (1 if male else 2), panel_count_source='verified_saved_psam_fingerprint')
-				if male: result['x_mode'] = 'male_haploid_nonpar'
-				break
 	if sites:
 		result.update(lead_retained_for_tree=int(int(row["lead_pos"]) in positions), high_ld_sites_retained_for_tree=sum(p in positions for p in markers))
 	if ld:
@@ -2448,7 +2384,7 @@ def saved_locus_audit(path, row):
 		ancestor = dict(zip([int(r["pos"]) for r in sites], anc[0]["seq"]))
 		result["ld_ancestral_risk_matches_retained"] = sum(ancestor.get(int(r["pos"]), "N") == r.get("risk_linked_allele") for r in high)
 	result["site_qc_file"] = str(loc / "site_qc.tsv") if (loc / "site_qc.tsv").is_file() else ""
-	result["site_missingness_audit"] = "recorded" if (loc / "site_qc.tsv").is_file() else "unknown_historical_per_reference_calls_not_saved"
+	result["site_missingness_audit"] = "recorded" if (loc / "site_qc.tsv").is_file() else "missing_site_qc"
 	result["ld_span_bp"] = int(row["core_end"]) - int(row["core_start"]) if row.get("core_kb") else None
 	result["archaic_shared_tract_bp"] = None
 	result["ils_statistic_scope"] = "LD_span_sensitivity_only;not_shared_tract_evidence"
@@ -2772,7 +2708,7 @@ def phyml_audit_main(p):
 			types=["numeric" if k in numeric or k.startswith(("n_", "ld_markers_")) else "character" for k in fields]))
 	job = a.output / "workbook.json"
 	job.write_text(json.dumps(spec))
-	writer = Path(__file__).resolve().parents[2] / "0f/results.py"
+	writer = Path(__file__).resolve().parent / "results.py"
 	subprocess.run([p.sys.executable, str(writer), "stream-workbook", str(job), str(a.output / "phyml_audit.xlsx")], check=True)
 	print(json.dumps(dict(n_leads=len(leads), supported_allele_tests=len(supported), stages=stages), ensure_ascii=False), flush=True)
 

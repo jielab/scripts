@@ -390,7 +390,7 @@ biallelic variants, phased GTs, and a normalized INFO/AA field. INFO/AA, rather
 than VCF REF, is used as the ancestral state.
 
 Large VCF-Zarr intermediates are created below a Linux temporary directory
-(default: /tmp), not beside the final output on /mnt/d. This is important in
+(default: /tmp), not beside the final results. This is important in
 WSL because Zarr contains many small files and is extremely slow to create or
 remove on a Windows-mounted filesystem.
 """
@@ -668,8 +668,10 @@ def infer_main() -> None:
 		("mutation rate", args.mutation_rate),
 		("population size", args.population_size),
 	):
-		if value <= 0:
-			infer_die(f"{name} must be positive")
+		if not math.isfinite(value) or value <= 0:
+			infer_die(f"{name} must be finite and positive")
+	if args.mismatch_ratio is not None and (not math.isfinite(args.mismatch_ratio) or args.mismatch_ratio <= 0):
+		infer_die("mismatch ratio must be finite and positive")
 	args.vcf = args.vcf.resolve()
 	if not args.vcf.is_file() or args.vcf.stat().st_size == 0:
 		infer_die(f"Input VCF is missing or empty: {args.vcf}")
@@ -701,9 +703,23 @@ def infer_main() -> None:
 
 	sample_ids = infer_extract_sample_ids(args.vcf)
 	phase_qc = infer_check_phasing(args.vcf, args.phase_check_records)
-	# Checkpoint identity follows the requested output, not input metadata.
-	work = args.tmp_root / f"gu_arg_{args.out.stem}"
+	# A kept checkpoint belongs to one exact source/configuration. Reusing only
+	# the output basename could silently consume old VCF-Zarr/ancestor data after
+	# input replacement or collide with another cohort's chr1 in the same /tmp.
+	stamp = args.vcf.stat()
+	checkpoint_request = {
+		"input": [str(args.vcf), stamp.st_size, stamp.st_mtime_ns],
+		"output": str(args.out.resolve()),
+		"code": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+		"options": {k: getattr(args, k) for k in ('chr', 'recombination_rate', 'mutation_rate', 'population_size', 'tsdate_method', 'mismatch_ratio', 'one_bit', 'sample_match_min_work')},
+		"versions": {m.__name__: infer_version_of(m) for m in (tsinfer, tsdate, tskit, zarr)},
+	}
+	checkpoint_key = hashlib.sha256(json.dumps(checkpoint_request, sort_keys=True).encode()).hexdigest()[:20]
+	work = args.tmp_root / f"gu_arg_{args.out.stem}_{checkpoint_key}"
 	work.mkdir(parents=True, exist_ok=True)
+	checkpoint_lock = (args.tmp_root / f'.gu_arg_{checkpoint_key}.lock').open('a')
+	fcntl.flock(checkpoint_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+	(work / 'request.json').write_text(json.dumps(checkpoint_request, sort_keys=True, indent=2) + '\n')
 	started = time.time()
 	completed = False
 	try:
@@ -1080,6 +1096,9 @@ def trace_validate(ts: tskit.TreeSequence, rows: list[tuple[int, str, int]], chr
 			f"TRACE sample map does not bijectively cover chr{chrom} sample nodes: "
 			f"rows={len(rows)} samples={len(nodes)}"
 		)
+	identities = [(sample, hap) for _, sample, hap in rows]
+	if len(identities) != len(set(identities)) or any(not sample for sample, _ in identities):
+		raise SystemExit(f"TRACE sample map contains duplicate/empty biological haplotypes for chr{chrom}")
 	positions = [site.position for site in ts.sites()]
 	span = (max(positions) - min(positions)) / max(1.0, float(ts.sequence_length))
 	if any(hap < 1 for _, _, hap in rows):
@@ -1174,6 +1193,7 @@ def trace_main() -> None:
 	out_qc = args.out_dir / f"chr{args.chr}.arg_qc.json"
 	out_meta = args.out_dir / f"chr{args.chr}.trace.meta.json"
 	source_signature = {
+		"exporter_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
 		"tree": [str(args.tree.resolve()), args.tree.stat().st_size, args.tree.stat().st_mtime_ns],
 		"sample_map": [
 			str(args.sample_map.resolve()),
@@ -1528,13 +1548,13 @@ def singer_parse():
 	p.add_argument("--method", choices=["singer"], default="singer")
 	p.add_argument("--action", choices=["all", "build", "prepare", "check"], default="build")
 	p.add_argument("--format", choices=["native", "trace"], default="native")
-	p.add_argument("--dir-gen", default="/mnt/f/gen/1kg/37")
-	p.add_argument("--dir-vcf", "--target-vcf-dir", dest="dir_vcf")
-	p.add_argument("--arg-dir")
-	p.add_argument("--gen4arg-dir")
-	p.add_argument("--sample-file", "--sample-panel", dest="sample_file")
+	p.add_argument("--dir-gen", default=str(Path(os.environ["GU_REF_ROOT"]) / "1kg/37"))
+	p.add_argument("--dir-vcf", dest="dir_vcf")
+	p.add_argument("--dir-arg", dest="arg_dir")
+	p.add_argument("--dir-gen4arg", dest="gen4arg_dir")
+	p.add_argument("--sample-panel", dest="sample_file")
 	p.add_argument("--keep")
-	p.add_argument("--chr", "--chrs", dest="chr", default="1-22,X")
+	p.add_argument("--chr", dest="chr", default="1-22,X")
 	p.add_argument("--grch", default="37")
 	p.add_argument("--replace", type=str.upper, choices=["TRUE", "FALSE"], default="FALSE")
 	p.add_argument("--threads", type=int, default=1, help="total CPU budget; each SINGER window uses one CPU")
@@ -2507,7 +2527,7 @@ def threads_repack(source, output, chrom, source_map):
 	"""Stream PGEN; enforce phase and unique positions, pack only real X copies."""
 	from importlib.util import module_from_spec, spec_from_file_location
 
-	grid = Path(os.environ.get("REFGEN_GRID_ROOT", threads_HERE.parents[1] / "grid")) / "f"
+	grid = Path(os.environ.get("GU_ARG_HELPERS", threads_HERE))
 	_spec = spec_from_file_location("grid_arg_helpers", grid / "0.arg.py")
 	_grid_arg = module_from_spec(_spec)
 	_spec.loader.exec_module(_grid_arg)
@@ -2998,7 +3018,7 @@ def threads_arg_threads_main():
 		for chrom in chrs:
 			threads_check(chrom, out)
 		return
-	grid = Path(os.environ.get("REFGEN_GRID_ROOT", threads_HERE.parents[1] / "grid")) / "f"
+	grid = Path(os.environ.get("GU_ARG_HELPERS", threads_HERE))
 	sys.path.insert(0, str(grid))
 	if not shutil.which("plink2"):
 		raise ValueError("plink2 is missing from PATH")

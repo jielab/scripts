@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
 # Conda activate/deactivate hooks in common geospatial packages are not nounset-safe.
 set -eo pipefail
 
@@ -15,20 +8,16 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source "$ROOT/f/0.common.sh"
 gu_load_config
 ENV_NAME=${GU_ENV_NAME:-gu}
-SOFT=${GU_SOFT:-/mnt/d/software/gu}
+SOFT=${GU_SOFT:-$HOME/.local/share/gu}
 STATE=${GU_INSTALL_STATE:-$SOFT/.gu-install.state}
 YML=$ROOT/environment.yml
 IBDMIX_DIR=${IBDMIX_RUNTIME:-$SOFT/ibdmix}
-AS3_DIR=$ROOT/f/as3
 TRACE_DIR=${TRACE_RUNTIME:-$SOFT/trace}
-AS3_ENV_NAME=${AS3_ENV_NAME:-as3_mamba}
-AS3_PYTHON_VERSION=${AS3_PYTHON_VERSION:-3.9}
-DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
-REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
-AS3_MODEL_DIR=${AS3_MODEL_DIR:-$REF_ROOT/archaic/38/models}
+DATA_ROOT=$GU_DATA_ROOT
+REF_ROOT=$GU_REF_ROOT
 TARGET_ROOT=${GU_TARGET_ROOT:-$REF_ROOT/1kg/37}
 TARGET_VCF_DIR=${GU_TARGET_VCF_DIR:-$TARGET_ROOT/vcf}
-SAMPLE_PANEL=${GU_SAMPLE_PANEL:-$TARGET_ROOT/samples.txt}
+SAMPLE_PANEL=${GU_SAMPLE_PANEL:-$REF_ROOT/1kg/38/samples.txt}
 ARCHAIC_ROOT=${GU_ARCHAIC_ROOT:-${GU_ARCHAIC37_ROOT:-$REF_ROOT/archaic/37/vcf}}
 
 
@@ -40,9 +29,12 @@ Modules:
     --arg  Install Threads and SINGER environments
 
 Main options:
+    --GPU TRUE|FALSE  Build optional IBDmix CUDA backend (default FALSE)
     --check  Check GU software
+    --check-ibdmix  Check only the CPU IBDmix runtime (no installation)
     --check-references  Check reference inputs
-    -h, --help  Help; details: 0.README.md
+    --dir-software DIR  Software installation root (see f/runtime.env)
+    -h, --help  Help; details: README.md
 
 Example:
     ./install.sh                 # GU software and environment
@@ -60,56 +52,18 @@ install_threads() (
 	set -euo pipefail
 	runtime=${GU_THREADS_ENV:-$HOME/.venvs/gu-threads}
 	python=${GU_THREADS_PYTHON:-python3}
+	[[ ! -x $runtime/bin/python ]] || python=$runtime/bin/python
 	"$python" -c 'import sys; assert sys.version_info >= (3, 12), "Threads tested environment requires Python >=3.12; set GU_THREADS_PYTHON"'
-	"$python" -m venv "$runtime"
+	if [[ ! -d $runtime/conda-meta ]]; then "$python" -m venv "$runtime"; fi
 	# Pinned threads environment; keep independent of the other ARG backend.
 	"$runtime/bin/python" -m pip install -r /dev/stdin <<'GU_THREADS_REQUIREMENTS'
-arg-needle-lib==1.1.3
-attrs==26.1.0
-certifi==2026.7.22
-charset-normalizer==3.5.1
-click==8.5.0
-coloredlogs==15.0.1
-cyvcf2==0.34.0
-demes==0.2.3
-donfig==0.8.1.post1
-filelock==3.32.5
-google-crc32c==1.8.0
-h5py==3.16.0
-humanfriendly==10.0
-humanize==4.16.0
-idna==3.19
-jsonschema==4.26.0
-jsonschema-specifications==2025.9.1
-llvmlite==0.49.0
-msgpack==1.2.2
-msprime==1.4.4
-newick==1.11.0
-numba==0.67.0
-numcodecs==0.16.5
-numpy==2.5.2
-packaging==26.3
-pandas==3.0.5
-Pgenlib==0.94.1
-protobuf==7.36.1
-python-dateutil==2.9.0.post0
-PyYAML==6.0.3
-ray==2.58.0
-referencing==0.37.0
-requests==2.34.2
-rpds-py==2026.6.3
-ruamel.yaml==0.19.1
-scipy==1.18.1
-six==1.17.0
 threads-arg==0.2.1
-tqdm==4.70.0
-tskit==1.0.3
-tszip==0.3.1
-typing_extensions==4.16.0
-urllib3==2.7.0
-xarray==2026.7.0
-zarr==3.3.0
+arg-needle-lib==1.1.3
+pysam>=0.23,<0.24
+tszip>=0.2,<1
+
 GU_THREADS_REQUIREMENTS
+	"$runtime/bin/python" -m pip freeze >"$runtime/requirements.lock.txt"
 	"$runtime/bin/threads" infer --help
 )
 
@@ -119,19 +73,20 @@ install_singer() (
 	prefix=${GU_SINGER_HOME:-$HOME/software/singer-0.1.9}
 	archive=$(mktemp --suffix=.tar.gz)
 	trap 'rm -f "$archive"' EXIT
-	curl -fL --retry 3 -o "$archive" https://raw.githubusercontent.com/popgenmethods/SINGER/eb8e39b1a15be4a9a4df4fdaab61847bf73515d7/releases/singer-0.1.9-beta-linux-x86_64.tar.gz
+	/usr/bin/curl -fL --retry 3 -o "$archive" https://raw.githubusercontent.com/popgenmethods/SINGER/eb8e39b1a15be4a9a4df4fdaab61847bf73515d7/releases/singer-0.1.9-beta-linux-x86_64.tar.gz
 	printf '%s  %s\n' accd2cf432092aec64f27ddc88a25098974060f25d54e477c0603afbad8e91b8 "$archive" | sha256sum -c -
 	mkdir -p "$prefix"
 	tar -xzf "$archive" -C "$prefix" --strip-components=1
-	"${GU_SINGER_PYTHON:-python3}" -m venv "$runtime"
+	if [[ ! -d $runtime/conda-meta ]]; then "${GU_SINGER_PYTHON:-python3}" -m venv "$runtime"; fi
 	# Pinned singer environment; keep independent of the other ARG backend.
 	"$runtime/bin/python" -m pip install -r /dev/stdin <<'GU_SINGER_REQUIREMENTS'
-tskit==1.0.2
-numpy==2.4.3
+tskit>=1.0,<2
+numpy>=2,<3
 pysam==0.23.3
 tszip==0.3.1
-msprime==1.3.4
+msprime>=1.3,<2
 GU_SINGER_REQUIREMENTS
+	"$runtime/bin/python" -m pip freeze >"$runtime/requirements.lock.txt"
 	"$runtime/bin/python" "$prefix/singer_master" --help >/dev/null
 	"$runtime/bin/python" "$prefix/convert_to_tskit" --help >/dev/null
 	printf 'SINGER 0.1.9 installed: %s\nPython runtime: %s\n' "$prefix" "$runtime"
@@ -169,21 +124,28 @@ need_value() { [[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || {
 
 INSTALL_ACTION=install
 CONDA_INPUT=""
+BUILD_GPU=FALSE
+IBDMIX_COMMIT=6a9d4bc67dcaf602e65cac0fa6191e1e7a1291ef
+TRACE_COMMIT=70cab6c6687900826eb0b2ded69c39554b1b4146
 
 
 # 🚩 Command-line arguments
 while (($#)); do
 	case "$1" in
+		--GPU)
+			need_value "$@"
+			case "${2^^}" in TRUE|FALSE) BUILD_GPU=${2^^} ;; *) echo "ERROR: --GPU requires TRUE or FALSE" >&2; exit 2 ;; esac
+			shift 2 ;;
+		--check-ibdmix)
+			INSTALL_ACTION=check-ibdmix
+			shift
+			;;
 		--check)
 			INSTALL_ACTION=check
 			shift
 			;;
 		--check-references)
 			INSTALL_ACTION=check-references
-			shift
-			;;
-		--repair-as3)
-			INSTALL_ACTION=repair-as3
 			shift
 			;;
 		--env-name)
@@ -196,7 +158,7 @@ while (($#)); do
 			CONDA_INPUT=$2
 			shift 2
 			;;
-		--software-dir)
+		--dir-software)
 			need_value "$@"
 			SOFT=$2
 			STATE=$SOFT/.gu-install.state
@@ -204,43 +166,43 @@ while (($#)); do
 			TRACE_DIR=$SOFT/trace
 			shift 2
 			;;
-		--ibdmix-dir)
+		--dir-ibdmix)
 			need_value "$@"
 			IBDMIX_DIR=$2
 			shift 2
 			;;
-		--trace-dir)
+		--dir-trace)
 			need_value "$@"
 			TRACE_DIR=$2
 			shift 2
 			;;
-		--data-root)
+		--dir-data-root)
 			need_value "$@"
 			DATA_ROOT=$2
-			REF_ROOT=/mnt/f/gen
+			REF_ROOT=$DATA_ROOT/gen
 			TARGET_ROOT=$REF_ROOT/1kg/37
 			TARGET_VCF_DIR=$TARGET_ROOT/vcf
-			SAMPLE_PANEL=$TARGET_ROOT/samples.txt
+			SAMPLE_PANEL=$REF_ROOT/1kg/38/samples.txt
 			ARCHAIC_ROOT=$REF_ROOT/archaic/37/vcf
 			shift 2
 			;;
-		--reference-root)
+		--dir-reference-root)
 			need_value "$@"
 			REF_ROOT=$2
 			TARGET_ROOT=$REF_ROOT/1kg/37
 			TARGET_VCF_DIR=$TARGET_ROOT/vcf
-			SAMPLE_PANEL=$TARGET_ROOT/samples.txt
+			SAMPLE_PANEL=$REF_ROOT/1kg/38/samples.txt
 			ARCHAIC_ROOT=$REF_ROOT/archaic/37/vcf
 			shift 2
 			;;
-		--target-root)
+		--dir-target-root)
 			need_value "$@"
 			TARGET_ROOT=$2
 			TARGET_VCF_DIR=$TARGET_ROOT/vcf
 			SAMPLE_PANEL=$TARGET_ROOT/samples.txt
 			shift 2
 			;;
-		--target-vcf-dir)
+		--dir-target-vcf)
 			need_value "$@"
 			TARGET_VCF_DIR=$2
 			shift 2
@@ -250,14 +212,9 @@ while (($#)); do
 			SAMPLE_PANEL=$2
 			shift 2
 			;;
-		--archaic-root)
+		--dir-archaic-root)
 			need_value "$@"
 			ARCHAIC_ROOT=$2
-			shift 2
-			;;
-		--as3-python-version)
-			need_value "$@"
-			AS3_PYTHON_VERSION=$2
 			shift 2
 			;;
 		-h | --help)
@@ -299,153 +256,14 @@ have_env() { "$CONDA_EXE_PATH" env list | awk 'NF && $1 !~ /^#/ {print $1}' | gr
 activate() {
 	source "$CONDA_BASE_PATH/etc/profile.d/conda.sh"
 	conda activate "$ENV_NAME"
+	# The shared diagnostic wrapper was sourced before conda activation.
+	GU_BCFTOOLS_BIN=$(type -P bcftools)
 }
-as3_python_path() {
-	local candidate
-	for candidate in "${AS3_PYTHON:-}" "$CONDA_BASE_PATH/envs/$AS3_ENV_NAME/bin/python"; do
-		[[ -n $candidate && -x $candidate ]] || continue
-		printf '%s\n' "$candidate"
-		return 0
-	done
-	return 1
-}
-as3_env_ok() {
-	local py
-	py=$(as3_python_path) || return 1
-	AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3.py" health >/dev/null 2>&1
-}
-as3_health_report() {
-	local py
-	py=$(as3_python_path) || {
-		echo "AS3 HEALTH ERROR: environment $AS3_ENV_NAME has no Python" >&2
-		return 1
-	}
-	AS3_EXPECT_PYTHON="$AS3_PYTHON_VERSION" "$py" "$ROOT/f/as3.py" health
-}
-as3_repair_hdf5_abi() {
-	local py=$1 built runtime
-	read -r built runtime < <(
-		"$py" - <<'PY'
-import warnings
-warnings.filterwarnings("ignore", message="h5py is running against HDF5")
-import h5py
-print(".".join(map(str, h5py.version.hdf5_built_version_tuple[:2])),
-      ".".join(map(str, h5py.version.hdf5_version_tuple[:2])))
-PY
-	) || die "could not inspect h5py/HDF5 versions in $AS3_ENV_NAME"
-	[[ -n $built && -n $runtime ]] || die "h5py did not report build/runtime HDF5 versions"
-	[[ $built != "$runtime" ]] || return 0
-	echo "Repairing h5py/HDF5 ABI: built=$built runtime=$runtime"
-	# Match the runtime library to the ABI used by the installed h5py extension.
-	# Solving the two packages together prevents a later HDF5-only upgrade from
-	# recreating the mismatch.
-	"$CONDA_EXE_PATH" install -n "$AS3_ENV_NAME" -c conda-forge \
-		"h5py>=3.10,<4" "hdf5=$built.*" -y
-}
-as3_compute_cap() {
-	if [[ -n ${AS3_GPU_COMPUTE_CAP:-} ]]; then
-		printf '%s\n' "$AS3_GPU_COMPUTE_CAP"
-		return
-	fi
-	nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null | awk 'NR==1{gsub(/[[:space:]]/,"");print;exit}'
-}
-as3_blackwell() {
-	local cap major
-	cap=$(as3_compute_cap)
-	major=${cap%%.*}
-	[[ $major =~ ^[0-9]+$ && $major -ge 12 ]]
-}
-install_as3_torch_profile() {
-	local py=$1 torch_version cuda_version torchvision_version index_url actual actual_torch actual_cuda actual_torchvision
-	if as3_blackwell; then
-		torch_version=${AS3_TORCH_VERSION:-2.8.0}
-		cuda_version=${AS3_CUDA_VERSION:-12.8}
-		torchvision_version=${AS3_TORCHVISION_VERSION:-0.23.0}
-	else
-		torch_version=${AS3_TORCH_VERSION:-2.4.0}
-		cuda_version=${AS3_CUDA_VERSION:-12.1}
-		torchvision_version=${AS3_TORCHVISION_VERSION:-0.19.0}
-	fi
-	actual=$("$py" -c 'import torch; print(torch.__version__.split("+",1)[0]+"|"+str(torch.version.cuda or ""))' 2>/dev/null || true)
-	actual_torch=${actual%%|*}
-	actual_cuda=${actual#*|}
-	if [[ $actual_torch != "$torch_version" || $actual_cuda != "$cuda_version" ]]; then
-		index_url=${AS3_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu${cuda_version/./}}
-		"$py" -m pip install "torch==$torch_version" "torchvision==$torchvision_version" --index-url "$index_url"
-		return
-	fi
-	# torchvision is not part of the AS3 requirements file because it must match
-	# the hardware-specific Torch profile.  Check it independently: a valid
-	# Torch install must not make a missing or mismatched torchvision look healthy.
-	actual_torchvision=$("$py" -c 'import torchvision; print(torchvision.__version__.split("+",1)[0])' 2>/dev/null || true)
-	if [[ $actual_torchvision != "$torchvision_version" ]]; then
-		index_url=${AS3_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu${cuda_version/./}}
-		"$py" -m pip install "torchvision==$torchvision_version" --index-url "$index_url"
-	fi
-}
-as3_runtime_ok() {
-	[[ -s $AS3_DIR/ArchaicSeeker3.1-mamba ]] || return 1
-	[[ -s $AS3_DIR/src/standard_postprocess.py ]] || return 1
-	[[ -s $AS3_DIR/requirements-gu.txt ]] || return 1
-	[[ -s $AS3_DIR/MODEL_SHA256SUMS && -d $AS3_MODEL_DIR ]] || return 1
-	grep -Fq 'ancestry = int(ancestry[0])' "$AS3_DIR/src/dataloaders/genome_datasets.py" || return 1
-	grep -Fq "final_bed_df_raw['sample_hap_id'] = final_bed_df_raw['sample_hap_id'].fillna('Unknown_HapID')" "$AS3_DIR/src/stepsagnostic/training_inference.py" || return 1
-	(cd "$AS3_MODEL_DIR" && sha256sum -c "$AS3_DIR/MODEL_SHA256SUMS" >/dev/null 2>&1)
-}
-
-validate_bundled_as3_source() {
-	local data_file="$AS3_DIR/src/dataloaders/genome_datasets.py"
-	local infer_file="$AS3_DIR/src/stepsagnostic/training_inference.py"
-	[[ -s $AS3_DIR/ArchaicSeeker3.1-mamba && -s $AS3_DIR/src/standard_postprocess.py && -s $data_file && -s $infer_file ]] ||
-		die "bundled AS3 source is incomplete under $AS3_DIR"
-	grep -Fq 'ancestry = int(ancestry[0])' "$data_file" ||
-		die "bundled AS3 NumPy compatibility edit is missing: $data_file"
-	grep -Fq "final_bed_df_raw['sample_hap_id'] = final_bed_df_raw['sample_hap_id'].fillna('Unknown_HapID')" "$infer_file" ||
-		die "bundled AS3 Pandas raw-output compatibility edit is missing: $infer_file"
-	[[ -s $AS3_DIR/MODEL_SHA256SUMS && -d $AS3_MODEL_DIR ]] ||
-		die "AS3 model directory or checksum manifest is missing: $AS3_MODEL_DIR"
-	(cd "$AS3_MODEL_DIR" && sha256sum -c "$AS3_DIR/MODEL_SHA256SUMS" >/dev/null) ||
-		die "AS3 model files are missing or fail SHA-256 validation under $AS3_MODEL_DIR"
-}
-
-repair_as3_env() {
-	local as3_env_python mamba_version causal_version
-	validate_bundled_as3_source
-	[[ -s $AS3_DIR/requirements-gu.txt ]] || die "missing GU AS3 dependency file: $AS3_DIR/requirements-gu.txt"
-	if as3_env_python=$(as3_python_path 2>/dev/null); then
-		"$as3_env_python" - "$AS3_PYTHON_VERSION" <<'PY' ||
-\
-import sys
-expected = tuple(int(x) for x in sys.argv[1].split('.')[:2])
-raise SystemExit(0 if sys.version_info[:2] == expected else 1)
-PY
-			die "existing $AS3_ENV_NAME uses $($as3_env_python -c 'import platform; print(platform.python_version())'); recreate it with Python $AS3_PYTHON_VERSION before repairing it"
-	else
-		"$CONDA_EXE_PATH" create -n "$AS3_ENV_NAME" "python=$AS3_PYTHON_VERSION" pip git packaging ninja -c conda-forge -y
-		as3_env_python=$(as3_python_path) || die "could not locate Python for newly created AS3 environment: $AS3_ENV_NAME"
-	fi
-	install_as3_torch_profile "$as3_env_python"
-	"$as3_env_python" -m pip install -U pip setuptools wheel packaging ninja
-	"$as3_env_python" -m pip install -r "$AS3_DIR/requirements-gu.txt"
-	as3_repair_hdf5_abi "$as3_env_python"
-	causal_version=${AS3_CAUSAL_CONV1D_VERSION:-1.6.2.post1}
-	mamba_version=${AS3_MAMBA_SSM_VERSION:-2.3.1}
-	if ! "$as3_env_python" -c 'import causal_conv1d, mamba_ssm' >/dev/null 2>&1; then
-		CUDA_HOME=$CONDA_BASE_PATH/envs/$AS3_ENV_NAME \
-			"$as3_env_python" -m pip install --no-build-isolation "causal-conv1d==$causal_version" "mamba-ssm==$mamba_version"
-	fi
-	as3_health_report || die "AS3 repair finished but the environment is still unhealthy"
-}
-
 check() {
 	local bad=0 cmd plugin_help
 	[[ ${CONDA_DEFAULT_ENV:-} == "$ENV_NAME" ]] || activate
-	# Host-level R libraries can contain packages compiled for a different R ABI.
-	# GU must use the packages installed in its Conda environment.
-	unset R_LIBS R_LIBS_USER
-	export R_ENVIRON_USER=/dev/null R_PROFILE_USER=/dev/null
-	unset BCFTOOLS_PLUGINS
-	for cmd in python python3 Rscript bcftools bgzip tabix bedtools samtools plink2 bgenix phyml cmake; do
+	export BCFTOOLS_PLUGINS="$CONDA_PREFIX/libexec/bcftools"
+	for cmd in python python3 bcftools bgzip tabix bedtools samtools plink2 bgenix phyml cmake; do
 		command -v "$cmd" >/dev/null 2>&1 || {
 			echo "MISSING command: $cmd" >&2
 			bad=1
@@ -466,26 +284,12 @@ PY
 		echo "MISSING command: $cmd" >&2
 		bad=1
 	}; done
-	for cmd in data.table R.utils ape pegas writexl shiny bslib plotly DT DBI RSQLite; do
-		Rscript -e "quit(status=if(requireNamespace('$cmd', quietly=TRUE)) 0 else 1)" >/dev/null 2>&1 || {
-			echo "MISSING or unloadable R package: $cmd" >&2
-			bad=1
-		}
-	done
 	for cmd in ibdmix generate_gt gt_lods; do
 		[[ -x "$IBDMIX_DIR/build/src/$cmd" ]] || {
 			echo "MISSING IBDmix executable: $IBDMIX_DIR/build/src/$cmd" >&2
 			bad=1
 		}
 	done
-	as3_runtime_ok || {
-		echo "MISSING AS3 runtime: $AS3_DIR" >&2
-		bad=1
-	}
-	as3_health_report || {
-		echo "MISSING or broken AS3 environment: $AS3_ENV_NAME" >&2
-		bad=1
-	}
 	((bad == 0))
 }
 
@@ -525,7 +329,7 @@ check_references() {
 			}
 		fi
 	done
-	for ref in Altai Chagyr Vindija Denisova; do
+	for ref in Altai Chagyr Denisova Denisova25 Vindija; do
 		for chr in {1..22} X; do
 			vcf=$(find_archaic_vcf "$ref" "$chr" || true)
 			[[ -n $vcf && -s $vcf && (-s $vcf.tbi || -s $vcf.csi) ]] || {
@@ -537,6 +341,30 @@ check_references() {
 	((bad == 0))
 }
 
+check_ibdmix() {
+    local bad=0 cmd
+    [[ ${CONDA_DEFAULT_ENV:-} == "$ENV_NAME" ]] || activate
+    export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
+    export BCFTOOLS_PLUGINS="$CONDA_PREFIX/libexec/bcftools"
+    for cmd in python3 bcftools bgzip tabix bedtools samtools plink2; do
+        command -v "$cmd" >/dev/null 2>&1 || { echo "MISSING command: $cmd" >&2; bad=1; }
+    done
+    bcftools plugin -l | grep -Fx fill-tags >/dev/null || { echo "MISSING bcftools plugin: fill-tags" >&2; bad=1; }
+    python3 -c 'import numpy, pandas, pysam' || bad=1
+    for cmd in "$IBDMIX_DIR/build/src/ibdmix" "$IBDMIX_DIR/build/src/generate_gt" "$IBDMIX_DIR/build/src/gt_lods" "${IBDMIX_PREPARE_BIN:-$SOFT/ibdmix-prepare/prepare}"; do
+        [[ -x $cmd ]] || { echo "MISSING executable: $cmd" >&2; bad=1; continue; }
+        if ldd "$cmd" 2>/dev/null | grep -q 'not found'; then
+            echo "MISSING shared library: $cmd" >&2; bad=1
+        fi
+    done
+    ((bad == 0))
+}
+
+if [[ $INSTALL_ACTION == check-ibdmix ]]; then
+    check_ibdmix && { echo 'OK (IBDmix CPU software; reference inputs checked separately)'; exit 0; }
+    exit 1
+fi
+
 mkdir -p "$SOFT"
 
 if [[ $INSTALL_ACTION == check ]]; then
@@ -547,61 +375,59 @@ if [[ $INSTALL_ACTION == check-references ]]; then
 	check_references && echo OK
 	exit
 fi
-if [[ $INSTALL_ACTION == repair-as3 ]]; then
-	validate_bundled_as3_source
-	if as3_env_ok; then
-		as3_health_report
-	else
-		repair_as3_env
-	fi
-	echo "OK (AS3 environment)"
-	exit 0
-fi
 
-# A successful installation marker makes subsequent calls a fast health check.
-if [[ -s $STATE ]] && have_env && check; then
+# Reuse only this pinned release; old marker files do not certify the source version.
+if [[ -s $STATE ]] && grep -Fxq "trace=$TRACE_COMMIT" "$STATE" && grep -Fxq "ibdmix=$IBDMIX_COMMIT" "$STATE" && [[ $BUILD_GPU == FALSE ]] && have_env && check; then
 	echo OK
 	exit 0
 fi
 
-if have_env; then
-	"$CONDA_EXE_PATH" env update -n "$ENV_NAME" -f "$YML" --prune
-else
-	"$CONDA_EXE_PATH" env create -n "$ENV_NAME" -f "$YML"
+# HPC compute nodes have no external DNS. A prepared project environment can
+# be reused explicitly for the offline build; the health check still runs.
+if [[ ${GU_INSTALL_ENV_READY:-0} != 1 ]]; then
+	if have_env; then
+		"$CONDA_EXE_PATH" env update -n "$ENV_NAME" -f "$YML"
+	else
+		"$CONDA_EXE_PATH" env create -n "$ENV_NAME" -f "$YML"
+	fi
 fi
 activate
 
-# TRACE has no PyTorch dependency. Installing it separately keeps its source build
-# independent of the large PyTorch wheel transaction and reuses the local checkout.
-if [[ ! -d $TRACE_DIR/.git ]]; then
-	git clone https://github.com/YulinZhang9806/trace.git "$TRACE_DIR"
-fi
-if ! command -v trace-extract >/dev/null 2>&1 || ! command -v trace-infer >/dev/null 2>&1 || ! command -v trace-summarize >/dev/null 2>&1; then
-	python -m pip install --no-build-isolation "$TRACE_DIR"
-fi
-
-if [[ ! -d $IBDMIX_DIR/.git ]]; then
-	git clone --depth 1 https://github.com/PrincetonUniversity/IBDmix.git "$IBDMIX_DIR"
-fi
-if [[ -x "$IBDMIX_DIR/build/src/ibdmix" && -x "$IBDMIX_DIR/build/src/generate_gt" && -x "$IBDMIX_DIR/build/src/gt_lods" ]]; then
-	echo "IBDmix: reuse existing build under $IBDMIX_DIR/build"
+# Immutable upstream source snapshots. Never overwrite local upstream edits.
+checkout_pinned() {
+	local repo=$1 destination=$2 commit=$3
+	if [[ ! -d $destination/.git ]]; then
+		[[ ! -e $destination ]] || die "non-git directory already exists: $destination"
+		git clone "$repo" "$destination"
+	fi
+	[[ -z $(git -C "$destination" status --porcelain --untracked-files=no) ]] || die "local edits exist in $destination; preserve them before installing the pinned version"
+	if ! git -C "$destination" cat-file -e "$commit^{commit}" 2>/dev/null; then
+		git -C "$destination" fetch origin "$commit"
+	fi
+	git -C "$destination" checkout --detach "$commit"
+}
+checkout_pinned https://github.com/YulinZhang9806/trace.git "$TRACE_DIR" "$TRACE_COMMIT"
+# Reinstall from the verified source, including its declared CPU dependencies.
+if [[ ${GU_INSTALL_ENV_READY:-0} == 1 ]] && python -c 'from importlib.metadata import version; assert version("tracehmm") == "0.0.1a0"' >/dev/null 2>&1; then
+    echo "Reusing TRACE installed during pinned online preparation"
 else
-	# CMake caches absolute paths. --fresh safely regenerates a cache when an
-	# existing checkout/build was moved from another directory.
-	cmake --fresh -S "$IBDMIX_DIR" -B "$IBDMIX_DIR/build"
-	cmake --build "$IBDMIX_DIR/build" --parallel "${GU_BUILD_JOBS:-4}"
+    python -m pip install --no-build-isolation "$TRACE_DIR"
 fi
+checkout_pinned https://github.com/PrincetonUniversity/IBDmix.git "$IBDMIX_DIR" "$IBDMIX_COMMIT"
+ibdmix_cmake_args=()
+if [[ -d $SOFT/sources/deps/cli11-2.2.0 ]]; then
+    ibdmix_cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_CLI11=$SOFT/sources/deps/cli11-2.2.0")
+fi
+cmake --fresh -S "$IBDMIX_DIR" -B "$IBDMIX_DIR/build" "${ibdmix_cmake_args[@]}"
+cmake --build "$IBDMIX_DIR/build" --parallel "${GU_BUILD_JOBS:-4}"
 
 IBDMIX_PREPARE_BIN="${IBDMIX_PREPARE_BIN:-$SOFT/ibdmix-prepare/prepare}" bash "$ROOT/f/ibdmix.sh" build-prepare --if-needed
 
-# AS3 inference source is vendored under f/as3; checkpoints live with
-# the GRCh38 Ref1028 data.  No external AS3 checkout is read or updated.
-validate_bundled_as3_source
-if ! as3_env_ok; then
-	repair_as3_env
-	activate
+if [[ $BUILD_GPU == TRUE ]]; then
+	GU_SOFT="$SOFT" IBDMIX_GPU_BIN="${IBDMIX_GPU_BIN:-$SOFT/ibdmix-gpu/ibdmix-gpu}" bash "$ROOT/f/ibdmix.sh" build-gpu
 fi
-
 check || die "installation finished but the software health check still reports missing components"
-printf 'installed\n' >"$STATE"
+printf 'ibdmix=%s\ntrace=%s\n' "$IBDMIX_COMMIT" "$TRACE_COMMIT" >"$STATE"
+"$CONDA_EXE_PATH" list -n "$ENV_NAME" --explicit >"$SOFT/gu-conda-explicit.txt"
+python -m pip freeze >"$SOFT/gu-pip-freeze.txt"
 echo "OK (software). Run ./install.sh --check-references separately for the full reference inventory."

@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
 set -euo pipefail
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/0.common.sh"
+gu_load_config
 
 
 # UKB BGEN/array inspection, VCF export and exact ancestral-allele annotation.
@@ -29,9 +24,9 @@ prep_ukb() (
 			;;
 	esac
 
-	HAP=${UKB_HAP_ROOT:-/mnt/f/gen/ukb/37/hap}
-	TYPED=${UKB_TYPED_ROOT:-/mnt/f/gen/ukb/37/typ}
-	OUT=${UKB_WORK:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu}/ukb}
+	HAP=${UKB_HAP_ROOT:-$GU_REF_ROOT/ukb/37/hap}
+	TYPED=${UKB_TYPED_ROOT:-$GU_REF_ROOT/ukb/37/typ}
+	OUT=${UKB_WORK:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE}/ukb}
 	CHRS=${GU_CHRS:-22}
 	THREADS=${UKB_THREADS:-8}
 	REF_FASTA=${UKB_REF_FASTA:-}
@@ -113,10 +108,10 @@ Main options:
     Other actions: options parsed by gu.sh; recipes: 0.README.md
 
 Example:
-    ./gu.sh ukb inspect-hap --chr 22 --grch 37 --ukb-hap-root /mnt/f/gen/ukb/37/hap
-    ./gu.sh ukb make-panel --chr 22 --grch 37 --ukb-hap-root /mnt/f/gen/ukb/37/hap
-    ./gu.sh ukb batches --chr 22 --grch 37 --sample-panel /mnt/f/analysis/gu/ukb/ukb.sample_panel.tsv --ukb-batch-size 1000 --ukb-anchors-per-group 1000
-    ./gu.sh ukb hap-arg-vcf --chr 22 --grch 37 --ukb-hap-root /mnt/f/gen/ukb/37/hap --ukb-ref-fasta /path/to/human_g1k_v37.fasta --ukb-keep /mnt/f/analysis/gu/ukb/batches/ALL.b0001.joint.txt --ukb-1kg-vcf-dir /mnt/f/gen/1kg/37/vcf --ukb-vcf-out /mnt/f/analysis/gu/ukb/work/ALL.b0001/vcf --ukb-arg-vcf-out /mnt/f/analysis/gu/ukb/work/ALL.b0001/vcf.aa
+    ./gu.sh ukb inspect-hap --chr 22 --grch 37 --ukb-hap-root $GU_REF_ROOT/ukb/37/hap
+    ./gu.sh ukb make-panel --chr 22 --grch 37 --ukb-hap-root $GU_REF_ROOT/ukb/37/hap
+    ./gu.sh ukb batches --chr 22 --grch 37 --sample-panel $GU_ANALYSIS_BASE/ukb/ukb.sample_panel.tsv --ukb-batch-size 1000 --ukb-anchors-per-group 1000
+    ./gu.sh ukb hap-arg-vcf --chr 22 --grch 37 --ukb-hap-root $GU_REF_ROOT/ukb/37/hap --ukb-ref-fasta /path/to/human_g1k_v37.fasta --ukb-keep $GU_ANALYSIS_BASE/ukb/batches/ALL.b0001.joint.txt --ukb-1kg-vcf-dir $GU_REF_ROOT/1kg/37/vcf --ukb-vcf-out $GU_ANALYSIS_BASE/ukb/work/ALL.b0001/vcf --ukb-arg-vcf-out $GU_ANALYSIS_BASE/ukb/work/ALL.b0001/vcf.aa
 
     ./gu.sh ukb inspect-pgen --help
 HELP
@@ -283,7 +278,7 @@ PY
 				rm -f -- "$RAW/chr$c.vcf.gz" "$RAW/chr$c.vcf.gz.tbi"
 			done
 			echo "AA-tagged phased VCFs are ready under: $AAOUT"
-			echo "Next: bash /mnt/d/scripts/gu/arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-/mnt/f/gen/ukb/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
+			echo "Next: bash $GU_CODE_ROOT/gu/arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-$GU_REF_ROOT/ukb/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
 			;;
 
 		inspect-typed)

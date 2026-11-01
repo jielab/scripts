@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPYCACHEPREFIX=/tmp/gu-python-cache
-export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
+export TMPDIR=${TMPDIR:-/tmp} TMP=${TMPDIR:-/tmp} TEMP=${TMPDIR:-/tmp}
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$ROOT/f/scratch.sh"
 F=$ROOT/f
-SHINY=$ROOT/shiny
+SHINY=$ROOT/f/shiny
 GU_ORIGINAL_ARGS=("$@")
 # shellcheck source=f/0.common.sh
 source "$F/0.common.sh"
 gu_load_config
+# HPC scheduling lives in the main entry point; workers enter the original
+# scientific driver only after LSF has allocated a compute node.
+if [[ ${1:-} == hpc ]]; then
+    shift
+    exec "${GU_HPC_PYTHON:-$GU_ENV_PREFIX/bin/python3}" "$F/hpc.py" "$@"
+fi
+hpc_help=0
+for hpc_arg in "$@"; do
+    case "$hpc_arg" in -h|--help) hpc_help=1 ;; esac
+done
+if [[ ${1:-} == ibdmix && -z ${LSB_JOBID:-} && ${WORKFLOW_WORKER:-0} != 1 && ${GU_CMD_WORKER:-0} != 1 && $hpc_help == 0 && ( $# == 1 || ${2:-} == --* ) ]]; then
+    exec "${GU_SUBMIT_PYTHON:-$SHARED_PYTHON}" "$F/hpc_batch.py" "$@"
+fi
+unset hpc_help hpc_arg
+export GU_RESULTS_R=${GU_RESULTS_R:-$ROOT/f/results.R}
+export GU_PHYML_R=${GU_PHYML_R:-$F/phyml.R}
+export RESULTS_PY=${RESULTS_PY:-$ROOT/f/results.py}
+export RESULTS_RSCRIPT=${RESULTS_RSCRIPT:-Rscript}
 
 
 # 🚩 PhyML environment-to-CLI adapter
@@ -44,7 +56,7 @@ gu_run_phyml() (
 case "${1:-}:${2:-}" in
 	ukb:inspect-pgen | ukb:make-panel-pgen | ukb:pilot | ukb:pgen-vcf)
 		# This early entry returns before the normal logging setup below.
-		SCRIPT_CONSOLE_PASSTHROUGH=1 source "$ROOT/../0f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
+		SCRIPT_CONSOLE_PASSTHROUGH=1 source "$ROOT/f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
 		if [[ ${CONDA_DEFAULT_ENV:-} != ${GU_ENV_NAME:-gu} && ${GU_ENV_REEXEC:-0} != 1 ]]; then
 			conda_owner=${GU_CONDA_EXE:-${GU_CONDA_BASE:-$HOME/anaconda3}/bin/conda}
 			[[ -x $conda_owner ]] || { echo "ERROR: activate the GU conda environment before UKB preparation" >&2; exit 2; }
@@ -103,7 +115,7 @@ gu_ukb_prepared_context() {
 		return 2
 	}
 	root=$(gu_require_result_path "$GU_UKB_RESULTS_ROOT") || return $?
-	for protected in /mnt/f/analysis/gu "${GU_DATA_ROOT:-/mnt/f}/analysis/gu"; do
+	for protected in "$GU_ANALYSIS_BASE"; do
 		protected=$(realpath -m -- "$protected") || return $?
 		[[ $root != "$protected" ]] || {
 			echo "ERROR: UKB results require a dataset subdirectory, e.g. $protected/ukb003" >&2
@@ -117,7 +129,7 @@ gu_ukb_prepared_context() {
 			return 2
 		}
 	done
-	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT AS3_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR; do
+	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR; do
 		value=${!result_var:-}
 		[[ -n $value ]] || continue
 		value=$(realpath -m -- "$value") || return $?
@@ -126,7 +138,7 @@ gu_ukb_prepared_context() {
 			return 2
 		}
 	done
-	for value in "$root"/{phyml,ibdmix,trace,as3}/1kg; do
+	for value in "$root"/{phyml,ibdmix,trace}/1kg; do
 		[[ ! -d $value ]] || {
 			echo "ERROR: the UKB results root already contains 1KG analysis data: $value" >&2
 			return 2
@@ -153,7 +165,7 @@ gu_ukb_prepared_context() {
 	}
 	if [[ -n ${TARGET_DIR_INPUT:-} ]]; then
 		[[ $(realpath -m -- "$TARGET_DIR_INPUT") == "$(realpath -m -- "$GU_TARGET_NATIVE_VCF_PREFIX")" ]] || {
-			echo "ERROR: --target-dir differs from the verified UKB VCF prefix; source the matching gu-target.env" >&2
+			echo "ERROR: --dir-target differs from the verified UKB VCF prefix; source the matching gu-target.env" >&2
 			return 2
 		}
 	fi
@@ -162,7 +174,7 @@ gu_ukb_prepared_context() {
 	GU_NORMALIZE_SAMPLE_PANEL=$panel
 	export GU_TARGET_GEN_PREFIX GU_TARGET_DIR GU_NORMALIZE_SAMPLE_PANEL
 	case "${METHOD:-}" in
-		phyml | trace | as3)
+		phyml | trace)
 			[[ ${GU_UKB_PHASE_CHECKED:-0} == 1 ]] || {
 				echo "ERROR: prepared UKB $METHOD requires phase-certified exports; rerun pgen-vcf --ukb-require-phase true. Each chromosome's full export receipt will be rechecked before inference" >&2
 				return 2
@@ -187,50 +199,56 @@ gu_ukb_prepared_context() {
 gu_main() {
 	usage() {
 		cat <<'HELP'
+GU — whole-genome archaic matching and locus phylogeny
+
 Modules:
-    phyml / phyml-GPU    Phylogenetic inference
-    ibdmix / ibdmix-GPU  Archaic introgression
-    trace / trace-GPU    ARG-based inference
-    as3                 ArchaicSeeker3
-    ukb                 Genotype preparation
-    final / shiny       Summarize / view completed results
+    ibdmix [check]             IBDmix CPU by default; --GPU TRUE selects CUDA
+    trace [extract|infer|segments]  TRACE from certified ARG trees
+    phyml [check|match]        PhyML analysis of GWAS leads (--loci-format cojo)
+    final                     Rebuild saved summaries after workers finish
+    shiny                     View saved results
+    ukb                       UKB preparation helpers
+    hpc plan|submit|status|retry  Advanced LSF orchestration (formerly gu-hpc.sh)
 
 Main options:
-    --target NAME        Target dataset [1kg or ukb]
-    --dir-target PREFIX  Chromosome file prefix, e.g. /mnt/f/gen/ukb/37/imp/chr
-    --dir-out DIR --postfix TEXT  Output prefix and suffix, e.g. ukb + 001
-    --grch 37|38         Input genome build
-    --chr CSV            Selected chromosomes
-    --loci FILE --loci-format FORMAT  Locus input
-    --keep-psam FILE,N,BATCH  Select N PSAM rows in batch BATCH (1-based)
-    --keep-males         Filter males after batch selection
-    --archaic-gen CSV    Altai,Chagyr,Denisova,Denisova25,Vindija
-    --jobs N --memory-cap SIZE  Worker and memory budgets
-    -h, --help           Help; workflow details: 0.README.md
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; pass the original date to resume
+    --GPU TRUE|FALSE           IBDmix backend; default FALSE
+    --grch 37|38               Input coordinate build (built-in IBDmix masks: 37)
+    --target NAME --dir-target PREFIX
+    --dir-out DIR --postfix ID Result root is DIR+ID; or quoted range '[013-049]'
+    --chr '1 2 22 X'           Whole chromosomes, or --loci FILE (BED)
+    --keep FILE               PLINK sample list
+    --keep-psam FILE,SIZE,INDEX Deterministic 1-based chunks; INDEX also accepts [013-049]
+                              Batch ranges must match --postfix; split BEFORE --keep-males
+    --keep-males              Keep males (male non-PAR X remains experimental)
+    --sample-panel FILE       Population/sex metadata
+    --archaic-path DIR --archaic-gen LIST  Default: Altai,Chagyr,Denisova,Denisova25,Vindija
+    --dir-arg DIR             TRACE ARG trees and matching sample maps
+    --jobs N --memory-cap SIZE  Resource budget [local 32G / HPC 160G; 0f/0os.sh]
+    --resource-guard MODE     auto|systemd|scheduler|ulimit (see README)
+    --run-cmd FALSE           On HPC login: generate cohort .cmd files without bsub
+    --submit local|hpc --jobs-N 1..8 --wait TRUE|FALSE  Shared .cmd scheduling
+    --queue short --slots 40 --walltime 144:00  HPC submission resources
+    --foreground TRUE|FALSE   Default TRUE
+    --replace-ibdmix TRUE|FALSE  Explicitly replace incompatible outputs
+    --auto-final TRUE|FALSE   Default FALSE; aggregate after all workers finish
+    -h, --help                Show help
 
-Example:
-    ./gu.sh phyml --loci /mnt/f/gwas/main/common/bald0/gwas/bald0.jma.cojo --loci-format cojo --grch 38 --target 1kg --dir-target /mnt/f/gen/1kg/37/pfile/chr --jobs 1 --memory-cap 32G
+Examples (first source ./f/runtime.env so shell variables expand):
+    ./gu.sh ibdmix --chr 22 --grch 37 --target 1kg --dir-target /data/1kg/37/pfile/chr --dir-out /results/gu/1kg
+    ./gu.sh ibdmix --GPU FALSE --grch 37 --target ukb --chr 1-22,X --dir-target "$GU_REF_ROOT/ukb/37/imp/chr" --dir-out "$GU_ANALYSIS_BASE/ukb" --postfix '[013-049]' --keep-psam "$GU_REF_ROOT/ukb/37/imp/chr1.psam,10000,[013-049]" --keep-males
+    ./gu.sh final --dir-out $GU_ANALYSIS_BASE/ukb --postfix 001
+    ./gu.sh shiny --dir-out $GU_ANALYSIS_BASE/ukb --postfix 001
+    ./gu.sh trace --chr '1 2 22' --dir-arg /data/1kg/37/arg.tsinfer --target 1kg --dir-target /data/1kg/37/pfile/chr --dir-out /results/gu/trace1kg
 
-    # UKB：PSAM 前 10000 人，再筛男性；默认 chr1–22、X。
-    ./gu.sh ibdmix-GPU --grch 37 --target ukb --dir-target /mnt/f/gen/ukb/37/imp/chr --dir-out /mnt/f/analysis/gu/ukb --postfix 001 --keep-psam /mnt/f/gen/ukb/37/imp/chr1.psam,10000,1 --keep-males
+On the HPC login node, ibdmix submits one independent LSF job per postfix.
+Use --run-cmd FALSE to inspect the generated .cmd files first.
 
-    # --dir-target 是染色体文件前缀；--dir-out 与 --postfix 拼成 /mnt/f/analysis/gu/ukb001。
-    # CPU/GPU 输出分别在 ukb001/ibdmix/ 和 ukb001/ibdmix-GPU/。
-    # --keep-psam FILE,每批人数,批次号（从 1 开始）；--keep-males 在分批后筛男性。
-    # 可追加 --chr 22 或 --chr 1,2,X；默认五个参考 Altai,Chagyr,Denisova,Denisova25,Vindija。
-    # 追加 --archaic-gen Altai,Denisova 可仅使用这两个参考；也可从上述五个中任选一个或多个，以逗号分隔，替换默认列表。
-    # ibdmix-GPU 默认 --jobs 4 --memory-cap 16G --replace-ibdmix FALSE --foreground TRUE --auto-final FALSE。
-    # IBDmix-GPU 并行准备染色体，GPU 调用按设备串行，避免显存叠加。
+CPU and CUDA IBDmix use the same ibdmix/ output layout. Run CPU/GPU validation
+in different --dir-out roots. Both backends use the ibdmix module and result directory.
+TRACE fits autosomes jointly; X uses its own sample map and model.
+Full setup, outputs, scientific caveats and HPC workflow: 0.README.md.
 
-    ./gu.sh trace --chr 22 --grch 37 --arg-dir /mnt/f/gen/1kg/37/arg.threads/trees --target 1kg --dir-target /mnt/f/gen/1kg/37/pfile/chr --jobs 1 --memory-cap 32G
-    ./gu.sh as3 --chr 22 --grch 38 --target 1kg --dir-target /mnt/f/gen/1kg/38/pfile/chr --jobs 1 --memory-cap 32G
-
-    # UKB 运行完成后：GPU 汇总/查看。
-    GU_RESULT_MODULE=ibdmix-GPU ./gu.sh final --dir-out /mnt/f/analysis/gu/ukb --postfix 001
-    GU_RESULT_MODULE=ibdmix-GPU ./gu.sh shiny --dir-out /mnt/f/analysis/gu/ukb --postfix 001
-
-    ./gu.sh as3 --grch 38 --target 1kg --dir-target /mnt/f/gen/1kg/38/pfile/chr --chr 22 --jobs 1
-    ./gu.sh as3 --grch 38 --target 1kg --dir-target /mnt/f/gen/1kg/38/pfile/chr
 HELP
 	}
 
@@ -248,9 +266,12 @@ HELP
 	PHYML_BACKEND=cpu
 	TRACE_BACKEND=cpu
 	GPU_METHOD=''
+	GPU_INPUT=FALSE
+	GPU_SET=0
+	RESOURCE_GUARD_INPUT=${GU_RESOURCE_GUARD:-auto}
+	MEMORY_CAP_SET=0
 	export GU_RESULT_MODULE=""
 	case "$METHOD" in
-		ibdmix-GPU) METHOD=ibdmix; IBDMIX_BACKEND=cuda; GPU_METHOD=ibdmix ;;
 		phyml-GPU) METHOD=phyml; PHYML_BACKEND=cuda; GPU_METHOD=phyml ;;
 		trace-GPU) METHOD=trace; TRACE_BACKEND=cuda; GPU_METHOD=trace ;;
 	esac
@@ -258,14 +279,13 @@ HELP
 	if [[ $METHOD == final || $METHOD == shiny ]]; then
 		case "$requested_result_module" in
 			'') ;;
-			ibdmix-GPU) IBDMIX_BACKEND=cuda; GPU_METHOD=ibdmix ;;
 			phyml-GPU) PHYML_BACKEND=cuda; GPU_METHOD=phyml ;;
 			trace-GPU) TRACE_BACKEND=cuda; GPU_METHOD=trace ;;
-			*) echo "ERROR: GU_RESULT_MODULE must be phyml-GPU, ibdmix-GPU, trace-GPU, or empty" >&2; return 2 ;;
+			*) echo "ERROR: GU_RESULT_MODULE must be phyml-GPU, trace-GPU, or empty" >&2; return 2 ;;
 		esac
 	fi
 	export IBDMIX_BACKEND PHYML_BACKEND TRACE_BACKEND
-	case "$METHOD" in phyml | ibdmix | trace | as3 | final | shiny | ukb) ;; *)
+	case "$METHOD" in phyml | ibdmix | trace | final | shiny | ukb) ;; *)
 		echo "ERROR: unknown method: $METHOD" >&2
 		usage >&2
 		exit 2
@@ -277,7 +297,6 @@ HELP
 		phyml) valid_actions=' check match ' ;;
 		ibdmix) valid_actions=' check ' ;;
 		trace) valid_actions=' extract infer segments ' ;;
-		as3) valid_actions=' check ' ;;
 		final) valid_actions=' ' ;;
 		shiny) valid_actions=' ' ;;
 		ukb) valid_actions=' inspect-hap make-panel batches hap-vcf hap-arg-vcf inspect-typed ' ;;
@@ -300,10 +319,7 @@ HELP
 	}
 
 	LOCI_INPUT=""
-	MEMORY_CAP_INPUT=${GU_MEMORY_CAP:-32G}
-	if [[ $OUTPUT_MODULE == ibdmix-GPU ]]; then
-		MEMORY_CAP_INPUT=${GU_MEMORY_CAP:-16G}
-	fi
+	MEMORY_CAP_INPUT=${GU_MEMORY_CAP:-${MEMORY_DEFAULT_GIB}G}
 	LOCI_FORMAT=bed
 	LOCI_COLLAPSE_SIZE=1Mb
 	LOCI_COLLAPSE_SET=0
@@ -313,7 +329,7 @@ HELP
 	GRCH_INPUT=""
 	TARGET_INPUT=""
 	TARGET_DIR_INPUT=""
-	export GU_RESULT_MODULE=${GPU_METHOD:+$GPU_METHOD-GPU}
+	if [[ $GPU_METHOD != ibdmix ]]; then export GU_RESULT_MODULE=${GPU_METHOD:+$GPU_METHOD-GPU}; fi
 	DIR_OUT_INPUT=""
 	POSTFIX_INPUT=""
 	GU_KEEP=${GU_KEEP:-}
@@ -333,10 +349,6 @@ HELP
 	REPLACE_IBDMIX_SET=0
 	REPLACE_TRACE_INPUT=FALSE
 	REPLACE_TRACE_SET=0
-	REPLACE_AS3_INPUT=FALSE
-	REPLACE_AS3_SET=0
-	AS3_TARGET_CHUNK_SIZE_INPUT=${AS3_TARGET_CHUNK_SIZE:-64}
-	AS3_TARGET_CHUNK_SIZE_SET=0
 	AUTO_FINAL_INPUT=FALSE
 	TRACE_LOCI_MODE_INPUT=posthoc
 	TRACE_LOCI_MODE_SET=0
@@ -374,7 +386,14 @@ HELP
 	EXTRA=()
 	while (($#)); do
 		case "$1" in
+			--GPU)
+				[[ $# -ge 2 ]] || { echo "ERROR: --GPU requires TRUE or FALSE" >&2; exit 2; }
+				GPU_INPUT=$(gu_bool "$2") || { echo "ERROR: --GPU requires TRUE or FALSE" >&2; exit 2; }
+				GPU_SET=1; shift 2 ;;
+			--resource-guard)
+				RESOURCE_GUARD_INPUT=${2:?--resource-guard requires MODE}; shift 2 ;;
 			--memory-cap)
+				MEMORY_CAP_SET=1
 				MEMORY_CAP_INPUT=${2:?--memory-cap requires SIZE, e.g. 32G}
 				shift 2
 				;;
@@ -437,7 +456,7 @@ HELP
 				GU_KEEP_PSAM=$2; KEEP_PSAM_SET=1; shift 2 ;;
 			--keep-males)
 				GU_MALE_ONLY=1; shift ;;
-			--dir-target | --target-dir)
+			--dir-target)
 				[[ $# -ge 2 && -n ${2:-} ]] || {
 					echo "ERROR: --dir-target requires a per-chromosome prefix" >&2
 					exit 2
@@ -471,10 +490,6 @@ HELP
 				}
 				ARCHAIC_GEN_INPUT=$2
 				shift 2
-				;;
-			--target-gen)
-				echo "ERROR: --target-gen was replaced by --target NAME --target-dir PREFIX" >&2
-				exit 2
 				;;
 			--plot-phy)
 				[[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || {
@@ -510,24 +525,6 @@ HELP
 				}
 				REPLACE_TRACE_INPUT=$2
 				REPLACE_TRACE_SET=1
-				shift 2
-				;;
-			--replace-as3)
-				[[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || {
-					echo "ERROR: --replace-as3 requires TRUE or FALSE" >&2
-					exit 2
-				}
-				REPLACE_AS3_INPUT=$2
-				REPLACE_AS3_SET=1
-				shift 2
-				;;
-			--as3-target-chunk-size)
-				[[ $# -ge 2 && -n ${2:-} ]] || {
-					echo "ERROR: --as3-target-chunk-size requires a positive integer" >&2
-					exit 2
-				}
-				AS3_TARGET_CHUNK_SIZE_INPUT=$2
-				AS3_TARGET_CHUNK_SIZE_SET=1
 				shift 2
 				;;
 			--auto-final)
@@ -610,9 +607,9 @@ HELP
 				UNIT_JOBS_SET=1
 				shift 2
 				;;
-			--arg-dir)
+			--dir-arg)
 				[[ $# -ge 2 && -n ${2:-} ]] || {
-					echo "ERROR: --arg-dir requires DIR" >&2
+					echo "ERROR: --dir-arg requires DIR" >&2
 					exit 2
 				}
 				ARG_DIR_INPUT=$2
@@ -816,16 +813,8 @@ HELP
 		echo "ERROR: --replace-trace is only valid with trace" >&2
 		exit 2
 	fi
-	if ((REPLACE_AS3_SET)) && [[ $METHOD != as3 || ${ACTION:-run} != run ]]; then
-		echo "ERROR: --replace-as3 is only valid with the default AS3 analysis" >&2
-		exit 2
-	fi
-	if ((AS3_TARGET_CHUNK_SIZE_SET)) && [[ $METHOD != as3 ]]; then
-		echo "ERROR: --as3-target-chunk-size is only valid with as3" >&2
-		exit 2
-	fi
 	if ((ARG_DIR_SET)) && [[ $METHOD != trace ]]; then
-		echo "ERROR: --arg-dir is valid only with trace" >&2
+		echo "ERROR: --dir-arg is valid only with trace" >&2
 		exit 2
 	fi
 	if ((UKB_OPTION_SET)) && [[ $METHOD != ukb ]]; then
@@ -843,9 +832,9 @@ HELP
 	if ((RUN_CMD_SET || FOREGROUND_SET || UNIT_JOBS_SET)); then
 		command_action=${ACTION:-run}
 		case "$METHOD:$command_action" in
-			phyml:run | ibdmix:run | trace:run | trace:extract | trace:infer | trace:segments | as3:run) ;;
+			phyml:run | ibdmix:run | trace:run | trace:extract | trace:infer | trace:segments) ;;
 			*)
-				echo "ERROR: --run-cmd/--foreground/--jobs are valid only with phyml, ibdmix, trace analysis actions, or as3" >&2
+				echo "ERROR: --run-cmd/--foreground/--jobs are valid only with phyml, ibdmix, trace analysis actions" >&2
 				exit 2
 				;;
 		esac
@@ -857,12 +846,12 @@ HELP
 		echo "ERROR: --keep/--keep-psam/--keep-males are supported by phyml and ibdmix" >&2; exit 2
 	fi
 	if ((TARGET_INPUT_SET != TARGET_DIR_INPUT_SET)); then
-		echo "ERROR: --target and --dir-target (--target-dir) must be supplied together" >&2
+		echo "ERROR: --target and --dir-target  must be supplied together" >&2
 		exit 2
 	fi
 	if ((TARGET_INPUT_SET)); then
-		case "$METHOD" in phyml | ibdmix | trace | as3) ;; *)
-			echo "ERROR: --target/--target-dir are only valid with phyml, ibdmix, trace, or as3" >&2
+		case "$METHOD" in phyml | ibdmix | trace) ;; *)
+			echo "ERROR: --target/--dir-target are only valid with phyml, ibdmix, trace" >&2
 			exit 2
 			;;
 		esac
@@ -871,6 +860,7 @@ HELP
 			exit 2
 		}
 	fi
+	export GU_BATCH_ID=${POSTFIX_INPUT:-${GU_BATCH_ID:-}}
 	if [[ -n $DIR_OUT_INPUT || -n $POSTFIX_INPUT ]]; then
 		[[ $METHOD != ukb ]] || { echo "ERROR: UKB preparation uses --ukb-results-root" >&2; exit 2; }
 		gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$DIR_OUT_INPUT" "$POSTFIX_INPUT" >/dev/null || return $?
@@ -898,10 +888,6 @@ HELP
 	}
 	REPLACE_TRACE_INPUT=$(gu_bool "$REPLACE_TRACE_INPUT") || {
 		echo "ERROR: --replace-trace must be TRUE or FALSE" >&2
-		exit 2
-	}
-	REPLACE_AS3_INPUT=$(gu_bool "$REPLACE_AS3_INPUT") || {
-		echo "ERROR: --replace-as3 must be TRUE or FALSE" >&2
 		exit 2
 	}
 	AUTO_FINAL_INPUT=$(gu_bool "$AUTO_FINAL_INPUT") || {
@@ -940,10 +926,6 @@ HELP
 		echo "ERROR: --phyml-ld-r2 must be between 0 and 1" >&2
 		exit 2
 	}
-	[[ $AS3_TARGET_CHUNK_SIZE_INPUT =~ ^[1-9][0-9]*$ ]] || {
-		echo "ERROR: --as3-target-chunk-size must be a positive integer" >&2
-		exit 2
-	}
 	[[ -z $UKB_THREADS_INPUT || $UKB_THREADS_INPUT =~ ^[1-9][0-9]*$ ]] || {
 		echo "ERROR: --ukb-threads must be a positive integer" >&2
 		exit 2
@@ -957,15 +939,24 @@ HELP
 		exit 2
 	}
 
+	if ((GPU_SET)) && [[ $METHOD != ibdmix ]]; then
+		echo "ERROR: --GPU is supported by ibdmix; use the documented dedicated backend for other methods" >&2; return 2
+	fi
+	if [[ $METHOD == ibdmix ]]; then
+		IBDMIX_BACKEND=cpu; GPU_METHOD=''; OUTPUT_MODULE=ibdmix
+		if [[ $GPU_INPUT == TRUE ]]; then
+			IBDMIX_BACKEND=cuda; GPU_METHOD=ibdmix
+			((MEMORY_CAP_SET)) || MEMORY_CAP_INPUT=${GU_MEMORY_CAP:-16G}
+		fi
+		export IBDMIX_BACKEND GU_RESULT_MODULE=''
+	fi
+	export GU_RESOURCE_GUARD=$RESOURCE_GUARD_INPUT
 	GU_AUTO_FINAL=0
 	[[ $AUTO_FINAL_INPUT == FALSE ]] || GU_AUTO_FINAL=1
 	IBDMIX_REPLACE=0
 	[[ $REPLACE_IBDMIX_INPUT == FALSE ]] || IBDMIX_REPLACE=1
 	TRACE_REPLACE=0
 	[[ $REPLACE_TRACE_INPUT == FALSE ]] || TRACE_REPLACE=1
-	AS3_REPLACE=0
-	[[ $REPLACE_AS3_INPUT == FALSE ]] || AS3_REPLACE=1
-	AS3_TARGET_CHUNK_SIZE=$AS3_TARGET_CHUNK_SIZE_INPUT
 	TRACE_LOCI_MODE=$TRACE_LOCI_MODE_INPUT
 	PHYML_CHR_WINDOW_BP=$PHYML_WINDOW_BP_INPUT
 	PHYML_JOBS=$PHYML_JOBS_INPUT
@@ -974,8 +965,8 @@ HELP
 	GU_RUN_CMD=$RUN_CMD_INPUT
 	GU_FOREGROUND=$FOREGROUND_INPUT
 	GU_UNIT_JOBS=$UNIT_JOBS_INPUT
-	if [[ $METHOD == ibdmix && $IBDMIX_BACKEND == cuda ]]; then
-		IBDMIX_GPU_BIN=${IBDMIX_GPU_BIN:-${GU_SOFT:-/mnt/d/software/gu}/ibdmix-gpu/ibdmix-gpu}
+	if [[ $METHOD == ibdmix && $IBDMIX_BACKEND == cuda && $GU_RUN_CMD == TRUE ]]; then
+		IBDMIX_GPU_BIN=${IBDMIX_GPU_BIN:-$GU_SOFT/ibdmix-gpu/ibdmix-gpu}
 		export IBDMIX_GPU_BIN
 		[[ -x $IBDMIX_GPU_BIN ]] || { echo "ERROR: build the CUDA caller with bash $F/ibdmix.sh build-gpu" >&2; return 2; }
 		"$IBDMIX_GPU_BIN" --gpu-check --gpu-device "${IBDMIX_GPU_DEVICE:-0}" || return $?
@@ -985,13 +976,13 @@ HELP
 		GU_UNIT_JOBS=1
 	fi
 	if [[ $METHOD == phyml && $PHYML_BACKEND == cuda ]]; then
-		PHYML_GPU_BIN=${PHYML_GPU_BIN:-/mnt/d/software/gu/phyml-gpu/phyml-gpu}
+		PHYML_GPU_BIN=${PHYML_GPU_BIN:-$GU_SOFT/phyml-gpu/phyml-gpu}
 		PHYML_TREE_CPUS=1
 		export PHYML_GPU_BIN PHYML_TREE_CPUS
 		[[ -x $PHYML_GPU_BIN ]] || { echo "ERROR: build with bash $F/phyml_gpu/build.sh" >&2; return 2; }
 		"$PHYML_GPU_BIN" --gpu-check || return $?
 	fi
-	export GU_AUTO_FINAL IBDMIX_REPLACE TRACE_REPLACE AS3_REPLACE AS3_TARGET_CHUNK_SIZE
+	export GU_AUTO_FINAL IBDMIX_REPLACE TRACE_REPLACE
 	export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_FOREGROUND GU_UNIT_JOBS
 	if [[ $METHOD == phyml ]]; then
 		PHYML_PLOT_PHY=$PLOT_PHY_INPUT
@@ -1005,11 +996,8 @@ HELP
 
 	GU_MEMORY_CAP=$MEMORY_CAP_INPUT
 	export GU_MEMORY_CAP
-	# Apply before COJO conversion, conda, and background orchestration. Workers
-	# inherit and verify the same scope instead of receiving 32 GiB each.
-	if ! bash "$ROOT/../0f/memory_cap.sh" --check "$MEMORY_CAP_INPUT"; then
-		exec bash "$ROOT/../0f/memory_cap.sh" "$MEMORY_CAP_INPUT" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
-	fi
+	source "$F/resource_guard.sh"
+	gu_resource_guard "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 
 	# 馃毄 Runtime environment
 	# Re-enter the general GU environment before creating request-scoped temporary
@@ -1033,8 +1021,8 @@ HELP
 		exec "$conda_owner" run --no-capture-output -n "$ENV_NAME" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 	fi
 
-	GU_DATA_ROOT=${GU_DATA_ROOT:-/mnt/d}
-	GU_REF_ROOT=${GU_REF_ROOT:-/mnt/f/gen}
+	GU_DATA_ROOT=${GU_DATA_ROOT:?runtime configuration required}
+	GU_REF_ROOT=${GU_REF_ROOT:?runtime configuration required}
 	if [[ $METHOD == trace && $TRACE_BACKEND == cuda ]]; then
 		TRACE_BACKEND=cuda python3 "$F/trace.py" infer --gpu-check || return $?
 	fi
@@ -1047,7 +1035,7 @@ HELP
 			if [[ ${GU_CMD_WORKER:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
 				output_base=${GU_UKB_RESULTS_ROOT:-${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-}}}
 			elif [[ $METHOD == final || $METHOD == shiny ]]; then
-				output_base=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/1kg}}
+				output_base=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}}
 			fi
 		fi
 		output_root=$(gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$output_base" "$POSTFIX_INPUT") || return $?
@@ -1062,9 +1050,9 @@ HELP
 	fi
 	# Start console capture only after resolving the destination. A stale global
 	# SCRIPT_LOG_DIR must not send this batch's log into another dataset.
-	export SCRIPT_LOG_DIR=${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/ukb}/logs
-	# shellcheck source=../0f/console.sh
-	source "$ROOT/../0f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
+	export SCRIPT_LOG_DIR=${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/ukb}/logs
+	# shellcheck source=f/console.sh
+	source "$ROOT/f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
 	if [[ -n $GU_KEEP_PSAM ]]; then
 		local chunk_context
 		chunk_context=$(python3 "$F/ukb_prepare.py" target --chunk-only --keep-psam "$GU_KEEP_PSAM") || return $?
@@ -1093,14 +1081,14 @@ HELP
 	fi
 	if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
 		GU_TARGET=${TARGET_INPUT:-$GU_TARGET}
-		GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/$GU_TARGET}
+		GU_ANALYSIS_ROOT=${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/$GU_TARGET}
 		GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
 		GU_TARGET_NATIVE_VCF_PREFIX=""
 		export GU_FILTERED_TARGET GU_TARGET_NATIVE_VCF_PREFIX GU_KEEP GU_MALE_ONLY GU_SAMPLE_PANEL
 	fi
 	if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
 		GU_TARGET=$TARGET_INPUT
-		GU_UKB_RESULTS_ROOT=${GU_UKB_RESULTS_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/ukb}}
+		GU_UKB_RESULTS_ROOT=${GU_UKB_RESULTS_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/ukb}}
 		GU_UKB_RESULTS_ROOT=$(python3 - "$F" "$GU_UKB_RESULTS_ROOT" <<'PYROOT'
 import importlib.util,sys
 from pathlib import Path
@@ -1117,13 +1105,13 @@ PYROOT
 	if [[ ($METHOD == ibdmix || $METHOD == phyml) && (${GU_UKB_DIRECT:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1) ]]; then
 		gu_plan_ukb_resources "$MEMORY_CAP_INPUT" "$GU_UNIT_JOBS" || return $?
 	fi
-	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-/mnt/f/analysis/gu/1kg}}
+	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}}
 	export GU_PUBLISHED_ROOT
 	if [[ $METHOD == shiny && ${GU_SUMMARY_ONLY:-0} == 1 ]]; then
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results work-root --published "$GU_PUBLISHED_ROOT")
 	elif [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
 		local -a restore_run_args=()
-		case "$METHOD" in phyml) restore_run=${PHYML_OUT:-} ;; ibdmix) restore_run=${IBDMIX_OUT:-} ;; trace) restore_run=${TRACE_OUT:-} ;; as3) restore_run=${AS3_OUT:-} ;; *) restore_run= ;; esac
+		case "$METHOD" in phyml) restore_run=${PHYML_OUT:-} ;; ibdmix) restore_run=${IBDMIX_OUT:-} ;; trace) restore_run=${TRACE_OUT:-} ;; *) restore_run= ;; esac
 		[[ -z $restore_run ]] || restore_run_args=(--run "$restore_run")
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD" "${restore_run_args[@]}")
 	else
@@ -1131,11 +1119,11 @@ PYROOT
 	fi
 	GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
 	GU_FINAL_DIR=$GU_ANALYSIS_ROOT/final
-	[[ -z $GPU_METHOD ]] || GU_FINAL_DIR=$GU_FINAL_DIR/$GPU_METHOD-GPU
+	if [[ -n $GPU_METHOD && $GPU_METHOD != ibdmix ]]; then GU_FINAL_DIR=$GU_FINAL_DIR/$GPU_METHOD-GPU; fi
 	export GU_ANALYSIS_ROOT GU_FINAL_DIR GU_PUBLISHED_ROOT
-	GU_RUN_TMP_ROOT=/tmp/gu-runs
+	GU_RUN_TMP_ROOT=${GU_RUN_TMP_ROOT:-${TMPDIR:-/tmp}/gu-runs}
 	# Explicit overrides must not silently send primary outputs back to /tmp.
-	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT AS3_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
+	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
 		if [[ -n ${!result_var:-} ]]; then
 			result_path=$(gu_require_result_path "${!result_var}") || return $?
 			[[ $result_path == "$GU_ANALYSIS_ROOT/"* ]] || {
@@ -1144,9 +1132,8 @@ PYROOT
 			}
 		fi
 	done
-	GU_SOFT=${GU_SOFT:-$GU_DATA_ROOT/software/gu}
+	GU_SOFT=${GU_SOFT:-$HOME/.local/share/gu}
 	default_build=37
-	[[ $METHOD == as3 ]] && default_build=38
 	GU_BUILD=${GRCH_INPUT:-${GU_BUILD:-$default_build}}
 	case "${GU_BUILD,,}" in
 		37 | b37 | grch37 | hg19) GU_BUILD=37 ;;
@@ -1156,17 +1143,12 @@ PYROOT
 			exit 2
 			;;
 	esac
-	AS3_EXPERIMENTAL_BUILD=0
-	if [[ $METHOD == as3 && $GU_BUILD != 38 ]]; then
-		echo "WARNING: AS3 stopped before preprocessing: the public data support GRCh38 or CHM13, and this GU entry supports GRCh38 only (requested GRCh$GU_BUILD)." >&2
-		exit 2
-	fi
 	GU_TARGET=${TARGET_INPUT:-${GU_TARGET:-1kg}}
 	[[ $GU_TARGET =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $GU_TARGET != "." && $GU_TARGET != ".." ]] || {
 		echo "ERROR: target name must contain only letters, numbers, '.', '_' or '-', and must not be '.' or '..'" >&2
 		exit 2
 	}
-	if [[ $METHOD == phyml || $METHOD == ibdmix || $METHOD == trace || $METHOD == as3 ]]; then
+	if [[ $METHOD == phyml || $METHOD == ibdmix || $METHOD == trace ]]; then
 		mkdir -p "$GU_ANALYSIS_ROOT"
 		local result_env=$GU_ANALYSIS_ROOT/gu-target.env result_env_part
 		if [[ -s $result_env ]]; then
@@ -1201,7 +1183,7 @@ p=Path(sys.argv[1]); print(p.name+'.'+hashlib.sha256(p.read_bytes()+('gwas-lead-
 PYKEY
 		)
 		cojo_out="$GU_ANALYSIS_ROOT/$OUTPUT_MODULE/inputs/$cojo_key"
-		python3 "$F/phyml.py" input --input "$LOCI_INPUT" --output "$cojo_out" --build "$COJO_SOURCE_BUILD" --window "$PHYML_WINDOW_BP_INPUT" --chain "${GU_COJO_CHAIN:-/mnt/d/files/liftOver/hg38ToHg19.over.chain.gz}"
+		python3 "$F/phyml.py" input --input "$LOCI_INPUT" --output "$cojo_out" --build "$COJO_SOURCE_BUILD" --window "$PHYML_WINDOW_BP_INPUT" --chain "${GU_COJO_CHAIN:?runtime configuration required}"
 		export GU_PHYML_LEAD_TABLE="$cojo_out/gwas_leads.GRCh37.tsv"
 		LOCI_INPUT="$cojo_out/search_windows.GRCh37.bed"
 		LOCI_FORMAT=bed
@@ -1217,29 +1199,17 @@ PYKEY
 
 	# 馃毄 Target inputs
 	# PFILE is the primary target format. Methods which require VCF receive a
-	# single-run VCF under the analysis temporary directory.  AS3 is VCF-native, so it directly
-	# reuses indexed chrN.vcf.gz inputs instead of needlessly round-tripping them
-	# through PGEN.  The explicit chrX.male.vcf.gz sibling remains available as a
+	# single-run VCF under the analysis temporary directory. Indexed VCFs are reused
+	# directly where supported.  The explicit chrX.male.vcf.gz sibling remains available as a
 	# validated VCF input when a chrX.male pfile is absent.
 	GU_TARGET_NATIVE_VCF_PREFIX=${GU_TARGET_NATIVE_VCF_PREFIX-$GU_TARGET_ROOT/vcf/chr}
 	GU_TARGET_DIR=$GU_TARGET_GEN_PREFIX
-	if [[ $METHOD == as3 ]]; then
-		AS3_RUNTIME=$F/as3
-		AS3_REFERENCE_PANEL_DIR=${AS3_REFERENCE_PANEL_DIR:-$GU_REF_ROOT/archaic/38/vcf}
-		AS3_REFERENCE_MAP=${AS3_REFERENCE_MAP:-$AS3_REFERENCE_PANEL_DIR/Ref_Panel.map.txt}
-		AS3_MASK_DIR=${AS3_MASK_DIR:-$GU_REF_ROOT/archaic/38/mask}
-		AS3_MODEL_DIR=${AS3_MODEL_DIR:-$GU_REF_ROOT/archaic/38/models}
-		GU_ARCHAIC_ROOT=${GU_ARCHAIC_ROOT:-$AS3_REFERENCE_PANEL_DIR}
-	else
-		archaic_build_root_var=GU_ARCHAIC${GU_BUILD}_ROOT
-		GU_ARCHAIC_ROOT=${GU_ARCHAIC_ROOT:-${!archaic_build_root_var:-$GU_REF_ROOT/archaic/$GU_BUILD/vcf}}
-	fi
-	AS3_PUBLISHED_CALLS_DIR=${AS3_PUBLISHED_CALLS_DIR:-$GU_REF_ROOT/archaic/38/database_introgression_call}
-	AS3_REFERENCE_CALLSET_CACHE=${AS3_REFERENCE_CALLSET_CACHE:-$GU_FINAL_DIR/normalize/reference-callsets.sqlite}
+	archaic_build_root_var=GU_ARCHAIC${GU_BUILD}_ROOT
+	GU_ARCHAIC_ROOT=${GU_ARCHAIC_ROOT:-${!archaic_build_root_var:-$GU_REF_ROOT/archaic/$GU_BUILD/vcf}}
 	GU_SAMPLE_PANEL=${SAMPLE_PANEL_INPUT:-${GU_SAMPLE_PANEL:-}}
 	GU_ARG_DIR=${ARG_DIR_INPUT:-${GU_ARG_DIR:-$GU_TARGET_ROOT/arg.tsinfer}}
 	if [[ $METHOD == phyml && -z $LOCI_INPUT && -z $CHR_INPUT ]]; then
-		LOCI_INPUT=${GU_DEFAULT_LOCI:-/mnt/d/files/gu.$GU_BUILD.bed}
+		LOCI_INPUT=${GU_DEFAULT_LOCI:-$GU_FILES_ROOT/gu.$GU_BUILD.bed}
 	fi
 
 	GU_LOCI_FILE=""
@@ -1332,9 +1302,9 @@ PYKEY
 			}
 			IBDMIX_REFS=$(python3 "$F/ibdmix.py" normalize-refs "$IBDMIX_REFS") || return $?
 			for ukb_reference in $IBDMIX_REFS; do
-				case "$ukb_reference" in Altai | Chagyr | Vindija | Denisova | Denisova25) ;;
+				case "$ukb_reference" in Altai | Altai.2013 | Chagyr | Vindija | Denisova | Denisova.2013 | Denisova25) ;;
 					*)
-						echo "ERROR: IBDmix references must be selected from Altai,Chagyr,Denisova,Denisova25,Vindija; .2013 replication references are retired" >&2
+						echo "ERROR: unsupported IBDmix reference; see --archaic-gen in README" >&2
 						return 2
 						;;
 				esac
@@ -1343,11 +1313,7 @@ PYKEY
 			echo "[GU UKB] Exploratory archaic reference matches, not confirmed lineage assignments; African Denisova subtraction is OFF. Keep a fixed cohort across chromosomes and references; separate sample batches change IBDmix frequencies."
 		fi
 		IBDMIX_PROFILE=${IBDMIX_PROFILE:-multi_reference}
-		if [[ -z ${IBDMIX_REFS:-} ]]; then
-			if [[ $IBDMIX_PROFILE == multi_reference ]]; then
-				IBDMIX_REFS="Altai Chagyr Denisova Denisova25 Vindija"
-			else IBDMIX_REFS="Altai Denisova"; fi
-		fi
+		IBDMIX_REFS=${IBDMIX_REFS:-Altai Chagyr Denisova Denisova25 Vindija}
 		IBDMIX_REFS=$(python3 "$F/ibdmix.py" normalize-refs "$IBDMIX_REFS") || exit $?
 		export IBDMIX_PROFILE IBDMIX_REFS
 		if [[ $IBDMIX_PROFILE != custom ]]; then
@@ -1362,19 +1328,11 @@ PYKEY
 		fi
 		read -r -a ibdmix_precheck_chrs <<<"${GU_CHRS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X}"
 		read -r -a ibdmix_precheck_refs <<<"$IBDMIX_REFS"
-		[[ -z ${IBDMIX_MASK_CACHE:-} ]] || {
-			echo "ERROR: IBDMIX_MASK_CACHE is retired; use IBDMIX_MASK_ROOT pointing to the unified mask directory" >&2
-			exit 2
-		}
 		ibdmix_mask_args=(--root "${IBDMIX_MASK_ROOT:-$(dirname -- "$GU_ARCHAIC_ROOT")/mask}"
 		--archaic-root "$GU_ARCHAIC_ROOT" --chroms "${ibdmix_precheck_chrs[@]}" --refs "${ibdmix_precheck_refs[@]}")
 		[[ -z ${IBDMIX_MASK_DIR:-} ]] || ibdmix_mask_args+=(--custom-masks "$IBDMIX_MASK_DIR")
 		# Check the whole request before spawning chromosome workers or exporting VCFs.
 		python3 "$F/ibdmix.py" check-masks "${ibdmix_mask_args[@]}" || exit $?
-	fi
-	if [[ $METHOD == as3 && " $GU_CHRS " == *" X "* ]]; then
-		echo "ERROR: AS3 supports GRCh38 autosomes 1-22 only; chrX is unavailable" >&2
-		exit 2
 	fi
 	if [[ $METHOD == trace ]]; then
 		trace_precheck_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}
@@ -1448,7 +1406,7 @@ PYKEY
 		local action
 		action=$(gu_command_action)
 		case "$METHOD:$action" in
-			phyml:run | ibdmix:run | trace:run | trace:extract | trace:infer | trace:segments | as3:run) return 0 ;;
+			phyml:run | ibdmix:run | trace:run | trace:extract | trace:infer | trace:segments) return 0 ;;
 			*) return 1 ;;
 		esac
 	}
@@ -1459,11 +1417,10 @@ PYKEY
 			phyml) override=${PHYML_OUT:-} ;;
 			ibdmix) override=${IBDMIX_OUT:-} ;;
 			trace) override=${TRACE_OUT:-} ;;
-			as3) override=${AS3_OUT:-} ;;
 		esac
 		local result
-		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$METHOD" "$unit_label" "$GU_TARGET_NAMESPACE" "$override" "$request_units")
-		if [[ $METHOD == ibdmix && $unit_label == chrX* && ${IBDMIX_X_PROFILE:-nonpar-v2} != legacy && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
+		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$METHOD" "$unit_label" "$override" "$request_units")
+		if [[ $METHOD == ibdmix && $unit_label == chrX* && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
 			[[ $result == *.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1} ]] || result="$result.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
 		fi
 		printf '%s\n' "$result"
@@ -1475,10 +1432,6 @@ PYKEY
 		local -a cmd_args
 		out=$(gu_command_output "$unit_label" "$request_units")
 		mkdir -p "$out"
-		# Adopt historical completion before replacing the old command or BED.
-		if [[ $METHOD == phyml && -s $out/$unit_label.cmd ]]; then
-			python3 "$F/phyml.py" cache adopt "$out/$unit_label.cmd" --archaic-root "$GU_ARCHAIC_ROOT" || true
-		fi
 
 		worker_action=$(gu_command_action)
 		cmd_args=("$ROOT/gu.sh" "$OUTPUT_MODULE")
@@ -1499,7 +1452,12 @@ PYKEY
 					return 2
 				}
 				;;
-			chromosome) unit_bed="" ;;
+			request_loci)
+				unit_bed=$out/${scope_label}.bed
+				bed_tmp=$unit_bed.tmp.$$
+				cp "$GU_LOCI_CORE_FILE" "$bed_tmp"
+				;;
+			chromosome | request) unit_bed="" ;;
 			*)
 				echo "ERROR: internal command unit kind is invalid: $kind" >&2
 				return 2
@@ -1512,10 +1470,9 @@ PYKEY
 			cmd_args+=(--chr "$chr")
 		fi
 		cmd_args+=(--grch "$GU_BUILD")
-		cmd_args+=(--memory-cap "$MEMORY_CAP_INPUT")
-		# Use the legacy spelling in saved commands for existing cache readers;
-		# the resolved output root is exported below, without appending twice.
-		cmd_args+=(--target "$GU_TARGET" --target-dir "$GU_TARGET_GEN_PREFIX")
+		cmd_args+=(--memory-cap "$MEMORY_CAP_INPUT" --resource-guard "$GU_RESOURCE_GUARD")
+		# Save the canonical CLI. The resolved output root is exported below.
+		cmd_args+=(--target "$GU_TARGET" --dir-target "$GU_TARGET_GEN_PREFIX")
 		if [[ -n $GU_KEEP_PSAM ]]; then
 			cmd_args+=(--keep-psam "$GU_KEEP_PSAM")
 		else
@@ -1530,16 +1487,12 @@ PYKEY
 				output_var=PHYML_OUT
 				;;
 			ibdmix)
-				cmd_args+=(--replace-ibdmix "$REPLACE_IBDMIX_INPUT" --archaic-path "$GU_ARCHAIC_ROOT" --archaic-gen "${IBDMIX_REFS// /,}")
+				cmd_args+=(--GPU "$GPU_INPUT" --replace-ibdmix "$REPLACE_IBDMIX_INPUT" --archaic-path "$GU_ARCHAIC_ROOT" --archaic-gen "${IBDMIX_REFS// /,}")
 				output_var=IBDMIX_OUT
 				;;
 			trace)
-				cmd_args+=(--replace-trace "$REPLACE_TRACE_INPUT" --trace-loci-mode "$TRACE_LOCI_MODE_INPUT" --arg-dir "$GU_ARG_DIR")
+				cmd_args+=(--replace-trace "$REPLACE_TRACE_INPUT" --trace-loci-mode "$TRACE_LOCI_MODE_INPUT" --dir-arg "$GU_ARG_DIR")
 				output_var=TRACE_OUT
-				;;
-			as3)
-				cmd_args+=(--replace-as3 "$REPLACE_AS3_INPUT" --as3-target-chunk-size "$AS3_TARGET_CHUNK_SIZE_INPUT")
-				output_var=AS3_OUT
 				;;
 		esac
 		# A unit command is already the leaf worker. Keep it attached to the local
@@ -1577,13 +1530,14 @@ PYKEY
 					[[ -z ${!gpu_option:-} ]] || printf 'export %s=%q\n' "$gpu_option" "${!gpu_option}"
 				done
 				if [[ $IBDMIX_BACKEND == cuda ]]; then
-					printf 'export IBDMIX_GPU_BIN=%q\n' "$IBDMIX_GPU_BIN"
+					printf 'export IBDMIX_GPU_BIN=%q\n' "${IBDMIX_GPU_BIN:-$GU_SOFT/ibdmix-gpu/ibdmix-gpu}"
 					for gpu_option in IBDMIX_GPU_DEVICE IBDMIX_GPU_NODES IBDMIX_GPU_MAX_NODES IBDMIX_GPU_BATCH_SITES IBDMIX_GPU_EVENTS; do
 						[[ -z ${!gpu_option:-} ]] || printf 'export %s=%q\n' "$gpu_option" "${!gpu_option}"
 					done
 				fi
 				printf 'export IBDMIX_X_PROFILE=%q\nexport IBDMIX_X_MINOR_ALLELE_COUNT=%q\n' "${IBDMIX_X_PROFILE:-nonpar-v2}" "${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
 				printf 'export IBDMIX_PROFILE=%q\nexport IBDMIX_REFS=%q\n' "$IBDMIX_PROFILE" "$IBDMIX_REFS"
+				printf 'export GU_BATCH_ID=%q\n' "$GU_BATCH_ID"
 				printf 'export IBDMIX_AFR_DENISOVAN_FILTER=%q\nexport IBDMIX_MASK_DIR=%q\n' "${IBDMIX_AFR_DENISOVAN_FILTER:-1}" "${IBDMIX_MASK_DIR:-}"
 			fi
 			printf 'export GU_ANALYSIS_ROOT=%q\n' "$GU_ANALYSIS_ROOT"
@@ -1618,7 +1572,7 @@ PYKEY
 				[[ $REPLACE_IBDMIX_INPUT == FALSE ]] || return 1
 				# Validate original inputs and content-based cohort identity before
 				# rebuilding disposable UKB exports. Exit 2 refuses incompatible
-				# historical calls before spending hours on preparation.
+				# calls with a different contract before spending hours on preparation.
 				python3 "$F/ibdmix.py" resume check "$cmd"
 				;;
 			*) return 1 ;;
@@ -1722,7 +1676,6 @@ PYKEY
 		[[ -z ${GU_UKB_EFFECTIVE_JOBS:-} ]] || effective_jobs=$GU_UKB_EFFECTIVE_JOBS
 		if [[ -z $GU_LOCI_MAP_FILE && -z $command_chrs ]]; then
 			case "$METHOD" in
-				as3) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22" ;;
 				ibdmix) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
 				trace) command_chrs="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
 			esac
@@ -1733,7 +1686,7 @@ PYKEY
 					request_units=$(awk 'END{print (NR > 0 ? NR - 1 : 0)}' "$GU_LOCI_MAP_FILE")
 					unit_kind=locus
 					;;
-				phyml | trace | as3)
+				phyml | trace)
 					request_units=$(awk -F'\t' 'NR>1&&!seen[$1]++{n++}END{print n+0}' "$GU_LOCI_MAP_FILE")
 					unit_kind=loci_chr
 					;;
@@ -1741,6 +1694,10 @@ PYKEY
 		else
 			request_units=$(awk '{print NF}' <<<"$command_chrs")
 			unit_kind=chromosome
+		fi
+		if [[ $METHOD == trace ]]; then
+			request_units=1; effective_jobs=1
+			if [[ -n $GU_LOCI_MAP_FILE ]]; then unit_kind=request_loci; else unit_kind=request; fi
 		fi
 		((request_units > 0)) || {
 			echo "ERROR: no $METHOD analysis units selected" >&2
@@ -1752,8 +1709,10 @@ PYKEY
 		list=$cmd_root/${scope_label}.cmd.list
 		list_tmp=$list.tmp.$$
 		: >"$list_tmp"
-		echo "[GU CMD] CHECK preparing $request_units units and checking historical completion"
-		if [[ $unit_kind == locus ]]; then
+		echo "[GU CMD] CHECK preparing $request_units units and checking completion receipts"
+		if [[ $unit_kind == request || $unit_kind == request_loci ]]; then
+			gu_write_analysis_unit_cmd 1 "$scope_label" "$unit_kind" "$command_chrs" >>"$list_tmp"
+		elif [[ $unit_kind == locus ]]; then
 			while IFS=$'\t' read -r chr core_start core_end analysis_start analysis_end locus flank; do
 				unit_label=$(gu_locus_unit_label "$GU_LOCI_MAP_FILE" "$chr" "$core_start" "$core_end" "$locus")
 				gu_write_analysis_unit_cmd "$request_units" "$unit_label" locus "$chr" "$core_start" "$core_end" "$locus" >>"$list_tmp"
@@ -1774,10 +1733,6 @@ PYKEY
 		if [[ $GU_RUN_CMD == FALSE ]]; then
 			echo "[GU CMD] run_cmd=FALSE; generated command files only"
 			return 0
-		fi
-		if [[ $METHOD == as3 && $effective_jobs -gt 1 ]]; then
-			effective_jobs=1
-			echo "[GU CMD] scheduler_cap method=as3 requested_jobs=$GU_UNIT_JOBS effective_jobs=$effective_jobs reason=shared_GPU_assignment"
 		fi
 		echo "[GU CMD] run_cmd=TRUE mode=local jobs=$effective_jobs"
 		gu_run_analysis_cmds_local "$list" "$effective_jobs"
@@ -1862,7 +1817,7 @@ exit "$rc"'
 
 	if gu_command_orchestration_enabled && [[ ${GU_CMD_WORKER:-0} != 1 ]]; then
 		gu_orchestrate_analysis_cmds
-		if [[ ${ACTION:-run} == run && ${GU_KEEP_SCRATCH:-0} != 1 ]]; then
+		if [[ $GU_RUN_CMD == TRUE && ${ACTION:-run} == run && ${GU_KEEP_SCRATCH:-0} != 1 ]]; then
 			python3 "$F/cleanup.py" --analysis-root "$(dirname -- "$GU_PUBLISHED_ROOT")" --work "$GU_PUBLISHED_ROOT" --apply --quiet ||
 				echo 'WARNING: GU scratch cleanup deferred; results are complete.' >&2
 		fi
@@ -1883,7 +1838,7 @@ exit "$rc"'
 
 	USES_TARGET=0
 	case "$METHOD" in
-		phyml | ibdmix | trace | as3) USES_TARGET=1 ;;
+		phyml | ibdmix | trace) USES_TARGET=1 ;;
 	esac
 
 	declare -A GU_TARGET_SOURCE=() GU_TARGET_INDEX=() GU_TARGET_PVAR=() GU_TARGET_PSAM=() GU_TARGET_FORMAT=()
@@ -1925,7 +1880,7 @@ exit "$rc"'
 		fi
 		# IBDmix autosomes prefer the target directory's native VCF below,
 		# avoiding a whole-chromosome pfile export. Preserve chrX routing.
-		if [[ $METHOD != as3 && ($METHOD != ibdmix || $c == X || ${GU_FILTERED_TARGET:-0} == 1) && -s $base.pgen && -s $base.psam ]]; then
+		if [[ ($METHOD != ibdmix || $c == X || ${GU_FILTERED_TARGET:-0} == 1) && -s $base.pgen && -s $base.psam ]]; then
 			for pvar in "$base.pvar" "$base.pvar.zst"; do [[ -s $pvar ]] && break; done
 			[[ -s $pvar ]] || return 4
 			GU_DETECT_FORMAT=pfile
@@ -2040,52 +1995,9 @@ exit "$rc"'
 		((GU_CHRX_PAR_DIPLOID == 0)) || gu_check_log "chrX locus contract=PAR diploid; source=$(gu_target_genotype_base "$GU_TARGET_GEN_PREFIX" X); PLINK PAR1/PAR2 export=internal chrX.vcf.gz"
 		[[ $METHOD == trace || -d $GU_ARCHAIC_ROOT ]] || gu_check_fail "archaic reference root is missing: $GU_ARCHAIC_ROOT"
 		gu_check_log "archaic reference root=$GU_ARCHAIC_ROOT$([[ $METHOD == trace ]] && printf ' (not used by %s)' "${METHOD^^}")"
-		if [[ $METHOD == as3 ]]; then
-			gu_check_log "AS3 GRCh38 reference panel=$AS3_REFERENCE_PANEL_DIR"
-			gu_check_log "AS3 reference map=$AS3_REFERENCE_MAP"
-			gu_check_log "AS3 3N1D mask release=$AS3_MASK_DIR (inventory-validated; not reapplied to preprocessed Ref1028)"
-			gu_check_log "AS3 bundled code=$AS3_RUNTIME models=$AS3_MODEL_DIR"
-			if [[ -d $AS3_PUBLISHED_CALLS_DIR ]] && find "$AS3_PUBLISHED_CALLS_DIR" -type f \( -name '*.bed' -o -name '*.bed.gz' \) -size +0c -print -quit | grep -q .; then
-				gu_check_log "AS3 external callsets=$AS3_PUBLISHED_CALLS_DIR role=external_reference"
-			else
-				gu_check_log "AS3 external callsets=missing path=$AS3_PUBLISHED_CALLS_DIR"
-			fi
-			as3_preflight_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22"}
-			[[ -s $AS3_REFERENCE_MAP ]] || gu_check_fail "AS3 Ref1028 map missing or empty: $AS3_REFERENCE_MAP"
-			[[ -s $AS3_RUNTIME/ArchaicSeeker3.1-mamba && -d $AS3_RUNTIME/src ]] || gu_check_fail "bundled AS3 source is incomplete: $AS3_RUNTIME"
-			[[ -s $AS3_RUNTIME/MODEL_SHA256SUMS ]] || gu_check_fail "bundled AS3 model checksum manifest is missing: $AS3_RUNTIME/MODEL_SHA256SUMS"
-			(cd "$AS3_MODEL_DIR" && sha256sum -c "$AS3_RUNTIME/MODEL_SHA256SUMS" >/dev/null) || gu_check_fail "AS3 model files are missing or fail SHA-256 validation under $AS3_MODEL_DIR"
-			read -r as3_afr as3_den as3_nean as3_other < <(awk 'BEGIN{FS="[[:space:]]+"}
-      NF{total++; if(NF==2)n[$2]++}
-      END{other=total-(n["AFR"]+n["DEN"]+n["NEAN"]);print n["AFR"]+0,n["DEN"]+0,n["NEAN"]+0,other+0}' "$AS3_REFERENCE_MAP")
-			((as3_afr == 146 && as3_den == 1 && as3_nean == 3 && as3_other == 0)) ||
-				gu_check_fail "AS3 Ref1028 map must contain exactly AFR=146, DEN=1, NEAN=3 in two columns: $AS3_REFERENCE_MAP"
-			gu_check_log "AS3 reference map classes AFR=$as3_afr DEN=$as3_den NEAN=$as3_nean"
-			for c in $as3_preflight_chrs; do
-				c=${c#chr}
-				c=${c#CHR}
-				[[ $c =~ ^([1-9]|1[0-9]|2[0-2])$ ]] || gu_check_fail "AS3 Ref1028 supports GRCh38 chr1-22 only; got chr$c"
-				as3_vcf=$AS3_REFERENCE_PANEL_DIR/Ref_Panel.chr${c}.vcf.gz
-				[[ -s $as3_vcf ]] || gu_check_fail "AS3 Ref1028 VCF missing or empty: $as3_vcf"
-				[[ -s $as3_vcf.tbi || -s $as3_vcf.csi ]] || gu_check_fail "AS3 Ref1028 VCF index missing: $as3_vcf.tbi or $as3_vcf.csi"
-				bcftools view -h "$as3_vcf" >/dev/null 2>&1 || gu_check_fail "AS3 Ref1028 VCF/header is unreadable: $as3_vcf"
-				[[ $(bcftools index -n "$as3_vcf" 2>/dev/null || echo 0) -gt 0 ]] || gu_check_fail "AS3 Ref1028 VCF contains no indexed records: $as3_vcf"
-				for as3_mask in "$AS3_MASK_DIR/chr${c}_mask.bed" "$AS3_MASK_DIR/chr${c}_mask.wchr.bed"; do
-					[[ -s $as3_mask ]] || gu_check_fail "AS3 3N1D mask release is incomplete: $as3_mask"
-				done
-				awk -v chr="$c" 'NF{n++;if(NF<3||$1!~("^" chr "($|_)")||$2!~/^[0-9]+$/||$3!~/^[0-9]+$/||$2<0||$3<=$2)bad=1}END{exit !(n>0&&!bad)}' \
-					"$AS3_MASK_DIR/chr${c}_mask.bed" || gu_check_fail "invalid numeric-contig 3N1D mask: $AS3_MASK_DIR/chr${c}_mask.bed"
-				awk -v chr="$c" 'NF{n++;if(NF<3||$1!~("^chr" chr "($|_)")||$2!~/^[0-9]+$/||$3!~/^[0-9]+$/||$2<0||$3<=$2)bad=1}END{exit !(n>0&&!bad)}' \
-					"$AS3_MASK_DIR/chr${c}_mask.wchr.bed" || gu_check_fail "invalid chr-prefixed 3N1D mask: $AS3_MASK_DIR/chr${c}_mask.wchr.bed"
-				gu_check_log "AS3 Ref1028 chr$c=$as3_vcf masks=available"
-			done
-			gu_check_log "AS3 Ref1028/map/mask release preflight=PASS"
-		fi
 
 		if [[ -n $GU_CHRS ]]; then
 			TARGET_CHECK_CHRS=$GU_CHRS
-		elif [[ $METHOD == as3 ]]; then
-			TARGET_CHECK_CHRS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22"
 		else
 			TARGET_CHECK_CHRS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"
 		fi
@@ -2191,8 +2103,6 @@ exit "$rc"'
 			gu_check_log "WARNING: sample metadata was not found; phyml will infer chrX haploidy from GT width when possible"
 		elif [[ $METHOD == trace ]]; then
 			gu_check_log "sample metadata was not found; TRACE will use VCF/tree sample identities"
-		elif [[ $METHOD == as3 ]]; then
-			gu_check_log "WARNING: sample metadata was not found; AS3 will use target VCF sample IDs, but population-stratified normalization will be unavailable"
 		else
 			gu_check_fail "$METHOD requires sample metadata; use --sample-panel FILE or place samples.txt beside the target files"
 		fi
@@ -2229,24 +2139,27 @@ exit "$rc"'
 	export GU_DATA_ROOT GU_REF_ROOT GU_ANALYSIS_ROOT GU_SOFT GU_BUILD GU_TARGET GU_TARGET_NAMESPACE GU_TARGET_DIR GU_TARGET_ROOT GU_TARGET_VCF_DIR GU_TARGET_GEN_PREFIX GU_TARGET_NATIVE_VCF_PREFIX GU_TARGET_GEN_FORMAT GU_CHRX_MALE_ONLY GU_CHRX_PAR_DIPLOID GU_CHRX_TARGET_MODE GU_CHRXY_EXTRACT_BED
 	export GU_TARGET_TMP_DIR
 	export GU_ARCHAIC_ROOT GU_SAMPLE_PANEL GU_ARG_DIR GU_LOCI_FILE GU_LOCI_CORE_FILE GU_LOCI_MAP_FILE GU_LOCI_FLANK_BP GU_CHRS GU_SCOPE_ID GU_SCOPE_KEY GU_SCOPE_LABEL GU_CHECK_LOG GU_BUILD_CHECK_CHR
-	export AS3_RUNTIME AS3_REFERENCE_PANEL_DIR AS3_REFERENCE_MAP AS3_MASK_DIR AS3_MODEL_DIR AS3_PUBLISHED_CALLS_DIR AS3_REFERENCE_CALLSET_CACHE
 	export dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$GU_ARCHAIC_ROOT" dir_1kg="$GU_REF_ROOT/1kg/$GU_BUILD" GRCH="$GU_BUILD"
 
-	unset R_LIBS R_LIBS_USER BCFTOOLS_PLUGINS
+	export GU_RESULTS_R=${GU_RESULTS_R:-$ROOT/f/results.R}
+	export GU_PHYML_R=${GU_PHYML_R:-$F/phyml.R}
+	export RESULTS_RSCRIPT=${RESULTS_RSCRIPT:-$(command -v Rscript || printf Rscript)}
+	unset R_LIBS R_LIBS_USER
+	export BCFTOOLS_PLUGINS="${CONDA_PREFIX:-$GU_ENV_PREFIX}/libexec/bcftools"
 	export R_ENVIRON_USER=/dev/null R_PROFILE_USER=/dev/null
 
-	PHE_F=${PHE_F:-$ROOT/../0f/phenotype.sh}
+	PHE_F=${PHE_F:-$ROOT/f/phenotype.sh}
 	[[ -s $PHE_F ]] || {
 		echo "ERROR: missing shared helper: $PHE_F" >&2
 		exit 2
 	}
-	# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
+	# shellcheck source=f/phenotype.sh
 	source "$PHE_F"
 
 	# 馃毄 Genome-build validation
 	# Use coordinate sentinels when pvars do not contain rsIDs.
 	gu_check_grch_pvar_positions() {
-		local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:-/mnt/d/data/ukb/common/snp.lst}
+		local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:?runtime configuration required}
 		local n37 n38 inferred expected_n
 		[[ -s $src && -s $gold ]] || {
 			echo "ERROR: positional GRCh check input is missing: pvar=$src gold=$gold" >&2
@@ -2294,7 +2207,7 @@ exit "$rc"'
 		stat -c 'pgen\t%n:%s:%Y' "${pbase}.pgen"
 		stat -c 'pvar\t%n:%s:%Y' "$pvar"
 		stat -c 'psam\t%n:%s:%Y' "$psam"
-		if [[ -n $GU_LOCI_FILE && $METHOD != as3 ]]; then
+		if [[ -n $GU_LOCI_FILE ]]; then
 			printf 'loci_content\t%s\n' "$(cksum <"$GU_LOCI_FILE")"
 		else
 			printf 'loci\twhole_chromosome\n'
@@ -2391,7 +2304,7 @@ PYCONTRACT
 				[[ $pvar != *.zst ]] || pfile_args+=(vzs)
 				if [[ $c == X && $GU_CHRX_MALE_ONLY == 1 ]]; then
 					gu_check_log "chrX PFILE is already haploid; each male contributes one non-PAR X haplotype"
-				elif [[ $METHOD == phyml || $METHOD == as3 || $METHOD == trace ]]; then
+				elif [[ $METHOD == phyml || $METHOD == trace ]]; then
 					info_prefix=$chr_tmp/.pgen-info
 					info=$(plink2 "${pfile_args[@]}" --pgen-info --out "$info_prefix" 2>&1) || {
 						printf '%s\n' "$info" | tee -a "$GU_CHECK_LOG"
@@ -2411,7 +2324,7 @@ PYCONTRACT
 				local -a extract_args=() sample_args=()
 				[[ -z $GU_KEEP ]] || sample_args+=(--keep "$GU_KEEP")
 				[[ $GU_MALE_ONLY != 1 ]] || sample_args+=(--keep-males)
-				if [[ -n $GU_LOCI_FILE && $METHOD != as3 ]]; then
+				if [[ -n $GU_LOCI_FILE ]]; then
 					extract_bed=$GU_LOCI_FILE
 					[[ $c != X || $GU_CHRX_PAR_DIPLOID != 1 ]] || extract_bed=$GU_CHRXY_EXTRACT_BED
 					extract_args=(--extract bed0 "$extract_bed")
@@ -2459,13 +2372,11 @@ PYCONTRACT
 	fi
 
 	if [[ -z ${IBDMIX_RUNTIME:-} ]]; then IBDMIX_RUNTIME=$GU_SOFT/ibdmix; fi
-	if [[ ! -d ${IBDMIX_RUNTIME:-} ]]; then IBDMIX_RUNTIME=$GU_SOFT/IBDmix; fi
-	GU_REQUEST_CHRS=${GU_CHRS:-}
+		GU_REQUEST_CHRS=${GU_CHRS:-}
 	if [[ -z $GU_REQUEST_CHRS ]]; then
 		case "$METHOD" in
 			ibdmix) GU_REQUEST_CHRS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
 			trace) GU_REQUEST_CHRS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X" ;;
-			as3) GU_REQUEST_CHRS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22" ;;
 		esac
 	fi
 	GU_REQUEST_SCOPE_KEY=$GU_SCOPE_KEY
@@ -2482,26 +2393,11 @@ PYCONTRACT
 	PHYML_OUT_OVERRIDE=${PHYML_OUT:-}
 	IBDMIX_OUT_OVERRIDE=${IBDMIX_OUT:-}
 	TRACE_OUT_OVERRIDE=${TRACE_OUT:-}
-	AS3_OUT_OVERRIDE=${AS3_OUT:-}
-
-	ensure_reference_callset_cache() {
-		local -a cache_args=(--source "$AS3_PUBLISHED_CALLS_DIR" --cache "$AS3_REFERENCE_CALLSET_CACHE" --dataset-id "${AS3_REFERENCE_DATASET_ID:-AS3_1KG}")
-		if python3 "$F/results_normalize.py" reference-cache check "${cache_args[@]}" --fast >/dev/null 2>&1; then
-			echo "[GU FINAL] reference callset cache=ready: $AS3_REFERENCE_CALLSET_CACHE"
-			return 0
-		fi
-		echo "[GU FINAL] reference callset cache missing or invalid; preparing automatically"
-		python3 "$F/results_normalize.py" reference-cache prepare "${cache_args[@]}"
-	}
 
 	run_final() {
 		local normalize_dir=${GU_NORMALIZE_DIR:-${GU_SHINY_DATA_DIR:-${GU_RSHINY_DIR:-$GU_FINAL_DIR/normalize}}}
 		mkdir -p "$normalize_dir"
 		local -a norm_args=(--analysis-root "$GU_ANALYSIS_ROOT" --output-dir "$normalize_dir" --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --build "GRCh$GU_BUILD" --reciprocal-overlap "${GU_CATALOG_RECIP_OVERLAP:-0.5}")
-		if [[ ${GU_UKB_PGEN_PREPARED:-0} != 1 && ${GU_UKB_DIRECT:-0} != 1 && ${GU_FILTERED_TARGET:-0} != 1 && -d ${AS3_PUBLISHED_CALLS_DIR:-} ]]; then
-			ensure_reference_callset_cache
-			norm_args+=(--reference-cache "$AS3_REFERENCE_CALLSET_CACHE")
-		fi
 		local pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}}
 		[[ ${GU_UKB_PGEN_PREPARED:-0} != 1 ]] || pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-}}
 		[[ ! -s $pop_panel ]] || norm_args+=(--sample-panel "$pop_panel")
@@ -2609,7 +2505,7 @@ PYCONTRACT
 	}
 
 	# 馃毄 Analysis units
-	# Group AS3 loci into one task per chromosome.
+	# Group loci into one task per chromosome where requested.
 	gu_activate_loci_chr() {
 		local chr=$1 base tmp label
 		[[ -n ${GU_REGION_TMP_ROOT:-} ]] || {
@@ -2648,8 +2544,8 @@ PYCONTRACT
 	gu_output_for_unit() {
 		local method=$1 override=${2:-}
 		local result
-		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$method" "$GU_UNIT_LABEL" "$GU_TARGET_NAMESPACE" "$override" "$GU_REQUEST_UNIT_COUNT")
-		if [[ -z $override && $method == ibdmix && $GU_UNIT_LABEL == chrX* && ${IBDMIX_X_PROFILE:-nonpar-v2} != legacy && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
+		result=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" "$method" "$GU_UNIT_LABEL" "$override" "$GU_REQUEST_UNIT_COUNT")
+		if [[ -z $override && $method == ibdmix && $GU_UNIT_LABEL == chrX* && ${GU_CHRX_PAR_DIPLOID:-0} != 1 ]]; then
 			[[ $result == *.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1} ]] || result="$result.nonpar-v2.mac${IBDMIX_X_MINOR_ALLELE_COUNT:-1}"
 		fi
 		printf '%s\n' "$result"
@@ -2814,7 +2710,7 @@ PYUKBSCORING
 		export GU_CHRS GU_SCOPE_KEY GU_SCOPE_ID GU_UNIT_LABEL GU_OUTPUT_LAYOUT GU_LOCUS_ID
 		export GU_LOCI_FILE GU_LOCI_CORE_FILE GU_LOCI_MAP_FILE
 		export TRACE_CHRS=$GU_CHRS TRACE_OUT
-		TRACE_OUT=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" trace "$GU_UNIT_LABEL" "$GU_TARGET_NAMESPACE" "$TRACE_OUT_OVERRIDE" 1)
+		TRACE_OUT=$(gu_chr_result_dir "$GU_ANALYSIS_ROOT" trace "$GU_UNIT_LABEL" "$TRACE_OUT_OVERRIDE" 1)
 		echo "[GU RUN] method=trace analysis_request=$GU_UNIT_LABEL chromosomes=$GU_CHRS layout=request output=$TRACE_OUT"
 		gu_stage_ukb_qc "$TRACE_OUT" true || return $?
 		stage_loci_metadata "$TRACE_OUT"
@@ -2834,67 +2730,6 @@ PYUKBSCORING
 		bash "$F/trace.sh" "${ACTION:-run}"
 	}
 
-	run_as3_one() {
-		local a=${ACTION:-run} experimental_x=0 as3_loci_tmp as3_tmp_label
-		export AS3_CHRS=$GU_CHRS AS3_ALLOW_CHRX=0
-		[[ " $AS3_CHRS " != *" X "* ]] || {
-			echo "ERROR: AS3 chrX is unavailable because the official GRCh38 Ref1028 panel contains chr1-22 only" >&2
-			return 2
-		}
-		# Preserve chromosome-scale model context. A loci scope is applied when calls
-		# are normalized, rather than by concatenating small disjoint VCF slices.
-		export AS3_LOCI_FILE=""
-		export AS3_TARGET_VCF_DIR=${AS3_TARGET_VCF_DIR:-$GU_TARGET_VCF_DIR}
-		export AS3_DATA_OUT AS3_OUT AS3_RUNTIME_WORK_DIR
-		# AS3 loci use whole-chromosome model context. The validated manifest and
-		# upstream working directory exist only for this top-level GU invocation.
-		if [[ -n $GU_REQUEST_LOCI_FILE ]]; then
-			as3_tmp_label=chr$GU_CHRS
-		else
-			as3_tmp_label=$GU_UNIT_LABEL
-		fi
-		AS3_DATA_OUT=$GU_TARGET_TMP_DIR/as3-input/$as3_tmp_label
-		AS3_RUNTIME_WORK_DIR=$GU_TARGET_TMP_DIR/as3-runtime/$as3_tmp_label
-		AS3_OUT=$(gu_output_for_unit as3 "$AS3_OUT_OVERRIDE")
-		echo "[GU RUN] output=$AS3_OUT temporary_input=$AS3_DATA_OUT"
-		gu_stage_ukb_qc "$AS3_OUT" true || return $?
-		mkdir -p "$AS3_OUT"
-		printf 'key\tvalue\ntarget\t%s\ngenome_build\tGRCh%s\nscope_id\t%s\nchromosome\t%s\nlocus_id\t%s\noutput_layout\t%s\nexperimental_chrX\t%s\nexperimental_build\t%s\nmodel_context\twhole_chromosome\ntarget_chunk_size\t%s\ncgroup_memory_high\t%s\ncgroup_memory_max\t%s\ncgroup_swap_max\t%s\n' \
-			"$GU_TARGET_NAMESPACE" "$GU_BUILD" "$GU_SCOPE_ID" "$GU_CHRS" "$GU_LOCUS_ID" "$GU_OUTPUT_LAYOUT" "$experimental_x" "$AS3_EXPERIMENTAL_BUILD" "$AS3_TARGET_CHUNK_SIZE" "${AS3_MEMORY_HIGH:-20G}" "${AS3_MEMORY_MAX:-24G}" "${AS3_MEMORY_SWAP_MAX:-8G}" >"$AS3_OUT/run.meta.tsv"
-		if [[ -n $GU_LOCI_FILE ]]; then
-			as3_loci_tmp=$AS3_OUT/.input.loci.$$.bed
-			cp "$GU_LOCI_FILE" "$as3_loci_tmp"
-			gu_replace_if_changed "$as3_loci_tmp" "$AS3_OUT/input.loci.bed"
-			as3_loci_tmp=$AS3_OUT/.input.loci.core.$$.bed
-			cp "$GU_LOCI_CORE_FILE" "$as3_loci_tmp"
-			gu_replace_if_changed "$as3_loci_tmp" "$AS3_OUT/input.loci.core.bed"
-			as3_loci_tmp=$AS3_OUT/.input.loci.map.$$.tsv
-			cp "$GU_LOCI_MAP_FILE" "$as3_loci_tmp"
-			gu_replace_if_changed "$as3_loci_tmp" "$AS3_OUT/input.loci.map.tsv"
-			AS3_CLIP_LOCI_FILE=$AS3_OUT/input.loci.bed
-		else
-			rm -f "$AS3_OUT/input.loci.bed" "$AS3_OUT/input.loci.core.bed" "$AS3_OUT/input.loci.map.tsv"
-			AS3_CLIP_LOCI_FILE=""
-		fi
-		export AS3_CLIP_LOCI_FILE
-		local -a prep_args=(--reference-panel-dir "$AS3_REFERENCE_PANEL_DIR" --reference-map "$AS3_REFERENCE_MAP" --out "$AS3_DATA_OUT" --chr "$AS3_CHRS" --genome-build "b$GU_BUILD")
-		if [[ $a == check ]]; then
-			bash "$F/as3.sh" prepare "${prep_args[@]}" --check-only || return
-			(
-				export GU_ACTION=as3_env_check AS3_DATA_IN="$AS3_DATA_OUT" AS3_RUNTIME
-				bash "$F/as3.sh"
-			) || return
-			return
-		fi
-		# Always re-enter preparation: it cheaply revalidates direct target/Ref1028
-		# inputs and atomically refreshes the manifest when provenance changes.
-		bash "$F/as3.sh" prepare "${prep_args[@]}" || return
-		(
-			export GU_ACTION="as3_$a" AS3_DATA_IN="$AS3_DATA_OUT" AS3_RUNTIME
-			bash "$F/as3.sh"
-		) || return
-	}
-
 	# 馃毄 Method dispatch
 	case "$METHOD" in
 		phyml)
@@ -2906,25 +2741,8 @@ PYUKBSCORING
 			[[ ${ACTION:-run} == check ]] || maybe_run_final
 			;;
 		trace)
-			if [[ " $GU_REQUEST_CHRS " == *" X "* ]] && (($(awk '{print NF}' <<<"$GU_REQUEST_CHRS") > 1)); then
-				echo "[GU RUN] TRACE mixed autosome/chrX request: running chromosome-scoped outputs because ARG sample-node ploidy differs"
-				if [[ -n $GU_REQUEST_LOCI_FILE ]]; then
-					run_loci_grouped_by_chr run_trace_one
-				else
-					run_per_analysis_unit run_trace_one
-				fi
-			else
-				run_trace_request
-			fi
+			run_trace_request
 			if [[ ${ACTION:-run} == run || ${ACTION:-run} == infer || ${ACTION:-run} == segments ]]; then maybe_run_final; fi
-			;;
-		as3)
-			if [[ -n $GU_REQUEST_LOCI_FILE ]]; then
-				run_loci_grouped_by_chr run_as3_one
-			else
-				run_per_analysis_unit run_as3_one
-			fi
-			if [[ ${ACTION:-run} == run ]]; then maybe_run_final; fi
 			;;
 		final) run_final ;;
 		shiny)
@@ -2946,11 +2764,11 @@ PYUKBSCORING
 {
 	gu_main "$@"
 	case "${METHOD:-}" in
-		phyml | ibdmix | trace | as3)
+		phyml | ibdmix | trace)
 			if [[ ${ACTION:-run} != check && ${GU_PUBLICATION_DEFERRED:-0} != 1 && -n ${GU_PUBLISHED_ROOT:-} ]]; then
 				publication_args=()
 				if [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
-					case "$METHOD" in phyml) publication_run=$PHYML_OUT ;; ibdmix) publication_run=$IBDMIX_OUT ;; trace) publication_run=$TRACE_OUT ;; as3) publication_run=$AS3_OUT ;; esac
+					case "$METHOD" in phyml) publication_run=$PHYML_OUT ;; ibdmix) publication_run=$IBDMIX_OUT ;; trace) publication_run=$TRACE_OUT ;; esac
 					publication_args+=(--run "$publication_run")
 				fi
 				python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method "$METHOD" "${publication_args[@]}"

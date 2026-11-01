@@ -1,4 +1,9 @@
-source(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R"))
+# Locate this file whether sourced or run through Rscript.
+.gu_ofiles <- Filter(function(x) !is.null(x), lapply(sys.frames(), function(x) x$ofile))
+.gu_this <- if(length(.gu_ofiles)) tail(.gu_ofiles, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value=TRUE)[1L])
+.gu_f <- dirname(normalizePath(.gu_this, mustWork=TRUE))
+Sys.setenv(RESULTS_PY=Sys.getenv("RESULTS_PY", file.path(.gu_f, "results.py")))
+source(Sys.getenv("GU_RESULTS_R", file.path(.gu_f, "results.R")))
 
 
 # 🚩 Reusable method results Tables remain ordinary R data frames. Native fitted objects and exact exchange bytes are
@@ -6,7 +11,7 @@ source(Sys.getenv("GU_RESULTS_R", "/mnt/d/scripts/0f/results.R"))
 gu_read_metadata <- function(path) {
 	lines <- readLines(path, warn = FALSE)
 	lines <- lines[nzchar(lines)]
-	parts <- strsplit(gsub("\\t", "\t", lines, fixed = TRUE), "\t", fixed = TRUE)
+	parts <- strsplit(lines, "\t", fixed = TRUE)
 	width <- max(c(2L, lengths(parts)))
 	x <- matrix("", nrow = length(parts), ncol = width)
 	for (i in seq_along(parts)) x[i, seq_along(parts[[i]])] <- parts[[i]]
@@ -23,7 +28,7 @@ gu_pack_result <- function(spec) {
  for (entry in spec$files) {
   path <- file.path(spec$source, entry$name)
   if (is.null(entry$link) && grepl('[.]tsv([.]gz)?$', path) && file.size(path) > 0) {
-   x <- if (grepl('(^|/)(run|cache)[.]meta[.]tsv$', path)) gu_read_metadata(path) else
+   x <- if (grepl('(^|/)run[.]meta[.]tsv$', path)) gu_read_metadata(path) else
     withCallingHandlers(result_read_table(path), warning = function(w) stop('Incomplete result table: ', path, ': ', conditionMessage(w)))
    if (!is.null(x) && ncol(x)) tables[[entry$name]] <- x
   }
@@ -36,41 +41,6 @@ gu_pack_result <- function(spec) {
 }
 
 
-gu_restore_result <- function(source, target) {
-	x <- readRDS(source)
-	dir.create(target, recursive = TRUE, showWarnings = FALSE)
-	writeLines(attr(x, "source_root"), file.path(target, ".result-source-root"))
-	for (name in names(attr(x, "native_results"))) {
-		if (startsWith(name, "/") || ".." %in% strsplit(name, "/", fixed = TRUE)[[1]])
-			stop("Unsafe stored result path")
-		entry <- attr(x, "native_results")[[name]]
-		path <- file.path(target, name)
-		dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-		# Recovery must not replace newer native results or active-run files.
-		link <- Sys.readlink(path)
-		if (file.exists(path) || (!is.na(link) && nzchar(link))) next
-		if (!is.null(entry$link)) {
-			file.symlink(entry$link, path)
-		} else {
-			if (!identical(digest::digest(entry$bytes, algo = "sha256", serialize = FALSE), entry$sha256))
-				stop("Native result checksum mismatch")
-			stage <- tempfile(paste0(".", basename(path), ".part."), tmpdir = dirname(path))
-			writeBin(entry$bytes, stage)
-			stopifnot(file.rename(stage, path))
-			Sys.setFileTime(path, as.POSIXct(entry$modified, origin = "1970-01-01", tz = "UTC"))
-		}
-	}
-	for (figure in attr(x, "figure_files")) {
-		path <- file.path(target, figure$source)
-		dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-		if (!file.exists(path)) stopifnot(file.copy(file.path(dirname(source), figure$name), path))
-		workbook <- sub("[.]png$", ".xlsx", path)
-		if (!file.exists(workbook)) stopifnot(file.copy(file.path(dirname(source), sub("[.]png$", ".xlsx", figure$name)), workbook))
-	}
-	invisible(attr(x, "figure_files"))
-}
-
-
 # 🚩 Relational participant results
 gu_pack_database <- function(source, destination) {
 	con <- DBI::dbConnect(RSQLite::SQLite(), source)
@@ -80,18 +50,22 @@ gu_pack_database <- function(source, destination) {
 	table_names <- schema$name[schema$type == "table"]
 	tables <- setNames(lapply(table_names, function(name) DBI::dbReadTable(con, name)), table_names)
 	attr(tables, "sqlite_schema") <- schema
+	attr(tables, "sqlite_user_version") <- DBI::dbGetQuery(con, "PRAGMA user_version")[[1]]
+	stopifnot(attr(tables, "sqlite_user_version") == 2026L)
 	result_write_rds(tables, destination)
 	message("Database tables preserved: ", length(tables), "; rows: ", sum(vapply(tables, nrow, integer(1))))
 }
 
 gu_restore_database <- function(source, destination) {
 	tables <- readRDS(source)
+	stopifnot(identical(as.integer(attr(tables, "sqlite_user_version")), 2026L))
 	schema <- attr(tables, "sqlite_schema")
 	temporary <- tempfile("gu-database-", tmpdir = "/tmp", fileext = ".sqlite")
 	on.exit(unlink(temporary), add = TRUE)
 	con <- DBI::dbConnect(RSQLite::SQLite(), temporary)
 	on.exit(if (DBI::dbIsValid(con)) DBI::dbDisconnect(con), add = TRUE)
 	DBI::dbExecute(con, "PRAGMA journal_mode=OFF")
+	DBI::dbExecute(con, "PRAGMA user_version=2026")
 	DBI::dbWithTransaction(con, {
 		for (i in which(schema$type == "table")) DBI::dbExecute(con, schema$sql[i])
 		for (name in names(tables)) {
@@ -116,7 +90,7 @@ gu_result_workbooks <- function(spec) {
 		return(invisible(NULL))
 	final <- file.path(spec$source, "final")
 	out <- dirname(spec$destination)
-	source(Sys.getenv("GU_PHYML_R", "/mnt/d/scripts/gu/f/phyml.R"), local = FALSE)
+	source(Sys.getenv("GU_PHYML_R", file.path(.gu_f, "phyml.R")), local = FALSE)
 	for (table in c("evidence_trees.tsv", "region_common_trees.tsv")) {
 		d <- gu_b_read(file.path(final, table))
 		if (!nrow(d))
@@ -155,8 +129,6 @@ if (sys.nframe() == 0L) {
 		}
 	} else if (args[1] == "plots") {
 		for (spec in jsonlite::read_json(args[2])) gu_result_workbooks(spec)
-	} else if (args[1] == "restore") {
-		for (spec in jsonlite::read_json(args[2])) gu_restore_result(spec$source, spec$target)
 	} else if (args[1] == "database-pack")
 		gu_pack_database(args[2], args[3]) else if (args[1] == "database-restore")
 		gu_restore_database(args[2], args[3]) else stop("Unknown GU storage command")

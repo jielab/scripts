@@ -2,14 +2,18 @@ name: gu
 channels:
   - conda-forge
   - bioconda
-  - defaults
+  - nodefaults
 dependencies:
   - python=3.11
   - pip
+  - setuptools>=70
+  - wheel
+  - cython
   - git
-  - cmake>=3.14
+  - cmake>=3.24,<4
   - make
   - cxx-compiler
+  - libboost-devel
   - bcftools>=1.19
   - htslib>=1.19
   - bedtools
@@ -22,7 +26,7 @@ dependencies:
   - wget
   - curl
   - phyml
-  - numpy>=1.26
+  - numpy>=2,<3
   - pandas>=2.1
   - scipy
   - matplotlib>=3.8
@@ -30,34 +34,16 @@ dependencies:
   - pysam
   - cyvcf2
   - pybedtools
-  - zarr<3
-  - r-base>=4.3
-  - r-data.table
-  - r-r.utils
-  - r-ape
-  - r-pegas
-  - r-writexl
-  - r-shiny
-  - r-bslib
-  - r-plotly
-  - r-dt
-  - r-dbi
-  - r-rsqlite
-  - r-htmltools
-  - r-jsonlite
-  - r-scales
-  - scikit-learn
+  - zarr>=2.18,<3
+  - rich-click
+  - intervaltree
   - h5py
   - tqdm
   - scikit-allel
-  - opencv
   - pip:
-      - transformers==4.46.3
-      - einops
-      - ninja
       - packaging
-      - bio2zarr>=0.1.7
+      - bio2zarr==0.1.7
       - tskit>=1.0,<2
-      - tszip>=0.2
-      - tsinfer>=0.5.1
-      - tsdate>=0.2.7
+      - tszip>=0.2,<1
+      - tsinfer==0.5.1
+      - tsdate==0.2.7

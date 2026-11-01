@@ -26,7 +26,7 @@ from gu_0_common import load_module, x_nonpar_intervals
 
 
 # 🚩 ibdmix_final_filter
-"""Non-destructive Cell 2020 postprocessing for GU final.
+"""Reference-specific postprocessing for GU final.
 
 The published text does not specify the DAF window construction. Accept a
 provenanced exclusion BED; never substitute segment LOD or carrier frequency
@@ -37,10 +37,11 @@ import csv, gzip, hashlib, json, math, os, tempfile
 from collections import defaultdict, Counter
 from bisect import bisect_right
 
-ibdmix_final_filter_VERSION = "2026-09-15.1"
+ibdmix_final_filter_VERSION = "2026-10-31.1"
 AFR = {"ESN", "GWD", "LWK", "MSL", "YRI"}
-NEA = {"Altai", "Altai.2013", "Vindija", "Chagyr", "Chagyrskaya"}
+NEA = {"Altai", "Altai.2013", "Vindija", "Chagyr"}
 DEN = {"Denisova", "Denisova.2013", "Denisova25"}
+DAF_REFERENCES = {"Altai", "Altai.2013"}
 
 
 def rows(path):
@@ -113,15 +114,24 @@ def checksum(path):
 
 
 def load_daf(path):
-	"""BED plus .json declaring build, reference, percentile and provenance."""
+	"""BED plus .json declaring the exact GU reference ID and provenance.
+
+	Altai and Altai.2013 identify different VCF releases, not interchangeable
+	names for the same specimen. A literature citation alone does not establish
+	that a mask computed using one release is valid for the other.
+	"""
 	if path is None:
 		return {}, {"status": "not_applied_missing_author_mask"}
 	path = Path(path)
 	meta = json.loads(Path(str(path) + ".json").read_text())
-	if meta.get("genome_build") != "GRCh37" or meta.get("reference") != "Altai":
-		raise ValueError("DAF mask requires genome_build=GRCh37 and reference=Altai")
-	if meta.get("percentile") != 99.9 or not meta.get("source"):
+	if not isinstance(meta, dict):
+		raise ValueError("DAF mask metadata must be a JSON object")
+	if meta.get("genome_build") != "GRCh37" or not isinstance(meta.get("reference"), str) or meta["reference"] not in DAF_REFERENCES:
+		raise ValueError("DAF mask requires genome_build=GRCh37 and exact reference=Altai or Altai.2013")
+	if meta.get("percentile") != 99.9 or not isinstance(meta.get("source"), str) or not meta["source"].strip():
 		raise ValueError("DAF mask requires percentile=99.9 and a source citation")
+	if meta.get("coordinate_system") != "0-based-half-open":
+		raise ValueError("DAF mask must use BED0 (coordinate_system=0-based-half-open)")
 	masks = defaultdict(list)
 	with gzip.open(path, "rt") if str(path).endswith(".gz") else path.open() as f:
 		for line in f:
@@ -135,7 +145,8 @@ def load_daf(path):
 	if not masks:
 		raise ValueError("DAF mask is empty")
 	return {ch: ibdmix_final_filter_union(iv) for ch, iv in masks.items()}, dict(
-		meta, status="applied", path=str(path.resolve()), sha256=checksum(path)
+		meta, status="validated_not_yet_applied", coordinate_system="0-based-half-open",
+		path=str(path.resolve()), sha256=checksum(path)
 	)
 
 
@@ -179,7 +190,7 @@ def raw_masks(run, chrom, refs, altai_ref="Altai"):
 					if r["ID"] not in ids:
 						raise ValueError(f"Wrong population sample: {path}")
 					lo, hi = int(r["start"]) - 1, int(r["end"]) - 1
-					score = float(r.get("LOD", r.get("slod", "nan")))
+					score = float(r["slod"])
 					if not math.isfinite(score):
 						raise ValueError(f"Invalid LOD: {path}")
 					if score < 4 or hi - lo < 50000:
@@ -198,7 +209,9 @@ def raw_masks(run, chrom, refs, altai_ref="Altai"):
 	)
 
 
-def filter_rows(source, masks, daf, chrom, counts):
+def filter_rows(source, masks, daf, chrom, counts, *, daf_reference=None):
+	if daf and daf_reference not in DAF_REFERENCES:
+		raise ValueError("DAF filtering requires an explicit exact reference ID")
 	for row in rows(source):
 		ref = row["anc"]
 		lo, hi = int(row["start"]), int(row["end"])
@@ -206,7 +219,7 @@ def filter_rows(source, masks, daf, chrom, counts):
 			raise ValueError("Mixed chromosome final output")
 		counts[ref]["input_segments"] += 1
 		counts[ref]["input_bp"] += hi - lo
-		mask = daf.get(chrom, []) if ref == "Altai" else masks.get(ref, [])
+		mask = daf.get(chrom, []) if ref == daf_reference else masks.get(ref, [])
 		for left, right in ibdmix_final_filter_subtract(lo, hi, mask):
 			if right - left < 50000:
 				counts[ref]["short_fragment_bp"] += right - left
@@ -233,6 +246,8 @@ def prepare(source, output_root, meta, daf_path=None):
 		fields = reader.fieldnames
 		first = next(reader, None)
 	if first is None:
+		if daf_path is not None:
+			daf_info = dict(daf_info, status="not_applied_empty_native_result", applied_references=[])
 		return source, {"status": "empty_native_result", "daf": daf_info}
 	chrom = first["chrom"].removeprefix("chr")
 	if chrom not in set(map(str, range(1, 23))):
@@ -241,8 +256,22 @@ def prepare(source, output_root, meta, daf_path=None):
 		meta.get("genome_build") not in ("b37", "37", "GRCh37")
 		or meta.get("coordinate_system") != "0-based-half-open"
 	):
-		raise ValueError(f"Cell final filters require GRCh37 BED0 calls: {source}")
+		raise ValueError(f"Built-in reference filters require GRCh37 BED0 calls: {source}")
 	refs = set(meta.get("refs", "").split())
+	daf_reference = daf_info.get("reference")
+	altai_refs = refs & DAF_REFERENCES
+	applied_refs = altai_refs & {daf_reference}
+	unfiltered_refs = altai_refs - applied_refs
+	if daf_path is not None:
+		daf_info = dict(daf_info, status=(
+			"not_applied_reference_mismatch" if not applied_refs else
+			"partially_applied_reference_mismatch" if unfiltered_refs else "applied"
+		))
+		if not applied_refs:
+			daf = {}
+	daf_info = dict(daf_info, applied_references=sorted(applied_refs),
+		unfiltered_altai_references=sorted(unfiltered_refs),
+		reference_matching="exact_GU_reference_ID; no_cross_release_transfer")
 	if refs & {"Denisova", "Denisova25"} and "Altai" not in refs:
 		raise ValueError("Denisovan filtering requires original Altai calls")
 	if "Denisova.2013" in refs and "Altai.2013" not in refs:
@@ -284,27 +313,31 @@ def prepare(source, output_root, meta, daf_path=None):
 				run, chrom, {"Denisova.2013"}, altai_ref="Altai.2013"
 			)
 			masks.update({ref: ibdmix_final_filter_union(overlap2013 + iv) for ref, iv in high2013.items()})
+			high.update(high2013)
 		for name, iv in [
-			("Altai_overlap", overlap),
-			("Altai.2013_overlap", overlap2013),
+			*([("Altai_overlap", overlap)] if refs & {"Denisova", "Denisova25"} else []),
+			*([("Altai.2013_overlap", overlap2013)] if "Denisova.2013" in refs else []),
 			*[(r + "_AFR30", iv) for r, iv in high.items()],
-			("Altai_DAF", daf.get(chrom, [])),
+			*[(ref + "_DAF", daf.get(chrom, [])) for ref in sorted(applied_refs)],
 		]:
 			(stage / (name + ".bed")).write_text("".join(f"{chrom}\t{lo}\t{hi}\n" for lo, hi in iv))
 		counts = defaultdict(Counter)
 		with gzip.open(stage / "segments.tsv.gz", "wt") as f:
 			w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n")
 			w.writeheader()
-			w.writerows(filter_rows(source, masks, daf, chrom, counts))
+			w.writerows(filter_rows(source, masks, daf, chrom, counts, daf_reference=daf_reference))
 		audit = dict(
 			signature=signature,
 			status="filtered",
 			daf=daf_info,
 			chrom=chrom,
-			denisovan_overlap="union_of_original_Altai_calls_across_all_populations; 2013 pair uses Altai.2013",
+			denisovan_overlap="union_of_original_calls_from_the_matched_Altai_reference_across_all_populations",
+			denisovan_overlap_references={ref: altai for ref, altai in {
+				"Denisova": "Altai", "Denisova25": "Altai", "Denisova.2013": "Altai.2013"
+			}.items() if ref in refs},
 			african_frequency="pointwise_distinct_carriers_in_pooled_ESN_GWD_LWK_MSL_YRI / all_tested_members >= 0.30",
 			n_african_controls=denominator,
-			reference_scope="Altai/Denisova and Altai.2013/Denisova.2013 independent pairs; Denisova25 uses Altai extension",
+			reference_scope=sorted(refs),
 			counts=dict(counts),
 			output_sha256=checksum(stage / "segments.tsv.gz"),
 		)
@@ -334,8 +367,7 @@ WORKFLOW_SCRIPTS = {
 
 
 def contract(text):
-	# GNU stat's format in older run records emitted literal backslash-t.
-	rows = [line.replace("\\t", "\t").split("\t") for line in text.splitlines() if line]
+	rows = [line.split("\t") for line in text.splitlines() if line]
 	refs = next((row[1].split() for row in rows if row[0] == "refs"), [])
 	versions = [row for row in rows if row[0] == "pipeline_version"]
 	masks = [row for row in rows if row[0] == "excluded_mask_sha256"]
@@ -353,12 +385,21 @@ def contract(text):
 	}
 	if actual != expected or len(masks) != len(expected):
 		raise ValueError("Incomplete or duplicate excluded-mask checksums")
+	# run_record writes preparation binary, calling binary, then helper scripts.
+	# The first binary already has a content checksum; an identical rebuild
+	# must not invalidate completed calls merely because its mtime changed.
+	prepare_software = next((row for row in rows if row[0] == "software"), None) if any(
+		row[0] == "genotype_binary_sha256" and len(row) == 2 and re.fullmatch(r"[0-9a-f]{64}", row[1])
+		for row in rows
+	) else None
 	result = []
 	for row in rows:
 		key = row[0]
 		if key in {"mask_root", "mask_manifest_sha256"}:
 			continue  # Actual BED hashes, rather than their storage metadata.
 		if key == "software" and len(row) == 2:
+			if row is prepare_software:
+				continue
 			path = row[1].rsplit(":", 2)[0]
 			if path in WORKFLOW_SCRIPTS:
 				continue  # Explicit pipeline_version controls semantic compatibility.
@@ -368,31 +409,6 @@ def contract(text):
 
 def differences(previous, current):
 	before, after = contract(previous), contract(current)
-
-	def references(lines):
-		return set(next(line.split("\t")[1].split() for line in lines if line.startswith("refs\t")))
-
-	common = references(before) & references(after)
-
-	def project(lines, refs):
-		result = []
-		for line in lines:
-			row = line.split("\t")
-			if row[0] == "refs":
-				continue
-			if row[0] == "excluded_mask_sha256" and row[2] not in common:
-				continue
-			if row[0] in {"archaic_vcf", "excluded_mask"}:
-				path = row[1].rsplit(":", 2)[0]
-				owners = set(Path(path).parts) & refs
-				if len(owners) != 1:
-					raise ValueError(f"Cannot identify reference in provenance input: {path}")
-				if not owners & common:
-					continue
-			result.append(line)
-		return result
-
-	before, after = project(before, references(before)), project(after, references(after))
 	return "".join(
 		difflib.unified_diff(
 			[s + "\n" for s in before],
@@ -403,44 +419,12 @@ def differences(previous, current):
 	)
 
 
-def merge_cache(previous, current):
-	"""Retain validated per-reference contracts when references are deselected."""
-	before, after = contract(previous), contract(current)
-
-	def refs(lines):
-		return set(next(line.split("\t")[1].split() for line in lines if line.startswith("refs\t")))
-
-	old_refs, new_refs = refs(before), refs(after)
-	retained = old_refs - new_refs
-	result = [line for line in after if not line.startswith("refs\t")]
-	for line in before:
-		row = line.split("\t")
-		if row[0] == "excluded_mask_sha256" and row[2] in retained:
-			result.append(line)
-		elif row[0] in {"archaic_vcf", "excluded_mask"}:
-			path = row[1].rsplit(":", 2)[0]
-			if set(Path(path).parts) & retained:
-				result.append(line)
-	result.append("refs\t" + " ".join(sorted(old_refs | new_refs)))
-	merged = "\n".join(sorted(result)) + "\n"
-	contract(merged)  # Validate before committing the retained contracts.
-	return merged
-
-
 def ibdmix_provenance_main():
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("--write-cache", action="store_true")
 	parser.add_argument("previous", type=Path)
 	parser.add_argument("current", type=Path)
 	args = parser.parse_args()
 	try:
-		if args.write_cache:
-			current = args.current.read_text()
-			merged = merge_cache(args.previous.read_text(), current) if args.previous.exists() else current
-			staged = args.previous.with_name(args.previous.name + ".part")
-			staged.write_text(merged)
-			staged.replace(args.previous)
-			return 0
 		diff = differences(args.previous.read_text(), args.current.read_text())
 	except ValueError as error:
 		print(str(error), file=sys.stderr)
@@ -456,7 +440,7 @@ def ibdmix_provenance_cli():
 
 
 # 🚩 ibdmix_workflow
-"""IBDmix preparation and final filtering following the authors' Cell workflow.
+"""IBDmix preparation and reference-specific filtering.
 
 The caller remains the unmodified upstream executable. BED files here are
 0-based half-open; native IBDmix coordinates are converted exactly once.
@@ -468,17 +452,17 @@ import subprocess
 import numpy as np
 
 load_module("0.common.py")
-from gu_0_common import CHROM_LENGTHS, write_tsv_rows
+from gu_0_common import CHROM_LENGTHS, DEFAULT_ARCHAIC_REFERENCES, SUPPORTED_ARCHAIC_REFERENCES, write_tsv_rows
 
-ibdmix_workflow_VERSION = "2026-09-14.1"
+ibdmix_workflow_VERSION = "2026-10-31.1"
 AFRICAN_CONTROLS = {"ESN", "GWD", "LWK", "MSL", "YRI"}
-NEANDERTHALS = {"Altai", "Altai.2013", "Chagyr", "Chagyrskaya", "Vindija"}
+NEANDERTHALS = {"Altai", "Altai.2013", "Chagyr", "Vindija"}
 DENISOVANS = {"Denisova", "Denisova.2013", "Denisova25"}
 
 
 REFERENCE_ALIASES = {ref.lower(): ref for ref in sorted(NEANDERTHALS | DENISOVANS)}
-REFERENCE_ALIASES.update(vindijia="Vindija", denisovan="Denisova", den25="Denisova25", chagyrskaya="Chagyr")
-CALL_REFERENCES = ("Altai", "Chagyr", "Denisova", "Denisova25", "Vindija")
+DEFAULT_REFERENCES = DEFAULT_ARCHAIC_REFERENCES
+CALL_REFERENCES = SUPPORTED_ARCHAIC_REFERENCES
 
 
 def normalize_refs(value):
@@ -511,6 +495,14 @@ def file_checksum(path, algorithm="sha256"):
 
 def sha256_file(path):
 	return file_checksum(path)
+
+
+def runtime_directory(name, environ=None):
+	environ = os.environ if environ is None else environ
+	value = environ.get(name)
+	if not value:
+		raise ValueError(f"{name} is unset; use gu.sh or load f/runtime.env before running this helper")
+	return Path(value).expanduser()
 
 
 def samples(panel, actual, output, background_required=True):
@@ -550,7 +542,7 @@ def samples(panel, actual, output, background_required=True):
 		groups.setdefault(pop, []).append(sample)
 	if background_required and not AFRICAN_CONTROLS.issubset(groups):
 		raise ValueError(
-			"Cell 2020 filtering needs all five African control populations: ESN GWD LWK MSL YRI. Use a complete 1KG cohort, or an explicitly configured custom profile."
+			"African Denisovan background filtering needs all five control populations: ESN GWD LWK MSL YRI. Supply those populations or explicitly disable this background filter."
 		)
 	output = Path(output)
 	output.mkdir(parents=True, exist_ok=True)
@@ -653,8 +645,10 @@ def cpg_sites(reference, variants, alignments, chrom):
 
 
 def axt_directory():
-	annot = Path(os.environ.get("GU_ANNOT_ROOT", "/mnt/f/annot"))
-	return Path(os.environ.get("IBDMIX_AXT_DIR", str(annot / "axt/37")))
+	if os.environ.get("IBDMIX_AXT_DIR"):
+		return Path(os.environ["IBDMIX_AXT_DIR"]).expanduser()
+	annot = Path(os.environ["GU_ANNOT_ROOT"]).expanduser() if os.environ.get("GU_ANNOT_ROOT") else runtime_directory("GU_DATA_ROOT") / "annot"
+	return annot / "axt/37"
 
 
 @contextmanager
@@ -728,24 +722,26 @@ def cached_cpg_sites(fasta, variants, alignments, chrom, length, root):
 
 
 def link_cached_masks(cache, output, names):
-	"""Link each analysis unit to generated masks within the analysis tree."""
+	"""Publish cached masks as regular files; no scratch symlinks required."""
 	output = Path(output)
 	output.mkdir(parents=True, exist_ok=True)
 	with tempfile.TemporaryDirectory(prefix=".mask-links.", dir=output) as temporary:
 		for name in names:
 			link = Path(temporary) / name
-			link.symlink_to((cache / name).resolve())
+			shutil.copyfile(cache / name, link)
 			os.replace(link, output / name)
 
 
 def axt_reference(chrom, species, root=None):
 	filename = f"chr{chrom}.hg19.{species}.synNet.axt.gz"
 	url = f"https://hgdownload.soe.ucsc.edu/goldenPath/hg19/vs{species[0].upper() + species[1:]}/syntenicNet/{filename}"
-	# Explicit roots retain the flat-directory interface. The default cache
-	# separates species, matching the user's 37/vsPanTro2 layout.
+	# Accept both the species-subdirectory download layout and legacy flat roots.
 	directory = Path(root or axt_directory())
-	if root is None and not os.environ.get("IBDMIX_AXT_DIR"):
-		directory /= f"vs{species[0].upper() + species[1:]}"
+	nested = directory / f"vs{species[0].upper() + species[1:]}"
+	if (nested / filename).exists() or (nested.is_dir() and not (directory / filename).exists()):
+		directory = nested
+	elif root is None and not os.environ.get("IBDMIX_AXT_DIR"):
+		directory = nested
 	return url, directory / filename
 
 
@@ -899,7 +895,7 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
 	output = Path(output)
 	output.mkdir(parents=True, exist_ok=True)
 	assets = root
-	refs = refs or ["Altai", "Denisova"]
+	refs = list(DEFAULT_REFERENCES) if refs is None else refs
 	check_mask_inputs(root, [chrom], refs, archaic_root)
 	# This published accessibility BED contains autosomes only. Applying its
 	# empty X subset would exclude all of X, independently of the AXT issue.
@@ -1017,11 +1013,7 @@ def prepare_masks(root, chrom, modern, fasta, upstream, output, axt_root=None, r
 				json.dumps(
 					dict(
 						signature=signature,
-						profile=(
-							"multi_reference"
-							if extra
-							else "cell2020_chrX_extension" if chrom == "X" else "cell2020"
-						),
+						profile="multi_reference_chrX_extension" if chrom == "X" else "multi_reference",
 						reference_callability={
 							ref: (
 								"published_minimal_mask"
@@ -1133,11 +1125,16 @@ def finalize(
 						raise ValueError(f"Wrong population sample or chromosome in {path}")
 					start = int(row["start"]) - 1
 					end = int(row["end"]) - 1
-					score = float(row.get("LOD", row.get("slod", "nan")))
-					if start < 0 or end <= start:
+					score = float(row["slod"])
+					if start < 0 or end < start:
 						raise ValueError(f"Invalid native IBDmix interval: {path}")
 					if not np.isfinite(score):
 						raise ValueError(f"Invalid LOD score in {path}")
+					# Upstream purge emits start=end for a singleton maximum at
+					# EOF. It has zero span under native exclusive-end semantics;
+					# discard it instead of aborting an otherwise valid large run.
+					if end == start:
+						continue
 					if score < lod or end - start < min_bp:
 						continue
 					if ref == "Denisova" and pop["population"] in AFRICAN_CONTROLS:
@@ -1345,7 +1342,6 @@ def ibdmix_workflow_cli():
 				raise ValueError(
 					"IBDmix calling references are limited to "
 					+ ",".join(CALL_REFERENCES)
-					+ "; .2013 replication references are retired (historical results remain readable)"
 				)
 			print(" ".join(refs))
 		except ValueError as error:
@@ -1415,14 +1411,14 @@ def resume_atomic_json(path, value):
 
 def resume_wanted(name):
 	return (
-		name in {".complete", "run.meta.tsv", "cache.meta.tsv", "inputs/ukb.samples.tsv"}
+		name in {".complete", "run.meta.tsv", "inputs/ukb.samples.tsv"}
 		or (name.startswith("inputs/ukb-scoring/") and name.endswith("/target.json"))
 		or (name.startswith("qc/masks/") and name.endswith(".preparation.json"))
 	)
 
 
 def resume_evidence(run):
-	"""Freeze small receipts before stage-qc can overwrite historical inputs."""
+	"""Freeze current-run receipts before stage-qc regenerates exchange inputs."""
 	record = (run / "run.meta.tsv").read_text()
 	key = resume_digest(record.encode())
 	receipt = run / ".ibdmix.resume.json"
@@ -1494,21 +1490,32 @@ def resume_command(path):
 			env.update(word.split("=", 1) for word in words[1:])
 		elif words[:1] == ["exec"]:
 			argv = words[1:]
-	resume_require(len(argv) >= 2 and argv[1] in {"ibdmix", "ibdmix-GPU"}, "not an IBDmix worker command")
-	env["IBDMIX_BACKEND"] = "cuda" if argv[1] == "ibdmix-GPU" else "cpu"
+	resume_require(len(argv) >= 2 and argv[1] == "ibdmix", "not an IBDmix worker command")
 	args = argv[2:]
 	if args[:1] == ["run"]:
 		args = args[1:]
 	if "--keep-males" in args:
-		args.insert(args.index("--keep-males") + 1, "TRUE")
+		i = args.index("--keep-males") + 1
+		if i == len(args) or args[i].startswith("--"):
+			args.insert(i, "TRUE")
 	resume_require(
 		len(args) % 2 == 0 and all(x.startswith("--") for x in args[::2]), "unsupported worker arguments"
 	)
-	return env, dict(zip(args[::2], args[1::2]))
+	opts = dict(zip(args[::2], args[1::2]))
+	resume_require(len(opts) * 2 == len(args), "duplicate worker options")
+	allowed = {"--chr", "--grch", "--target", "--dir-target", "--dir-out", "--postfix",
+		"--archaic-path", "--archaic-gen", "--GPU", "--keep", "--keep-psam", "--sample-panel",
+		"--keep-males", "--replace-ibdmix", "--memory-cap", "--resource-guard", "--loci",
+		"--loci-format", "--loci-flank", "--foreground", "--auto-final"}
+	resume_require(not (set(opts) - allowed), "unsupported worker options: " + ", ".join(sorted(set(opts) - allowed)))
+	gpu = opts.get("--GPU", "FALSE").upper()
+	resume_require(gpu in {"TRUE", "FALSE"}, "--GPU must be TRUE or FALSE")
+	env["IBDMIX_BACKEND"] = "cuda" if gpu == "TRUE" else "cpu"
+	return env, opts
 
 
 def resume_records(text):
-	return [line.replace("\\t", "\t").split("\t") for line in text.splitlines() if line]
+	return [line.split("\t") for line in text.splitlines() if line]
 
 
 def resume_scoring(saved, chrom):
@@ -1550,9 +1557,9 @@ def resume_samples_at(path):
 
 def resume_verify_cohort(prep, env, opts):
 	chrom = opts["--chr"]
-	root = Path(opts["--target-dir"]).parent.resolve()
+	root = Path(opts["--dir-target"]).parent.resolve()
 	resume_require(prep["pgen_root"] == str(root), "target PGEN directory changed")
-	resume_require(Path(opts["--target-dir"]).name == "chr", "unsupported UKB PGEN prefix")
+	resume_require(Path(opts["--dir-target"]).name == "chr", "unsupported UKB PGEN prefix")
 	options = prep["options"]
 	male = opts.get("--keep-males") == "TRUE"
 	resume_require(
@@ -1617,108 +1624,17 @@ def resume_verify_cohort(prep, env, opts):
 	)
 	recorded = {x["path"] for x in prep["inputs"]}
 	resume_require(all(str(p.resolve()) in recorded for p in paths), "PGEN input paths changed")
-	fasta = Path(
-		env.get(
-			"UKB_REF_FASTA",
-			str(
-				Path(env.get("GU_REF_ROOT", "/mnt/f/gen"))
-				/ f'1hgp/{opts["--grch"]}/GRCH{opts["--grch"]}.fasta.gz'
-			),
-		)
-	).resolve()
+	fasta = (Path(env["UKB_REF_FASTA"]) if env.get("UKB_REF_FASTA") else runtime_directory("GU_REF_ROOT", env)
+		/ f'1hgp/{opts["--grch"]}/GRCH{opts["--grch"]}.fasta.gz').expanduser().resolve()
 	resume_require(
 		str(fasta) in recorded and str(fasta) + ".fai" in recorded, "preparation reference FASTA changed"
 	)
 	resume_verify_stats(x for x in prep["inputs"] if not resume_disposable(x["path"]))
 
 
-# The original file SHA remains immutable audit evidence. This exact migration
-# accepts its masks only if the AST of every mask routine and constant is unchanged.
-# New caches still record the current file SHA; unknown or changed code is rejected.
-MASK_IMPLEMENTATION_FUNCTIONS = (
-	"opener",
-	"fingerprint",
-	"file_checksum",
-	"sha256_file",
-	"bed_intervals",
-	"write_boolean_bed",
-	"cpg_sites",
-	"axt_directory",
-	"cached_mask_artifacts",
-	"cached_cpg_sites",
-	"link_cached_masks",
-	"axt_reference",
-	"local_axt",
-	"published_mask_name",
-	"local_mask_candidates",
-	"local_mask_ready",
-	"require_local_mask",
-	"local_reference",
-	"published_reference_mask",
-	"reference_mask_resource",
-	"check_mask_inputs",
-	"prepare_masks",
-)
-MASK_IMPLEMENTATION_CONSTANTS = ("ibdmix_workflow_VERSION", "MINIMAL_MASK_NAMES")
-MASK_PRECONSOLIDATION_FILE_SHA256 = "800b1b29ac695c197724bf12b83148eaa55131ef75185d02f904386babfb2ab4"
-MASK_PRECONSOLIDATION_IMPLEMENTATION = "7cf342f562afd3a7bc5e2f0d92a4281e8b16e1f520b8a579831a44630e6d0005"
-
-
-def mask_implementation_digest(source):
-	"""Fingerprint mask calculations independently of file layout and formatting."""
-	import ast
-
-	class StripNonComputational(ast.NodeTransformer):
-		def visit_Import(self, node):
-			return None
-
-		def visit_ImportFrom(self, node):
-			return None
-
-		def visit_Expr(self, node):
-			if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-				return None
-			return self.generic_visit(node)
-
-	def structure(value):
-		if isinstance(value, ast.AST):
-			return [
-				type(value).__name__,
-				{
-					name: structure(item)
-					for name, item in ast.iter_fields(value)
-					if name != "type_params" or item
-				},
-			]
-		if isinstance(value, list):
-			return [structure(item) for item in value]
-		if isinstance(value, bytes):
-			return {"bytes": value.hex()}
-		if value is Ellipsis:
-			return {"ellipsis": True}
-		return value
-
-	nodes = {}
-	for node in ast.parse(source).body:
-		if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in MASK_IMPLEMENTATION_FUNCTIONS:
-			nodes[node.name] = structure(StripNonComputational().visit(node))
-		elif isinstance(node, ast.Assign):
-			for target in node.targets:
-				if isinstance(target, ast.Name) and target.id in MASK_IMPLEMENTATION_CONSTANTS:
-					nodes[target.id] = structure(node.value)
-	if set(nodes) != set(MASK_IMPLEMENTATION_FUNCTIONS) | set(MASK_IMPLEMENTATION_CONSTANTS):
-		return None
-	return hashlib.sha256(json.dumps(nodes, sort_keys=True).encode()).hexdigest()
-
-
 def mask_code_matches(recorded):
-	"""Accept the audited pre-consolidation masks only while their code is identical."""
-	if recorded == sha256_file(__file__):
-		return True
-	return (
-		recorded == MASK_PRECONSOLIDATION_FILE_SHA256
-		and mask_implementation_digest(Path(__file__).read_text()) == MASK_PRECONSOLIDATION_IMPLEMENTATION
-	)
+	"""Current-run mask reuse requires this exact implementation file."""
+	return recorded == sha256_file(__file__)
 
 
 def resume_verify_request(saved, env, opts, complete):
@@ -1745,6 +1661,8 @@ def resume_verify_request(saved, env, opts, complete):
 		modern_error_max=env.get("modern_error_max", "0.002"),
 		modern_error_proportion=env.get("modern_error_proportion", "2"),
 	)
+	if env.get("GU_BATCH_ID") or env.get("GU_POSTFIX"):
+		expected["batch_id"] = env.get("GU_BATCH_ID") or env["GU_POSTFIX"]
 	if chrom == "X":
 		expected.update(
 			x_scoring_profile=env.get("IBDMIX_X_PROFILE", "nonpar-v2"),
@@ -1754,7 +1672,7 @@ def resume_verify_request(saved, env, opts, complete):
 		resume_require(
 			values.get(key) == value, f"parameter changed: {key} ({values.get(key)!r} -> {value!r})"
 		)
-	soft = Path(env.get("GU_SOFT", "/mnt/d/software/gu"))
+	soft = Path(env.get("GU_SOFT", Path.home()/".local/share/gu/software"))
 	prepare = Path(env.get("IBDMIX_PREPARE_BIN", soft / "ibdmix-prepare/prepare"))
 	resume_require(
 		resume_sha(prepare) == values["genotype_binary_sha256"], "genotype preparation binary changed"
@@ -1767,8 +1685,6 @@ def resume_verify_request(saved, env, opts, complete):
 		)
 	else:
 		runtime = Path(env.get("IBDMIX_RUNTIME", soft / "ibdmix"))
-		if not runtime.is_dir():
-			runtime = soft / "IBDmix"
 		caller = runtime / "build/src/ibdmix"
 		info = caller.stat()
 		resume_require(
@@ -1797,9 +1713,7 @@ def resume_verify_request(saved, env, opts, complete):
 		recorded_contract.get("original_fallback_mask_root") in {None, str(fallback)},
 		"fallback mask root changed",
 	)
-	fasta = env.get(
-		"IBDMIX_REFERENCE_FASTA", str(Path(env.get("GU_REF_ROOT", "/mnt/f/gen")) / "1hgp/37/GRCH37.fasta.gz")
-	)
+	fasta = env.get("IBDMIX_REFERENCE_FASTA") or str(runtime_directory("GU_REF_ROOT", env) / "1hgp/37/GRCH37.fasta.gz")
 	resume_require(values["reference_fasta"].rsplit(":", 2)[0] == fasta, "mask reference FASTA changed")
 	# The scoring receipt must belong to these calls, including after a failed
 	# rerun has overwritten the working inputs directory.
@@ -1979,17 +1893,13 @@ loci_FIELDS = (
 )
 
 
-def loci_canonical_ref(ref):
-	return "Chagyr" if ref == "Chagyrskaya" else ref
-
-
 def loci_tested_rosters(con, database, dataset, build):
 	from results_normalize import density_run_path, reference_role, source_class, whole_chromosome_run
 
 	"""Certify full-autosome denominators from saved caller rosters only.
 
     Missing provenance is not inferred from positive calls or annotation panels.
-    Historical controls and locus-only runs cannot certify these windows.
+    Locus-only runs cannot certify these windows.
     """
 	runs = con.execute(
 		"""SELECT chr,raw_file FROM method_runs
@@ -2006,21 +1916,18 @@ def loci_tested_rosters(con, database, dataset, build):
 		if not path.is_file():
 			warnings.append(f"chr{chrom}: missing run metadata; excluded")
 			continue
-		text = path.read_text().replace("\\t", "\t")
+		text = path.read_text()
 		if not whole_chromosome_run(text, chrom):
 			warnings.append(f"chr{chrom}: locus-only/unverified genome scope; excluded")
 			continue
 		records = dict(line.split("\t", 1) for line in text.splitlines() if "\t" in line)
 		roster = path.parent / "samples" / ("C" + chrom) / "ALL.txt"
-		if not roster.is_file():
-			roster = path.parent / "samples" / "ALL.txt"
 		members = set(roster.read_text().split()) if roster.is_file() else set()
 		if not members:
 			warnings.append(f"chr{chrom}: missing/empty actual caller roster; excluded")
 			continue
 		background_only = records.get("background_filter") == "1" and records.get("export_denisovan") != "1"
 		for ref in records.get("refs", "").split():
-			ref = loci_canonical_ref(ref)
 			if reference_role(ref) != "scientific_reference":
 				continue
 			lineage = source_class(ref)
@@ -2088,7 +1995,7 @@ def loci_window_profiles(rows, targets, lengths, window_bp):
 		intervals = (
 			(max(0, r[3]), min(lengths[chrom], r[4]))
 			for r in group
-			if sample in refs.get(loci_canonical_ref(r[5]), set())
+			if sample in refs.get(r[5], set())
 		)
 		for lo, hi in loci_union_intervals(intervals):
 			loci_add_interval(p["boundary"], p["full"], lo, hi, window_bp)
@@ -2188,7 +2095,7 @@ def loci_annotate_loci(rows, loci, targets):
 	bounds = {key: ([r["start"] for r in group], [r["end"] for r in group]) for key, group in index.items()}
 	for lineage, chrom, sample, start, end, source, score in rows:
 		key = (lineage, chrom)
-		ref = loci_canonical_ref(source)
+		ref = source
 		if key not in index or sample not in targets[key].get(ref, set()):
 			continue
 		starts, ends = bounds[key]
