@@ -691,7 +691,12 @@ def canonical_metrics(metrics):
 	return metrics
 
 
-def validate_evaluation(run, cache):
+def benchmark_analysis_root(cache, explicit=None):
+	"""Resolve the kinship namespace independently of the physical cache path."""
+	return Path(explicit or os.environ.get("GRID_WORKFLOW_ANALYSIS_ROOT") or Path(cache).resolve().parents[1])
+
+
+def validate_evaluation(run, cache, analysis_root=None):
 	run, cache = Path(run), Path(cache)
 	for name in ("model.pt", "metrics.tsv", "history.tsv", "test_predictions.tsv.gz"):
 		require(run / name)
@@ -700,7 +705,7 @@ def validate_evaluation(run, cache):
 		raise ValueError("Cannot validate cache before publication")
 	evaluation = json.loads(require(run / "evaluation.json").read_text())
 	from kinship import active
-	correction = active(cache.parents[1])
+	correction = active(benchmark_analysis_root(cache, analysis_root))
 	if evaluation.get("kinship_correction_sha256") != (correction["signature"] if correction else None):
 		raise ValueError("Evaluation predates the active kinship correction; retrain this benchmark")
 	if evaluation.get("format_version") != 1 or evaluation.get("preparation_signature") != meta["signature"]:
@@ -725,7 +730,7 @@ def validate_evaluation(run, cache):
 def publish(args):
 	run = Path(args.run_dir).expanduser().resolve()
 	cache = Path(args.cache_dir).expanduser().resolve()
-	meta = validate_evaluation(run, cache)
+	meta = validate_evaluation(run, cache, getattr(args, "output_root", None))
 	pred = read_table(run / "test_predictions.tsv.gz")
 	pred["eid"] = normalize_ids(pred.eid)
 	needed = {"target", "split", "trait", "y", "baseline", "prediction", "genetic_score"}
@@ -927,7 +932,8 @@ def read_inputs(args, traits, require_training=True):
 	if not np.any(data["split"] == "test"):
 		raise ValueError("No held-out test samples were provided.")
 	from kinship import correct_benchmark
-	data, kinship_signature = correct_benchmark(data, Path(args.data).resolve().parents[2],
+	analysis_root = benchmark_analysis_root(Path(args.data).parent, getattr(args, "analysis_root", None))
+	data, kinship_signature = correct_benchmark(data, analysis_root,
 		getattr(args, "seed", 20260904), separate_calibration=bool(getattr(args, "calibration_roles", None)))
 	if getattr(args, "calibration_roles", None):
 		roles = pd.read_csv(args.calibration_roles, sep="\t", dtype={"id": str, "group_id": str})
@@ -1004,7 +1010,7 @@ def read_inputs(args, traits, require_training=True):
 	if kinship_signature:
 		identity["kinship_correction_sha256"] = kinship_signature
 		from kinship import publication_metadata
-		identity.update(publication_metadata(Path(args.data).parents[2]))
+		identity.update(publication_metadata(analysis_root))
 	final_stamps = [(path.stat().st_size, path.stat().st_mtime_ns, path.stat().st_ino) for path in input_paths]
 	if initial_stamps != final_stamps:
 		raise RuntimeError("An input file changed while it was being read; retry with a stable prepared cache.")
@@ -1104,7 +1110,7 @@ def apply_baselines(data, traits, preprocessing):
 
 
 def neighborhood_runtime():
-	"""Require the project's pinned CUDA/NATTEN runtime."""
+	"""Require a published matching CUDA/NATTEN wheel; model_smoke tests kernels."""
 	torch = import_torch()
 	try:
 		natten = importlib.import_module("natten")
@@ -1112,10 +1118,14 @@ def neighborhood_runtime():
 		raise RuntimeError("NATTEN is missing; run bash install.sh.") from exc
 	version = str(getattr(natten, "__version__", "")).split("+")[0]
 	stack = (str(torch.__version__).split("+")[0], torch.version.cuda, version)
-	if stack != ("2.12.0", "13.0", "0.21.7"):
-		raise RuntimeError(f"Unsupported torch/CUDA/NATTEN stack {stack}; run bash install.sh.")
+	if stack not in {("2.12.0", "12.6", "0.21.7"), ("2.12.0", "13.0", "0.21.7")}:
+		raise RuntimeError(f"Unsupported torch/CUDA/NATTEN stack {stack}; require torch 2.12.0 with CUDA 12.6 or 13.0 "
+			"and matching NATTEN 0.21.7. Use install.sh (HPC cu126 recipe for Volta-era devices).")
 	if not getattr(natten, "HAS_LIBNATTEN", False) or not hasattr(natten, "na1d"):
-		raise RuntimeError("NATTEN's compiled extension is missing; install the matching torch2120cu130 wheel.")
+		raise RuntimeError("NATTEN's compiled extension is missing; install the matching torch2120cu126 or torch2120cu130 wheel.")
+	if torch.cuda.is_available() and torch.version.cuda == "13.0" and torch.cuda.get_device_capability() < (7, 5):
+		raise RuntimeError("CUDA 13 removed pre-Turing device support; use the pinned CUDA 12.6/NATTEN cu126 recipe "
+			"and pass the real-device forward/backward preflight before training.")
 	return natten, version
 
 
@@ -1511,7 +1521,7 @@ def stage_evaluation(args, identity, preparation, checkpoint):
 		raise RuntimeError("The input cohort or SNP manifest changed while the model was running; outputs are not marked complete.")
 	output_directory = Path(args.out_dir)
 	from kinship import active
-	correction = active(Path(args.data).resolve().parents[2])
+	correction = active(benchmark_analysis_root(Path(args.data).parent, getattr(args, "analysis_root", None)))
 	if identity.get("kinship_correction_sha256") != (correction["signature"] if correction else None):
 		raise RuntimeError("Kinship correction changed while the model was running")
 	model_stat = (output_directory / "model.pt").stat()
@@ -1901,6 +1911,8 @@ def run_prediction(args):
 
 
 def add_model_arguments(parser):
+	parser.add_argument("--analysis-root", default=os.environ.get("GRID_WORKFLOW_ANALYSIS_ROOT"),
+		help="Analysis/kinship namespace; separate from an optionally external genotype cache")
 	parser.add_argument("--genotypes", required=True, help="Aligned sample-major .npy dosage memmap")
 	parser.add_argument("--data", required=True, help="TSV(.gz): eid,target,split,phenotypes,numeric covariates")
 	parser.add_argument("--variants", required=True, help="Ordered TSV(.gz): CHR,BP,SNP,REF,ALT")

@@ -7,7 +7,7 @@ if (.c4_mode %in% c("panel", "reconstruct")) {
 # Focused, prospective test of LE8 supervision and use of prevalent (Yang) donors.  All risk models use
 # incident training participants only. Yang enters proxy learning.
 suppressPackageStartupMessages({
-	fdir <- Sys.getenv("LE8_FDIR", unset = "/mnt/d/scripts/le8/f")
+	fdir <- Sys.getenv("LE8_FDIR", unset = file.path(Sys.getenv("DIRSCRIPT"), "f"))
 	source(file.path(fdir, "0.common.R"))
 	source(file.path(fdir, "c1.correlate.R"))
 
@@ -449,7 +449,7 @@ c4_fit_concepts <- function(train,test,yang,features,components,covars,panel,coh
 		fit <- train[fold!=f,,drop=FALSE]; held <- train[fold==f,,drop=FALSE]
 		learn <- if (cohort=="YinYang") bind_rows(fit,yang[!yang$.group %in% held$.group,,drop=FALSE]) else fit
 		learn$.le8_proxy_half <- le8_group_folds(learn$.group,2,seed+411)
-		tmp <- tempfile("le8-concept-proxy-",tmpdir="/tmp"); dir.create(tmp)
+		tmp <- tempfile("le8-concept-proxy-",tmpdir=le8_table_tmpdir()); dir.create(tmp)
 		pool <- tryCatch(le8_training_connection_set(learn,features,components,covars,tmp),finally=unlink(tmp,recursive=TRUE))
 		fp <- head(pool,k)
 		if (length(fp)!=k) return(list(status="unavailable: insufficient nested replicated proxies",fold=f))

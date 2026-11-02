@@ -1,0 +1,9 @@
+sample_id	individual_id	cohort	age_bp	region	include	unrelated
+A1	I1	ancient	8500	E	1	1
+A2	I2	ancient	8000	E	1	1
+A3	I3	ancient	3500	C	1	1
+A4	I4	ancient	3000	C	1	1
+A5	I5	ancient	500	SW	1	1
+A6	I6	ancient	0	SW	1	1
+M1	I7	modern	0	E	1	1
+M2	I8	modern	0	C	1	1

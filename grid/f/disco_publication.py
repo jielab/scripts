@@ -21,6 +21,30 @@ def read_performance(root, trait):
         receipt = json.loads((folder / "performance.json").read_text())
         if receipt.get("status") != "completed":
             return None, receipt.get("reason", "not_completed")
+        if receipt.get("schema") == "grid.target_benchmark.1":
+            from shared_cohort import sha256
+            if receipt.get("trait") != trait or receipt.get("method") != "disco":
+                raise InvalidPublication("wrong standalone Disco trait/method")
+            if not receipt.get("test_labels_used_only_after_prediction_freeze"):
+                raise InvalidPublication("missing standalone prediction-freeze evidence")
+            required = {str((folder / "performance.tsv").resolve()),
+                        str((folder / "_LOCAL_ONLY/roles.tsv.gz").resolve()),
+                        str((folder / "_LOCAL_ONLY/frozen_models.json").resolve()),
+                        str((folder / "_LOCAL_ONLY/final_prs.tsv.gz").resolve())}
+            if not required <= set(receipt.get("files", {})):
+                raise InvalidPublication("missing bound standalone outputs")
+            for path, digest in receipt["files"].items():
+                if not Path(path).is_file() or sha256(path) != digest:
+                    raise InvalidPublication("standalone input/output changed")
+            roles = pd.read_csv(folder / "_LOCAL_ONLY/roles.tsv.gz", sep="\t", dtype=str)
+            if roles.id.duplicated().any() or roles.groupby("group_id").role.nunique().max() != 1:
+                raise InvalidPublication("standalone group role isolation failed")
+            if int(roles.role.eq("test").sum()) != receipt["roster"]["test_N"]:
+                raise InvalidPublication("standalone frozen test count changed")
+            table = pd.read_csv(folder / "performance.tsv", sep="\t")
+            if len(table) != 1 or not table.source.eq("3.disco.sh").all() or not table.stage.eq("test").all():
+                raise InvalidPublication("standalone aggregate provenance invalid")
+            return table, "completed"
         if receipt.get("schema") != "grid.disco.performance.1" or receipt.get("trait") != trait:
             raise InvalidPublication("wrong schema or trait")
         correction = active(root)

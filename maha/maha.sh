@@ -24,7 +24,7 @@ Main options:
     --steps CSV  Select internal stages
     --rscript FILE  R interpreter
     --replace-steps CSV  Explicitly replace selected stages
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/maha

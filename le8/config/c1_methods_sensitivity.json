@@ -1,7 +1,11 @@
 {
-  "version": "LE8-C1-sensitivity-2026-10-26-v1",
-  "description": "Exploratory/sensitivity methods only",
+  "version": "LE8-C1-sensitivity-2026-11-02-v1",
+  "description": "Explicit historical fitted-head and exploratory methods; these are not the transparent count primary",
   "methods": [
+    "abm_case_preserving",
+    "abm_profile",
+    "abm_prevalent",
+    "abm_lenient",
     "abm_legacy",
     "molecular_deviation",
     "abm_deep"

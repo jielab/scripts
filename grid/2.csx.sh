@@ -2,7 +2,7 @@
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/0f/cli_dirs.sh"
     script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
@@ -15,9 +15,19 @@ set -euo pipefail
 usage() {
 	cat <<'HELP'
 Modules:
-    all      Weights and scoring (default)
+    all      Weights -> scores -> small target-validation fit -> test accuracy (default)
     weights  Joint four-population PRS-CSx
     score    Apply saved SNP weights; select with --stage
+    prepare  Shared cohort/genotype preparation only; no model training
+    targetfit  Fit four population beta values on small validation; evaluate untouched test
+    blockprepare  Build outcome-free block PRSs (--blocks 1|4)
+    blockridge    Independent block regression extension and test performance
+    blocknet      Independent block Transformer extension and test performance
+
+Benchmark/block options: --analysis-root DIR --traits LIST --validation-n 5000
+    --cohort FILE (optional TSV: id,group_id,split,y/trait,covariates)
+    --covariates age,sex,PC1,PC2; --blocks 1|4 or --ld-block-files CSV
+    ./2.csx.sh targetfit --help and ./2.csx.sh blocknet --help list full options.
 
 Default permanent paths (outside the analysis output directory):
     READ GWAS / WRITE final SNP weights: /mnt/f/gwas/4grid/common
@@ -29,7 +39,9 @@ Default permanent paths (outside the analysis output directory):
     Changing --dir-output-root alone does not relocate weights/scores.
 
 Main options:
-    --trait NAME / --traits LIST   Default: height,ldl,t2dm; traits run sequentially.
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
+    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
     --stage all|weights|score      Default: all.
     --dir-gwas DIR                /mnt/f/gwas/4grid/common
     --dir-gen DIR                 /mnt/f/gen/ukb/37/typ; falls back to hap when typ is absent.
@@ -42,7 +54,7 @@ Main options:
     --replace TRUE|FALSE         Default FALSE; reuse only matching saved results.
     --check                      Validate inputs and prepare target SNP metadata; no inference/scoring.
     --dry-run TRUE               Same preflight/plan behavior; no completion markers.
-    -h, --help  Help; complete options: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/grid
@@ -68,6 +80,25 @@ case "${1:-}" in -h | --help | help)
 	;;
 esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/workflow_entry.sh"
+grid_workflow_entry csx "$@"
+set -- "${GRID_ENTRY_ARGS[@]}"
+case "${1:-}" in
+    prepare|targetfit|blockprepare|blockridge|blocknet)
+        module=$1; shift
+        source "$ROOT/f/0.common.sh"
+        grid_activate_environment
+        export PYTHONPATH="$ROOT/f${PYTHONPATH:+:$PYTHONPATH}"
+        case "$module" in
+            prepare) exec "${GRID_PYTHON:-python3}" "$ROOT/f/shared_cohort.py" prepare "$@" ;;
+            targetfit) exec "${GRID_PYTHON:-python3}" "$ROOT/f/target_benchmark.py" "$@" ;;
+            *) exec "${GRID_PYTHON:-python3}" "$ROOT/f/csx_blocks.py" "$module" "$@" ;;
+        esac
+        ;;
+    all|weights|score)
+        module=$1; shift; set -- --stage "$module" "$@"
+        ;;
+esac
 # Resolve auto at pipeline startup before selecting output paths and signatures.
 # Export before the memory-cap re-entry; explicit environment/CLI choices still apply.
 export GRID_CSX_BACKEND=${GRID_CSX_BACKEND:-auto}

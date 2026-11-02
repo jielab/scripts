@@ -1,0 +1,4 @@
+# Merge with ../hpc.yml. Edit its root, or pass --root PATH.
+schema: 1
+legacy_library_dir: null
+legacy_metadata_dir: null

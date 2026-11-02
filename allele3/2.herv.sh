@@ -30,6 +30,17 @@ Options:
   --help-full            Show detailed options
   -h, --help             Show this help
 
+Execution (shared with ld/metag 0f/0os.sh):
+  --submit local|hpc    Local process cap or .cmd/bsub DAG submission
+  --date-scratch DATE   Dated HPC scratch root; specify the active allocation date
+  --write-cmd           Generate reviewable .cmd files without submitting
+  --max-running N       HPC concurrency ceiling [32]; independent of --jobs-N
+  --jobs-N N            Local parallel jobs [1; maximum 8]
+  --wait TRUE|FALSE     Wait for submitted jobs [FALSE]
+  --queue NAME --job-cores N --job-memory-gb N --job-hours N
+  --job-dir DIR         Stable submission receipts; new plan/input -> new directory
+  --retry-failed        Explicit EXIT retry with pending dependency repair
+
 Examples:
   ./2.herv.sh [OPTIONS]
   ./2.herv.sh --out /mnt/f/gen/1kg/38/herv/HG00096
@@ -53,7 +64,7 @@ main() {
     local out=${HERV_OUT:-${ALLELE_HERV_OUT:-}} gen=${HERV_GEN:-1kg} sample=${HERV_SAMPLE:-HG00096}
     local build=${HERV_BUILD:-38} pfile=${HERV_PFILE_DIR:-}
     local vcf=${HERV_VCF_DIR:-${ALLELE_HERV_VCF_DIR:-}}
-    local fasta=${HERV_FASTA:-${ALLELE_FASTA:-}}
+    local fasta=${HERV_FASTA:-}
     local jobs=${HERV_JOBS:-${ALLELE_HERV_JOBS:-8}} cores=${HERV_CORES:-${ALLELE_HERV_CORES:-16}}
     local python=${HERV_PYTHON:-${ALLELE_PYTHON:-}}
     local memory=${HERV_MEMORY_LIMIT_GB:-${ALLELE_MEMORY_LIMIT_GB:-16}}
@@ -99,13 +110,17 @@ main() {
     fi
     [[ $gen =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && $sample =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail '--gen and --sample must be single names (letters, digits, dots, underscores or hyphens)'
     [[ $build == 37 || $build == 38 ]] || fail '--build must be 37 or 38'
-    local sample_out=/mnt/f/gen/$gen/$build/herv/$sample
+    export ALLELE_ACTIVE_HERV_BUILD=$build
+    local sample_out=${DIR_DATA:-/mnt/f}/gen/$gen/$build/herv/$sample
+    if [[ ${submit:-local} == hpc ]]; then sample_out=$DIR_SCRATCH/allele3/herv/$gen/$build/$sample; fi
     if [[ -z $out ]]; then
         if [[ -n $analysis_root ]]; then out=$analysis_root/herv/$gen/$sample; else out=$sample_out; fi
     fi
-    vcf=${vcf:-/mnt/f/gen/$gen/$build/vcf}
-    pfile=${pfile:-/mnt/f/gen/$gen/$build/pfile}
-    fasta=${fasta:-/mnt/f/gen/1hgp/$build/GRCH$build.fasta.gz}
+    vcf=${vcf:-${DIR_DATA:-/mnt/f}/gen/$gen/$build/vcf}
+    pfile=${pfile:-${DIR_DATA:-/mnt/f}/gen/$gen/$build/pfile}
+    if [[ -z $fasta ]]; then
+        if [[ $build == 37 ]]; then fasta=${ALLELE_FASTA37:-${DIR_DATA:-/mnt/f}/gen/1hgp/37/GRCH37.fasta.gz}; else fasta=${ALLELE_FASTA:-${DIR_DATA:-/mnt/f}/gen/1hgp/38/GRCH38.fasta.gz}; fi
+    fi
     extra+=(--pfile-dir "$pfile")
     # The canonical sample directory can be recalculated or resumed in place.
     # Keep other cache sources protected; do not attach a directory to itself.
@@ -116,7 +131,8 @@ main() {
     if [[ -n $reuse && $(readlink -m -- "$reuse") == $(readlink -m -- "$out") ]]; then reuse=''; fi
     positive_integer --jobs "$jobs"
     positive_integer --cores "$cores"
-    ((jobs <= 8)) || fail 'Use at most 8 workers on this shared host'
+    workflow_cpu_check "$jobs" 8
+    if [[ ${submit:-local} == hpc ]]; then workflow_cpu_check "$cores" 16; fi
     local conda_root=${HERV_CONDA_ROOT:-${ALLELE_CONDA_ROOT:-${METAG_CONDA_ROOT:-$HOME/anaconda3}}}
     python=$(workflow_python "$python" "$conda_root/envs/herv-pgen/bin/python" \
         "$conda_root/envs/allele3-herv-pgen/bin/python" "$conda_root/envs/allele3-evolution/bin/python")
@@ -136,3 +152,4 @@ main() {
 }
 
 main "$@"
+

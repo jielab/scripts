@@ -23,6 +23,17 @@ Options:
   --help-full            Show detailed scanner options
   -h, --help             Show this help
 
+Execution (shared with ld/metag 0f/0os.sh):
+  --submit local|hpc    Local process cap or .cmd/bsub DAG submission
+  --date-scratch DATE   Dated HPC scratch root; specify the active allocation date
+  --write-cmd           Generate reviewable .cmd files without submitting
+  --max-running N       HPC concurrency ceiling [32]; independent of --jobs-N
+  --jobs-N N            Local parallel jobs [1; maximum 8]
+  --wait TRUE|FALSE     Wait for submitted jobs [FALSE]
+  --queue NAME --job-cores N --job-memory-gb N --job-hours N
+  --job-dir DIR         Stable submission receipts; new plan/input -> new directory
+  --retry-failed        Explicit EXIT retry with pending dependency repair
+
 Examples:
   ./3.scan.sh [run|plan|adopt|verify]
   ./3.scan.sh --out /mnt/f/annot/gnomad/allele3
@@ -66,7 +77,7 @@ main() {
     args+=(--replace "$replace")
     positive_integer --memory-limit-gb "$memory"
     positive_integer --screen-log-interval "$interval"
-    ((memory <= 32)) || fail 'Memory cap must be at most 32 GiB on this shared host'
+    workflow_memory_check "$memory"
     python=$(workflow_python "$python" /home/huangj/anaconda3/envs/allele3-evolution/bin/python3 \
         "$HOME/anaconda3/envs/allele3-evolution/bin/python3")
     local entry=$ROOT/f/scan_store.py
@@ -78,3 +89,4 @@ main() {
 }
 
 main "$@"
+

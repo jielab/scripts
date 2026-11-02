@@ -334,7 +334,7 @@ class Report:
 
 		self.table_dir = self.out
 		self.table_dir.mkdir(exist_ok=True)
-		self.panel_dir = Path(tempfile.mkdtemp(prefix="le8-panels-", dir="/tmp"))
+		self.panel_dir = Path(tempfile.mkdtemp(prefix="le8-panels-", dir=os.getenv("TMPDIR", "/tmp")))
 		self.panel_dir.mkdir(exist_ok=True)
 		self.registry = []
 		self.findings = []
@@ -4244,7 +4244,7 @@ def share_viewer(root, output, r_bin="Rscript", max_table_mb=128):
 	root, output = Path(root).resolve(), Path(output).resolve()
 	if output.suffix.lower() != ".zip" or output.is_relative_to(root):
 		raise ValueError("Use a ZIP path outside the analysis result directory")
-	with tempfile.TemporaryDirectory(prefix="le8-share-", dir="/tmp") as scratch:
+	with tempfile.TemporaryDirectory(prefix="le8-share-", dir=os.getenv("TMPDIR", "/tmp")) as scratch:
 		bundle = Path(scratch) / "le8-share"
 		shutil.copytree(SHARE_ROOT / "shiny", bundle / "shiny")
 		evidence_Indexer(root, bundle / "evidence", max_table_mb).run()

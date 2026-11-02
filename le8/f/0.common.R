@@ -5,7 +5,7 @@ source(file.path(dirname(dirname(dirname(normalizePath(.png_common_source)))), "
 # 🚩 Consolidated result tables
 # Excel workbooks contain aggregate worksheets and exact source exports.
 # RDS retains reusable raw/model objects; identifiers do not determine format.
-le8_table_tmpdir <- function() if (.Platform$OS.type == 'windows') tempdir() else '/tmp'
+le8_table_tmpdir <- function() Sys.getenv('TMPDIR', unset = tempdir())
 le8_table_identifier_columns <- c(
 	'eid', 'iid', 'fid', 'id', 'id1', 'id2', 'participantid', 'individualid',
 	'subjectid', 'patientid', 'queryid', 'targetid', 'referenceid', 'donorid',
@@ -550,7 +550,7 @@ le8_table_write_workbook <- function(directory, tables, filename, entries, priva
 	if (!length(tables)) stop('Cannot publish an empty result workbook: ', filename)
 	cells <- sum(vapply(tables, function(x) as.double(nrow(x)) * ncol(x), numeric(1)))
 	if (cells > 3000000 || any(vapply(tables, function(x) nrow(x) > 1048575L, logical(1)))) {
-		source(Sys.getenv('LE8_RESULTS_R', '/mnt/d/scripts/0f/results.R'), local = TRUE)
+		source(Sys.getenv('LE8_RESULTS_R', file.path(dirname(Sys.getenv('DIRSCRIPT')), '0f/results.R')), local = TRUE)
 		target <- file.path(directory, filename)
 		temporary <- tempfile('le8-workbook-', tmpdir = le8_table_tmpdir(), fileext = '.xlsx')
 		on.exit(unlink(temporary), add = TRUE)
@@ -751,7 +751,8 @@ if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] %in%
 	}
 	if (length(args) != 2L) stop('Table storage commands require an analysis root')
 	if (args[1] == '--tables-restore') {
-		if (!startsWith(normalizePath(args[2], mustWork = TRUE), '/tmp/')) stop('Restore destination must be under /tmp')
+		allowed_tmp <- normalizePath(Sys.getenv('TMPDIR', unset = if (.Platform$OS.type == 'windows') tempdir() else '/tmp'), mustWork = TRUE)
+		if (!startsWith(normalizePath(args[2], mustWork = TRUE), paste0(allowed_tmp, '/'))) stop('Restore destination must be under the allocated TMPDIR')
 		le8_tables_restore(args[2])
 	} else le8_tables_pack(args[2])
 	quit(save = 'no', status = 0)
@@ -1480,7 +1481,7 @@ inormal2 <- function(x) {
 
 
 # 🚩 Paths and global settings
-if (!exists("dir0")) dir0 <- ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d")
+if (!exists("dir0")) dir0 <- Sys.getenv("DIR_WORK", unset = ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d"))
 PHE_F_R <- Sys.getenv("PHE_F", unset = file.path(dir0, "scripts/0f/phenotype.sh"))
 find_first_existing <- function(paths, default = paths[[1]]) {
 	paths <- unique(paths[!is.na(paths) & nzchar(paths)])
@@ -1514,9 +1515,9 @@ out.prot <- file.path(out.base, "prot")
 out.met <- file.path(out.base, "met")
 invisible(lapply(c(out.base, out.prot, out.met), dir.create, recursive = TRUE, showWarnings = FALSE))
 
-dir.Y <- Sys.getenv("LE8_GWAS_DIR", unset = file.path("/mnt/d/data", "gwas/main"))
-dir.X <- Sys.getenv("LE8_PQTL_IV_DIR", unset = file.path("/mnt/d/data", "gwas/prot"))
-dir.met.gwas <- Sys.getenv("LE8_MQTL_IV_DIR", unset = file.path("/mnt/d/data", "gwas/met"))
+dir.Y <- Sys.getenv("LE8_GWAS_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/main"))
+dir.X <- Sys.getenv("LE8_PQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/prot"))
+dir.met.gwas <- Sys.getenv("LE8_MQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/met"))
 gwas_trait_dir <- function(project_dir, trait, category = "common") file.path(project_dir, category, trait)
 gwas_clean_dir <- function(project_dir, trait, category = "common") file.path(gwas_trait_dir(project_dir, trait, category), "gwas")
 gwas_clean_file <- function(project_dir, trait, suffix = ".gz") file.path(gwas_clean_dir(project_dir, trait), paste0(trait, suffix))
@@ -1534,7 +1535,7 @@ prot_bed_file <- find_first_existing(
 	c(
 		Sys.getenv("LE8_PROT_BED", unset = ""),
 		file.path(dir.X, "ppp_3k.b38.bed"),
-		"/mnt/f/gwas/prot/pheno.bed"
+		file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/prot/pheno.bed")
 	),
 	file.path(dir.X, "ppp_3k.b38.bed")
 )
@@ -1684,7 +1685,7 @@ le8_stage_fingerprint <- function() {
 	code <- list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE)
 	env <- Sys.getenv(); env <- env[grepl("^(C[1-5]_|PGS_|RUN_|MRLINK2_EIGH_BACKEND|LE8_(GWAS|PQTL|MQTL|LD|GROUP|GRCH|REFGEN|ENDPOINT|BASELINE|OUTER|Y_DATE|VARS_ADJ|VARIANT|REFERENCE|EVIDENCE)|FINAL_CONNECTION|DATE_FOLLOW_END)",names(env))]
 	files <- unique(c(file.path(get0("indir",ifnotfound=""),"Rdata",c("all.rds","prot.rds","met.rds")),
-		file.path("/mnt/f/gwas",c("prot","met"),"pgs",c("prot.pgs.gz","met.pgs.gz")),
+		file.path(Sys.getenv("DIR_DATA", "/mnt/f"),"gwas",c("prot","met"),"pgs",c("prot.pgs.gz","met.pgs.gz")),
 		unname(env[file.exists(env)]),get0(".le8_stage_source_files",ifnotfound=character()),file.path(get0("indir",ifnotfound=""),"rap/vip.tab.gz")))
 	for (mf in env[grepl("MANIFEST$",names(env)) & file.exists(env)]) {
 		m <- tryCatch(data.table::fread(mf,showProgress=FALSE),error=function(e) NULL)
@@ -2305,7 +2306,7 @@ le8_normalize_variants <- function(z, metadata) {
 	fai <- data.table::fread(paste0(fasta,".fai"),header=FALSE,colClasses=c(V1="character"))
 	contig <- as.character(fai$V1[match(.norm_chr_value(z$CHR[ix]),.norm_chr_value(fai$V1))])
 	if (anyNA(contig)) stop("Reference lacks requested chromosome")
-	tmp <- tempfile("le8-normalize-",tmpdir="/tmp"); dir.create(tmp); on.exit(unlink(tmp,recursive=TRUE),add=TRUE)
+	tmp <- tempfile("le8-normalize-",tmpdir=le8_table_tmpdir()); dir.create(tmp); on.exit(unlink(tmp,recursive=TRUE),add=TRUE)
 	input <- file.path(tmp,"input.vcf"); output <- file.path(tmp,"normalized.vcf")
 	header <- c("##fileformat=VCFv4.2",paste0("##contig=<ID=",fai$V1,",length=",fai$V2,">"),"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO")
 	writeLines(header,input)
@@ -2940,7 +2941,7 @@ le8_check_final_request <- function(obj) {
 # Cache paths stay stable across disposable execution workspaces.
 le8_cache_root <- function() {
 	project <- Sys.getenv('LE8_PUBLISHED_ROOT', Sys.getenv('LE8_ANALYSIS_ROOT', '/mnt/d/analysis/le8'))
-	file.path('/tmp/le8-cache', substr(digest::digest(project, algo = 'sha256', serialize = FALSE), 1, 12))
+	file.path(Sys.getenv('LE8_CACHE_ROOT', unset = file.path(Sys.getenv('TMPDIR', '/tmp'), 'le8-cache')), substr(digest::digest(project, algo = 'sha256', serialize = FALSE), 1, 12))
 }
 le8_cache_dir <- function(stage, layer, ...) {
 	layer <- if (layer %in% c('protein', 'prot')) 'prot' else 'met'
@@ -4651,7 +4652,7 @@ le8_refresh_figure_files <- function(rawdir, incoming = NULL) {
 	prefix <- if (grepl('^Fig', revised$file[1])) 'final' else sub('[.].*$', '', revised$file[1])
 	ix <- le8_figure_order(prefix, revised$group) ; revised <- revised[ix, , drop = FALSE] ; sources <- sources[ix]
 	revised$file <- paste0(if (prefix == 'final') '' else paste0(prefix, '.'), 'Fig', seq_len(nrow(revised)), '.', revised$group, '.png')
-	stage <- tempfile('.renumber-', tmpdir = '/tmp') ; dir.create(stage)
+	stage <- tempfile('.renumber-', tmpdir = le8_table_tmpdir()) ; dir.create(stage)
 	on.exit(unlink(stage, recursive = TRUE), add = TRUE)
 	stopifnot(all(file.copy(sources, file.path(stage, revised$file))))
 	old_tables <- character()
@@ -4842,7 +4843,7 @@ le8_flush_figures <- function(rawdir) {
 		}
 		audit[[src]]$status <- "rendered in grouped figures"
 	}
-	staging <- tempfile(".figures-", tmpdir = "/tmp") ; dir.create(staging)
+	staging <- tempfile(".figures-", tmpdir = le8_table_tmpdir()) ; dir.create(staging)
 	on.exit(unlink(staging, recursive = TRUE), add = TRUE)
 	manifest <- list() ; number <- 0L ; prefix <- q[[1]]$rule$module
 	dpi <- as.integer(Sys.getenv("LE8_FIGURE_DPI", unset = "220"))
@@ -4867,7 +4868,7 @@ le8_flush_figures <- function(rawdir) {
 		}
 	}
 	# Preserve source geometry separately from the aligned/paginated figures.
-	originals <- tempfile('le8-source-figures-', tmpdir = '/tmp') ; dir.create(originals)
+	originals <- tempfile('le8-source-figures-', tmpdir = le8_table_tmpdir()) ; dir.create(originals)
 	on.exit(unlink(originals, recursive = TRUE), add = TRUE)
 	for (src in names(q)) {
 		item <- q[[src]] ; target <- file.path(originals, src)

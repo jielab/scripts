@@ -11,8 +11,27 @@ fi
 # LE8 FINAL interface. Default sequence: integrated multiroute C1, C2, C3, C4, C5.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
-export TMPDIR=/tmp TMP=/tmp TEMP=/tmp PYTHONPYCACHEPREFIX=/tmp/python-cache
 LE8_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$LE8_ROOT/../0f/workflow_env.sh"
+workflow_init le8 "$@"
+set -- "${WORKFLOW_ARGS[@]}"
+source "$LE8_ROOT/f/runtime_env.sh"
+# Public runs always produce inspectable .cmd stages. Planning uses only Python
+# stdlib; no R, cohort preparation or fitting can execute on an HPC login node.
+if [[ ${WORKFLOW_WORKER:-0} != 1 ]]; then
+    le8_plan=TRUE
+    for le8_arg in "$@"; do
+        case "$le8_arg" in -h|--help|help) le8_plan=FALSE ;; esac
+    done
+    case "${1:-}" in abm|deviation|evidence|viewer) le8_plan=FALSE ;; esac
+    if [[ $le8_plan == TRUE ]]; then
+        exec "${LE8_PLANNER_PYTHON:-python3}" "$LE8_ROOT/f/hpc_workflow.py" "$@"
+    fi
+    if [[ $submit == hpc && ${1:-} =~ ^(abm|deviation|evidence|viewer)$ && -z ${LSB_JOBID:-} ]]; then
+        echo 'Standalone utilities on HPC require an allocated LSF job. Use the module DAG for scheduled analysis.' >&2
+        exit 2
+    fi
+fi
 # One logger covers the public dispatcher and all of its children.
 export SCRIPT_FOREGROUND=1
 export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/tmp/le8-logs/runs}
@@ -24,7 +43,7 @@ source "$LE8_ROOT/../0f/console.sh"
 le8_usage() {
 	cat <<'HELP'
 Modules:
-    c1_correlate   Associations and five primary prediction methods
+    c1_correlate   Associations, glmnet/LightGBM and transparent twin-count ABM
     c1_reliability Re-evaluate frozen glmnet reliability; never refit risk models
     c2_cause       MR and genetic decomposition
     c3_coloc       Colocalization
@@ -35,6 +54,13 @@ Modules:
     Default: c1_correlate -> C2 -> C3 -> C4 -> C5
 
 Main options:
+    --submit local|hpc   Local DAG execution or LSF submission (auto detected)
+    --jobs-N N          Concurrent local jobs / maximum active LSF submissions
+    --wait TRUE|FALSE   Wait for submitted HPC jobs [FALSE]
+    --plan-only         Write .cmd DAG without analysis/submission
+    --plan-dir DIR      Persistent plans/logs [ANALYSIS_ROOT/le8/logs/workflows]
+    --resume-plan FILE  Continue submission/waiting for the same plan (no failed-job retry)
+    --queue NAME --gpu-queue NAME --hours N  LSF resources [ser,gpu,72]
     --Y CSV, --trait CSV  Outcomes [cvd_cad,ra]
     --biom CSV            Omic layers [prot,met]
     --dir-analysis-root DIR   Results [/mnt/d/analysis/le8]
@@ -46,8 +72,9 @@ Main options:
     --replace-models TRUE|FALSE       Override C1 risk-model replacement
     --replace-evaluation TRUE|FALSE   Override common evaluation replacement
     --replace-reliability TRUE|FALSE  Override P0/P1/P2 evaluation replacement
-    --methods CSV         glmnet,lightgbm,abm_case_preserving,abm_profile,abm_prevalent
-                          Sensitivities: abm_legacy,molecular_deviation,abm_deep (explicit only)
+    --methods CSV         glmnet,lightgbm,abm_count
+                          Historical sensitivities: abm_case_preserving,abm_profile,
+                          abm_prevalent,abm_legacy,molecular_deviation,abm_deep
     --device NAME         [auto], cpu or cuda; independent of scientific method
     --config FILE         C1 parameter file [config/c1_methods.json]
     --history-config FILE Historical-case assumptions [config/c1_history.json]
@@ -59,7 +86,18 @@ Main options:
     --preflight / --dry-run  Check inputs / print commands
     --no-reindex          Read the existing Shiny index
     --port N / --host IP  Viewer address [3839 / 127.0.0.1]
-    -h, --help            Help; full options and notes: 0.README.md
+    -h, --help            Show options and examples below
+
+Deployment and results:
+    Override DIR_WORK / DIR_DATA / DIR_SCRATCH for actual mounts; select
+    PYTHON_BIN / R_BIN for installed scientific environments. Plan-only uses stdlib.
+    Generate plans on the execution machine; never reuse foreign absolute paths.
+    After a failed LSF job: fix the cause and create a new plan. Resume does not
+    resubmit failed jobs or reconnect their downstream dependencies.
+    HPC Shiny supports preparation only; launch the interactive viewer locally.
+    Donor identities and model evidence stay in LOCAL_ONLY files. Count uses
+    IPCW and family ESS shrinkage; unsupported queries abstain with prior fallback.
+    Compare full population and the same selected people, including complements.
 
 Example:
     cd /mnt/d/scripts/le8
@@ -152,7 +190,7 @@ le8_main() {
 	esac
 	# Shared defaults, deliberately visible at the public entry point.
 	local modules=c1_correlate,c2_cause,c3_coloc,c4_connect,c5_cellulation trait_csv=${Y:-cvd_cad,ra} biom_csv=${BIOM:-prot,met}
-	local analysis_root=${LE8_ANALYSIS_ROOT:-/mnt/d/analysis/le8}
+	local analysis_root=${LE8_ANALYSIS_ROOT:-$ANALYSIS_ROOT/le8}
 	local seed=${SEED:-2026} replace=FALSE r_bin=${R_BIN:-Rscript}
 	local port=${LE8_SHINY_PORT:-3839} host=${LE8_SHINY_HOST:-127.0.0.1}
 	# C2 retains the R analysis heap while external MR workers run. A 24 GiB
@@ -161,12 +199,12 @@ le8_main() {
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
-	export UKB_PHE=${UKB_PHE:-/mnt/d/data/ukb}
-	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-/mnt/f/gen/ukb/37/typ/ukb_rel.dat}
-	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-/mnt/f/gwas/main}
-	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-/mnt/f/gwas/prot}
-	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-/mnt/f/gwas/met}
-	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-/mnt/f/gen/1kg}
+	export UKB_PHE=${UKB_PHE:-${DIR_WORK:-/mnt/d}/data/ukb}
+	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-${DIR_DATA:-/mnt/f}/gen/ukb/37/typ/ukb_rel.dat}
+	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}
+	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}
+	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/met}
+	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-${DIR_DATA:-/mnt/f}/gen/1kg}
 	export LE8_GRCH=${LE8_GRCH:-auto}
 	# Pool capacity coordinates concurrent runs; each phase requests only its own budget.
 	export LE8_TOTAL_CORES=${LE8_TOTAL_CORES:-16}
@@ -178,8 +216,8 @@ le8_main() {
 	export C4_FOCUS_BUDGETS=${C4_FOCUS_BUDGETS:-5,10,50}
 	export C4_MODULE_BOOT=${C4_MODULE_BOOT:-100} C4_MODULE_STABILITY=${C4_MODULE_STABILITY:-0.70}
 	# Author-published CIGMA inference remains labelled as external evidence.
-	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/f/annot/cigma/chen2026/cigma.results.csv ]]; then
-		export C5_CIGMA_RESULTS=/mnt/f/annot/cigma/chen2026/cigma.results.csv
+	if [[ -z ${C5_CIGMA_RESULTS:-} && -s $DIR_DATA/annot/cigma/chen2026/cigma.results.csv ]]; then
+		export C5_CIGMA_RESULTS=$DIR_DATA/annot/cigma/chen2026/cigma.results.csv
 	fi
 	if [[ $# -gt 0 && $1 != -* ]]; then
 		modules=$1

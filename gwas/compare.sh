@@ -31,7 +31,7 @@ Main options:
     --run-munge TRUE|FALSE  Prepare LDSC caches [TRUE]
     --ref-ld-chr PREFIX --w-ld-chr PREFIX  LD references
     --port N --host IP  Shiny address [3841 / 127.0.0.1]
-    -h, --help  Help; viewer recipe and module options: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/gwas

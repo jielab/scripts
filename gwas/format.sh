@@ -38,7 +38,7 @@ Main options:
     --replace TRUE|FALSE         Recompute selected results [FALSE]
     --hm3 TRUE|FALSE --thin TRUE|FALSE  SNP selection
     --thin-chr-max N             Thinned SNP cap [10000]
-    -h, --help                   Help; analysis options: 0.README.md
+    -h, --help                   Show options and examples below
 
 Example:
     cd /mnt/d/scripts/gwas

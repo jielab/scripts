@@ -103,7 +103,7 @@ class BlockLinear(nn.Module):
 
 def batch_data(a,rr,ix,mu,sd,side,device):
     x=(np.asarray(a[rr[ix]],np.float32)-mu)/sd
-    return torch.as_tensor(x,device=device),torch.as_tensor(side[ix],device=device)
+    return torch.as_tensor(x,dtype=torch.float32,device=device),torch.as_tensor(side[ix],dtype=torch.float32,device=device)
 
 def batches(ix,n,seed=None):
     z=np.asarray(ix,np.int64).copy()

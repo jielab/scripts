@@ -1,0 +1,10 @@
+# Fallback after measuring summed hash size. Build checkpoints remain unchanged.
+schema: 1
+classify_queue: v3-6t
+classify_cores: 96
+classify_threads: 30
+classify_workers: 3
+classify_memory_gib: 5120
+classify_hours: 120
+classify_concurrency: 2
+memory_accounting: conservative

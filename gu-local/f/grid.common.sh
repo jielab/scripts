@@ -19,7 +19,7 @@ Modules:
 
 Main options:
     --scope core|arg|grid|all  Validation scope
-    -h, --help  Help; pipeline options: ../0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     bash f/grid.common.sh preflight --scope core

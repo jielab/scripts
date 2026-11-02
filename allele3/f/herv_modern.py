@@ -141,10 +141,28 @@ class PrimaryBackground(Background):
             value[1] += n*rate
 
 
+def archaic_label_reference(label):
+    """Read only the exact dataset::archaic:REFERENCE:exposure namespace."""
+    marker = "::archaic:"
+    if marker not in label:
+        return None
+    if label.count(marker) != 1:
+        raise ValueError(f"Ambiguous archaic exposure label: {label}")
+    dataset, encoded = label.split(marker)
+    reference, separator, exposure = encoded.partition(":")
+    if not dataset or not reference or not separator or not exposure:
+        raise ValueError(f"Malformed archaic exposure label: {label}")
+    return reference
+
+
 @transactional("summary_manifest.json")
-def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2000, seed=20261027):
+def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2000, seed=20261027,
+                             archaic_references=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    selected_references = scan.track_references(archaic_references)
+    reference_set = set(selected_references)
+    reference_audit = Counter()
     background = Background(architecture_paths(modern, "global"), minimum)
     # Supported observed/expected/denominator, then unsupported obs/denominator.
     blocks = defaultdict(lambda: defaultdict(lambda: np.zeros(5)))
@@ -156,6 +174,12 @@ def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2
             c = canonical_chrom(r["chrom"])
             if c not in AUTOSOMES:
                 continue
+            reference = archaic_label_reference(r["label"])
+            if reference is not None:
+                selected = reference in reference_set
+                reference_audit[(r["label"], reference, selected)] += 1
+                if not selected:
+                    continue
             key = r["label"], int(r["threshold"]), r["sensitivity"]
             n, m = int(r["n_sites"]), int(r["n_multi"])
             if r["block_id"] == "outside_partition":
@@ -184,7 +208,20 @@ def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2
     for r, q in zip(tested, scan.bh_fdr([r["bootstrap_p"] for r in tested])):
         r["fdr"] = q
     write_rows(out / "common_support_enrichment.tsv", results)
+    selection_rows = [dict(label=label, reference=reference, decision="retained" if selected else "excluded",
+                           reason="selected_reference" if selected else "reference_not_selected", counter_rows=count)
+                      for (label, reference, selected), count in sorted(reference_audit.items())]
+    write_rows(out / "archaic_reference_selection.tsv", selection_rows,
+               fields=["label", "reference", "decision", "reason", "counter_rows"])
     manifest = dict(schema=SCHEMA, status="complete", source=str(Path(modern).resolve()),
+                    summary_definition_version="common-support-reference-selection-2",
+                    selected_archaic_references=list(selected_references),
+                    observed_archaic_references=sorted({reference for _, reference, _ in reference_audit}),
+                    selected_archaic_references_not_present=sorted(reference_set - {reference for _, reference, _ in reference_audit}),
+                    excluded_archaic_labels=sorted({label for label, _, selected in reference_audit if not selected}),
+                    excluded_archaic_counter_rows=sum(n for (_, _, selected), n in reference_audit.items() if not selected),
+                    reference_selection="Exact dataset::archaic:REFERENCE:exposure matching before aggregation and BH; other annotation labels unchanged",
+                    reference_audit_scope="Autosomal all-population AC5/10 counter rows; row counts are not unique genomic bases",
                     minimum_training_sites=minimum, minimum_support=coverage, bootstrap=bootstrap,
                     denominator="original eligible SNVs; unsupported strata removed from BOTH numerator and denominator",
                     adjustment="LOCO canonical trinucleotide, primary ALT AF and AN; base denominator fixed across AC tiers",
@@ -1413,6 +1450,8 @@ def parser():
     p.add_argument("--erv-joined")
     p.add_argument("--fasta")
     p.add_argument("--families", default="ERV1,ERVK")
+    p.add_argument("--archaic-references", default=",".join(scan.DEFAULT_ARCHAIC_REFERENCES),
+                   help="Common-support summary reference selection; .2013 references require explicit selection; reads existing counters only")
     p.add_argument("--end-bp", type=int, default=200, help="Spatial head/tail length in aligned bases; records <= twice this length form the short-element part")
     p.add_argument("--body-bins", type=int, default=20, help="Exploratory strand-oriented normalized aligned-body bins")
     p.add_argument("--flank", type=int, default=2000)
@@ -1438,7 +1477,8 @@ def main(argv=None):
     if not 0 < a.min_support <= 1 or a.min_training_sites < 1:
         raise ValueError("Require 0 < min-support <=1 and positive training count")
     if a.command == "summary":
-        return summarize_common_support(a.modern_dir, a.out, a.min_training_sites, a.min_support, a.bootstrap, a.seed)
+        return summarize_common_support(a.modern_dir, a.out, a.min_training_sites, a.min_support, a.bootstrap, a.seed,
+                                        a.archaic_references)
     if not a.erv_joined:
         raise ValueError("--erv-joined required for targeted spatial/boundary scan")
     if a.command == "spatial":
@@ -1451,3 +1491,4 @@ if __name__ == "__main__":
         main()
     except (ValueError, OSError, RuntimeError) as exc:
         raise SystemExit(f"herv-modern: {exc}")
+

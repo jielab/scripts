@@ -1,0 +1,8 @@
+# Same partitioned CPU union, two explicitly declared confidence thresholds.
+# Compare accuracy only with appropriate labelled truth, not classified fraction.
+- name: union_c10
+  classifier_engine: kraken
+  parameters: {confidence: 0.1, minimum_hit_groups: 2, minimum_base_quality: 0}
+- name: union_c30
+  classifier_engine: kraken
+  parameters: {confidence: 0.3, minimum_hit_groups: 2, minimum_base_quality: 0}

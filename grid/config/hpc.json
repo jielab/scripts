@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "site": "TaiYi editable resource requests; verify current queue limits with bqueues",
+  "defaults": {
+    "queue": "ser",
+    "cores": 16,
+    "memory_gib": 160,
+    "hours": 120,
+    "gpus": 0,
+    "memory_scope": "host"
+  },
+  "gpu": {
+    "queue": "gpu",
+    "cores": 20,
+    "memory_gib": 160,
+    "hours": 120,
+    "gpus": 1
+  },
+  "stages": {
+    "prepare": {
+      "cores": 16,
+      "memory_gib": 160
+    },
+    "weights": {
+      "cores": 32,
+      "memory_gib": 160
+    },
+    "score": {
+      "cores": 32,
+      "memory_gib": 160
+    },
+    "targetfit": {
+      "cores": 8,
+      "memory_gib": 32,
+      "hours": 24
+    },
+    "blockprepare": {
+      "cores": 16,
+      "memory_gib": 160
+    },
+    "blockridge": {
+      "cores": 16,
+      "memory_gib": 160
+    },
+    "blocknet": {
+      "gpus": 1
+    },
+    "prsformer": {
+      "gpus": 1
+    },
+    "prsformer2": {
+      "gpus": 1
+    },
+    "twins": {
+      "cores": 16,
+      "memory_gib": 160
+    },
+    "evaluate": {
+      "cores": 8,
+      "memory_gib": 32,
+      "hours": 24
+    },
+    "architecture": {
+      "cores": 4,
+      "memory_gib": 16,
+      "hours": 24
+    },
+    "final": {
+      "cores": 4,
+      "memory_gib": 16,
+      "hours": 24
+    },
+    "countprepare": {
+      "cores": 16,
+      "memory_gib": 160
+    }
+  }
+}

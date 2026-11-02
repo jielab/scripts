@@ -62,10 +62,13 @@ def run_centroids(a):
             iid=r.get('sample_id') or r.get('IID')
             if iid in meta:raise ValueError(f'Duplicate metadata sample: {iid}')
             if not iid or r.get('include','1')!='1':continue
+            cohort=r.get('cohort')
+            if cohort not in {'ancient','modern'}:
+                raise ValueError(f'{iid}: explicit ancient/modern cohort is required; age zero does not identify modern samples')
             try:age=float(r.get('age_bp') or r.get('age'))
             except (TypeError,ValueError):continue
             if not math.isfinite(age) or age<0:continue
-            meta[iid]=(r.get('cohort') or ('modern' if age==0 else 'ancient'),age)
+            meta[iid]=(cohort,age)
     agg=defaultdict(lambda:[0,0.,0.,0.]);unavailable=defaultdict(set);measured=set();missing=Counter()
     current=None;seen_samples=set();finished=set()
     with op(a.dosages) as f:
@@ -102,8 +105,12 @@ def run_centroids(a):
         import matplotlib.pyplot as plt
         fig=plt.figure(figsize=(9,7));ax=fig.add_subplot(projection='3d')
         for vid in sorted({r['variant_id'] for r in valid})[:12]:
-            selected=sorted([r for r in valid if r['variant_id']==vid],key=lambda r:r['start_bp'])
-            ax.plot([r['pc1'] for r in selected],[r['pc2'] for r in selected],[(r['start_bp']+r['end_bp'])/2 for r in selected],marker='o',label=vid)
+            selected=sorted([r for r in valid if r['variant_id']==vid and r['cohort']=='ancient'],key=lambda r:r['start_bp'])
+            if selected:
+                ax.plot([r['pc1'] for r in selected],[r['pc2'] for r in selected],[(r['start_bp']+r['end_bp'])/2 for r in selected],marker='o',label=vid+' ancient')
+            modern=[r for r in valid if r['variant_id']==vid and r['cohort']=='modern']
+            if modern:
+                ax.scatter([r['pc1'] for r in modern],[r['pc2'] for r in modern],[0.]*len(modern),marker='^',label=vid+' modern endpoint')
         ax.set(xlabel='PC1 carrier centroid',ylabel='PC2 carrier centroid',zlabel='Age BP');ax.legend(fontsize=6);fig.tight_layout()
         fig.savefig(out/'allele_centroid_trajectories.png',dpi=180)
         plt.close(fig)
@@ -410,3 +417,4 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'centroid':
         raise SystemExit(main_centroid(sys.argv[2:]))
     raise SystemExit(main_pca())
+

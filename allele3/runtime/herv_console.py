@@ -35,6 +35,9 @@ class HervScreenLog(console.ScreenLog):
         line = raw.decode('utf-8', errors='replace').strip()
         if not line:
             return
+        if line.startswith(('[dataset]', '[build-check]')):
+            print(line, flush=True)
+            return
         if line.startswith('{'):
             try:
                 event = json.loads(line)
@@ -78,3 +81,4 @@ class HervScreenLog(console.ScreenLog):
 if __name__ == '__main__':
     console.ScreenLog = HervScreenLog
     raise SystemExit(console.main())
+

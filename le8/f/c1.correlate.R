@@ -720,7 +720,7 @@ pgs_publication_joint <- function(trait, analysis_root, layers = c("prot", "met"
 find_c1_pgs_file <- function(layer) {
 	label <- switch(layer, protein = "prot", prot = "prot", metabolite = "met", met = "met",
 		stop("Unknown PGS layer: ", layer, call. = FALSE))
-	file <- file.path("/mnt/f/gwas", label, "pgs", paste0(label, ".pgs.gz"))
+	file <- file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas", label, "pgs", paste0(label, ".pgs.gz"))
 	if (!file.exists(file) || is.na(file.size(file)) || file.size(file) <= 0)
 		stop("Required canonical PGS file missing/empty: ", file, call. = FALSE)
 	normalizePath(file, winslash = "/", mustWork = TRUE)

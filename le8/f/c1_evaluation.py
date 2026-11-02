@@ -352,12 +352,22 @@ def evaluate_methods(predictions: dict[str, dict[str, Any]], truth: dict[str, An
     subset_metadata = {"all_common": dict(selector="none", coverage_target=1., subset_kind="all_cohort")}
     controls, coverage = {}, []
     for name, pred in aligned.items():
+        if pred["supported"] is not None:
+            for label, use in (("supported", pred["supported"]), ("unsupported", ~pred["supported"])):
+                key = f"{label}::{name}"
+                requests[key] = master_qc & use
+                subsets[key] = common & use
+                subset_metadata[key] = dict(selector=name, coverage_target=1., subset_kind=label)
         for q, frozen in sorted(pred["masks"].items()):
             key = f"selected::{name}::{q:g}"
             requested = frozen & master_qc
             selected = requested & finite
             subsets[key], requests[key] = selected, requested
             subset_metadata[key] = dict(selector=name, coverage_target=q, subset_kind="selected")
+            rejected_key = f"not_selected::{name}::{q:g}"
+            subsets[rejected_key] = common & ~frozen
+            requests[rejected_key] = master_qc & ~frozen
+            subset_metadata[rejected_key] = dict(selector=name, coverage_target=q, subset_kind="not_selected")
             control = abm.risk_matched_mask(selected, common, risk, ids, risk_edges, seed + 412)
             if control.sum() != selected.sum():
                 raise AssertionError("Risk-matched control changed the selected sample size")
@@ -365,6 +375,8 @@ def evaluate_methods(predictions: dict[str, dict[str, Any]], truth: dict[str, An
             supported = pred["supported"]
             coverage.append(dict(selector=name, coverage_target=q, original_N=len(ids),
                 common_N=int(common.sum()), requested_selected_N=int(requested.sum()), selected_N=int(selected.sum()),
+                not_selected_N=int(np.sum(common & ~frozen)),
+                not_selected_cases=int(np.sum(y[common & ~frozen])),
                 actual_coverage_all=float(selected.mean()),
                 actual_coverage_common=float(selected.sum() / common.sum()) if common.any() else np.nan,
                 cases=int(np.sum(y[selected])), controls=int(np.sum(selected & (w > 0) & (y == 0))),
@@ -419,7 +431,8 @@ def evaluate_methods(predictions: dict[str, dict[str, Any]], truth: dict[str, An
     # Cache only one block's score-rank plans, not every coverage point at once.
     for subset, mask in subsets.items():
         meta = subset_metadata[subset]
-        primary = subset == "all_common" or np.isclose(meta["coverage_target"], primary_coverage, rtol=0, atol=1e-12)
+        primary = subset == "all_common" or (meta["subset_kind"] == "selected" and
+            np.isclose(meta["coverage_target"], primary_coverage, rtol=0, atol=1e-12))
         if not primary:
             continue
         needed = names if subset == "all_common" else list(dict.fromkeys([baseline_name, meta["selector"]]))
@@ -1617,7 +1630,8 @@ def main(argv=None):
                 print(f"[LE8 C1] RELIABILITY ERROR {trait}/{layer}: {error}",file=sys.stderr,flush=True)
                 if args.strict:raise
     from c1_report import write_reliability_cross_trait_summary
-    for layer in layers:write_reliability_cross_trait_summary(args.analysis_root,layer)
+    if os.getenv("WORKFLOW_WORKER") != "1":
+        for layer in layers:write_reliability_cross_trait_summary(args.analysis_root,layer)
     return 1 if any(r["status"]=="error" for r in summary) else 0
 
 

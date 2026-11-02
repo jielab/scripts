@@ -32,6 +32,17 @@ Options:
   --help-full            Show detailed options
   -h, --help             Show this help
 
+Execution (shared with ld/metag 0f/0os.sh):
+  --submit local|hpc    Local process cap or .cmd/bsub DAG submission
+  --date-scratch DATE   Dated HPC scratch root; specify the active allocation date
+  --write-cmd           Generate reviewable .cmd files without submitting
+  --max-running N       HPC concurrency ceiling [32]; independent of --jobs-N
+  --jobs-N N            Local parallel jobs [1; maximum 8]
+  --wait TRUE|FALSE     Wait for submitted jobs [FALSE]
+  --queue NAME --job-cores N --job-memory-gb N --job-hours N
+  --job-dir DIR         Stable submission receipts; new plan/input -> new directory
+  --retry-failed        Explicit EXIT retry with pending dependency repair
+
 Examples:
   ./1.pca3D.sh [render|run|plan|atlas|prepare-basis|project|project-plan|trajectory|trajectory-plan]
   ./1.pca3D.sh --out /mnt/f/gen/ancient/allele3/pca3d/
@@ -59,7 +70,7 @@ main() {
     esac
     local analysis_root=${PCA3D_ANALYSIS_ROOT:-/mnt/d/analysis/allele3} out=${PCA3D_OUT:-}
     local ancient=${PCA3D_ANCIENT_DIR:-/mnt/f/gen/ancient} cache=${PCA3D_PGEN_CACHE_DIR:-}
-    local python=${PCA3D_PYTHON:-} memory=${PCA3D_MEMORY_LIMIT_GB:-16}
+    local python=${PCA3D_PYTHON:-${ALLELE_PYTHON:-}} memory=${PCA3D_MEMORY_LIMIT_GB:-${ALLELE_MEMORY_LIMIT_GB:-16}}
     local threads=${PCA3D_THREADS:-4} pca_memory=${PCA3D_MEMORY_MB:-8192}
     local interval=${PCA3D_SCREEN_LOG_INTERVAL:-300} verbose=0 dry_run=0 full_help=0
     local replace=${PCA3D_REPLACE:-TRUE}
@@ -98,7 +109,7 @@ main() {
     positive_integer --memory-limit-gb "$memory"
     positive_integer --pca-threads "$threads"
     positive_integer --pca-memory-mb "$pca_memory"
-    ((threads <= 8)) || fail 'Use at most 8 threads on this shared host'
+    workflow_cpu_check "$threads" 8
     if ((pca_memory > memory * 512)); then pca_memory=$((memory * 512)); fi
     ((pca_memory >= 640)) || fail 'PLINK needs at least 640 MiB; increase --memory-limit-gb / --pca-memory-mb'
     local conda_root=${PCA3D_CONDA_ROOT:-$HOME/anaconda3}
@@ -150,3 +161,4 @@ main() {
 }
 
 main "$@"
+

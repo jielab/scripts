@@ -216,7 +216,10 @@ def locate_blocks(config, trait, block_files=None, block_dir=None, *, allow_buil
 
 def reconstruction_probe(array, tokens, cohort, config, receipt, trait, b):
     from dosage_storage import dosage_lock
-    with dosage_lock(config, exclusive=True):
+    from resume import run_lock
+    # Global dosage is read-only. Only this trait's compact probe/receipt is
+    # written, so readers may coexist while release still needs exclusive access.
+    with dosage_lock(config, exclusive=False, wait=True), run_lock(Path(array.filename).parent):
         return _reconstruction_probe(array, tokens, cohort, config, receipt, trait, b)
 
 
@@ -266,17 +269,8 @@ def _reconstruction_probe(array, tokens, cohort, config, receipt, trait, b):
             direct_rows = np.arange(len(rr))
         if genotype.shape[1] != len(variants):
             raise ValueError("Audit dosage variant count differs")
-        checks = []
-        for channel, pop in enumerate(b.POPS):
-            weights = b.read_weights(b.locate_weights(config, trait)[0][pop])
-            if receipt["layout"]["mode"] == "population_multiview":
-                bed = tokens[tokens.source_population.eq(pop)]
-                block_score = np.asarray(array[rr][:, tokens.source_population.eq(pop), 0], float).sum(1)
-            else:
-                bed = tokens
-                block_score = np.asarray(array[rr][:, :, channel], float).sum(1)
-            direct = b.direct_assigned_score(genotype, direct_rows, weights, bed, variants)
-            checks.append(dict(population=pop, **b.assigned_reconstruction(block_score, direct, config)))
+        checks = b.independent_reconstruction(array, tokens, genotype, rr, direct_rows,
+            variants, config, trait, receipt["layout"]["mode"], receipt.get("shared_weight_fusion"))
         if full:
             save_probe(base, receipt, rr, genotype)
         return dict(n=len(rr), row_ids_sha256=ordered_ids_sha256(cohort.iloc[rr].eid),

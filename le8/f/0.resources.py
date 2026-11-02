@@ -208,7 +208,7 @@ def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,rese
     ids=[str(t['task_id']) for t in tasks]
     if len(set(ids))!=len(ids):raise ValueError('Duplicate task IDs')
     if max_workers<1:raise ValueError('max_workers must be positive')
-    pool=SharedBudget(pool_path or f'/tmp/le8-resources-{os.getuid()}.json',cores,memory_gib,reserve_gib)
+    pool=SharedBudget(pool_path or os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),cores,memory_gib,reserve_gib)
     pending=[];result={};running={}
     try:
         previous={str(record['task_id']):record for record in json.loads((outdir/'run_status.json').read_text())}
@@ -341,7 +341,7 @@ def phase_worker_budget(cores,memory_gib,pool_path,reserve_gib):
     # The parent is blocked until execute() finishes, including child cleanup.
     names=('LE8_POOL_CPUS','LE8_GPU_LEASE_HELD','LE8_GPU_LOCAL_LEASE')
     previous={name:os.environ.get(name) for name in names}
-    with tempfile.TemporaryDirectory(prefix='le8-phase-workers-',dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='le8-phase-workers-',dir=os.getenv('TMPDIR', '/tmp')) as directory:
         os.environ['LE8_POOL_CPUS']=','.join(map(str,cpus))
         if os.getenv('LE8_GPU_LEASE_HELD')=='1':
             # A GPU phase owns the device globally, but parallel MR children
@@ -391,6 +391,32 @@ def phase_main(argv):
     command=a.command[1:] if a.command[:1]==['--'] else a.command
     if not command:raise ValueError('Missing phase command')
     if a.cores<1 or a.memory_gib<=0:raise ValueError('Invalid phase request')
+    if os.getenv('WORKFLOW_RESOURCE_MANAGER') == 'lsf':
+        # LSF already admitted this independent job. A machine-global /tmp lease
+        # would serialize unrelated allocations and is meaningless across nodes.
+        if not os.getenv('LSB_JOBID'):
+            raise RuntimeError('LSF phase requires an allocated worker')
+        slots = int(os.getenv('WORKFLOW_CORES', os.getenv('LSB_DJOB_NUMPROC', '0')))
+        memory = float(os.getenv('WORKFLOW_MEMORY_GIB', '0'))
+        if a.cores > slots or a.memory_gib > memory:
+            raise ValueError('Phase exceeds the declared LSF allocation')
+        if a.gpu and int(os.getenv('WORKFLOW_GPUS', '0')) < 1:
+            raise ValueError('GPU phase has no allocated GPU')
+        env = dict(os.environ, LE8_PHASE_ADMITTED='1', LE8_PHASE_CORES=str(a.cores),
+            LE8_PHASE_MEMORY_GIB=str(a.memory_gib), LE8_PHASE_SUPERVISOR_PID=str(os.getpid()),
+            LE8_TOTAL_CORES=str(slots), LE8_RESOURCE_MEMORY_GIB=str(memory),
+            LE8_GPU_LEASE_HELD='1' if a.gpu else '0')
+        print('[LE8] LSF allocation: ' + json.dumps(dict(phase=a.label, cores=a.cores,
+            memory_request_gib=a.memory_gib, scheduler_enforcement='site_policy')), flush=True)
+        return subprocess.run(command, env=env).returncode
+    if os.getenv('LE8_PHASE_ADMITTED') == '1':
+        # Nested association/report subprocesses share the parent's reservation;
+        # reacquiring the same CPU slots would deadlock a local C1 worker.
+        if a.cores > int(os.environ['LE8_PHASE_CORES']) or a.memory_gib > float(os.environ['LE8_PHASE_MEMORY_GIB']):
+            raise ValueError('Nested phase exceeds the admitted parent budget')
+        if a.gpu and os.getenv('LE8_GPU_LEASE_HELD') != '1':
+            raise ValueError('Nested GPU phase has no parent GPU reservation')
+        return subprocess.run(command, env=dict(os.environ)).returncode
     pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),
         int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')),
         float(os.getenv('LE8_RESOURCE_RESERVE_GIB','2')))

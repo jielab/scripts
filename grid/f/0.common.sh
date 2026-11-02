@@ -2,7 +2,7 @@
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/0f/cli_dirs.sh"
     script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
@@ -19,7 +19,7 @@ Modules:
 
 Main options:
     --scope core|arg|grid|all  Validation scope
-    -h, --help  Help; pipeline options: ../0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     bash f/0.common.sh preflight --scope core
@@ -34,7 +34,7 @@ fi
 # 🚩 grid_activate_environment
 grid_activate_environment() {
 	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/python-cache
-	export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
+	export TMPDIR=${TMPDIR:-/tmp} TMP=${TMP:-${TMPDIR:-/tmp}} TEMP=${TEMP:-${TMPDIR:-/tmp}}
 	# Make the supported environment usable for non-interactive GRID calls without
 	# requiring `conda activate` first.
 	GRID_CONDA_ENV=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -306,7 +306,7 @@ grid_configure() {
 				--gpu-device)
 					_grid_need_value "$@"
 					GRID_CSX_GPU=$2; shift 2 ;;
-				--output-root | --output-dir)
+				--output-root | --output-dir | --analysis-root)
 					_grid_need_value "$@"
 					GRID_OUTPUT_ROOT=${2%/}
 					shift 2
@@ -837,9 +837,27 @@ grid_pipeline() (
 	GRID_POSTERIOR_FREQ_DIR=
 	GRID_POSTERIOR_MEMORY=${GRID_POSTERIOR_MEMORY:-8192}
 	GRID_SCORE_MEMORY=${GRID_SCORE_MEMORY:-2048}
+	GRID_BENCHMARK_ARGS=()
+	GRID_SHARED_ARGS=()
+	GRID_BENCHMARK_EXTERNAL_COHORT=FALSE
 	args=()
 	while (($#)); do
 		case "$1" in
+			--validation-n|--covariates|--prs-standardization|--family-col)
+				_grid_need_value "$@"
+				GRID_BENCHMARK_ARGS+=("$1" "$2")
+				[[ $1 != --covariates ]] || GRID_SHARED_ARGS+=("$1" "$2")
+				shift 2 ;;
+			--cohort|--prepared)
+				_grid_need_value "$@"
+				GRID_BENCHMARK_ARGS+=("$1" "$2")
+				GRID_BENCHMARK_EXTERNAL_COHORT=TRUE
+				shift 2 ;;
+			--pheno-file|--group-file|--split-group-file|--relationship-file|--group-col)
+				_grid_need_value "$@"
+				GRID_SHARED_ARGS+=("$1" "$2")
+				[[ $1 != --pheno-file ]] || GRID_PHE_FILE=$2
+				shift 2 ;;
 			--check)
 				GRID_CHECK=TRUE
 				shift
@@ -1021,13 +1039,24 @@ grid_pipeline() (
 		done
 	fi
 	# Publish compact reports even when computation reused an existing result.
-	if [[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]]; then
+	if [[ $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE && $GRID_STAGE != weights ]]; then
 		grid_select_r data.table,openxlsx,ggplot2
 		local report_subset=''
 		[[ ${CHRS[*]} == "$(seq -s ' ' 1 22)" ]] || report_subset="chr$(join_comma "${CHRS[@]}")"
 		"${GRID_R[@]}" "$ROOT/f/results.R" "$method" --analysis-root "$GRID_OUTPUT_ROOT" \
 			--score-dir "$GRID_SCORE_DIR" --pca-dir "$(dirname -- "$GRID_PCA_FILE")" \
 			--ancestry-file "$GRID_ANCESTRY_FILE" --traits "$GRID_TRAITS" --subset "$report_subset"
+	fi
+	# Only all owns fitting/evaluation; weights and score remain independent stages.
+	if [[ $method == csx && $GRID_STAGE == all && $GRID_CHECK == FALSE && $GRID_DRY_RUN == FALSE ]]; then
+		if [[ $GRID_BENCHMARK_EXTERNAL_COHORT == FALSE && ! -s $GRID_OUTPUT_ROOT/prsformer/cache/data.tsv.gz ]]; then
+			python3 "$ROOT/f/shared_cohort.py" prepare --analysis-root "$GRID_OUTPUT_ROOT" \
+				--traits "$GRID_TRAITS" --threads "$GRID_THREADS" --pheno-file "$GRID_PHE_FILE" \
+				--dir-gen "$GRID_TARGET_DIR" --snpinfo "$GRID_CSX_SNPINFO" --remove "${GRID_REMOVE:-none}" \
+				--ancestry-file "$GRID_ANCESTRY_FILE" "${GRID_SHARED_ARGS[@]}"
+		fi
+		python3 "$ROOT/f/target_benchmark.py" --analysis-root "$GRID_OUTPUT_ROOT" --traits "$GRID_TRAITS" \
+			--score-dir "$GRID_SCORE_DIR" --models "$GRID_CSX_MODELS" "${GRID_BENCHMARK_ARGS[@]}"
 	fi
 )
 

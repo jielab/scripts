@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def fingerprint(root=ROOT):
     h=hashlib.sha256()
-    files=sorted(p for folder in ('f','config','tests') for p in (root/folder).rglob('*')
+    files=sorted(p for folder in ('f','config','2test') for p in (root/folder).rglob('*')
                  if p.is_file() and p.suffix in ('.py','.sh','.json','.R'))
     files += [root/'grid.sh',root/'4.prsformer.sh',root/'environment.yml']
     for p in files:

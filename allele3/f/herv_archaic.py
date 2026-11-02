@@ -25,7 +25,8 @@ from types import SimpleNamespace
 
 from analysis_integrity import identity, transactional, validate_manifest
 
-SCHEMA = "allele3-archaic-2"
+SCHEMA = "allele3-archaic-3"
+DEFAULT_REFERENCES = ("Altai", "Chagyr", "Denisova", "Denisova25", "Vindija")
 AUTOSOMES = tuple(str(i) for i in range(1, 23))
 CHROMOSOMES = (*AUTOSOMES, "X", "Y")
 CODE = ("herv_archaic.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py", "analysis_integrity.py")
@@ -74,8 +75,10 @@ def archive_complete(path):
     return False
 
 
-def inspect_dataset(path, module="auto", chromosomes=AUTOSOMES):
+def inspect_dataset(path, module="auto", chromosomes=AUTOSOMES, references=DEFAULT_REFERENCES):
     """Metadata and file inventory only; do not open raw tracts at preflight."""
+    from scan import track_references
+    selected_references = track_references(references)
     path = Path(path).resolve()
     modules = [p for p in (path/"ibdmix", path/"ibdmix-GPU") if p.is_dir()]
     if module != "auto":
@@ -108,7 +111,18 @@ def inspect_dataset(path, module="auto", chromosomes=AUTOSOMES):
         refs = tuple(sorted(data.get("refs", "").split()))
         if not refs:
             raise ValueError(f"Missing archaic reference list: {meta}")
-        current = (build, refs, float(data["lod_cut"]), int(data["len_cut"]))
+        missing_refs = set(selected_references) - set(refs)
+        if missing_refs:
+            raise ValueError(f"Requested references were not tested in {meta}: {sorted(missing_refs)}")
+        lod_cut, len_cut = float(data["lod_cut"]), int(data["len_cut"])
+        if not math.isfinite(lod_cut) or lod_cut < 0 or len_cut < 1:
+            raise ValueError(f"Invalid native tract thresholds: {meta}")
+        if not data.get("pipeline_version"):
+            raise ValueError(f"Missing GU caller provenance: {meta}")
+        current = (build, refs, lod_cut, len_cut,
+                   tuple((key, data.get(key, "not_recorded")) for key in
+                         ("pipeline_version", "profile", "background_filter", "denisovan_call_definition",
+                          "emit_lod_cut", "minor_allele_count", "archaic_error", "modern_error_max", "modern_error_proportion")))
         if contract is not None and current != contract:
             raise ValueError(f"Build/reference/filter contract differs between chromosomes: {source}")
         contract = current
@@ -121,7 +135,8 @@ def inspect_dataset(path, module="auto", chromosomes=AUTOSOMES):
             inputs.append(directory/"cache.meta.tsv")
         files.append(str(tract)); panels.append(str(panel))
     return dict(dataset=path.name, source=str(source), status="ready", build=contract[0],
-                references=list(contract[1]), native_min_lod=contract[2], native_min_length=contract[3],
+                references=list(contract[1]), selected_references=list(selected_references),
+                caller_contract=dict(contract[4]), native_min_lod=contract[2], native_min_length=contract[3],
                 n_samples=len(cohort), sample_panel=panels[0], chromosomes=list(chromosomes),
                 files=files, inputs=[str(p) for p in inputs])
 
@@ -136,7 +151,7 @@ def chromosome_groups(selection="auto"):
     return [(x, AUTOSOMES if x == "autosomes" else (x,)) for x in tokens]
 
 
-def discover(root, datasets="auto", module="auto", chromosomes="auto"):
+def discover(root, datasets="auto", module="auto", chromosomes="auto", references=DEFAULT_REFERENCES):
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"GU source directory is missing: {root}")
@@ -156,7 +171,7 @@ def discover(root, datasets="auto", module="auto", chromosomes="auto"):
         for scope, selected in chromosome_groups(chromosomes):
             identifier = name if scope == "autosomes" else f"{name}.chr{scope}"
             try:
-                record = inspect_dataset(root/name, module, selected)
+                record = inspect_dataset(root/name, module, selected, references)
                 record.update(dataset=identifier, cohort=name, chromosome_scope=scope)
                 records.append(record)
             except (OSError, ValueError, KeyError, tarfile.TarError, EOFError) as exc:
@@ -267,7 +282,8 @@ def analyze_dataset(args):
         sample_panel=dataset["sample_panel"], n_samples=None, build=dataset["build"], target_build="38",
         chain=args.chain, liftover=args.liftover, min_lod=args.min_lod, min_length=args.min_length,
         carrier_thresholds=args.carrier_thresholds, coordinates="bed0",
-        files=dataset.get("files"), chromosomes=dataset.get("chromosomes"))
+        files=dataset.get("files"), chromosomes=dataset.get("chromosomes"),
+        references=dataset["selected_references"])
     track_result = scan.build_tracks(track_args)
     files, audits = [], []
     for chrom, vcf in args.tasks:
@@ -444,7 +460,7 @@ def plot_results(rows, out):
 def run(args):
     from herv_modern import targeted_inputs
     selection = getattr(args, "chromosomes", "auto")
-    records = discover(args.gu_root, args.datasets, args.module, selection)
+    records = discover(args.gu_root, args.datasets, args.module, selection, getattr(args, "references", DEFAULT_REFERENCES))
     common = modern_inputs(args.modern_dir)
     # This validates the relocated source and all original QC inputs. New
     # exposure queries use the original options, not fresh scanner defaults.
@@ -512,6 +528,7 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--gu-root", default="/mnt/f/analysis/gu")
     p.add_argument("--datasets", default="auto")
+    p.add_argument("--references", default=",".join(DEFAULT_REFERENCES), help="Comma-separated tested references; historical .2013 references require explicit selection")
     p.add_argument("--module", choices=("auto", "ibdmix", "ibdmix-GPU"), default="auto")
     p.add_argument("--chromosomes", default="auto", help="auto: autosomes plus available X/Y; or autosomes,X,Y / X,Y / X / Y")
     p.add_argument("--modern-dir", required=True)
@@ -561,3 +578,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         raise SystemExit(f"archaic: {exc}")
+

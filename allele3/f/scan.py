@@ -4426,6 +4426,21 @@ from pathlib import Path
 def enrichment_open_text(path,mode="rt"):
     return gzip.open(path,mode,encoding=None if "b" in mode else "utf-8") if str(path).endswith(".gz") else open(path,mode,encoding=None if "b" in mode else "utf-8")
 
+DEFAULT_ARCHAIC_REFERENCES = ("Altai", "Chagyr", "Denisova", "Denisova25", "Vindija")
+
+
+def track_references(value=None):
+    """Five current references by default; historical references require selection."""
+    if value is None:
+        return DEFAULT_ARCHAIC_REFERENCES
+    values = value.replace(",", " ").split() if isinstance(value, str) else list(value)
+    if not values or any(not isinstance(x, str) or not x.strip() or any(c.isspace() for c in x) for x in values):
+        raise ValueError("Archaic references must be explicit nonempty names")
+    if len(values) != len(set(values)):
+        raise ValueError("Duplicate archaic reference selection")
+    return tuple(values)
+
+
 ALIASES={
  "sample":["ID","id","sample","sample_id","IID","iid"],
  "chrom":["chrom","chr","chromosome","CHR"],
@@ -4464,15 +4479,18 @@ def rows_text(path):
         r=csv.reader(f,delimiter="\t");header=next(r)
         yield header,r
 
-def normalize_file(path,fmt,out,min_lod,min_length,allowed_samples=None,build=None,coordinates="bed0",chromosomes=None):
+def normalize_file(path,fmt,out,min_lod,min_length,allowed_samples=None,build=None,coordinates="bed0",chromosomes=None,allowed_references=None):
     def emit(header, rows, source):
         isamp,ic,is_,ie=pick(header,"sample"),pick(header,"chrom"),pick(header,"start"),pick(header,"end")
-        ia,il=pick(header,"anc",False),pick(header,"lod",False)
+        ia,il=pick(header,"anc"),pick(header,"lod")
         for row in rows:
             if row is None:continue
             try:
                 sample=str(row[isamp]).strip(); chrom=str(row[ic]).replace("chr","")
-                start,end=int(float(row[is_])),int(float(row[ie]))
+                start_value,end_value=float(row[is_]),float(row[ie])
+                if not math.isfinite(start_value) or not math.isfinite(end_value) or not start_value.is_integer() or not end_value.is_integer():
+                    raise ValueError("Noninteger or nonfinite tract coordinate")
+                start,end=int(start_value),int(end_value)
             except Exception as exc: raise ValueError(f'Malformed tract in {source}: {row}') from exc
             if chromosomes is not None and chrom not in chromosomes:
                 raise ValueError(f'Tract chromosome outside selected scope: {chrom}')
@@ -4482,11 +4500,18 @@ def normalize_file(path,fmt,out,min_lod,min_length,allowed_samples=None,build=No
             if build and 'genome_build' in header and str(row[header.index('genome_build')]).replace('GRCh','').replace('b','') != str(build): raise ValueError('Tract build mismatch')
             if start<0: raise ValueError('Negative tract start')
             if not sample or end<=start or end-start<min_length:continue
-            if il is not None and il<len(row) and row[il] not in (None,"","NA"):
-                try:
-                    if float(row[il])<min_lod:continue
-                except Exception:continue
-            anc=str(row[ia]).strip() if ia is not None and ia<len(row) and row[ia] not in (None,"") else "archaic"
+            anc=str(row[ia]).strip() if ia<len(row) and row[ia] is not None else ""
+            if not anc:
+                raise ValueError(f"Missing archaic reference in {source}")
+            if allowed_references is not None and anc not in allowed_references:
+                continue
+            try:
+                lod=float(row[il])
+            except (TypeError, ValueError, IndexError) as exc:
+                raise ValueError(f"Missing/invalid LOD in {source}: {sample} {chrom}:{start}-{end}") from exc
+            if not math.isfinite(lod):
+                raise ValueError(f"Nonfinite LOD in {source}: {sample} {chrom}:{start}-{end}")
+            if lod<min_lod:continue
             out.write(f"{chrom}\t{anc}\t{sample}\t{start}\t{end}\t{source}\n")
     if fmt=="ibdmix-xlsx":
         import openpyxl
@@ -4538,6 +4563,9 @@ def external_sort(src,dst,keys):
     with open(dst,"wt") as out:subprocess.run(cmd,stdout=out,check=True)
 
 def build_tracks(args):
+    if not math.isfinite(args.min_lod) or args.min_lod < 0 or args.min_length < 1:
+        raise ValueError("Require a finite nonnegative LOD and positive minimum length")
+    references=track_references(getattr(args, "references", None))
     N,den_source=denominator(args)
     files=[Path(p) for p in args.files] if getattr(args, 'files', None) is not None else tract_files(args.dir,args.format)
     if not files:raise ValueError("No IBDmix tract files")
@@ -4547,7 +4575,7 @@ def build_tracks(args):
         with norm.open("wt") as h:
             for p in files:
                 print(f'[archaic] normalize {p}',flush=True)
-                normalize_file(p,args.format,h,args.min_lod,args.min_length,panel_ids(args.sample_panel) if args.sample_panel else None,args.build,getattr(args,'coordinates','bed0'),getattr(args,'chromosomes',None))
+                normalize_file(p,args.format,h,args.min_lod,args.min_length,panel_ids(args.sample_panel) if args.sample_panel else None,args.build,getattr(args,'coordinates','bed0'),getattr(args,'chromosomes',None),references)
         external_sort(norm,sorted1,["-k1,1V","-k2,2","-k3,3","-k4,4n","-k5,5n"])
         with sorted1.open() as f,events.open("wt") as e:
             key=None; lo=hi=None
@@ -4599,6 +4627,7 @@ def build_tracks(args):
         lift={"input_intervals":ni,"input_bp":bi,"mapped_intervals":nm,"mapped_bp":bm,
               "mapped_bp_fraction":(bi-bu)/bi if bi else None,"mapped_source_bp":bi-bu,"target_span_change_bp":bm-(bi-bu),"target_to_source_bp_ratio":bm/bi if bi else None,"unmapped_intervals":nu,"unmapped_bp":bu,"counting":"label-weighted interval bp","command":cmd}
     manifest={"status":"complete","format":args.format,"files":len(files),"denominator":N,"denominator_source":den_source,
+              "selected_references":list(references),
               "coordinate_input":f"GRCh{args.build} BED0 half-open","coordinate_output":f"GRCh{args.target_build}",
               "carrier_thresholds":thresholds,"output":str(result_bed),"liftover":lift,
               "interpretation":"IBDmix is unphased; score is fraction of analyzed people carrying a tract at the locus, not archaic allele frequency."}
@@ -4609,6 +4638,7 @@ def main_tracks(argv=None):
     p=argparse.ArgumentParser()
     p.add_argument("--dir",required=True)
     p.add_argument("--format",choices=["ibdmix","ibdmix-xlsx"],default="ibdmix")
+    p.add_argument("--references",default=",".join(DEFAULT_ARCHAIC_REFERENCES),help="Comma-separated references; .2013 is never added implicitly")
     p.add_argument("--build",choices=["37","38"],default="37")
     p.add_argument("--target-build",choices=["37","38"],default="38")
     p.add_argument("--sample-panel")
@@ -4800,3 +4830,4 @@ if __name__ == '__main__':
         main_mappability()
     else:
         raise SystemExit(main_modern())
+

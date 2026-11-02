@@ -19,7 +19,7 @@ Modules:
 Main options:
     --download-tool NAME  Download backend
     --concurrent-downloads N --connections-per-server N  Download limits
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     ./02_download_pubmed.sh --download-tool aria2 --concurrent-downloads 2 --connections-per-server 1

@@ -27,7 +27,7 @@ Main options:
     --journal-rank FILE  Real journal rank data
     --pred-sample-rows N Prediction sample size [1000000]; 0 for all
     --python FILE --rscript FILE  Interpreters
-    -h, --help           Help; review requirements: 0.README.md
+    -h, --help           Show options and examples below
 
 Example:
     cd /mnt/d/scripts/pfi

@@ -319,10 +319,14 @@ def generate_compare(cfg, datasets=None, only=None, methods=None, repeats=None,
                 largest[sample["dataset"]] = (size, sample)
         samples = [largest[k][1] for k in sorted(largest)]
     chosen = methods.split(",") if isinstance(methods, str) else methods
+    if cfg.get("database_layout") == "partitioned" and chosen is None and not profiles:
+        chosen = ["kraken"]
     profile_values = read_config_file(profiles) if profiles else None
     cases = make_cases(samples, methods=chosen, repeats=cfg["compare_repeats"] if repeats is None else repeats,
                        limit=cfg["compare_fragments"] if limit is None else limit, profiles=profile_values)
     methods_used = sorted({c["classifier_engine"] for c in cases})
+    if cfg.get("database_layout") == "partitioned" and any(name != "kraken" for name in methods_used):
+        raise ValueError("The partitioned catalog supports the CPU union engine only. Kun-peng needs its own completed single-index configuration; no final-taxid merge is substituted.")
     snapshots, database_states = {}, {}
     sources = set()
     for method in methods_used:
@@ -482,7 +486,7 @@ def submit_plan(path, retry=False):
                                          "command_path": command["path"], "dependency": dependency})
                 atomic_json(target, history)
                 try:
-                    result = submit_cmd(cfg, command["path"], dependency=dependency)
+                    result = submit_cmd(cfg, command["path"], dependency=dependency, expected_sha256=command["sha256"])
                 except SubmissionError as exc:
                     attempt["jobs"][position] = {**exc.result, "role": role}
                     atomic_json(target, history)

@@ -48,7 +48,7 @@ Main options:
     --dir-analysis-root DIR --dir-ukb-phe DIR  Results and inputs
     --cores N --memory-limit-gb N  Resources
     --preflight / --dry-run  Validate / print commands
-    -h, --help  Help; detailed options and prerequisites: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     # Public default: C1-C5 with reference ABM; final/shiny are separate.
@@ -129,7 +129,7 @@ C1_FULL_LE8_SENSITIVITY="${C1_FULL_LE8_SENSITIVITY:-TRUE}"
 # fields because the model expects an analysis-ready treatment covariate.
 C1_TREATMENT_VARS="${C1_TREATMENT_VARS:-drug.lipid}"
 C2_HERITABILITY_FILE="${C2_HERITABILITY_FILE:-}"
-C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-/mnt/f/gwas/prot/ppp.h2.csv}"
+C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-${DIR_DATA:-/mnt/f}/gwas/prot/ppp.h2.csv}"
 C2_MET_HERITABILITY_FILE="${C2_MET_HERITABILITY_FILE:-}"
 C4_MODULE_BOOT="${C4_MODULE_BOOT:-100}"
 C4_MODULE_STABILITY="${C4_MODULE_STABILITY:-0.70}"
@@ -141,23 +141,23 @@ FINAL_INC_PROT=""
 FINAL_INC_MET=""
 MATCH_SNP_MEMORY_MB="${MATCH_SNP_MEMORY_MB:-4096}"
 MATCH_SNP_SORT_MEMORY_MB="${MATCH_SNP_SORT_MEMORY_MB:-512}"
-MATCH_SNP_TMP_DIR="${MATCH_SNP_TMP_DIR:-/tmp}"
-LE8_ANALYSIS_ROOT=/mnt/d/analysis/le8
-LE8_GWAS_DIR="${LE8_GWAS_DIR:-/mnt/f/gwas/main}"
-LE8_PQTL_IV_DIR="${LE8_PQTL_IV_DIR:-/mnt/f/gwas/prot}"
-LE8_MQTL_IV_DIR="${LE8_MQTL_IV_DIR:-/mnt/f/gwas/met}"
-LE8_PROT_BED=""
-LE8_REFGEN_ROOT="${LE8_REFGEN_ROOT:-/mnt/f/gen/1kg}"
+MATCH_SNP_TMP_DIR="${MATCH_SNP_TMP_DIR:-${TMPDIR:-/tmp}}"
+LE8_ANALYSIS_ROOT=${LE8_ANALYSIS_ROOT:-${ANALYSIS_ROOT:-/mnt/d/analysis}/le8}
+LE8_GWAS_DIR="${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}"
+LE8_PQTL_IV_DIR="${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}"
+LE8_MQTL_IV_DIR="${LE8_MQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/met}"
+LE8_PROT_BED="${LE8_PROT_BED:-}"
+LE8_REFGEN_ROOT="${LE8_REFGEN_ROOT:-${DIR_DATA:-/mnt/f}/gen/1kg}"
 LE8_GRCH="${LE8_GRCH:-auto}"
-UKB_PHE="${UKB_PHE:-/mnt/d/data/ukb}"
-Y_GWAS=""
-MRLINK2_REF_BED=""
-MRLINK2_REF_PFILE_DIR=""
+UKB_PHE="${UKB_PHE:-${DIR_WORK:-/mnt/d}/data/ukb}"
+Y_GWAS="${Y_GWAS:-}"
+MRLINK2_REF_BED="${MRLINK2_REF_BED:-}"
+MRLINK2_REF_PFILE_DIR="${MRLINK2_REF_PFILE_DIR:-}"
 MRLINK2_REF_POP="${MRLINK2_REF_POP:-EUR}"
 MRLINK2_REF_ID_DIR="${MRLINK2_REF_ID_DIR:-}"
 MRLINK2_REF_SAMPLES="${MRLINK2_REF_SAMPLES:-}"
 PHE_F="${PHE_F:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../0f" && pwd)/phenotype.sh}"
-R_BIN=Rscript
+R_BIN=${R_BIN:-Rscript}
 N_CORES=1
 LE8_MEMORY_LIMIT_GB="${LE8_MEMORY_LIMIT_GB:-32}"
 LE8_MEMORY_SWAP_GB="${LE8_MEMORY_SWAP_GB:-4}"
@@ -462,7 +462,13 @@ if [[ "$FINAL_JOINT_SUMMARY_ONLY" == TRUE && "$replace" == TRUE ]]; then
 fi
 memory_limit_mode=disabled
 if ((LE8_MEMORY_LIMIT_GB > 0)); then
-	if [[ "${LE8_MEMORY_SCOPE_ACTIVE:-0}" == 1 ]]; then
+	if [[ ${WORKFLOW_RESOURCE_MANAGER:-} == lsf ]]; then
+		[[ -n ${LSB_JOBID:-} ]] || { echo 'HPC native stage requires an LSF allocation' >&2; exit 2; }
+		if (( LE8_MEMORY_LIMIT_GB > ${WORKFLOW_MEMORY_GIB%.*} )); then
+			echo 'Native memory budget exceeds the LSF request' >&2; exit 2
+		fi
+		memory_limit_mode=lsf_allocation_site_enforcement
+	elif [[ "${LE8_MEMORY_SCOPE_ACTIVE:-0}" == 1 ]]; then
 		memory_limit_mode=cgroup-v2
 	else
 		user_systemd_state=""
@@ -526,7 +532,7 @@ export C2_DANDELION_GENE_P_FILE C2_DANDELION_GENE_ANNOTATION C2_DANDELION_SNP_FI
 export C2_DANDELION_ALLOW_MAGMA C2_DANDELION_MAX_TARGET_FRACTION
 export LE8_ANALYSIS_ROOT LE8_GWAS_DIR LE8_PQTL_IV_DIR LE8_MQTL_IV_DIR LE8_REFGEN_ROOT UKB_PHE
 if [[ -z "$LE8_PROT_BED" ]]; then
-	for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" /mnt/f/gwas/prot/pheno.bed; do
+	for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" "${DIR_DATA:-/mnt/f}/gwas/prot/pheno.bed"; do
 		if [[ -s "$prot_bed_candidate" ]]; then
 			LE8_PROT_BED="$prot_bed_candidate"
 			break
@@ -733,7 +739,7 @@ if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
 	done <<<"$checked_run"
 fi
 {
-	le8_log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
+	le8_log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
 	mkdir -p "$le8_log_root"
 	resume_audit="$le8_log_root/completed_results.${module_csv//,/-}.$(date +%Y%m%d-%H%M%S).csv"
 	check_jobs=("${requested[@]}")
@@ -985,13 +991,13 @@ preflight() {
 		echo "  MISSING: python3 (required by C1 enrichment fallback)"
 		bad=1
 	}
-	if [[ "$need_mrlink2" == TRUE || "$need_gpu_coloc" == TRUE ]]; then
+	if [[ ${LE8_RUNTIME_READY:-0} != 1 && ( "$need_mrlink2" == TRUE || "$need_gpu_coloc" == TRUE ) ]]; then
 		command -v conda >/dev/null 2>&1 || {
 			echo "  MISSING: conda (required by selected MR-link-2/GPU-coloc steps)"
 			bad=1
 		}
 	fi
-	if [[ "$need_mrlink2" == TRUE ]] && ! conda run -n le8 python3 -c 'import bitarray, duckdb, numpy, pandas, pyarrow, scipy' >/dev/null 2>&1; then
+	if [[ "$need_mrlink2" == TRUE ]] && ! "${PYTHON_BIN:-python3}" -c 'import bitarray, duckdb, numpy, pandas, pyarrow, scipy' >/dev/null 2>&1; then
 		echo "  MISSING: MR-link-2 Python dependencies (including bitarray). Run: conda env update -n le8 -f $script_dir/../environment.yml"
 		bad=1
 	fi
@@ -1265,10 +1271,10 @@ run_one() {
 		echo "ERROR: missing worker for $job" >&2
 		exit 3
 	}
-	log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/$trait
+	log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/$trait
 	local log_job="$job"
 	if [[ "$job" == final || "$job" == final_prediction ]]; then
-		log_root=/tmp/le8-logs/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/final/$trait
+		log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/final/$trait
 		[[ "$job" != final ]] || log_job=report
 		[[ "$job" != final_prediction ]] || log_job=prediction
 	fi

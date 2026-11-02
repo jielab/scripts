@@ -57,7 +57,7 @@ INTERMEDIATE_DIRECTORIES = frozenset({
 	'raw', 'mask', 'masks', 'cache', 'caches', 'extract', 'infer', 'input', 'inputs',
 	'tmp', 'temp', 'normalize', 'migration', 'work', 'scratch', 'shards', 'chunks',
 	'checkpoint', 'checkpoints', 'models', 'weights', 'logs', 'log', 'debug',
-	'test', 'tests', 'testing', 'validation', 'pilot', 'backup', 'backups', 'benchmark', 'benchmarks',
+	'test', 'tests', '2test', 'testing', 'validation', 'pilot', 'backup', 'backups', 'benchmark', 'benchmarks',
 	'deployment', 'intermediate', 'intermediates', 'reference', 'references',
 	'annotations', 'pgen', 'genotypes', 'metadata', 'join', 'panel', 'candidates',
 	'bootstraps', 'permutation', 'permutations', 'folds', 'replicates',
@@ -1036,7 +1036,7 @@ Main options:
     Hidden files and intermediate directories are excluded regardless of --check
     With --folder, replace only selected subfolders; otherwise replace whole projects
     Write DEST/PROJECT.files.lst for each selected project; paths include PROJECT/
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     ./github_copy.sh --dir /mnt/d/analysis --dat grid --folder abm,csx,disco,final

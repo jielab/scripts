@@ -92,9 +92,11 @@ def _run(args, config, device):
     from resume import run_lock
     root = Path(args.analysis_root)
     from kinship import analysis_guard
-    with analysis_guard(root), run_lock(root / "prsformer2"):
+    with analysis_guard(root):
         ensure_inputs(args, config)
-        cache = root / "prsformer/cache"
+        from grid_paths import read_config
+        block = read_config(config["block_config"], root)
+        cache = Path(block["prsformer_cache"])
         preparation = json.loads((cache / "prepare.json").read_text())
         if file_sha256(cache / "data.tsv.gz") != preparation["sha256"]["data.tsv.gz"]:
             raise ValueError("PRSformer row identities changed")
@@ -117,7 +119,8 @@ def _run(args, config, device):
         traits = args.traits.split(",")
         for index, trait in enumerate(traits, 1):
             print(f"[GRID] PRSformer2 trait {index}/{len(traits)}: {trait}", flush=True)
-            _run_trait(args, config, device, cache, preparation, roles, trait)
+            with run_lock(root / "prsformer2" / trait):
+                _run_trait(args, config, device, cache, preparation, roles, trait)
 
 
 def _run_trait(args, config, device, cache, preparation, roles, trait):
@@ -144,36 +147,45 @@ def _run_trait(args, config, device, cache, preparation, roles, trait):
     else:
         write_json(manifest_path, manifest)
     traits = [trait]
+    from dosage_storage import dosage_lock, prsformer_cache_lock
+    from grid_paths import read_config
+    block = read_config(config["block_config"], root)
     if (run / "COMPLETE.json").is_file():
-        verify_complete(run, cache, traits)
-        write_json(run.parent / "CURRENT.json", dict(run=run.name))
+        with dosage_lock(block, wait=True), prsformer_cache_lock(cache):
+            verify_complete(run, cache, traits)
+            write_json(run.parent / "CURRENT.json", dict(run=run.name))
         print(f"[GRID] SKIP PRSformer2 {trait}: completed outputs verified", flush=True)
         return
     action = action_for(local)
-    if action != "publish":
-        if not (cache / "genotypes.npy").is_file():
-            from .cold_start import preparation_command
-            subprocess.run(preparation_command(args, config), check=True)
-        cmd = [sys.executable, str(ROOT / "f/prsformer.py"),
-               "predict" if action == "predict" else "train",
-               "--genotypes", str(cache / "genotypes.npy"), "--data", str(cache / "data.tsv.gz"),
-               "--variants", str(cache / "variants.tsv.gz"), "--upstream-dir", args.upstream_dir,
-               "--out-dir", str(local), "--traits", trait, "--covariates", "age,sex,PC1,PC2",
-               "--device", device, "--threads", str(args.threads),
-               "--calibration-roles", str(local / "roles.tsv.gz")]
-        for key, value in settings.items():
-            cmd += ["--" + key.replace("_", "-"), str(value)]
-        if action == "resume":
-            cmd.append("--resume")
-        elif action == "predict":
-            cmd += ["--checkpoint", str(local / "model.pt")]
-        if args.check:
-            cmd.append("--check")
-        print("[GRID] PRSformer2 " + action + ": " + shlex.join(cmd), flush=True)
-        subprocess.run(cmd, check=True)
-        if args.check:
-            return
-    publish(run, cache, traits)
+    if action != "publish" and not (cache / "genotypes.npy").is_file():
+        from copy import copy
+        from shared_cohort import ensure_inputs as restore_inputs
+        options = copy(args)
+        options.complete_features = False
+        restore_inputs(options, config)
+    with dosage_lock(block, wait=True), prsformer_cache_lock(cache):
+        if action != "publish":
+            cmd = [sys.executable, str(ROOT / "f/prsformer.py"),
+                   "predict" if action == "predict" else "train",
+                   "--genotypes", str(cache / "genotypes.npy"), "--data", str(cache / "data.tsv.gz"),
+                   "--variants", str(cache / "variants.tsv.gz"), "--upstream-dir", args.upstream_dir,
+               "--analysis-root", str(root),
+                   "--out-dir", str(local), "--traits", trait, "--covariates", "age,sex,PC1,PC2",
+                   "--device", device, "--threads", str(args.threads),
+                   "--calibration-roles", str(local / "roles.tsv.gz")]
+            for key, value in settings.items():
+                cmd += ["--" + key.replace("_", "-"), str(value)]
+            if action == "resume":
+                cmd.append("--resume")
+            elif action == "predict":
+                cmd += ["--checkpoint", str(local / "model.pt")]
+            if args.check:
+                cmd.append("--check")
+            print("[GRID] PRSformer2 " + action + ": " + shlex.join(cmd), flush=True)
+            subprocess.run(cmd, check=True)
+            if args.check:
+                return
+        publish(run, cache, traits)
 
 
 if __name__ == "__main__":

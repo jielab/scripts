@@ -1,12 +1,6 @@
 {
-  "version": "LE8-C1-primary-2026-10-26-v1",
-  "description": "Primary C1 methods",
-  "methods": [
-    "glmnet",
-    "lightgbm",
-    "abm_case_preserving",
-    "abm_profile",
-    "abm_prevalent"
-  ],
+  "version": "LE8-C1-primary-2026-11-02-v1",
+  "description": "Conventional glmnet/LightGBM baselines and transparent count ABM; fitted-head historical methods are explicit sensitivities",
+  "methods": ["glmnet", "lightgbm", "abm_count"],
   "overrides": {}
 }

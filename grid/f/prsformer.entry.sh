@@ -10,7 +10,7 @@ export PYTHONDONTWRITEBYTECODE=1
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # The public Python entry normally owns logging; also support direct invocation.
-export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/mnt/d/analysis/grid/logs}
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/logs}
 source "$ROOT/../0f/console.sh"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
@@ -57,8 +57,8 @@ done
 PYTHON=${GRID_PYTHON:-python3}
 PYTHON_EXPLICIT=FALSE
 [[ -z ${GRID_PYTHON:-} ]] || PYTHON_EXPLICIT=TRUE
-CACHE_DIR=/mnt/d/analysis/grid/cache/abm
-OUT_ROOT=/mnt/d/analysis/grid/abm
+CACHE_DIR=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/cache/abm
+OUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/abm
 PRSFORMER_ROOT=
 PRS_CACHE_DIR=
 PRS_PUBLICATION_DIR=
@@ -189,12 +189,9 @@ run_prsformer() {
 acquire_lock() {
 	local path=$1
 	exec {module_lock}>"$path"
-	if [[ $WAIT_LOCK == TRUE ]]; then
-		printf 'WAIT for exclusive module cache: %s\n' "$path"
-		flock "$module_lock"
-	else
-		flock -n "$module_lock" || die "Another run is using $path; use --wait-lock to queue this run"
-	fi
+	# Only the short roster verification/preparation section owns this lock.
+	# Independent trait jobs can then read the frozen cache concurrently.
+	flock "$module_lock"
 }
 
 if [[ $DRY_RUN == FALSE && $STAGE != check ]]; then
@@ -231,6 +228,10 @@ if [[ $STAGE == check ]]; then
 fi
 ROSTER_ARGS+=(--roster-dir "$PRS_ROSTER_DIR")
 run_command "$PYTHON" "$ROOT/f/prsformer.py" shared-roster "${ROSTER_ARGS[@]}"
+if [[ $DRY_RUN == FALSE && $STAGE != check ]]; then
+	flock -u "$module_lock"
+	exec {module_lock}>&-
+fi
 run_prsformer
 
 # Never read an edited script after a job returns.

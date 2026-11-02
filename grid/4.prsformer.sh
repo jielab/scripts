@@ -16,9 +16,11 @@ cat <<'HELP'
               Does NOT train PRSformer.
   prsformer   Run/resume PRSformer (independent traits).
   prsformer2  Run/resume PRSformer2 exploratory with separate calibration.
-  all         prepare -> prsformer -> prsformer2.
+  all         prepare -> independent prsformer and prsformer2 jobs.
 
-Default module: all (prepare -> prsformer -> prsformer2)
+Default module: all (prepare, then independent method/trait jobs).
+Scheduler: --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+Resources: --hpc-config FILE --queue NAME --gpu-queue NAME --job-memory-gb N
 
 Examples:
   ./4.prsformer.sh --traits height,ldl,t2dm
@@ -57,8 +59,11 @@ case "${1:-all}" in
 esac
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/workflow_entry.sh"
+grid_workflow_entry prsformer "$@"
+set -- "${GRID_ENTRY_ARGS[@]}"
 export SCRIPT_FOREGROUND=1
-export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/mnt/d/analysis/grid/logs}
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/logs}
 source "$ROOT/../0f/console.sh"
 
 runtime=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -86,13 +91,13 @@ args=("$@")
 
 case "$module" in
   prepare)
-    exec "$PYTHON_PATH" "$ROOT/f/prsformer_prepare_shared.py" "${args[@]}"
+    exec "$PYTHON_PATH" "$ROOT/f/shared_cohort.py" prepare "${args[@]}"
     ;;
   prsformer)
-    exec "$PYTHON_PATH" "$ROOT/f/twin.py" prsformer "${args[@]}"
+    exec "$PYTHON_PATH" "$ROOT/f/prsformer_dispatch.py" prsformer "${args[@]}"
     ;;
   prsformer2)
-    exec "$PYTHON_PATH" "$ROOT/f/twin.py" prsformer2 "${args[@]}"
+    exec "$PYTHON_PATH" "$ROOT/f/prsformer_dispatch.py" prsformer2 "${args[@]}"
     ;;
   all)
     "$0" prepare "${args[@]}"

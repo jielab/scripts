@@ -38,6 +38,9 @@ _PRESERVE = dict(pruning="case_preserving", keep_fraction=1.0,
                  final_multiroute_release="", reference_experiment="unified_case_preserving_20261022",
                  radius_k_ref=64)
 METHODS = {
+    "abm_count": MethodSpec("abm_count", "twin_count",
+        "Transparent frozen molecular neighbors: IPCW event counts, prior shrinkage and abstention; no regression head",
+        dict(_PRESERVE, panel_selection="all", geometry="all_molecular_pca", selector="support_only", neighbor_weighting="uniform")),
     "glmnet": MethodSpec("glmnet", "r_glmnet", "Penalized logistic incidence model on the shared horizon/roster"),
     "lightgbm": MethodSpec("lightgbm", "lightgbm", "Tree incidence model on the shared horizon/roster"),
     "abm_legacy": MethodSpec("abm_legacy", "twin", "Historical loss-based donor cleaning; explicit sensitivity only",
@@ -63,7 +66,7 @@ METHODS = {
     "molecular_deviation": MethodSpec("molecular_deviation", "deviation",
         "Existing molecular deviation analysis; optional within C1", experimental=True),
 }
-DEFAULT_METHODS = ("glmnet", "lightgbm", "abm_case_preserving", "abm_profile", "abm_prevalent")
+DEFAULT_METHODS = ("glmnet", "lightgbm", "abm_count")
 METHOD_ALIASES = {"pradeep": "glmnet", "lgbm": "lightgbm", "abm_multiview": "abm_profile"}
 LEGACY_MODULE_METHODS = {"c1_abm": ("abm_legacy", "molecular_deviation"), "c1_abm_GPU": ("abm_deep",)}
 
@@ -157,6 +160,13 @@ def build_abm_config(method, base_config=None, *, overrides=None, **identity):
     params = dict(spec.abm_overrides)
     params.update(overrides or {})
     params.update(identity)
+    if spec.name == "abm_count":
+        if params.get("geometry") not in {"all_molecular_pca", "all_molecular"}:
+            raise ValueError("abm_count requires an explicitly transparent molecular geometry")
+        if params.get("panel_selection") != "all" or params.get("selector") != "support_only":
+            raise ValueError("abm_count cannot use a fitted panel/error head; select a labelled sensitivity method")
+        if float(params.get("keep_fraction", 1)) != 1:
+            raise ValueError("abm_count retains every eligible build donor; loss pruning is not this method")
     if spec.name.startswith("abm_") and spec.name != "abm_legacy":
         if params.get("pruning") not in {"case_preserving", "none"}:
             raise ValueError("This method must preserve cases; select abm_legacy for loss-based deletion")
@@ -217,7 +227,7 @@ PREDICTABILITY_TARGET_MODEL = "elasticnet_full"
 DEFAULT_UKB_REL_FILE = os.getenv("LE8_UKB_REL_FILE", "/mnt/f/gen/ukb/37/typ/ukb_rel.dat")
 KINSHIP_PROTOCOL = "2026-10-17.ukb-king-components-v1"
 GROUPING_SOURCE = "UKB KING kinship connected components"
-COHORT_CACHE_ROOT = Path("/tmp") / f"le8-cohort-{os.getuid()}"
+COHORT_CACHE_ROOT = Path(os.getenv("LE8_COHORT_CACHE_ROOT", str(Path(os.getenv("TMPDIR", "/tmp")) / f"le8-cohort-{os.getuid()}")))
 KINSHIP_ALGORITHM = ("union-find connected components on full released relatedness graph; "
                      "then subset to all.rds; nonrelated participants assigned singleton groups")
 KINSHIP_SEMANTICS = "UKB KING close-relatedness file; all released rows used as graph edges"
@@ -750,7 +760,9 @@ def archive_pre_kinship_roster(output):
     root_key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:20]
     lock_path = cohort_lock_path(output)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(f"/tmp/le8-{root_key}.lock", "a") as analysis_lock, open(lock_path, "a") as lock:
+    analysis_lock_path = root / "logs/locks" / f"le8-{root_key}.lock"
+    analysis_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(analysis_lock_path, "a") as analysis_lock, open(lock_path, "a") as lock:
         try:
             fcntl.flock(analysis_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:

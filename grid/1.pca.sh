@@ -2,7 +2,7 @@
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/0f/cli_dirs.sh"
     script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
@@ -26,6 +26,8 @@ Default permanent paths (outside the analysis output directory):
     Changing --dir-output-root alone does not relocate these permanent files.
 
 Main options:
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
     --dir-imp DIR                 /mnt/f/gen/ukb/37/imp (chr*.pgen/pvar/psam)
     --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --cov-pcs N / --distance-pcs N 20 / 10; require 5 <= distance <= covariate PCs.
@@ -34,7 +36,7 @@ Main options:
     --replace TRUE|FALSE          Default FALSE. TRUE rebuilds projection and QC.
     --check                       Validate existing projection or genotype inputs.
     --dry-run TRUE                Same preflight/plan behavior; no analysis.
-    -h, --help  Help; complete options: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/grid
@@ -52,6 +54,9 @@ case "${1:-}" in -h | --help | help)
 	;;
 esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/workflow_entry.sh"
+grid_workflow_entry pca "$@"
+set -- "${GRID_ENTRY_ARGS[@]}"
 
 
 # 🚩 pca_run

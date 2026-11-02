@@ -419,7 +419,7 @@ class InsufficientDevelopmentSupport(ValueError):
             ". Early-censored rows remain unknown; prediction was not fitted.")
 
 
-def check_development_support(parts, y, w, qc, config, *, require_gate=False):
+def check_development_support(parts, y, w, qc, config, *, require_gate=False, required_roles=None):
     """Conventional assessment can fall back; TwinABM's fitted gate cannot."""
     audit = []
     for role in abm.ROLES[:4]:
@@ -430,13 +430,14 @@ def check_development_support(parts, y, w, qc, config, *, require_gate=False):
         audit.append(dict(role=role, N=len(ix), technical_qc_pass=int(np.sum(qc[ix])),
             technical_qc_failed=int(np.sum(~qc[ix])), known_cases=cases, known_controls=controls,
             unknown_after_qc=int(np.sum(qc[ix] & ~known)), minimum_per_class=config.min_events,
-            required=require_gate or role != "tune_gate", sufficient=min(cases, controls) >= config.min_events))
+            required=(role in required_roles if required_roles is not None else require_gate or role != "tune_gate"),
+            sufficient=min(cases, controls) >= config.min_events))
     if any(row["required"] and not row["sufficient"] for row in audit):
         raise InsufficientDevelopmentSupport(audit, config)
     return audit
 
 
-def context(development, test_x, config):
+def context(development, test_x, config, *, required_roles=None):
     """One numerical contract. The only outcomes accepted are development labels."""
     config.validate()
     d, t = development, test_x
@@ -474,7 +475,7 @@ def context(development, test_x, config):
     y, w = np.zeros(len(X), int), np.zeros(len(X))
     y[fit_rows], w[fit_rows] = km.labels_weights(d["time"][fit_rows], d["event"][fit_rows])
     w *= qc
-    check_development_support(parts, y, w, qc, config)
+    check_development_support(parts, y, w, qc, config, required_roles=required_roles)
     z = prep.transform(X)
     return SimpleNamespace(development=d, test_x=t, X=X, ids=ids, groups=groups, roles=roles,
         parts=parts, names=names, cfg=config, prep=prep, km=km, y=y, w=w, qc=qc, z=z,
@@ -629,7 +630,8 @@ def _fit_assessment(c, probability, diagnostics):
         probability[cal], _subset(diagnostics, cal), c.ids[cal])
 
 
-def finish_projection(c, probability, diagnostics, out, *, fitted, metadata, extra_probabilities=None):
+def finish_projection(c, probability, diagnostics, out, *, fitted, metadata, extra_probabilities=None,
+                      assessment=None):
     """Freeze everything before the caller is allowed to load test truth."""
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     probability = np.asarray(probability, float)
@@ -637,7 +639,9 @@ def finish_projection(c, probability, diagnostics, out, *, fitted, metadata, ext
         raise ValueError("Every person must receive a finite probability (fallback required)")
     if np.any((probability < 0) | (probability > 1)):
         raise ValueError("Invalid probability")
-    assessment = _fit_assessment(c, probability, diagnostics)
+    # The transparent count estimator supplies a geometry-only assessment.
+    # Conventional models retain their separately labelled learned error heads.
+    assessment = assessment if assessment is not None else _fit_assessment(c, probability, diagnostics)
     fitted.update(assessment=assessment, feature_names=c.names, config=asdict(c.cfg), version=VERSION)
     joblib.dump(fitted, out / "model_LOCAL_ONLY.joblib", compress=3)
     joblib.dump(c.km, out / "censoring_model_LOCAL_ONLY.joblib", compress=3)
@@ -645,8 +649,8 @@ def finish_projection(c, probability, diagnostics, out, *, fitted, metadata, ext
         "roles": {k: {"N": len(v), "id_hash": abm.fingerprint(c.ids[v])} for k,v in c.parts.items()},
         "test_outcomes_used": False, "assessment_status": assessment.status,
         "assessment_gate_N": assessment.gate_N, "assessment_gate_cases": assessment.gate_cases,
-        "predictability_definition": "one minus predicted conditional squared probability error; not correctness probability",
-        "assessment_calibration_role": "calibration_fit reused for upstream probability calibration and feature-only selection thresholds; validation is calibration_audit/test",
+        "predictability_definition": getattr(assessment, "definition", "one minus predicted conditional squared probability error; not correctness probability"),
+        "assessment_calibration_role": getattr(assessment, "calibration_role", "calibration_fit reused for upstream probability calibration and feature-only selection thresholds; validation is calibration_audit/test"),
         "selection": "frozen outcome-blind test queries; unsupported persons retain risk predictions",
         "test_provenance": "previously_inspected_or_unverified_exploratory"}
     abm.json_write(out / "MODEL_FROZEN.json", manifest)

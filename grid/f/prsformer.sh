@@ -40,21 +40,21 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 PYTHON=${GRID_PRSFORMER_PYTHON:-${GRID_PYTHON:-python3}}
 PYTHON_EXPLICIT=FALSE
 [[ -z ${GRID_PRSFORMER_PYTHON:-${GRID_PYTHON:-}} ]] || PYTHON_EXPLICIT=TRUE
-UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-/mnt/f/software/PRSformer}
+UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-${DIR_SOFTWARE:-/mnt/f/software}/PRSformer}
 MODE=all
 TRAITS=height,ldl,t2dm
-DIR_GEN=/mnt/f/gen/ukb/37/hap
-PHENO_FILE=/mnt/d/data/ukb/Rdata/all.rds
-ANCESTRY_FILE=/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+DIR_GEN=${GRID_TARGET_DIR:-/mnt/f/gen/ukb/37/hap}
+PHENO_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/Rdata/phe.rds}
+ANCESTRY_FILE=${GRID_ANCESTRY_FILE:-/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz}
 GROUP_COL=genetic_ancestry
 COVARIATES=age,sex,PC1,PC2
 HEIGHT_COL=height
 LDL_COL=ldl
 T2DM_COL=auto
-SNP_LIST=/mnt/f/LD/csx/snpinfo_mult_1kg_hm3
+SNP_LIST=${GRID_CSX_SNPINFO:-${GRID_CSX_REF_DIR:-/mnt/f/LD/csx}/snpinfo_mult_1kg_hm3}
 CHRS=1-22
 KEEP=none
-REMOVE=/mnt/d/files/ukb.exclude.id
+REMOVE=${GRID_REMOVE:-/mnt/d/files/ukb.exclude.id}
 SPLIT_FILE=none
 SPLIT_GROUP_FILE=none
 REQUIRE_SHARED_COHORT=FALSE
@@ -65,7 +65,7 @@ CALL_RATE=0.98
 CHUNK_VARIANTS=32
 CACHE_DIR=
 RUN_DIR=
-OUTPUT_ROOT=/mnt/d/analysis/grid
+OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}
 PUBLICATION_DIR=
 SCORE_DIR=
 MAX_SAMPLES=
@@ -397,13 +397,16 @@ if [[ $CHECK == TRUE ]]; then
 fi
 dependencies
 
-# 🚩 Hold one canonical-cache lock across preparation, training, prediction and publication
-# The model helper has its own independent output-directory lock. Do not acquire
-# this cache key again inside a helper: this descriptor stays open until shell exit.
+# Producers own the cache exclusively. Independent trait models share a read
+# lock after preparation; each model still owns its independent output lock.
 mkdir -p -- "$CACHE_DIR"
 CACHE_LOCK_FILE="$CACHE_DIR/.pipeline.lock"
 exec {CACHE_LOCK_FD}>"$CACHE_LOCK_FILE"
-flock -n "$CACHE_LOCK_FD" || die "Another PRSformer invocation is using this cache: $CACHE_DIR. Wait for it to finish or choose a different --cache-dir."
+if [[ $MODE == prepare || ( $MODE == all && $RESUME == FALSE ) ]]; then
+	flock -x "$CACHE_LOCK_FD"
+else
+	flock -s "$CACHE_LOCK_FD"
+fi
 
 if [[ $MODE == all || $MODE == train ]]; then
 	if [[ $RESUME == TRUE && -f $RUN_DIR/evaluation.json ]]; then
@@ -414,7 +417,7 @@ if [[ $MODE == all || $MODE == train ]]; then
 	fi
 fi
 case $MODE in
-	all) prepare_for_training; need_cache; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
+	all) prepare_for_training; flock -s "$CACHE_LOCK_FD"; need_cache; run_command "${TRAIN[@]}"; run_command "${PUBLISH[@]}" ;;
 	prepare) run_command "${PREPARE[@]}" ;;
 	train) need_cache; run_command "${TRAIN[@]}" ;;
 	predict) need_cache; run_command "${PREDICT[@]}" ;;
@@ -424,7 +427,11 @@ esac
 # Keep unfinished runs resumable. Successful evaluations no longer need the
 # large dosage matrix for reports; preserve its metadata and a verified receipt.
 if [[ $MODE != prepare && ${PRSFORMER_KEEP_GENOTYPES:-1} != 1 ]]; then
-	run_command "$PYTHON" "$ROOT/f/prsformer_cleanup.py" --cache-dir "$CACHE_DIR" --run-dir "$RUN_DIR" --cache-lock-held
+	if flock -n -x "$CACHE_LOCK_FD"; then
+		run_command "$PYTHON" "$ROOT/f/prsformer_cleanup.py" --cache-dir "$CACHE_DIR" --run-dir "$RUN_DIR" --cache-lock-held
+	else
+		printf 'RETAIN shared dosage: other model readers are using %s\n' "$CACHE_DIR"
+	fi
 fi
 
 # Exit inside the parsed block without rereading the script from disk.

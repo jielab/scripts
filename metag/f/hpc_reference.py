@@ -36,6 +36,7 @@ ACC = re.compile(r"^(GC[AF]_\d+\.\d+)(?:_|\.|$)")
 FASTA_SUFFIXES = (".fna", ".fa", ".fasta", ".fas")
 DNA = frozenset(b"ACGTURYSWKMBDHVNXacgturyswkmbdhvnx")
 LOWER_TO_X = bytes.maketrans(b"abcdefghijklmnopqrstuvwxyz", b"x" * 26)
+MAX_MASK_RECORD = (1 << 31) - 1  # Pinned k2mask stores single-record positions in int32_t.
 PARAMETERS = {"k": 35, "l": 31, "seed": "1" * 17 + "01" * 7,
               "load_factor": 0.7, "block_size": 16384, "subblock_size_rule": "ceil(block_size / threads)",
               "min_taxid_bits": 0, "maximum_capacity": None,
@@ -684,6 +685,8 @@ def _emit_fasta(cfg, rows, destination, mapping, stats):
                     else:
                         if not records or not set(line).issubset(DNA):
                             raise RuntimeError(f"Invalid DNA FASTA sequence in {path}, record {records}")
+                        if bool(cfg.get("masking", True)) and record_bases + len(line) > MAX_MASK_RECORD:
+                            raise RuntimeError(f"FASTA record exceeds the pinned k2mask signed-position limit: {path}, record {records}. No completed cache will be published; handle this record with a separately validated masking strategy.")
                         destination.write(line + b"\n")
                         bases += len(line)
                         record_bases += len(line)
@@ -882,6 +885,57 @@ def _native_opts(path):
     return {"k": k, "l": l, "minimum_acceptable_hash_value": minimum}
 
 
+def _native_index_structure(folder, *, expected_capacity=None):
+    """Check pinned native file layouts with two 32-byte reads, not a full scan.
+
+    The bundled native hash writer does not check ostream write/close errors.
+    A zero exit status and a nonempty hash file therefore do not establish that
+    all cells reached disk. These checks also apply to legacy valid receipts;
+    they neither rewrite those receipts nor change the build identity.
+    """
+    folder = Path(folder)
+    headers, sizes = {}, {}
+    for name in ("hash.k2d", "taxo.k2d"):
+        path = folder / name
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError(f"Native index must be a regular non-symlink file: {path}")
+        with path.open("rb") as handle:
+            headers[name] = handle.read(32)
+            sizes[name] = os.fstat(handle.fileno()).st_size
+        if len(headers[name]) != 32:
+            raise RuntimeError(f"Truncated native index header: {path}")
+
+    capacity, used, key_bits, value_bits = struct.unpack("<QQQQ", headers["hash.k2d"])
+    if not capacity or used > capacity or not 0 < value_bits < 32 or key_bits + value_bits != 32:
+        raise RuntimeError(f"Invalid native hash header: {folder / 'hash.k2d'}")
+    if expected_capacity is not None and (
+            isinstance(expected_capacity, bool) or not isinstance(expected_capacity, int)
+            or expected_capacity <= 0 or capacity != expected_capacity):
+        raise RuntimeError(f"Native hash capacity {capacity} differs from the build estimate {expected_capacity}")
+    expected_hash_bytes = 32 + capacity * 4
+    if sizes["hash.k2d"] != expected_hash_bytes:
+        raise RuntimeError(f"Native hash length mismatch: {folder / 'hash.k2d'}; "
+                           f"expected {expected_hash_bytes} bytes, found {sizes['hash.k2d']}")
+
+    # Pinned 64-bit little-endian ABI: 'K2TAXDAT', three size_t fields,
+    # node_count records of seven uint64_t fields, then two string arrays.
+    header = headers["taxo.k2d"]
+    if header[:8] != b"K2TAXDAT":
+        raise RuntimeError(f"Invalid native taxonomy magic: {folder / 'taxo.k2d'}")
+    nodes, names_bytes, ranks_bytes = struct.unpack("<QQQ", header[8:])
+    if nodes < 2 or not names_bytes or not ranks_bytes:
+        raise RuntimeError(f"Invalid native taxonomy header: {folder / 'taxo.k2d'}")
+    expected_taxonomy_bytes = 32 + nodes * 56 + names_bytes + ranks_bytes
+    if sizes["taxo.k2d"] != expected_taxonomy_bytes:
+        raise RuntimeError(f"Native taxonomy length mismatch: {folder / 'taxo.k2d'}; "
+                           f"expected {expected_taxonomy_bytes} bytes, found {sizes['taxo.k2d']}")
+    if nodes > (1 << value_bits):
+        raise RuntimeError("Native hash taxid bits cannot encode the native taxonomy node count")
+    return {"capacity": capacity, "used": used, "key_bits": key_bits,
+            "value_bits": value_bits, "taxonomy_nodes": nodes,
+            "hash_bytes": expected_hash_bytes, "taxonomy_bytes": expected_taxonomy_bytes}
+
+
 def database_snapshot(cfg):
     """Fast read-only validation; never rehash the TB-scale database per sample."""
     paths = _paths(cfg)
@@ -904,6 +958,8 @@ def database_snapshot(cfg):
     if marker["files"] != marker["context"]["files"] or marker["taxonomy_files"] != marker["context"]["taxonomy_files"]:
         raise RuntimeError("Database output records do not match its fingerprint")
     _native_opts(paths["db"] / "opts.k2d")
+    resource = marker["context"].get("resource_estimate", {})
+    _native_index_structure(paths["db"], expected_capacity=resource.get("capacity"))
     return marker
 
 
@@ -1023,6 +1079,7 @@ def build_database(cfg):
                        "-c", str(capacity), "-B", "16384", "-b", str(math.ceil(16384 / threads)), "-r", "0"]
             _run_feed(command, sources, paths["db"] / "build.log")
             native_options = _native_opts(stage / "opts.k2d")
+            _native_index_structure(stage, expected_capacity=capacity)
             for name in ("hash.k2d", "taxo.k2d", "opts.k2d"):
                 file = stage / name
                 if not file.is_file() or file.stat().st_size == 0:

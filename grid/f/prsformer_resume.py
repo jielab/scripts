@@ -18,12 +18,12 @@ def publication_valid(base, evaluation):
             and all(Path(p).is_file() and sha(p) == digest for p,digest in files.items()))
 
 
-def plan(root, trait):
+def plan(root, trait, cache=None):
     from prsformer import validate_evaluation
     base = Path(root) / 'prsformer' / trait; run = base / 'run'
     evaluation = run / 'evaluation.json'
     if evaluation.is_file():
-        validate_evaluation(run, Path(root) / 'prsformer/cache')
+        validate_evaluation(run, Path(cache) if cache is not None else Path(root) / 'prsformer/cache', analysis_root=root)
         # The training/evaluation task set is fixed; do not silently reuse another task set.
         import pandas as pd
         actual = set(pd.read_csv(run / 'metrics.tsv', sep='\t', usecols=['trait']).trait)
@@ -61,41 +61,51 @@ def dispatch(code_root, args, dry=False):
         return
     device = benchmark_device(options.device)
     from kinship import analysis_guard
-    with analysis_guard(root), run_lock(root / 'prsformer'):
+    with analysis_guard(root):
         ensure_inputs(options, config)
         for index, trait in enumerate(traits, 1):
             print(f'[GRID] PRSformer trait {index}/{len(traits)}: {trait}', flush=True)
-            _run_trait(code_root, options, config, device, trait)
+            with run_lock(root / 'prsformer' / trait):
+                _run_trait(code_root, options, config, device, trait)
 
 
 def _run_trait(code_root, options, config, device, trait):
     root = Path(options.analysis_root)
+    from grid_paths import read_config
+    block = read_config(config['block_config'], root)
+    cache = Path(block['prsformer_cache'])
     base = root / 'prsformer' / trait
-    action = plan(root, trait)
+    action = plan(root, trait, cache)
     if action == 'skip':
         print(f'[GRID] SKIP PRSformer {trait}: completed model, evaluation and reports verified', flush=True)
         return
-    if action != 'report' and not (root / 'prsformer/cache/genotypes.npy').is_file():
-        from abm_core.cold_start import preparation_command
-        subprocess.run(preparation_command(options, config), check=True)
+    if action != 'report' and not (cache / 'genotypes.npy').is_file():
+        from copy import copy
+        from shared_cohort import ensure_inputs
+        preparation = copy(options)
+        preparation.complete_features = False
+        ensure_inputs(preparation, config)
     entry = ['bash', str(code_root / 'f/prsformer.entry.sh'), '--python', sys.executable,
              '--traits', trait, '--no-replace', '--cache-dir', str(root / 'cache/abm'),
              '--out-root', str(root / 'abm'), '--prsformer-root', str(root),
+             '--prsformer-cache-dir', str(cache),
              '--prsformer-run-dir', str(base / 'run'),
              '--prsformer-publication-dir', str(base), '--prsformer-score-dir', str(root / 'prsformer'),
              '--prsformer-device', device, '--prsformer-threads', str(options.threads)]
     env = dict(os.environ, PRSFORMER_KEEP_GENOTYPES='1')
-    if action == 'report':
-        print('[GRID] PRSformer: reuse saved evaluation; repair reports without training', flush=True)
-        subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
-    elif action == 'predict':
-        print('[GRID] PRSformer: reuse completed model; regenerate evaluation without training', flush=True)
-        subprocess.run([*entry, '--prsformer-mode', 'predict'], check=True, env=env)
-        subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
-    else:
-        print('[GRID] PRSformer: ' + ('resume last saved epoch' if action == 'resume' else 'start new training'), flush=True)
-        if action == 'resume':
-            subprocess.run([*entry, '--prsformer-mode', 'train', '--prsformer-arg', '--resume'], check=True, env=env)
+    from dosage_storage import dosage_lock
+    # Different traits share read-only dosage. The wrapper takes the matching
+    # shared pipeline lock; producers and release still require exclusive locks.
+    with dosage_lock(block, wait=True):
+        if action == 'report':
+            print('[GRID] PRSformer: reuse saved evaluation; repair reports without training', flush=True)
+            subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
+        elif action == 'predict':
+            print('[GRID] PRSformer: reuse completed model; regenerate evaluation without training', flush=True)
+            subprocess.run([*entry, '--prsformer-mode', 'predict'], check=True, env=env)
             subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
         else:
-            subprocess.run(entry, check=True, env=env)
+            print('[GRID] PRSformer: ' + ('resume last saved epoch' if action == 'resume' else 'start new training'), flush=True)
+            resume = ['--prsformer-arg', '--resume'] if action == 'resume' else []
+            subprocess.run([*entry, '--prsformer-mode', 'train', *resume], check=True, env=env)
+            subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)

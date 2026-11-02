@@ -18,11 +18,21 @@ MARKER = "DOSAGE_PROBE.json"
 
 
 @contextmanager
-def dosage_lock(config, *, exclusive=False):
+def dosage_lock(config, *, exclusive=False, wait=False):
     root = Path(config["cache_root"])
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".dosage.lock").open("a") as handle:
-        fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | (0 if wait else fcntl.LOCK_NB))
+        yield
+
+
+@contextmanager
+def prsformer_cache_lock(cache, *, exclusive=False, wait=True):
+    """Use the shell pipeline's cache key for readers, producers and release."""
+    root = Path(cache)
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".pipeline.lock").open("a") as handle:
+        fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | (0 if wait else fcntl.LOCK_NB))
         yield
 
 

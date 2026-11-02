@@ -69,6 +69,25 @@ memory_cap_enter() {
 	# shellcheck disable=SC2034
 	MEMORY_SWAP_CAP_GB=$swap
 	[[ $help == false ]] || return 0
+	# LSF owns resource enforcement on allocated compute nodes. Do not create a
+	# user-systemd scope there (many clusters do not run a user systemd manager).
+	# The shared .cmd writer requests both -M and rusage; their enforcement is a
+	# cluster policy, not evidence that this process observed a cgroup hard cap.
+	if [[ ${submit:-${SUBMIT:-local}} == hpc ]]; then
+		[[ -n ${LSB_JOBID:-} && ${WORKFLOW_RESOURCE_MANAGER:-} == lsf ]] || {
+			echo "ERROR: $label HPC computation must run in an allocated workflow .cmd job." >&2
+			exit 2
+		}
+		python3 - "$ram" "${WORKFLOW_MEMORY_GIB:-0}" <<'PY' || exit 2
+import sys
+requested, allocated = map(float, sys.argv[1:])
+if requested > allocated:
+    raise SystemExit('ERROR: analysis memory budget exceeds the generated LSF job request')
+PY
+		export MEMORY_CAP_MODE=lsf
+		echo "[$label] LSF job=$LSB_JOBID; requested RAM=${WORKFLOW_MEMORY_GIB} GiB, analysis budget=${ram} GiB; cluster manages enforcement." >&2
+		return 0
+	fi
 	local ram_bytes=$((ram * 1073741824)) swap_bytes=$((swap * 1073741824))
 	local cg unit
 	cg=$(awk -F: '$1 == "0" {print $3}' /proc/self/cgroup)

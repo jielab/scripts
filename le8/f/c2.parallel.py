@@ -39,7 +39,7 @@ def reference_identity_files(rows,forward):
         files=[Path(bed+'.'+ext) for ext in ('bed','bim','fam')]
         if not all(p.is_file() for p in files):raise ValueError('Incomplete explicit reference BED')
         return list(map(str,files))
-    directory=Path(option('--reference-pfile-dir','MRLINK2_REF_PFILE_DIR',f"/mnt/f/gen/1kg/{os.getenv('LE8_GRCH','37')}/pfile"))
+    directory=Path(option('--reference-pfile-dir','MRLINK2_REF_PFILE_DIR',str(Path(os.getenv("DIR_DATA", "/mnt/f")) / "gen/1kg" / os.getenv("LE8_GRCH", "37") / "pfile")))
     pop=option('--reference-pop','MRLINK2_REF_POP','EUR').upper();files=[]
     for chrom in sorted({r['region'].split(':')[0].removeprefix('chr') for r in rows}):
         candidates=[(directory.parent/'bfile'/pop/f'chr{chrom}','bed'),
@@ -142,7 +142,7 @@ def match_main(argv):
     import fcntl,gzip
     if len(argv)!=4:raise ValueError('match reference input output audit')
     reference,source,output,audit=argv
-    phe=Path(os.getenv('PHE_F','/mnt/d/scripts/0f/phenotype.sh')).resolve(strict=True)
+    phe=Path(os.getenv('PHE_F',str(Path(__file__).resolve().parents[2]/'0f/phenotype.sh'))).resolve(strict=True)
     h=hashlib.sha256()
     with gzip.open(source,'rb') if source.endswith('.gz') else open(source,'rb') as handle:
         for block in iter(lambda:handle.read(2**20),b''):h.update(block)
@@ -297,7 +297,7 @@ def main():
     p.add_argument('--memory-gib',type=float,default=float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')))
     p.add_argument('--job-memory-gib',type=float,default=float(os.getenv('LE8_CPU_TASK_MEMORY_GIB',os.getenv('MRLINK2_JOB_MEMORY_GIB','4'))))
     p.add_argument('--job-base-gib',type=float,default=1);p.add_argument('--ld-workspace-multiplier',type=float,default=8)
-    p.add_argument('--cache-root',type=Path,default=Path('/tmp/le8-mrlink2-validated'))
+    p.add_argument('--cache-root',type=Path,default=Path(os.getenv('MRLINK2_VALIDATED_CACHE',str(Path(os.getenv('TMPDIR','/tmp'))/'le8-mrlink2-validated'))))
     p.add_argument('--hash-mode',choices=['stat','sha256'],default='stat')
     p.add_argument('--identity-file',action='append',default=[],help='LD/keep/build manifest or actual files to fingerprint; REQUIRED')
     p.add_argument('--pool');p.add_argument('--reserve-gib',type=float,default=4)

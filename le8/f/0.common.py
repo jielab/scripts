@@ -62,7 +62,7 @@ MODULES = [
 	"c5_cellulation",
 	"final",
 ]
-PRIVATE_PARTS = re.compile(r"^(?:_|\.|private|cache|input|neural|checkpoints|logs)", re.I)
+PRIVATE_PARTS = re.compile(r"(?:^(?:_|\.|private|cache|input|neural|checkpoints|logs)|LOCAL_ONLY)", re.I)
 PRIVATE_NAMES = re.compile(
 	r"(?:^|[._])(roles|predictions|outcomes|individual|participants|context|split|matches|early_stop_ids|reference_candidates)(?:[._]|$)",
 	re.I,
@@ -1611,6 +1611,7 @@ def run_table_storage(mode, work, r_bin, env):
 def analysis_lock(path, shared=False, waiting="Waiting for another LE8 run"):
 	import fcntl
 
+	Path(path).parent.mkdir(parents=True, exist_ok=True)
 	with open(path, "a") as lock:
 		mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
 		try:
@@ -1674,16 +1675,16 @@ def skip_completed_c1(parsed):
 	}:
 		raise ValueError("Invalid outcome/layer")
 	key = hashlib.sha256(json.dumps([str(root), traits, layers]).encode()).hexdigest()[:24]
-	cache = Path("/tmp/le8-completed")
-	cache.mkdir(exist_ok=True)
+	cache = root / "logs/completed_cache"
+	cache.mkdir(parents=True, exist_ok=True)
 	receipt = cache / (key + ".json")
 	lock_name = hashlib.sha256(str(root).encode()).hexdigest()[:20]
 	with ExitStack() as locks:
-		locks.enter_context(analysis_lock(Path("/tmp") / f"le8-{lock_name}.lock", shared=True))
+		locks.enter_context(analysis_lock((root / "logs/locks") / f"le8-{lock_name}.lock", shared=True))
 		for trait in sorted(set(traits)):
 			for layer in sorted(set(layers)):
 				scope = hashlib.sha256(f"{root}/{trait}/{layer}".encode()).hexdigest()[:20]
-				locks.enter_context(analysis_lock(Path("/tmp") / f"le8-scope-{scope}.lock"))
+				locks.enter_context(analysis_lock((root / "logs/locks") / f"le8-scope-{scope}.lock"))
 		before = c1_result_signature(root, traits, layers)
 		if before is None:
 			return False
@@ -1692,7 +1693,7 @@ def skip_completed_c1(parsed):
 		except (OSError, ValueError):
 			saved = {}
 		if saved.get("signature") != before:
-			with tempfile.TemporaryDirectory(prefix="le8-check-completed-", dir="/tmp") as temporary:
+			with tempfile.TemporaryDirectory(prefix="le8-check-completed-", dir=os.getenv("TMPDIR", "/tmp")) as temporary:
 				audit = Path(temporary) / "results.csv"
 				result = subprocess.run(
 					[
@@ -1835,12 +1836,13 @@ def _table_runtime(argv):
 		return False
 	root.mkdir(parents=True, exist_ok=True)
 	lock_name = hashlib.sha256(str(root).encode()).hexdigest()[:20]
-	publication_lock = Path("/tmp") / f"le8-{lock_name}-publish.lock"
+	publication_scope = hashlib.sha256(repr(sorted(scopes)).encode()).hexdigest()[:12] if scopes is not None else "all"
+	publication_lock = (root / "logs/locks") / f"le8-{lock_name}-{publication_scope}-publish.lock"
 	locks = ExitStack()
 	try:
 		locks.enter_context(
 			analysis_lock(
-				Path("/tmp") / f"le8-{lock_name}.lock",
+				(root / "logs/locks") / f"le8-{lock_name}.lock",
 				shared=scopes is not None,
 				waiting=f"Waiting for analysis/report transaction at {root}.",
 			)
@@ -1849,7 +1851,7 @@ def _table_runtime(argv):
 			key = hashlib.sha256(f"{root}/{y}/{b}".encode()).hexdigest()[:20]
 			locks.enter_context(
 				analysis_lock(
-					Path("/tmp") / f"le8-scope-{key}.lock",
+					(root / "logs/locks") / f"le8-scope-{key}.lock",
 					waiting=f"{y}/{b} is already running at {root}; waiting for that scope.",
 				)
 			)
@@ -1865,7 +1867,7 @@ def _run_table_workspace(
 ):
 	import fcntl
 
-	workspace = Path(tempfile.mkdtemp(prefix="le8-run-", dir="/tmp"))
+	workspace = Path(tempfile.mkdtemp(prefix="le8-run-", dir=os.getenv("TMPDIR", "/tmp")))
 	work = workspace / "results"
 	work.mkdir()
 	initial = {}
@@ -1895,6 +1897,9 @@ def _run_table_workspace(
 					continue
 				relative = path.relative_to(root)
 				parts = relative.parts
+				native_benchmark = parts[-3:] == ("prediction", "_LOCAL_ONLY", "benchmark.json.gz")
+				if ("LOCAL_ONLY" in str(relative) and not native_benchmark) or "methods" in parts:
+					continue
 				# twin publishes its own transactional directories and LOCAL_ONLY files.
 				# The native workbook exporter must never repack these artifacts.
 				if any(
@@ -1926,11 +1931,11 @@ def _run_table_workspace(
 			LE8_ANALYSIS_ROOT=str(work),
 			LE8_PUBLISHED_ROOT=str(root),
 			LE8_TABLE_ABM_PRIVATE=str(train_abm).upper(),
-			TMPDIR="/tmp",
-			TMP="/tmp",
-			TEMP="/tmp",
+			TMPDIR=os.getenv("TMPDIR", "/tmp"),
+			TMP=os.getenv("TMPDIR", "/tmp"),
+			TEMP=os.getenv("TMPDIR", "/tmp"),
 			PYTHONDONTWRITEBYTECODE="1",
-			PYTHONPYCACHEPREFIX="/tmp/python-cache",
+			PYTHONPYCACHEPREFIX=str(Path(os.getenv("TMPDIR", "/tmp")) / "python-cache"),
 		)
 		run_table_storage("--tables-restore", work, r_bin, env)
 		new_args = []
@@ -1975,8 +1980,8 @@ def _run_table_workspace(
 		raise
 	else:
 		if (work / "logs").is_dir():
-			logs = Path("/tmp/le8-logs") / workspace.name
-			logs.parent.mkdir(exist_ok=True)
+			logs = root / "logs/native" / workspace.name
+			logs.parent.mkdir(parents=True, exist_ok=True)
 			shutil.move(str(work / "logs"), str(logs))
 			print(f"[LE8] Logs: {logs}", flush=True)
 		shutil.rmtree(workspace)
@@ -1986,7 +1991,7 @@ def _run_table_workspace(
 		shiny_env = dict(
 			os.environ,
 			LE8_ANALYSIS_ROOT=str(root),
-			TMPDIR="/tmp",
+			TMPDIR=os.getenv("TMPDIR", "/tmp"),
 			LE8_SHINY_PORT=option("--port", "3839"),
 			LE8_SHINY_HOST=option("--host", "127.0.0.1"),
 			LE8_SHINY_MAX_TABLE_MB=option("--max-table-mb", "128"),
@@ -1995,7 +2000,7 @@ def _run_table_workspace(
 		if "--shiny-review" in argv:
 			command.append("--review")
 		viewer_key = hashlib.sha256((str(root) + shiny_env["LE8_SHINY_PORT"]).encode()).hexdigest()[:20]
-		viewer_lock = open(Path("/tmp") / f"le8-shiny-{viewer_key}.lock", "a")
+		viewer_lock = open((root / "logs/locks") / f"le8-shiny-{viewer_key}.lock", "a")
 		try:
 			fcntl.flock(viewer_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 		except BlockingIOError:
@@ -2176,7 +2181,7 @@ def main(argv=None):
 			if "c5_cellulation" in mods:
 				dispatch_main(["c5_cellulation", *abm_options, "--preflight"])
 			previous_state = os.environ.get("LE8_RUN_STATE_DIR")
-			with tempfile.TemporaryDirectory(prefix="le8-run-state-", dir="/tmp") as state:
+			with tempfile.TemporaryDirectory(prefix="le8-run-state-", dir=os.getenv("TMPDIR", "/tmp")) as state:
 				os.environ["LE8_RUN_STATE_DIR"] = state
 				try:
 					for module in mods:
@@ -2215,6 +2220,7 @@ def pipeline_parse(argv):
 					 default=str(pipeline_ROOT / "config/abm_GPU.json"))
 	options.add_argument("--config", default=str(pipeline_ROOT / "config/c1_methods.json"))
 	options.add_argument("--methods")
+	options.add_argument("--c1-stage", choices=["all", "prepare", "association", "models", "evaluation"], default="all")
 	options.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
 	options.add_argument("--association", choices=["auto", "run", "skip"], default="run")
 	options.add_argument("--pgs", choices=["TRUE", "FALSE"],
@@ -2267,7 +2273,7 @@ def pipeline_parse(argv):
 def pipeline_c1_command(research, a):
 	cmd = [os.getenv("ABM_PYTHON") or sys.executable, str(pipeline_HERE / "c1_correlate.py"),
 		"--Y", a.Y, "--biom", a.biom, "--analysis-root", str(a.analysis_root),
-		"--device", research.device,
+		"--device", research.device, "--stage", research.c1_stage,
 		"--association", research.association, "--pgs", research.pgs, "--seed", str(a.seed),
 		"--cores", str(a.cores or 8), "--r-bin", a.r_bin, "--replace", a.replace,
 		"--min-cases-with-biom", str(research.min_cases_with_biom),
@@ -2311,8 +2317,8 @@ def pipeline_c1_resource_command(command, a):
 	if a.preflight or a.dry_run:
 		return command
 	budget = a.memory_limit_gb if a.memory_limit_gb is not None else 32
-	if not 0 < budget <= 32:
-		raise ValueError("C1 requires a process-tree memory cap in (0, 32] GiB")
+	if not math.isfinite(budget) or budget <= 0:
+		raise ValueError("C1 requires a positive finite memory budget")
 	swap = a.memory_swap_gb if a.memory_swap_gb is not None else 4
 	# The unified runner invokes the native engine through its environment.
 	# Forward the same limits used by systemd so preflight and R agree with it.
@@ -2328,7 +2334,7 @@ def pipeline_c1_resource_command(command, a):
 			raise ValueError("Invalid task memory")
 		settings["LE8_CPU_TASK_MEMORY_GIB"] = claim
 	worker = ["env", *(f"{key}={value}" for key, value in settings.items()), *command]
-	if os.getenv("LE8_MEMORY_SCOPE_ACTIVE") != "1":
+	if os.getenv("LE8_MEMORY_SCOPE_ACTIVE") != "1" and os.getenv("WORKFLOW_RESOURCE_MANAGER") != "lsf":
 		worker = ["systemd-run", "--user", "--scope", "--quiet", "--collect",
 			"-p", f"MemoryMax={budget}G", "-p", f"MemorySwapMax={swap}G",
 			"-p", "OOMPolicy=kill", "--", "env", "LE8_MEMORY_SCOPE_ACTIVE=1", *worker]
@@ -2475,7 +2481,7 @@ def pipeline_main(argv=None):
 						raise ValueError("C1 ABM requires a process-tree memory cap in (0, 32] GiB")
 					# Same cgroup guard and CPU lease as the existing dispatcher.
 					if budget:
-						if os.getenv("LE8_MEMORY_SCOPE_ACTIVE") != "1":
+						if os.getenv("LE8_MEMORY_SCOPE_ACTIVE") != "1" and os.getenv("WORKFLOW_RESOURCE_MANAGER") != "lsf":
 							worker = [
 								"systemd-run",
 								"--user",
@@ -2702,7 +2708,7 @@ def canonical_pgs_file(layer):
 	label = {"prot": "prot", "protein": "prot", "met": "met", "metabolite": "met"}.get(layer)
 	if label is None:
 		raise ValueError(f"Unknown PGS layer: {layer}")
-	path = win_to_local(f"F:/gwas/{label}/pgs/{label}.pgs.gz")
+	path = Path(os.getenv("DIR_DATA", "F:" if os.name == "nt" else "/mnt/f")) / "gwas" / label / "pgs" / f"{label}.pgs.gz"
 	if not path.is_file() or path.stat().st_size == 0:
 		raise FileNotFoundError(f"Required canonical PGS file missing/empty: {path}")
 	return path

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GRID ABM LD-block preparation.
+"""PRS-CSx LD-block feature preparation, owned by 2.csx.sh blockprepare.
 
 Supported boundary layouts
 --------------------------
@@ -10,11 +10,11 @@ Supported boundary layouts
 
 2. One shared map:
    ALL.37.bed
-   All four PRS-CSx population-specific posterior weights are aggregated within the
-   same blocks. Output tensor: N x blocks x 4, channels AFR/EAS/EUR/SAS.
+   Four population weights are fused by prespecified external GWAS sample sizes,
+   then aggregated in the same blocks. Output tensor: N x blocks x 1.
 
-The shared-map implementation therefore preserves ancestry-specific PRS information
-without forcing four different block boundaries into one token sequence.
+The one-map fusion is a GRID extension, not official PRS-CSx posterior-precision
+meta-analysis. No target phenotype or fitted ancestry coefficient defines it.
 
 Current GRID genotypes/PRS-CSx weights are GRCh37. GRCh38 maps are rejected here.
 """
@@ -26,7 +26,7 @@ import pandas as pd
 import block_scoring
 
 POPS = ("AFR","EAS","EUR","SAS")
-PRODUCER_VERSION = "csx-assigned-dosage-blocks.1"
+PRODUCER_VERSION = "csx-assigned-dosage-blocks.2"
 BINDING_NAMESPACE = "producer-bound"
 # Keep one digest per file for the whole run. A bounded LRU evicted the 132 GiB
 # genotype digest while hashing the 44 PVAR/PSAM metadata files for each trait.
@@ -61,6 +61,17 @@ def sha256(path):
 
 
 def sha256_cached(path):
+    """Serialize refreshes of a shared large-dosage digest sidecar."""
+    import fcntl
+    p = Path(path)
+    if p.stat().st_size < 64 * 1024**2 and not p.with_name(p.name + ".verification.json").exists():
+        return _sha256_cached_unlocked(path)
+    with p.with_name(p.name + ".verification.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _sha256_cached_unlocked(path)
+
+
+def _sha256_cached_unlocked(path):
     """Reuse a recorded legacy digest while resolved path, size and mtime agree."""
     p = Path(path).resolve()
     identity = file_identity(p)
@@ -111,7 +122,8 @@ def json_write(path,value):
 
 
 def read_config(path):
-    c=json.loads(Path(path).read_text())
+    from grid_paths import read_config as portable_config
+    c=portable_config(path)
     if int(c.get("genome_build",37)) != 37:
         raise ValueError("Current GRID ABM supports the GRCh37 analysis only")
     if tuple(c["populations"])!=POPS:
@@ -200,7 +212,7 @@ def build_manifest(layout, config):
     else:
         manifest=read_bed(layout["files"][0],"ALL")
         manifest["token_index"]=np.arange(len(manifest),dtype=np.int32)
-        channels=list(POPS)
+        channels=["scalar"]
         counts={"ALL":len(manifest)}
     audit=dict(mode=layout["mode"],layout_id=layout["layout_id"],block_files=[str(p) for p in layout["files"]],
                block_file_sha256=layout["sha256"],counts=counts,
@@ -263,6 +275,52 @@ def locate_weights(config,trait, *, lightweight=False):
     return result,meta
 
 
+def shared_weight_fusion(config, trait, paths=None):
+    """A common SNP-weight rule fixed using external GWAS N, never target Y.
+
+    Alleles are aligned separately before coefficients/offsets are multiplied
+    by alpha=N/sum(N). A SNP absent in one population contributes zero for that
+    population; alpha is NOT renormalized SNP by SNP. Consequently summing the
+    scalar shared blocks equals the same fixed weighted sum of covered PRSs.
+    """
+    rule = config.get("shared_weight_rule", "external_sample_size")
+    if rule != "external_sample_size":
+        raise ValueError("Shared scalar blocks require shared_weight_rule=external_sample_size; "
+                         "official posterior-precision meta is a separate CSx benchmark")
+    paths = paths or locate_weights(config, trait)[0]
+    declared = config.get("shared_population_sample_sizes", {})
+    if trait in declared and isinstance(declared[trait], dict):
+        declared = declared[trait]
+    if declared and set(declared) != set(POPS):
+        raise ValueError("Declare external GWAS sample sizes for exactly AFR,EAS,EUR,SAS")
+    sizes, evidence = {}, {}
+    for pop in POPS:
+        if declared:
+            value = declared[pop]
+            evidence[pop] = dict(source="config.shared_population_sample_sizes", target_outcomes_used=False)
+        else:
+            source = Path(str(paths[pop]) + ".metadata.json")
+            if not source.is_file():
+                raise FileNotFoundError(f"Shared-map fusion needs external n_gwas_used metadata: {source}; "
+                    "or explicitly declare shared_population_sample_sizes in block config")
+            metadata = json.loads(source.read_text())
+            if "n_gwas_used" not in metadata:
+                raise ValueError(f"Missing external n_gwas_used in {source}")
+            value = metadata["n_gwas_used"]
+            evidence[pop] = dict(source=str(source), sha256=sha256(source), target_outcomes_used=False)
+        number = float(value)
+        if not np.isfinite(number) or number <= 0:
+            raise ValueError(f"Invalid external sample size for {pop}: {value}")
+        sizes[pop] = number
+    total = sum(sizes.values())
+    return dict(rule=rule, label="GRID fixed external-N SNP-weight fusion",
+        official_prscsx_meta=False, target_outcomes_used=False,
+        external_sample_sizes=sizes, alpha={p: sizes[p]/total for p in POPS}, evidence=evidence,
+        allele_rule="align each population to target ALT dosage before summation",
+        missing_population_snp="zero contribution; no per-SNP alpha renormalization",
+        effect_scale_requirement="same phenotype definition and commensurate SNP-effect units across GWAS")
+
+
 def read_rds(path):
     # Native R handles data.table RAW/ALTREP attributes unsupported by rdata.
     # Reuse GRID's reader, which also preserves character IDs and numeric precision.
@@ -283,7 +341,7 @@ def prsformer_cache(config):
     root=Path(config["prsformer_cache"])
     required=[root/"prepare.json",root/"data.tsv.gz",root/"variants.tsv.gz",root/"genotypes.npy"]
     for p in required:
-        if not p.is_file():raise FileNotFoundError(f"PRSformer preparation cache missing: {p}. Run ./grid.sh abm --module-only --through prepare")
+        if not p.is_file():raise FileNotFoundError(f"Shared dosage preparation cache missing: {p}. Run ./2.csx.sh prepare (inputs only; no model training)")
     meta=json.loads((root/"prepare.json").read_text())
     cohort=pd.read_csv(root/"data.tsv.gz",sep="\t",compression="gzip",
                        dtype={"eid":str, "group":str, "family_id":str, "group_id":str},low_memory=False)
@@ -351,9 +409,15 @@ def build_maps(config,layout,manifest,variants):
             maps.append(m);qc.append({k:v for k,v in m.items() if k not in {"cache_col","block_local","token_index","coef","offset"}})
     else:
         bed=manifest
-        for channel,pop in enumerate(POPS):
+        fusion = shared_weight_fusion(config, config["_trait"], paths)
+        for pop in POPS:
             weights=read_weights(paths[pop])
-            m=weight_map_for_population(pop,weights,bed,variants,channel,0)
+            m=weight_map_for_population(pop,weights,bed,variants,0,0)
+            alpha = fusion["alpha"][pop]
+            m["coef"] *= alpha
+            m["offset"] *= alpha
+            m["fusion_alpha"] = alpha
+            m["fusion_external_N"] = fusion["external_sample_sizes"][pop]
             maps.append(m);qc.append({k:v for k,v in m.items() if k not in {"cache_col","block_local","token_index","coef","offset"}})
     for q in qc:
         q.update(trait=config['_trait'],ld_layout=layout['layout_id'])
@@ -436,6 +500,33 @@ def assigned_reconstruction(block_score,direct,config):
     return q
 
 
+def independent_reconstruction(array, tokens, genotype, rows, direct_rows, variants,
+                               config, trait, mode, fusion=None):
+    """One producer/consumer audit shared by full dosage and retained probe rows."""
+    paths = locate_weights(config, trait)[0]
+    checks, fused_direct = [], np.zeros(len(rows), dtype=np.float64)
+    if mode == "shared_universal":
+        current = shared_weight_fusion(config, trait, paths)
+        if fusion is not None and current != fusion:
+            raise ValueError("Shared-map external sample sizes/fusion provenance changed")
+        fusion = current
+        if array.shape[2] != 1:
+            raise ValueError("A shared boundary map must have one fused PRS scalar per block")
+    for pop in POPS:
+        weights = read_weights(paths[pop])
+        bed = tokens[tokens.source_population.eq(pop)] if mode == "population_multiview" else tokens
+        direct = direct_assigned_score(genotype, direct_rows, weights, bed, variants)
+        if mode == "population_multiview":
+            block_score = np.asarray(array[rows][:, tokens.source_population.eq(pop), 0], float).sum(1)
+            checks.append(dict(population=pop, **assigned_reconstruction(block_score, direct, config)))
+        else:
+            fused_direct += fusion["alpha"][pop] * direct
+    if mode == "shared_universal":
+        block_score = np.asarray(array[rows][:, :, 0], float).sum(1)
+        checks.append(dict(population="FUSED", **assigned_reconstruction(block_score, fused_direct, config)))
+    return checks
+
+
 def cache_paths(config,layout,trait):
     # Isolate producer-bound outputs; never stamp an unbound existing array.
     base=Path(config["cache_root"])/BINDING_NAMESPACE/layout["layout_id"]/trait/"_LOCAL_ONLY"
@@ -453,7 +544,7 @@ def prepare_trait(config_path,trait,block_dir=None,block_files=None,replace=Fals
                                 trait,block_files,block_dir,allow_build=False)
         arr._mmap.close()
         return layout,paths[0],json.loads(paths[-1].read_text())
-    with dosage_lock(config, exclusive=True):
+    with dosage_lock(config, exclusive=True, wait=True):
         return _prepare_trait(config_path,trait,block_dir,block_files,replace,device)
 
 
@@ -465,6 +556,8 @@ def _prepare_trait(config_path,trait,block_dir=None,block_files=None,replace=Fal
     cache,prep_meta,cohort,variants,geno=prsformer_cache(config)
     variants,geno,dosage_supplement=complete_weighted_dosage(config,layout,manifest,prep_meta,cohort,variants,geno)
     maps,weight_qc=build_maps(config,layout,manifest,variants)
+    fusion = shared_weight_fusion(config, trait) if layout["mode"] == "shared_universal" else None
+    boundary_audit["shared_weight_fusion"] = fusion
     base,score_path,token_path,cohort_path,receipt_path=cache_paths(config,layout,trait)
     base.mkdir(parents=True,exist_ok=True)
     signature_payload=dict(version=config["version"],trait=trait,layout=layout["signature"],
@@ -474,6 +567,7 @@ def _prepare_trait(config_path,trait,block_dir=None,block_files=None,replace=Fal
         cohort_sha256=sha256(cache/"data.tsv.gz"),genotype_sha256=sha256_cached(cache/"genotypes.npy"),
         whole_score_sha256=sha256(Path(config["score_root"])/trait/"1csx.scores.rds"),
         source_sha256=sha256(Path(__file__)),scoring_source_sha256=sha256(Path(block_scoring.__file__)),qc_config={k:config[k] for k in config if k.startswith(("reconstruction_","min_weight_","min_boundary_"))},
+        shared_weight_fusion=fusion,
         cohort_N=len(cohort),tokens=len(manifest),channels=len(channels))
     signature=hashlib.sha256(json.dumps(signature_payload,sort_keys=True).encode()).hexdigest()
     if receipt_path.is_file() and score_path.is_file() and not replace:
@@ -527,25 +621,24 @@ def _prepare_trait(config_path,trait,block_dir=None,block_files=None,replace=Fal
     arr=np.load(score_path,mmap_mode="r")
     rng=np.random.default_rng(int(config["seed"])+17)
     rr=np.sort(rng.choice(n,min(n,int(config["reconstruction_sample_n"])),replace=False))
-    reconstruction=[]
-    for pi,pop in enumerate(POPS):
+    reconstruction = independent_reconstruction(arr, manifest, geno, rr, rr, variants,
+        config, trait, layout["mode"], fusion)
+    for q in reconstruction:
+        pop = q["population"]
         if layout["mode"]=="population_multiview":
             tok=np.flatnonzero(manifest.source_population.to_numpy()==pop)
             x=np.asarray(arr[rr][:,tok,0],np.float64).sum(axis=1)
         else:
-            x=np.asarray(arr[rr][:,:,pi],np.float64).sum(axis=1)
-        col=next((z for z in (f"csx.{pop}",f"CSX_{pop}",f"csx_{pop}") if z in joined),None)
-        if col is None:raise ValueError(f"{saved_path}: missing csx.{pop}")
-        y=pd.to_numeric(joined.iloc[rr][col],errors="coerce").to_numpy(float)
-        # Independent direct computation uses original alleles/betas, not token indices or coefficients.
-        weights=read_weights(locate_weights(config,trait)[0][pop])
-        bed=manifest[manifest.source_population==pop] if layout['mode']=='population_multiview' else manifest
-        direct=direct_assigned_score(geno,rr,weights,bed,variants)
-        q=assigned_reconstruction(x,direct,config)
+            x=np.asarray(arr[rr][:,:,0],np.float64).sum(axis=1)
+        y = np.zeros(len(rr), dtype=float)
+        for source_pop in (POPS if pop == "FUSED" else (pop,)):
+            col=next((z for z in (f"csx.{source_pop}",f"CSX_{source_pop}",f"csx_{source_pop}") if z in joined),None)
+            if col is None:raise ValueError(f"{saved_path}: missing csx.{source_pop}")
+            alpha = fusion["alpha"][source_pop] if pop == "FUSED" else 1.
+            y += alpha * pd.to_numeric(joined.iloc[rr][col],errors="coerce").to_numpy(float)
         full=lincheck(x,y)
         q.update({f'full_csx_{k}':float(v) if np.isfinite(v) else None for k,v in full.items()})
         q.update(population=pop,comparison='covered_block_score_vs_full_csx')
-        reconstruction.append(q)
 
     analysis=Path(config["output_root"])/layout["layout_id"]/trait/"blocks";analysis.mkdir(parents=True,exist_ok=True)
     manifest.to_csv(analysis/"block_manifest.tsv.gz",sep="\t",index=False,compression="gzip")
@@ -555,12 +648,12 @@ def _prepare_trait(config_path,trait,block_dir=None,block_files=None,replace=Fal
         shape=[n,t,c],channels=channels,score_file=str(score_path),tokens=str(token_path),cohort=str(cohort_path),
         weight_qc=weight_qc.to_dict("records"),reconstruction=reconstruction,
         prsformer_training_required=False,prsformer_preparation_cache_only=dosage_supplement is None,
-        dosage_supplement=dosage_supplement,
-        shared_map_semantics=("one genomic token per shared block with four ancestry-specific PRS channels"
+        dosage_supplement=dosage_supplement, shared_weight_fusion=fusion,
+        shared_map_semantics=("one scalar PRS per shared block; predefined external-N SNP-weight fusion"
                               if layout["mode"]=="shared_universal" else
                               "one scalar token per ancestry-specific LD block; four maps retained separately"))
     identity = hashlib.sha256(json.dumps(dict(layout=layout["signature"],
-        weights=signature_payload["weights"]), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        weights=signature_payload["weights"], shared_weight_fusion=fusion), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     receipt["array_binding"] = array_record(score_path,
         binding_metadata(cohort), geometry_sha256=identity,
         tokens=manifest, channels=channels, producer_version=PRODUCER_VERSION)

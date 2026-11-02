@@ -24,6 +24,9 @@ class PipelineScreenLog(console.ScreenLog):
         line = raw.decode("utf-8", errors="replace").strip()
         if not line:
             return
+        if line.startswith(("[dataset]", "[build-check]")):
+            print(line, flush=True)
+            return
         if line.startswith("[stage] "):
             stage = line.split(":", 1)[0]
             print(f"{stage}: running", flush=True)
@@ -56,3 +59,4 @@ class PipelineScreenLog(console.ScreenLog):
 if __name__ == "__main__":
     console.ScreenLog = PipelineScreenLog
     raise SystemExit(console.main())
+

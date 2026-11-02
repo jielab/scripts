@@ -88,11 +88,10 @@ def check_space(path, min_gib):
 
 
 def software_sources(root):
-    text = (Path(root) / '0.README.md').read_text(encoding='utf-8')
-    section = text.split('<!-- software-sources:start -->', 1)[1].split('<!-- software-sources:end -->', 1)[0]
-    data = yaml.safe_load(section.split('```yaml', 1)[1].split('```', 1)[0])
+    path = Path(root) / 'software.yml'
+    data = yaml.safe_load(path.read_text(encoding='utf-8'))
     if not isinstance(data, dict) or not {'kraken', 'kunpeng'} <= data.keys():
-        raise ValueError('Missing software source records in 0.README.md')
+        raise ValueError(f'Missing software source records in {path}')
     return data
 
 
@@ -112,24 +111,25 @@ def load_config(config_path=None, root_override=None):
     cfg.update(values)
     # Resolve only unfrozen defaults; generated config.json keeps numeric budgets.
     if cfg.get("convert_memory_gib") == "default":
-        budget = os.environ.get("MEMORY_DEFAULT_GIB")
-        if budget is None:
-            import subprocess
-            budget = subprocess.check_output(
-                ["bash", "-c", 'source "$1"; printf "%s" "$MEMORY_DEFAULT_GIB"',
-                 "memory-default", str(CODE_ROOT.parent / "0f" / "0os.sh")], text=True).strip()
+        budget = os.environ.get("MEMORY_DEFAULT_GIB", "160")
         cfg["convert_memory_gib"] = int(budget)
     if isinstance(cfg["convert_memory_gib"], bool) or not isinstance(cfg["convert_memory_gib"], (int, float)) or not math.isfinite(cfg["convert_memory_gib"]) or cfg["convert_memory_gib"] <= 0:
         raise ValueError("convert_memory_gib must be a positive finite number")
     if cfg.get("schema") != 1:
         raise ValueError("Unsupported HPC configuration schema")
-    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/scratch/2026-10-31/sph-huangj"))
+    if cfg.get("database_layout", "single") not in ("single", "partitioned"):
+        raise ValueError("database_layout must be single or partitioned")
+    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/work/sph-huang"))
     root = Path(root_value).expanduser().absolute()
     cfg["root"] = str(root)
     for key in PATH_KEYS:
         scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", "/scratch/" + "2026-10-31" + "/sph-huangj/analysis")
         value = Path(str(cfg[key]).replace("{scratch_analysis}", scratch).replace("{scratch_root}", str(Path(scratch).parent))).expanduser()
         cfg[key] = str(value if value.is_absolute() else root / value)
+    for key in ("legacy_library_dir", "legacy_metadata_dir", "parallel_reference_dir"):
+        if cfg.get(key):
+            value = Path(str(cfg[key])).expanduser()
+            cfg[key] = str(value if value.is_absolute() else root / value)
     # These names deliberately avoid the previous library and split outputs.
     cfg.update(db_dir=str(Path(cfg["library_dir"]) / "db"),
                kunpeng_db_dir=str(Path(cfg["library_dir"]) / "kunpeng"),
@@ -137,6 +137,10 @@ def load_config(config_path=None, root_override=None):
                taxonomy_dir=str(Path(cfg["metadata_dir"]) / "taxonomy"),
                reference_plan=str(Path(cfg["library_dir"]) / "reference_plan.json"),
                code_root=str(CODE_ROOT), config_path=str(source.absolute()))
+    if cfg.get("database_layout", "single") == "partitioned":
+        cfg["db_dir"] = str(Path(cfg.get("parallel_reference_dir") or Path(cfg["library_dir"]) / "parallel") / "index")
+        if cfg.get("classifier_engine", "kraken") != "kraken" or cfg.get("build_kunpeng", False):
+            raise ValueError("Partitioned per-minimizer union supports engine kraken only. Kun-peng conversion requires a separate completed single index and database_layout: single.")
     if cfg.get("reference_taxid_map"):
         mapping = Path(cfg["reference_taxid_map"]).expanduser()
         cfg["reference_taxid_map"] = str(mapping if mapping.is_absolute() else root / mapping)
@@ -226,19 +230,18 @@ def load_config(config_path=None, root_override=None):
 
 
 def code_identity():
-    paths = sorted((CODE_ROOT / "f").glob("*.py")) + sorted((CODE_ROOT / "f").glob("*.sh"))
+    paths = [p for p in sorted((CODE_ROOT / "f").rglob("*")) if p.is_file()
+             and p.suffix in (".py", ".sh", ".cc", ".h", ".patch") and "__pycache__" not in p.parts]
     paths += sorted(CODE_ROOT.glob("*.sh"))
-    paths.append(CODE_ROOT / "0.README.md")
+    paths.append(CODE_ROOT / "software.yml")
+    writer = CODE_ROOT / "f" / "native_checkpoint" / "checked_writer.txt"
+    if writer.is_file():
+        paths.append(writer)
     paths += sorted((CODE_ROOT / "f" / "vendor").glob("*source.tar.gz"))
     bundled = CODE_ROOT / "f" / "vendor" / "kun_peng-linux-x86_64"
     if bundled.is_file():
         paths.append(bundled)
     files = {str(p.relative_to(CODE_ROOT)): sha256(p) for p in paths}
-    # The shell environment and submission implementation now live outside
-    # metag/. Queued plans must reject changes to these executed dependencies.
-    for name in ("0os.sh", "submit_jobs.py"):
-        path = CODE_ROOT.parent / "0f" / name
-        files["../0f/" + name] = sha256(path)
     return fingerprint(files)
 
 
@@ -253,8 +256,13 @@ ENGINES = ("kraken", "kunpeng_full", "kunpeng_memory")
 
 def engine_snapshot(cfg):
     if cfg.get("classifier_engine", "kraken") == "kraken":
-        from hpc_reference import database_snapshot
+        if cfg.get("database_layout", "single") == "partitioned":
+            from partitioned_build import database_snapshot
+        else:
+            from hpc_reference import database_snapshot
     else:
+        if cfg.get("database_layout", "single") == "partitioned":
+            raise ValueError("Kun-peng cannot consume the partitioned union catalog; use a separately completed single index for that benchmark")
         from hpc_kunpeng_index import database_snapshot
     return database_snapshot(cfg)
 
@@ -313,8 +321,8 @@ def effective_workers(cfg, snapshot):
         result["classify_workers"] = min(cfg["classify_workers"], capacity)
         print(f"{engine}: index={index_gib:.2f} GiB; workers={result['classify_workers']}; {note}", flush=True)
         return result
-    index_bytes = sum(Path(snapshot["db_dir"], name).stat().st_size
-                      for name in ("hash.k2d", "taxo.k2d", "opts.k2d"))
+    names = list(snapshot["hashes"]) + ["taxo.k2d", "opts.k2d"] if snapshot.get("layout") == "partitioned" else ["hash.k2d", "taxo.k2d", "opts.k2d"]
+    index_bytes = sum(Path(snapshot["db_dir"], name).stat().st_size for name in names)
     index_gib = index_bytes / 2**30
     budget = float(cfg["classify_memory_gib"]) - float(cfg["system_reserve_gib"])
     overhead = float(cfg["worker_memory_gib"])

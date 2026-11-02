@@ -22,7 +22,7 @@ TERMINAL = {
     'complete', 'complete_descriptive_imputed_panel', 'complete_descriptive_all_allele_panel',
     'complete_descriptive_unverified', 'complete_adjustment_unavailable', 'planned',
     'no_usable_exact_high_quality_contrast', 'no_usable_contrast', 'not_estimable',
-    'not_available', 'not_run',
+    'not_available', 'not_run', 'complete_with_exclusions',
 }
 EVIDENCE = TERMINAL - {'planned', 'not_available', 'not_run'}
 SMALL_LIMIT = 64 * 1024 * 1024
@@ -234,3 +234,4 @@ def transactional(manifest, out_arg="out", *, input_dirs=(), input_files=(),
                     raise
         return wrapped
     return decorate
+

@@ -2,7 +2,7 @@
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/0f/cli_dirs.sh"
     script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
@@ -15,7 +15,10 @@ set -euo pipefail
 usage() {
 	cat <<'HELP'
 Modules:
-    Default  Combine CSx scores using reference PCA distances
+    all/default  Pinned Disco interpolation -> small-validation calibration -> test metrics
+    score        Pinned interpolation only (independent scheduler stage)
+    evaluate     Calibrate existing Disco scores and evaluate untouched test
+    prepare      Shared cohort/genotype inputs only; no predictor training
 
 Default permanent paths (outside the analysis output directory):
     READ CSx scores: /mnt/f/gen/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
@@ -26,7 +29,9 @@ Default permanent paths (outside the analysis output directory):
     --dir-score changes the permanent destination; --dir-output-root alone does not.
 
 Main options:
-    --trait NAME / --traits LIST   Default: height,ldl,t2dm; traits run sequentially.
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
+    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
     --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --distance-pcs N              10; reference and target use the same PCs (>=5).
     --a-list A1,A2,A3,A4          Default 1,1,1,1, in AFR,EAS,EUR,SAS order.
@@ -36,7 +41,7 @@ Main options:
     --replace TRUE|FALSE          Default FALSE; reuse matching outputs.
     --check                       Check prerequisite files/packages; no computation.
     --dry-run TRUE                Same preflight/plan behavior.
-    -h, --help  Help; complete options: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/grid
@@ -56,6 +61,24 @@ case "${1:-}" in -h | --help | help)
 	;;
 esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/workflow_entry.sh"
+grid_workflow_entry disco "$@"
+set -- "${GRID_ENTRY_ARGS[@]}"
+GRID_DISCO_EVALUATE=TRUE
+case "${1:-}" in
+    prepare|evaluate)
+        module=$1; shift
+        source "$ROOT/f/0.common.sh"
+        grid_activate_environment
+        export PYTHONPATH="$ROOT/f${PYTHONPATH:+:$PYTHONPATH}"
+        if [[ $module == prepare ]]; then
+            exec "${GRID_PYTHON:-python3}" "$ROOT/f/shared_cohort.py" prepare "$@"
+        fi
+        exec "${GRID_PYTHON:-python3}" "$ROOT/f/disco_evaluate.py" "$@"
+        ;;
+    score) GRID_DISCO_EVALUATE=FALSE; shift ;;
+    all) shift ;;
+esac
 
 
 # 🚩 disco_run
@@ -129,7 +152,9 @@ PY
 }
 
 disco_evaluate() {
-    python3 "$ROOT/f/disco_evaluate.py" --analysis-root "$GRID_OUTPUT_ROOT" --trait "$trait" --scores "$score_home/2disco.scores.rds"
+    [[ $GRID_DISCO_EVALUATE == TRUE ]] || return 0
+    python3 "$ROOT/f/disco_evaluate.py" --analysis-root "$GRID_OUTPUT_ROOT" --trait "$trait" \
+        --scores "$score_home/2disco.scores.rds" "${GRID_BENCHMARK_ARGS[@]}"
 }
 
 source "$ROOT/f/0.common.sh"

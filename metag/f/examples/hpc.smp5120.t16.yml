@@ -2,6 +2,10 @@
 # Use with --methods kraken,kunpeng_full --placement matched.
 # Complete this run and record its immutable jobs.json before creating the next plan.
 schema: 1
+database_layout: single
+legacy_library_dir: null
+legacy_metadata_dir: null
+# Set library_dir to a separately completed single index; not the new union.
 build_memory_gib: 5120
 classify_queue: smp
 classify_cores: 24

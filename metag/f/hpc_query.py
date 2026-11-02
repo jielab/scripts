@@ -46,11 +46,8 @@ def validate_snapshot(snapshot):
 
 
 def database_snapshot(cfg):
-    if _engine(cfg) == "kraken":
-        from hpc_reference import database_snapshot as snapshot
-    else:
-        from hpc_kunpeng_index import database_snapshot as snapshot
-    return snapshot(cfg)
+    from hpc_common import engine_snapshot
+    return engine_snapshot(cfg)
 
 
 def query_once(cfg, sample, snapshot, work, limit=0):
@@ -310,7 +307,7 @@ def _context(cfg, sample, snapshot, limit):
             "output_format": cfg.get("output_format", "tar"), "limit": limit,
             "code": {name: sha256(source / name) for name in
                      ("hpc_query.py", "ordinal_query.py", "kunpeng_query.py", "species_split.py", "fastq_stream.py",
-                      "taxonomy.py", "hpc_common.py")}}
+                      "taxonomy.py", "hpc_common.py", *(("partitioned_build.py",) if snapshot.get("layout") == "partitioned" else ()))}}
 
 
 def _verify_sources(sample, snapshot, context):
@@ -421,7 +418,8 @@ def _publish_sample(cfg, sample, snapshot, limit):
         summary = split_originals(cfg, sample, query, snapshot, payload)
         provenance = {"schema": SCHEMA, "identity": identity, "created_utc": utcnow(),
                       "context": context, "query": query,
-                      "classifier": {"kraken": "Kraken native CPU, mmap of one shared database",
+                      "classifier": {"kraken": ("CPU mmap category hashes, per-minimizer union LCA before paired/confidence/hit-group decision"
+                                                if snapshot.get("layout") == "partitioned" else "Kraken native CPU, mmap of one shared database"),
                                      "kunpeng_full": "Kun-peng native direct CPU, private fully loaded index",
                                      "kunpeng_memory": "Kun-peng native splitr/annotate/resolve CPU, verified zero-hit completion"}[_engine(cfg)],
                       "classify_threads": cfg.get("classify_threads", 8),

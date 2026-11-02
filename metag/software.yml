@@ -1,0 +1,32 @@
+# Pinned installation inputs; consumed by install.sh setup workers.
+kraken:
+  source_tag: 2.17.2
+  source_commit: 8c190b1b668825935dbf6dee5f969227dc8269bb
+  source_repository: https://github.com/DerrickWood/kraken2
+  archive: kraken-source.tar.gz
+  sha256: a02b8f8365dc993851c7a5df943c1cfd6fb31f859a7883b3f790ab0b47612c5a
+  bytes: 290924
+  archive_origin: git archive of the verified upstream commit; no compiled objects
+    included
+  reported_version_note: The upstream tag 2.17.2 retains VERSION=2.17.1. Source commit
+    and checksum identify this build.
+kunpeng:
+  source_commit: 034dabb547956be472a412a1521a207c30afef99
+  source_tag: v0.7.13
+  source_repository: https://github.com/eric9n/Kun-peng
+  archive: kunpeng-source.tar.gz
+  sha256: e609ceea77ed82a0aefca092a0f4bd7ac04d3629855bd1f9a53e2058af5c1fc1
+  bytes: 1609109
+  binary_file: kun_peng-linux-x86_64
+  binary_sha256: f032d7ce33ab0216a3b4e889d6d5c91b8f586134f076419d1a2f974cce965714
+  binary_url: https://github.com/eric9n/Kun-peng/releases/download/v0.7.13/kun_peng-v0.7.13-centos7
+  binary_origin: Unmodified official CentOS7 x86_64 release asset; not a locally compiled
+    binary
+  binary_platform: linux-x86_64
+  binary_version: 0.7.13
+  dependencies_archive: kunpeng-dependencies.tar.gz
+  dependencies_sha256: 2769302ea74cd54f7523bb9c7ff60dcbb488633bb91d9645927c92a0341ce3d4
+  dependencies_bytes: 23171367
+  rust_test_toolchain: 1.90.0
+  dependency_origin: cargo vendor --locked --versioned-dirs using upstream Cargo.lock;
+    includes original dependency licenses

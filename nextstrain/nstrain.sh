@@ -22,7 +22,7 @@ Main options:
     --conda-env NAME  Environment [nextstrain]
     --min-length N  Minimum sequence length [11000]
     --view TRUE|FALSE  Open results viewer [FALSE]
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/nextstrain

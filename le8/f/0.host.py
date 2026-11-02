@@ -1164,7 +1164,9 @@ def main(args):
 		return
 	scope.mkdir(parents=True, exist_ok=True)
 	lock_key = hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:20]
-	with open("/tmp/le8-abm-" + lock_key + ".lock", "a") as lock:
+	lock_dir = args.analysis_root / "logs/locks"
+	lock_dir.mkdir(parents=True, exist_ok=True)
+	with open(lock_dir / ("le8-abm-" + lock_key + ".lock"), "a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
 		targets = {"abm_twin": scope / "abm_twin", "molecular_deviation": deviation_target}
 		todo = {name for name, target in targets.items() if args.replace == "TRUE" or not completed(target)}

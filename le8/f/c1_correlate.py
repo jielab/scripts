@@ -42,7 +42,7 @@ from c1_models import (InsufficientDevelopmentSupport, context, fit_glmnet,
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-VERSION = "LE8-C1-FINAL-2026-10-26"
+VERSION = "LE8-C1-FINAL-2026-11-02-count"
 BASELINE_COMMIT = "40a884324f30219f865e8a7a49ac9708a913e742"
 INSUFFICIENT_SUPPORT = "skipped_insufficient_development_support"
 INSUFFICIENT_REFERENCE = "skipped_insufficient_reference_support"
@@ -87,6 +87,8 @@ def sha_file(path):
 def parser():
     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     p.add_argument("--Y", default="cvd_cad,ra")
+    p.add_argument("--stage", choices=["all", "prepare", "association", "models", "evaluation"], default="all",
+                   help="Restartable DAG boundary; evaluation refuses to fit missing models")
     p.add_argument("--biom", default="prot,met")
     p.add_argument("--analysis-root", "--dir-analysis-root", type=Path,
         default=Path(os.getenv("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8")))
@@ -145,7 +147,7 @@ def public_plan(args, plan, base):
     methods = []
     for name in plan["methods"]:
         spec = get_method(name)
-        cfg = build_abm_config(name if spec.engine in {"twin", "prevalent_transfer", "torch_transformer"}
+        cfg = build_abm_config(name if spec.engine in {"twin", "twin_count", "prevalent_transfer", "torch_transformer"}
             else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
             seed=args.seed, cores=args.cores, parallel_workers=min(args.cores, 4),
             bootstrap=args.bootstrap, final_multiroute_release="")
@@ -191,10 +193,11 @@ def native_association(args):
     demo = "--demo" in shlex.split(args.host_args)
     if args.association == "skip" or (args.association == "auto" and (args.prepared_source or demo)):
         return {"status": "skipped_by_scope", "existing_outputs_preserved": True}
-    cmd = ["bash", str(HERE/"0.engine.sh"), "c1_correlate", "--Y", args.Y, "--biom", args.biom,
+    cmd = [sys.executable, str(HERE/"0.common.py"), "dispatch", "c1_correlate", "--Y", args.Y, "--biom", args.biom,
            "--analysis-root", str(args.analysis_root), "--r-bin", args.r_bin,
            "--cores", str(args.cores), "--seed", str(args.seed), "--replace", "TRUE" if replace_stage(args,"association") else "FALSE"]
     if args.ukb_phe: cmd += ["--ukb-phe", args.ukb_phe]
+    cmd += ["--memory-limit-gb", str(int(float(os.getenv("LE8_MEMORY_LIMIT_GB", "32"))))]
     env = os.environ.copy()
     env.pop("C1_MIN_CASES_WITH_BIOM", None)  # Scope admission must not invalidate R model caches.
     env["LE8_C1_STAGE"] = "c1_correlate" # only association; prediction handled below
@@ -256,6 +259,17 @@ def save_prepared(incident, deviation, audit, target):
 
 
 def prepare(args, plan, scope):
+    # An input bundle may be requested by two independently submitted plans.
+    # Lock only this scope's preparation; all other scopes remain independent.
+    directory = args.analysis_root / "logs/locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:20]
+    with (directory / f"prepare-{key}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _prepare(args, plan, scope)
+
+
+def _prepare(args, plan, scope):
     host = load_module("le8_unified_host", HERE/"0.host.py")
     if args.prepared_source:
         source = args.prepared_source.resolve()
@@ -344,7 +358,9 @@ NONSCIENTIFIC_CONFIG_KEYS = {"cores", "parallel_workers", "device", "requested_d
 
 
 def _canonical_model_config(value):
-    return json.loads(json.dumps({k:v for k,v in dict(value or {}).items()
+    value = dict(value or {})
+    value.setdefault("neighbor_weighting", "kernel")
+    return json.loads(json.dumps({k:v for k,v in value.items()
         if k not in NONSCIENTIFIC_CONFIG_KEYS}, sort_keys=True, default=str))
 
 
@@ -638,8 +654,10 @@ def evaluate_all(args, c, predictions, source, scope, run_receipt):
 def run_scope(args, plan, base):
     scope = args.analysis_root/args.Y/args.biom/"c1_correlate"
     scope.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:20]
-    with open(Path("/tmp")/("le8-unified-c1-"+key+".lock"), "a") as lock:
+    key = hashlib.sha256(str(scope.parent.resolve()).encode()).hexdigest()[:20]
+    lock_dir = args.analysis_root / "logs" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir/("le8-scope-"+key+".lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         args._c1_stage = "prepare"
         source, contract, _ = getattr(args, "_prepared_inputs", None) or prepare(args, plan, scope)
@@ -649,7 +667,8 @@ def run_scope(args, plan, base):
             seed=args.seed, cores=args.cores, parallel_workers=min(4,args.cores), bootstrap=args.bootstrap,
             grouping_unit=grouping, always_include_indices=clinical, final_multiroute_release="")
         try:
-            c = context(d, x, cfg)
+            count_only = all(get_method(name).engine == "twin_count" for name in plan["methods"])
+            c = context(d, x, cfg, required_roles={"build"} if count_only else None)
         except InsufficientDevelopmentSupport as error:
             return record_insufficient_support(args, plan, cfg, source, scope, error)
         source_fingerprint = {name:sha_file(source/name) for name in
@@ -661,7 +680,7 @@ def run_scope(args, plan, base):
         for name in plan["methods"]:
             args._c1_stage = name
             spec = get_method(name)
-            method_cfg = build_abm_config(name if spec.engine in {"twin","prevalent_transfer","torch_transformer"}
+            method_cfg = build_abm_config(name if spec.engine in {"twin","twin_count","prevalent_transfer","torch_transformer"}
                 else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
                 trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores,
                 parallel_workers=min(4,args.cores), bootstrap=args.bootstrap, grouping_unit=grouping,
@@ -702,11 +721,16 @@ def run_scope(args, plan, base):
             elif not replace_stage(args,"models") and completion(target,stored_signature):
                 print(f"[LE8] DONE C1 REUSE MODEL {name}: verified frozen model and projections", flush=True)
             else:
+                if getattr(args, "stage", "all") == "evaluation":
+                    raise RuntimeError(f"Evaluation requires a verified frozen {name} model; run models first")
                 print(f"[LE8] START C1 REFIT MODEL method={name} Y={args.Y} biom={args.biom}; device={device['actual']}; all shared test outcomes withheld",flush=True)
                 with tempfile.TemporaryDirectory(prefix=".fit-",dir=target.parent) as temp:
                     stage = Path(temp)/"result"
                     if spec.engine != "deviation": stage.mkdir()
-                    if name == "glmnet": fit_glmnet(method_context,stage,args.r_bin)
+                    if name == "abm_count":
+                        from c1_count import fit_count
+                        fit_count(method_context, stage)
+                    elif name == "glmnet": fit_glmnet(method_context,stage,args.r_bin)
                     elif name == "lightgbm": fit_lightgbm(method_context,stage)
                     elif spec.engine == "twin":
                         try:
@@ -741,9 +765,13 @@ def run_scope(args, plan, base):
                 predictions["abm_prevalent_control"] = abm.load_model(target/"nohistory_control/test_predictions_LOCAL_ONLY.joblib")
                 receipt["methods"]["abm_prevalent_control"] = dict(path=str(target/"nohistory_control"),
                     signature=signature,device=device,automatic_matched_ablation=True)
+        if getattr(args, "stage", "all") == "models":
+            abm.json_write(scope/"C1_MODELS_FROZEN.json", dict(version=VERSION, **receipt,
+                test_outcomes_used=False, status="models_frozen"))
+            return {}
         if predictions:
             # Freeze the new reliability heads before either evaluator opens test truth.
-            if "glmnet" in predictions:
+            if "glmnet" in predictions and getattr(args, "stage", "all") == "all":
                 args._c1_stage = "reliability"
                 from c1_evaluation import evaluate_scope, DEFAULT_COVERAGES, RISK_BINS, PRIMARY_COVERAGE
                 receipt["reliability"] = evaluate_scope(scope, args.bootstrap, args.seed,
@@ -775,7 +803,7 @@ def scope_support_preflight(args, plan, base):
     configs = []
     for name in plan["methods"]:
         spec = get_method(name)
-        configs.append(build_abm_config(name if spec.engine in {"twin", "prevalent_transfer", "torch_transformer"}
+        configs.append(build_abm_config(name if spec.engine in {"twin", "twin_count", "prevalent_transfer", "torch_transformer"}
             else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
             trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores, final_multiroute_release=""))
     cfg = configs[0]
@@ -783,7 +811,8 @@ def scope_support_preflight(args, plan, base):
            (cfg.horizon, cfg.feature_missing, cfg.sample_missing) for c in configs):
         raise ValueError("Methods must share the horizon and input QC contract")
     minimum = max(c.min_events for c in configs)
-    required = {"build", "tune_model", "calibration_fit"}
+    required = ({"build"} if all(get_method(name).engine == "twin_count" for name in plan["methods"])
+                else {"build", "tune_model", "calibration_fit"})
     if any(get_method(name).engine == "twin" for name in plan["methods"]):
         required.add("tune_gate")
     if "glmnet" in plan["methods"]:
@@ -888,10 +917,13 @@ def main(argv=None):
         raise ValueError("Omic layers must be prot and/or met")
     if args.prepared_source and ("," in args.Y or "," in args.biom):
         raise ValueError("A prepared source belongs to exactly one trait/layer")
+    if args.stage == "evaluation":
+        args.replace_models = "FALSE"
     plan, base = plan_and_base(args)
     if args.dry_run:
         print(json.dumps(public_plan(args,plan,base),indent=2)); return
-    dependencies(args,plan)
+    if args.stage in {"all", "models"} or args.preflight:
+        dependencies(args,plan)
     if args.preflight:
         if args.prepared_source:
             for name in ("development_LOCAL_ONLY.npz","test_X_LOCAL_ONLY.npz","test_truth_LOCAL_ONLY.npz","host_contract.json"):
@@ -913,9 +945,15 @@ def main(argv=None):
                 if support["status"] == INSUFFICIENT_SCOPE_SUPPORT:
                     skipped.append(f"{trait}/{layer}")
                     continue
+                if args.stage == "prepare":
+                    print(f"[LE8] DONE C1 prepare Y={trait} biom={layer}; no test truth read", flush=True)
+                    continue
                 stage = "association"
                 scoped._c1_stage = stage
-                native_association(scoped)
+                if args.stage in {"all", "association"}:
+                    native_association(scoped)
+                if args.stage == "association":
+                    continue
                 stage = "methods/evaluation"
                 with threadpool_limits(args.cores): result = run_scope(scoped,plan,base)
             except Exception as error:
@@ -952,10 +990,11 @@ def main(argv=None):
     if failed:
         print("[LE8] PARTIAL C1 SUMMARY: failed scopes: " + ", ".join(failed) +
               ". All remaining trait/layer scopes were attempted; resume with --replace FALSE.", flush=True)
-    from c1_report import write_reliability_cross_trait_summary, write_pgs_cross_trait_summary
-    for layer in args.biom.split(","):
-        write_reliability_cross_trait_summary(args.analysis_root, layer)
-        write_pgs_cross_trait_summary(args.analysis_root, layer)
+    if os.getenv("WORKFLOW_WORKER") != "1":
+        from c1_report import write_reliability_cross_trait_summary, write_pgs_cross_trait_summary
+        for layer in args.biom.split(","):
+            write_reliability_cross_trait_summary(args.analysis_root, layer)
+            write_pgs_cross_trait_summary(args.analysis_root, layer)
     # Signal failures only after the entire batch, so callers can detect them.
     return 1 if failed else 0
 

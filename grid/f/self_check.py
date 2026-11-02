@@ -15,8 +15,8 @@ def main(argv=None):
     root = Path(__file__).resolve().parents[1]
     started = time.monotonic()
     suite = unittest.TestSuite([
-        unittest.TestLoader().discover(str(root / 'tests'), pattern="test_*.py"),
-        unittest.TestLoader().discover(str(root / 'tests/abm'), pattern="test_*.py"),
+        unittest.TestLoader().discover(str(root / '2test'), pattern="test_*.py"),
+        unittest.TestLoader().discover(str(root / '2test/abm'), pattern="test_*.py"),
     ])
     with threadpool_limits(4):
         result = unittest.TextTestRunner(verbosity=1, buffer=True).run(suite)

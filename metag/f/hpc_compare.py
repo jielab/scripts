@@ -141,11 +141,8 @@ def _resources(before, after):
 
 
 def _snapshot(cfg):
-    if cfg.get("classifier_engine", "kraken") == "kraken":
-        from hpc_reference import database_snapshot
-    else:
-        from hpc_kunpeng_index import database_snapshot
-    return database_snapshot(cfg)
+    from hpc_common import engine_snapshot
+    return engine_snapshot(cfg)
 
 
 def run_case(cfg, case, case_dir, snapshot=None):

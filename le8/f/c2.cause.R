@@ -713,7 +713,7 @@ le8_execute_mrlink2 <- function(layer, rawdir, jobs, ygfile, mode = RUN_MRlink2)
 		ref_keep <- "" ; ref_samples <- ""
 	}
 	sh <- file.path(Sys.getenv("LE8_FDIR"), "c2.cause.sh")
-	python <- Sys.getenv('ABM_PYTHON',Sys.getenv('PYTHON_BIN','/home/huangj/anaconda3/envs/le8/bin/python3'))
+	python <- Sys.getenv('ABM_PYTHON',Sys.getenv('PYTHON_BIN','python3'))
     adapter <- file.path(Sys.getenv('LE8_FDIR'),'c2.parallel.py')
     # system2 quotes the executable itself; only quote individual arguments.
     status <- system2(python,shQuote(c(adapter,'--worker-script',sh,'--jobs',jobs_file,'--cad-gwas',ygfile,'--outdir',linkdir)))

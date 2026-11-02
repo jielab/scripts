@@ -34,7 +34,7 @@ Main options:
     --check-ibdmix  Check only the CPU IBDmix runtime (no installation)
     --check-references  Check reference inputs
     --dir-software DIR  Software installation root (see f/runtime.env)
-    -h, --help  Help; details: README.md
+    -h, --help  Show options and examples below
 
 Example:
     ./install.sh                 # GU software and environment

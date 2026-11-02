@@ -32,7 +32,7 @@ Main options:
     --dir-out DIR  Results [/mnt/d/analysis/phole]
     --train-frac N  Training fraction [0.80]
     --device auto|cpu|cuda  auto prefers available CUDA
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/phole

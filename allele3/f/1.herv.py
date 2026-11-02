@@ -1246,6 +1246,7 @@ def run_job(args, p):
         for command in steps:
             print(shlex.join(command))
         return
+    audit_census_source(args)
     require_library(args.library)
     legacy=Path('/mnt/d/analysis/metag/herv')/args.gen/args.sample
     if args.out == Path('/mnt/d/analysis/allele3/herv')/args.gen/args.sample and not (args.out/'prepared.json').exists() and (legacy/'prepared.json').exists():
@@ -1268,6 +1269,87 @@ def run_job(args, p):
         execute(args,steps,cpus)
 
 
+def audit_census_source(args):
+    """Check the selected fresh source or the actual prepared-model receipts.
+
+    A prepared run does not reopen the CLI's PGEN/VCF alternatives. Original
+    inputs may have moved; only identity-matching recorded metadata is sampled.
+    The assembly engine still verifies its FASTA SHA and model/chunk receipts.
+    """
+    from data_sources import IndexedReference, audit_entries, canonical_chrom, length_evidence, normalize_build
+    build = normalize_build(os.environ.get('ALLELE_ACTIVE_HERV_BUILD', os.environ.get('HERV_BUILD', 'unknown')))
+    entries = []
+    prepared_path = args.out/'prepared.json'
+    prepared = json.loads(prepared_path.read_text()) if prepared_path.is_file() else None
+    prepared_lengths = {}
+
+    def add_source(chrom, path, kind):
+        entries.append(dict(id=f'herv_selected_{args.effective_input}_{chrom}', type=kind,
+            path=str(path), build=build, evidence='selected_individual_source',
+            role='Personal variant-conditioned HERV sequence model; actual GT decoded by the census'))
+
+    if prepared is not None:
+        if prepared.get('input_source', 'vcf') != args.effective_input:
+            raise ValueError('Prepared source differs from the source selected by commands()')
+        for chrom in prepared['chromosomes']:
+            receipt = args.out/'variants'/chrom/'done.json'
+            saved = json.loads(receipt.read_text())['inputs']
+            prepared_lengths[canonical_chrom(chrom)] = int(saved['length'])
+            if args.effective_input == 'pgen':
+                state = saved.get('sources', {}).get('pvar', {})
+                path, size, mtime, kind = state.get('path'), state.get('bytes'), state.get('mtime_ns'), 'pvar'
+            else:
+                path, size, mtime, kind = saved.get('vcf'), saved.get('vcf_bytes'), saved.get('vcf_mtime_ns'), 'vcf'
+            if not path:
+                print(f'[dataset] HERV prepared {chrom}: original source path unrecorded; deferred; CLI alternatives are unused', flush=True)
+                continue
+            path = Path(path)
+            if path.is_file():
+                stat = path.stat()
+                if size is None or mtime is None or stat.st_size != size or stat.st_mtime_ns != mtime:
+                    print(f'[dataset] HERV prepared {chrom}: original source identity changed/unverified; deferred; cached model retained: {path}', flush=True)
+                    continue
+            # Missing original sources are reported as deferred by audit_entries;
+            # PGEN/PSAM presence is not required for prepared-model annotation.
+            add_source(chrom, path, kind)
+        evidence = length_evidence(prepared_lengths)
+        if build in {'37', '38'} and evidence['matches']['38' if build == '37' else '37']:
+            raise ValueError('Prepared reference chromosome lengths conflict with the declared HERV build')
+    else:
+        for number in range(1, 23):
+            chrom = 'chr'+str(number)
+            if args.effective_input == 'pgen':
+                path, kind = source_files(args.pfile_dir, chrom)['pvar'], 'pvar'
+            else:
+                path, kind = args.vcf_dir/(chrom+'.vcf.gz'), 'vcf'
+            add_source(chrom, path, kind)
+
+    # Check the current, actually used FASTA even when all historical sources
+    # are unavailable. Read its existing index only; do not rehash the genome.
+    reference = IndexedReference(str(args.fasta), build if build in {'37', '38'} else '38', 1000)
+    try:
+        if build in {'37', '38'} and reference.info['status'] == 'reference_label_conflict':
+            raise ValueError('Selected HERV FASTA canonical lengths conflict with the declared build')
+        if any(c in reference.lengths and reference.lengths[c] != length for c, length in prepared_lengths.items()):
+            raise ValueError('Current FASTA lengths differ from the prepared-model reference')
+        index_status = reference.info['status']
+        if build not in {'37', '38'} and index_status == 'reference_label_conflict':
+            index_status = 'canonical_lengths_observed_build_undeclared'
+        print(f'[build-check] HERV current FASTA: declared={build}; index_status={index_status}; '
+              'full FASTA SHA/model receipts remain checked by the assembly engine', flush=True)
+    finally:
+        reference.close()
+    fasta37 = str(args.fasta) if build == '37' else os.environ.get('ALLELE_FASTA37', '/mnt/f/gen/1hgp/37/GRCH37.fasta.gz')
+    fasta38 = str(args.fasta) if build == '38' else os.environ.get('ALLELE_FASTA', '/mnt/f/gen/1hgp/38/GRCH38.fasta.gz')
+    print(f'[dataset] HERV selected input={args.effective_input}; prepared={prepared is not None}; declared build={build}; FASTA={args.fasta}', flush=True)
+    if not entries:
+        print('[dataset] HERV prepared model: no identity-matching original metadata to sample; original-source audit deferred', flush=True)
+        return
+    report = audit_entries(entries, out=None, fasta37=fasta37, fasta38=fasta38, max_records=1000, max_sites=100)
+    if report.get('has_conflicts'):
+        raise ValueError('Selected HERV genotype/reference build conflicts; census was not started')
+
+
 def execute(args,steps,cpus):
     os.sched_setaffinity(0,cpus)
     os.nice(5)
@@ -1281,7 +1363,9 @@ def execute(args,steps,cpus):
             subprocess.run(command,check=True)
         result=json.loads((args.out/'genome_fraction.json').read_text())
         with (args.out/'variant_summary.tsv').open() as f:variants=list(csv.DictReader(f,delimiter='\t'))
-        lines=[result['settings']['sample']+' / GRCh38 autosomal RepeatMasker census',
+        lines=[result['settings']['sample']+' / autosomal RepeatMasker census',
+               'Reference FASTA: '+str(args.fasta),
+               'Reference FASTA SHA256: '+result['settings']['fasta_sha256'],
                'Sequence-based annotation; variant-conditioned haplotypes, not complete independent assemblies.',
                'Unresolved spans were masked with N. Unknown inserted sequence lengths remain unknown.',
                '', 'label\tERV_with_MaLR_percent_model_length\tERV_with_MaLR_percent_non_N']
@@ -1357,8 +1441,8 @@ def main_plot(argv=None):
     rows=collect(a.run); refrows=collect(a.run,labels=("reference",)); vals=[r[-1] for r in rows if r[-1]>0]
     with gzip.open(out/"herv_union_segments.tsv.gz","wt") as f:
         w=csv.writer(f,delimiter="\t",lineterminator="\n");w.writerow(["haplotype","chrom","start","end","length_bp","coordinate_system"]);w.writerows([list(r)+["personalized_haplotype"] for r in rows])
-    with gzip.open(out/"reference_herv_segments.GRCh38.tsv.gz","wt") as f:
-        w=csv.writer(f,delimiter="\t",lineterminator="\n");w.writerow(["label","chrom","start","end","length_bp","coordinate_system"]);w.writerows([list(r)+["GRCh38_reference"] for r in refrows])
+    with gzip.open(out/"reference_herv_segments.reference.tsv.gz","wt") as f:
+        w=csv.writer(f,delimiter="\t",lineterminator="\n");w.writerow(["label","chrom","start","end","length_bp","coordinate_system"]);w.writerows([list(r)+["input_reference"] for r in refrows])
     with open(out/"herv_length_summary.tsv","wt") as f:
         w=csv.writer(f,delimiter="\t");w.writerow(["n","median","q25","q75","q95","max"])
         w.writerow([len(vals),q(vals,.5),q(vals,.25),q(vals,.75),q(vals,.95),max(vals) if vals else "NA"])
@@ -1371,7 +1455,7 @@ def main_plot(argv=None):
         fig,ax=plt.subplots(figsize=(8,5));ax.hist(vals,bins=bins,density=True)
         ax.set_xscale("log");ax.set(xlabel="Merged HERV/ERV segment length (bp, log scale)",ylabel="Density",title="HERV/ERV segment-length density")
         fig.tight_layout();fig.savefig(out/"herv_length_density.png",dpi=220,bbox_inches="tight");fig.savefig(out/"herv_length_density.pdf",bbox_inches="tight");plt.close(fig)
-    (out/"manifest.json").write_text(json.dumps({"personalized_segments":len(rows),"reference_segments":len(refrows),"definition":"merged ERV_with_MaLR union segments; hap1/hap2 are personalized coordinates, reference is GRCh38"},indent=2)+"\n")
+    (out/"manifest.json").write_text(json.dumps({"personalized_segments":len(rows),"reference_segments":len(refrows),"definition":"merged ERV_with_MaLR union segments; hap1/hap2 are personalized coordinates; reference coordinates use the FASTA recorded in this census run"},indent=2)+"\n")
 
 
 # ========================================================================
@@ -1542,3 +1626,4 @@ if __name__ == '__main__':
     except (ValueError, OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f'herv: {exc}', file=sys.stderr)
         raise SystemExit(2)
+

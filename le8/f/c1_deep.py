@@ -1021,7 +1021,9 @@ def main():
     target = args.analysis_root / args.Y / args.biom / "c1_abm_GPU"
     target.parent.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(str(target.resolve()).encode()).hexdigest()[:20]
-    with open(f"/tmp/le8-gpu-{key}.lock", "a") as lock:
+    lock_dir = args.analysis_root / "logs/locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir / f"le8-gpu-{key}.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         source = target.parent / "c1_abm/abm_twin"
         data, cpu_model, audit, receipt = load_cpu_inputs(source,args,cfg)

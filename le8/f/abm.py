@@ -167,6 +167,7 @@ class Config:
 	min_family_ess: float = 15.0
 	radius_quantile: float = 0.9
 	prior_strength: float = 20.0
+	neighbor_weighting: str = "kernel"  # legacy default; abm_count explicitly uses uniform
 	gate_iterations: int = 120
 	min_censor_survival: float = 0.05
 	min_events: int = 20
@@ -194,6 +195,8 @@ class Config:
 			raise ValueError("Unknown pruning mode")
 		if self.geometry not in {"coefficient_panel", "all_molecular_pca", "all_molecular"}:
 			raise ValueError("Unknown molecular geometry")
+		if self.neighbor_weighting not in {"uniform", "kernel"}:
+			raise ValueError("neighbor_weighting must be uniform or kernel")
 		if self.panel_selection not in {"pilot", "all"}:
 			raise ValueError("Unknown panel selection policy")
 		if self.technical_qc_scope not in {"legacy_panel", "assay"}:
@@ -636,7 +639,7 @@ def _parallel_fits(function, tasks, config, matrix_bytes, label):
 	              max(1, int((limit - parent - 2.0) / per_worker)))
 	print(f"[LE8] ABM {label}: {len(tasks)} tasks, {workers} processes; "
 	      f"one thread/worker; phase budget={limit:g} GiB", flush=True)
-	with tempfile.TemporaryDirectory(prefix="le8-abm-workers-", dir="/tmp") as tmp:
+	with tempfile.TemporaryDirectory(prefix="le8-abm-workers-", dir=os.getenv("TMPDIR", "/tmp")) as tmp:
 		with threadpool_limits(limits=1), parallel_config(backend="loky", inner_max_num_threads=1):
 			return Parallel(n_jobs=workers, max_nbytes="1M", mmap_mode="r",
 			                temp_folder=tmp, pre_dispatch=workers)(
@@ -952,7 +955,12 @@ class TwinBank:
 			raise ValueError("Collapsed matching geometry")
 		return self
 
-	def predict(self, X, ids, groups, fallback):
+	def predict(self, X, ids, groups, fallback, *, evidence=None):
+		"""Project frozen queries; optional evidence(query_row, donor_rows) is local-only.
+
+		The callback receives the exact donors/weights used, before any downstream
+		calibration. It never receives query outcomes. Existing callers are unchanged.
+		"""
 		if self.radius is None:
 			raise RuntimeError("Radius is not frozen")
 		z = self.pca.transform(X) / np.sqrt(self.pca.n_components_)
@@ -973,12 +981,18 @@ class TwinBank:
 				"nearest_radius_ratio",
 				"label_disagreement",
 				"borrow_fraction",
+				"matched_case_count",
+				"matched_control_count",
+				"weighted_case_mass",
+				"weighted_total_mass",
+				"local_event_rate",
 			)
 		}
 		out["donor_loss"].fill(10.0)
 		out["radius_ratio"].fill(100.0)
 		out["nearest_radius_ratio"].fill(100.0)
 		out["matching_radius"].fill(self.radius)
+		out["local_event_rate"].fill(np.nan)
 		# Denominator excludes self and the query's family, exactly as matching does.
 		# Compute lookup maps once, including when reading a legacy frozen bank.
 		valid_reference = np.asarray(self.w) > 0
@@ -1014,14 +1028,20 @@ class TwinBank:
 				order = np.lexsort((self.ids[idx], ds))[: self.config.k]
 				idx = idx[order]
 				ds = ds[order]
-				weight = np.exp(-0.5 * (ds / self.radius) ** 2) * self.w[idx]
-				weight /= weight.sum()
+				kernel = (np.ones(len(ds)) if getattr(self.config, "neighbor_weighting", "kernel") == "uniform"
+					else np.exp(-0.5 * (ds / self.radius) ** 2))
+				raw_weight = kernel * self.w[idx]
+				weight = raw_weight / raw_weight.sum()
 				_, inv = np.unique(self.groups[idx], return_inverse=True)
 				fw = np.bincount(inv, weights=weight)
 				ess, fess = 1 / np.sum(weight**2), 1 / np.sum(fw**2)
 				local = float(weight @ self.y[idx])
 				borrowing = fess / (fess + self.config.prior_strength)
 				prob[i] = borrowing * local + (1 - borrowing) * fallback[i]
+				if evidence is not None:
+					evidence(i, dict(donor_eid=self.ids[idx], donor_group=self.groups[idx],
+						distance=ds, kernel_weight=kernel, ipcw_weight=self.w[idx],
+						normalized_weight=weight, donor_outcome=self.y[idx]))
 				for name, value in dict(
 					matched_count=len(idx),
 					family_count=len(fw),
@@ -1032,6 +1052,11 @@ class TwinBank:
 					nearest_radius_ratio=ds[0] / self.radius,
 					label_disagreement=local * (1 - local),
 					borrow_fraction=borrowing,
+					matched_case_count=float(np.sum(self.y[idx])),
+					matched_control_count=float(np.sum(self.y[idx] == 0)),
+					weighted_case_mass=float(raw_weight @ self.y[idx]),
+					weighted_total_mass=float(raw_weight.sum()),
+					local_event_rate=local,
 				).items():
 					out[name][i] = value
 		out["supported"] = (out["matched_count"] >= self.config.min_twins) & (

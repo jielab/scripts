@@ -24,7 +24,7 @@ Main options:
     --dir-arg DIR --dir-gen4arg DIR  Isolated ARG and preparation outputs
     --resource-guard auto|systemd|scheduler|ulimit  Resource control [auto]
     --memory-limit-gb N --memory-swap-gb N  Local limits [32 / 4]
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd gu

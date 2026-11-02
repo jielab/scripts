@@ -18,7 +18,7 @@ Modules:
 
 Main options:
     -o FILE  Output PDF [merged.pdf]
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     ls -1v *.png | /mnt/d/scripts/0f/img2pdf.sh -o figures.pdf

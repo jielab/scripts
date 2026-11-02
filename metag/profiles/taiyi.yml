@@ -1,0 +1,20 @@
+# Fallback if migration/quota is not ready. The supplied sheet lists two smp
+# nodes; job sharing and concurrency depend on actual scheduler policy.
+schema: 1
+root: /data/sph-huang
+setup_queue: ser
+prepare_queue: ser
+category_resources:
+  viruses: {queue: ser, cores: 8, threads: 8, memory_gib: 48, hours: 120}
+  microbes: {queue: smp, cores: 32, threads: 32, memory_gib: 448, hours: 120}
+  plants: {queue: smp, cores: 64, threads: 64, memory_gib: 896, hours: 120}
+  invertebrates: {queue: smp, cores: 64, threads: 64, memory_gib: 896, hours: 120}
+  vertebrates: {queue: smp, cores: 64, threads: 64, memory_gib: 1792, hours: 120}
+classify_queue: smp
+classify_cores: 96
+classify_threads: 30
+classify_workers: 3
+classify_memory_gib: 5120
+classify_hours: 120
+classify_concurrency: 1
+compare_summary_queue: ser

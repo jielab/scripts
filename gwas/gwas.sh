@@ -34,7 +34,7 @@ Main options:
     --covariate-file FILE  Shared fallback for both types (default: phenotype file)
     Without separate files: continuous=age,sex,tdi,PC1,PC2,PC3,PC4; categorical=none.
     --sparse-grm TRUE|FALSE  Sparse relatedness matrix
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/gwas

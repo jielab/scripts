@@ -27,7 +27,7 @@ Main options:
     --input FILE --label NAME  PGS input and label
     --dir-pgs-pfile DIR  PGS genotypes [/mnt/f/gen/ukb/38/imp]
     --background  Explicit cluster submission for pgs/snp/apoe
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/ukb

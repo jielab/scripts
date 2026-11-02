@@ -314,7 +314,7 @@ Modules:
 Main options:
     --in FILE --ref FILE --out FILE  Target, reference and output
     --threads N  Worker threads
-    -h, --help  Help; allele requirements: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     # Optional thread override for exact ancestral-allele transfer:
@@ -432,7 +432,7 @@ Modules:
 
 Main options:
     ukb --help / ancestral --help  Subcommand options
-    -h, --help  Help; detailed preparation recipes: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     ./gu.sh ukb inspect-pgen --help

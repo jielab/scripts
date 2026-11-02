@@ -2,7 +2,7 @@
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../0f" && pwd)/cli_dirs.sh"
     script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
@@ -11,6 +11,25 @@ fi
 # CIGMA uses a separate environment because its pandas/scipy requirements differ.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+LE8_ROOT=$ROOT
+source "$ROOT/../0f/workflow_env.sh"
+workflow_init le8 "$@"
+set -- "${WORKFLOW_ARGS[@]}"
+source "$ROOT/f/runtime_env.sh"
+if [[ -z ${CONDA_EXE:-} && -x $OS_GU_CONDA/bin/conda ]]; then
+    export CONDA_EXE=$OS_GU_CONDA/bin/conda
+fi
+if [[ ${WORKFLOW_WORKER:-0} != 1 ]]; then
+    inspect_only=FALSE
+    for option in "$@"; do
+        case "$option" in -h|--help|--print-environment) inspect_only=TRUE ;; esac
+    done
+    if [[ $inspect_only != TRUE ]]; then
+        # The environment being created need not contain Python yet.
+        export WORKFLOW_PYTHON=${LE8_PLANNER_PYTHON:-python3}
+        exec "${LE8_PLANNER_PYTHON:-python3}" "$ROOT/f/hpc_workflow.py" install "$@"
+    fi
+fi
 
 # Standard Conda YAML, printed on demand; pip/cran comments select light installs.
 environment_recipe() {
@@ -64,11 +83,13 @@ Modules:
     --env le8|cigma  Create/update a complete Conda environment
 
 Main options:
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE  Scheduled installation
+    --plan-only --plan-dir DIR --queue NAME --hours N  Reviewable .cmd plan
     --python FILE --r-bin FILE  Interpreters
     --no-r  Skip R packages
     --print-environment le8|cigma  Print environment recipe
     --dry-run  Print commands without installing
-    -h, --help  Help; isolated CIGMA setup: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     # Dependency groups (choose the group needed for this installation):
@@ -100,7 +121,10 @@ if [[ $mode == conda ]]; then
     run "$conda_bin" env update --name "$environment_name" --file "$requirement_file"
     exit 0
 fi
-if ! command -v "$python_bin" >/dev/null 2>&1; then python_bin=python3; fi
+if ! command -v "$python_bin" >/dev/null 2>&1; then
+    echo "ERROR: selected Python does not exist: $python_bin. Create its environment or supply --python." >&2
+    exit 2
+fi
 environment_recipe le8 | awk -v profile="$profile" '
   / # pip:/ {
     split($0, fields, " # pip:"); group=fields[2]; package=fields[1]

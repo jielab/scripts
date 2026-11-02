@@ -19,7 +19,7 @@ Modules:
 
 Main options:
     Arguments follow the selected helper.
-    -h, --help  Help; public workflow: ../0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     ./gwas.sh -h

@@ -127,7 +127,9 @@ def main(argv=None):
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--label", choices=("pipeline", "run", "scan", "evolve", "herv", "pca3d", "population", "population-1kg", "prepare-archaic", "enrich", "herv-cohort", "pca-centroid", "focused-report",
         "scan-plan", "scan-adopt", "scan-verify", "scan-run", "baseline", "archaic", "summary", "spatial", "windows",
-        "alleles", "time", "selection", "candidates", "genotypes", "ld", "report"), required=True)
+        "alleles", "time", "selection", "candidates", "genotypes", "ld", "report",
+        "research-balance", "research-space", "research-domains", "research-cohort", "research-archaic-alleles",
+        "research-data", "research-allofus", "research-mfi", "research-panel", "research-mapped-targets", "pca-trajectory"), required=True)
     parser.add_argument("--interval", type=int, default=300)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -147,3 +149,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

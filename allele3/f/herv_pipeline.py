@@ -204,17 +204,18 @@ def plan(args, paths, names):
         ("herv_primary.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py"),
         ("numpy", "matplotlib"), manifest="primary_manifest.json")
     commands["summary"] = Stage("summary", [py, str(SOURCE / "herv_modern.py"), "summary", "--modern-dir", str(modern),
-        "--out", str(out / "summary"), "--bootstrap", str(args.bootstrap), "--seed", str(args.seed), "--min-training-sites", str(args.min_training_sites), "--min-support", str(args.min_support)],
+        "--out", str(out / "summary"), "--bootstrap", str(args.bootstrap), "--seed", str(args.seed), "--min-training-sites", str(args.min_training_sites), "--min-support", str(args.min_support),
+        "--archaic-references", args.archaic_references],
         modern_files(modern, "summary") if "summary" in names else [], out / "summary", ("herv_modern.py", "scan.py", "scan_store.py", "0.common.py"), ("numpy", "scipy", "matplotlib"), manifest="summary_manifest.json")
     if "archaic" in names:
         from herv_archaic import discover, modern_inputs
-        datasets = discover(args.archaic_root, args.archaic_datasets, args.archaic_module, args.archaic_chromosomes)
+        datasets = discover(args.archaic_root, args.archaic_datasets, args.archaic_module, args.archaic_chromosomes, args.archaic_references)
         ready = [d for d in datasets if d['status'] == 'ready']
         needs_lift = any(d['build'] != '38' for d in ready)
         cache = args.archaic_cache or str(modern.with_name(modern.name + '-archaic'))
         archaic_cmd = [py, str(SOURCE / 'herv_archaic.py'), '--gu-root', args.archaic_root,
             '--datasets', args.archaic_datasets, '--module', args.archaic_module,
-            '--chromosomes', args.archaic_chromosomes,
+            '--chromosomes', args.archaic_chromosomes, '--references', args.archaic_references,
             '--modern-dir', str(modern), '--out', str(out/'archaic'), '--cache-dir', cache,
             '--chain', args.chain37to38, '--liftover', args.archaic_liftover, '--bcftools', args.bcftools,
             '--min-lod', str(args.archaic_min_lod), '--min-length', str(args.archaic_min_length),
@@ -518,10 +519,11 @@ def parser():
     p.add_argument("--kg-min-ac", type=int, default=2)
     p.add_argument('--archaic-root', default=os.environ.get('ALLELE_ARCHAIC_ROOT', '/mnt/f/analysis/gu'))
     p.add_argument('--archaic-datasets', default=os.environ.get('ALLELE_ARCHAIC_DATASETS', '1kg'), help='Comma-separated names/globs [default: %(default)s]; auto selects all complete 1kg/ukbNNN datasets')
+    p.add_argument('--archaic-references', default='Altai,Chagyr,Denisova,Denisova25,Vindija', help='Explicit tested reference set; .2013 references are opt-in only')
     p.add_argument('--archaic-module', choices=('auto', 'ibdmix', 'ibdmix-GPU'), default='auto')
     p.add_argument('--archaic-chromosomes', default='auto', help='auto includes available X/Y separately; or autosomes,X,Y / X,Y / X / Y')
     p.add_argument('--archaic-cache', default=os.environ.get('ALLELE_ARCHAIC_CACHE'), help='Persistent per-cohort products; default SCAN-DIR-archaic')
-    p.add_argument('--archaic-liftover', default='/mnt/d/software/bin/liftOver')
+    p.add_argument('--archaic-liftover', default=os.environ.get('ALLELE_ARCHAIC_LIFTOVER', '/mnt/d/software/bin/liftOver'))
     p.add_argument('--archaic-min-lod', type=float, default=4.)
     p.add_argument('--archaic-min-length', type=int, default=50000)
     p.add_argument('--archaic-carrier-thresholds', default='0.01,0.05,0.10,0.20')
@@ -552,3 +554,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -10,7 +10,7 @@ case "$submit" in local|hpc) ;; *) echo 'submit must be local or hpc' >&2; retur
 export submit SUBMIT="$submit"
 if [[ $submit == local ]]; then jobs_N=${jobs_N:-1}; else jobs_N=${jobs_N:-8}; fi
 export jobs_N
-[[ $jobs_N =~ ^[1-8]$ ]] || { echo 'jobs_N must be 1..8' >&2; return 2; }
+[[ $jobs_N =~ ^[1-9][0-9]*$ ]] && (( jobs_N <= 10000 )) || { echo 'jobs_N must be an integer in 1..10000' >&2; return 2; }
 export DATE_SCRATCH=${DATE_SCRATCH:-2026-10-31}
 export SCRIPTS_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [[ $submit == hpc ]]; then

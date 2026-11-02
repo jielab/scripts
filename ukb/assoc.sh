@@ -21,7 +21,7 @@ Main options:
     --Xs CSV --Ys CSV  Exposures and outcomes
     --varX CSV  Covariates
     --type TYPE  Outcome type
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/ukb

@@ -37,7 +37,7 @@ Main options:
     OUT/rebuild_v2/logs/  Run status/STOP, partition errors and native PLINK logs
     MIN_FREE_GB=N  Filesystem/group-quota reserve, decimal GB [100]
     LD_QUEUE=short|spec  Submission queue [short]
-    -h, --help  Help; details: 0.README.md beside this script
+    -h, --help  Show options and examples below beside this script
 
 Usage examples:
     cd /work/sph-huangj/scripts/ld

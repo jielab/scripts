@@ -31,7 +31,7 @@ Main options:
     GRCH defaults to 37 when no input/output paths are supplied
     --dir-root DIR --jobs N  Download root and workers
     --dir-in DIR --dir-out DIR --chain-file FILE  BED liftover
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     # 1KG: phased VCF -> PGEN/BED; also split non-PAR X by sex for GU.

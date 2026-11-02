@@ -186,7 +186,7 @@ def write_rds(data, path):
 	path.parent.mkdir(parents=True, exist_ok=True)
 	frame = data.copy()
 	for column in frame:
-		if str(frame[column].dtype) in {"string", "category"}:
+		if pd.api.types.is_string_dtype(frame[column].dtype) or isinstance(frame[column].dtype, pd.CategoricalDtype):
 			frame[column] = frame[column].astype(object)
 		elif frame[column].dtype == np.dtype("float32"):
 			frame[column] = frame[column].astype(float)

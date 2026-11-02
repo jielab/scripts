@@ -883,7 +883,7 @@ def compare_scope(root, trait, layer, bootstrap=200, seed=2026, check=False):
 
 def comparison_main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--analysis-root',type=Path,default=Path('/mnt/d/analysis/le8'))
+    p.add_argument('--analysis-root',type=Path,default=Path(os.getenv('LE8_ANALYSIS_ROOT', '/mnt/d/analysis/le8')))
     p.add_argument('--Y',required=True);p.add_argument('--biom',default='prot,met')
     p.add_argument('--bootstrap',type=int,default=200);p.add_argument('--seed',type=int,default=2026)
     p.add_argument('--check',action='store_true');a=p.parse_args()

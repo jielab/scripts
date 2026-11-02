@@ -33,7 +33,7 @@ Main options:
     --run-cv TRUE|FALSE  Cross-validation [TRUE]
     --check-gpu  Validate GPU only
     --dir-analysis DIR  Results [/mnt/d/analysis/ems120]
-    -h, --help  Help; details: 0.README.md
+    -h, --help  Show options and examples below
 
 Example:
     cd /mnt/d/scripts/ems120

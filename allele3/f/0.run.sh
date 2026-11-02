@@ -2,6 +2,9 @@
 # Shared process-tree limits and logging for the three root entry points.
 
 fail() { printf '%s: %s\n' "${WORKFLOW_NAME:-allele3}" "$*" >&2; exit 2; }
+source "$ROOT/f/0.execution.sh"
+allele_execution_init "$@"
+set -- "${ALLELE_EXECUTION_ARGS[@]}"
 # Help remains available even when an explicitly configured path is missing.
 _allele_help=0
 for _allele_arg in "$@"; do
@@ -38,6 +41,7 @@ verify_limits() {
 launch_workflow() {
     local command=$1 python=$2 entry=$3 out=$4 memory=$5 screen_interval=$6
     local verbose_screen=$7 dry_run=$8 logged=$9 native_help=${10}
+    local log_dir=${WORKFLOW_LOG_DIR:-"$out/logs"}
     shift 10
     local -a args=("$@")
     local _path_index _path_option
@@ -51,7 +55,7 @@ launch_workflow() {
     if ((dry_run)); then
         printf 'MemoryMax=%s GiB; MemorySwapMax=0; OOMPolicy=kill; output=%s\n' "$memory" "$out"
         if ((logged)); then
-            printf 'Screen progress interval=%ss; verbose=%s; full logs=%s/logs/\n' "$screen_interval" "$verbose_screen" "$out"
+            printf 'Screen progress interval=%ss; verbose=%s; full logs=%s/\n' "$screen_interval" "$verbose_screen" "$log_dir"
         fi
         printf '%q ' "$python" "$entry" "${args[@]}"; printf '\n'
         return 0
@@ -65,6 +69,19 @@ launch_workflow() {
     export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
     export MPLCONFIGDIR=${MPLCONFIGDIR:-"$HOME/.cache/allele3-evolution/matplotlib"}
     if ((native_help)); then exec "$python" "$entry" "${args[@]}"; fi
+    local -a launch=("$python" "$ROOT/f/workflow_data_check.py" --workflow "$command" --
+        "$python" "$entry" "${args[@]}")
+    if ((logged)); then
+        local -a console=("$python" "${WORKFLOW_CONSOLE:-$ROOT/f/0.log.py}" --log-dir "$log_dir"
+            --label "$command" --interval "$screen_interval")
+        ((verbose_screen == 0)) || console+=(--verbose)
+        launch=("${console[@]}" -- "${launch[@]}")
+    fi
+    if [[ ${ALLELE_BATCH_WORKER:-0} == 1 && ${submit:-local} == hpc ]]; then
+        workflow_memory_check "$memory"
+        printf '[allocation] LSF job=%s cores=%s budget=%s GiB; scheduler-controlled worker\n' "$LSB_JOBID" "$ALLELE_ALLOCATED_CORES" "$ALLELE_ALLOCATED_MEMORY_GIB" >&2
+        exec "${launch[@]}"
+    fi
     # Non-login WSL terminals may omit these despite a running user manager.
     export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
     export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}
@@ -75,13 +92,6 @@ launch_workflow() {
     local unit
     unit="allele3-$(date +%s)-$$-$RANDOM"
     printf '[allele3] command=%s output=%s RAM=%s GiB swap=0\n' "$command" "$out" "$memory" >&2
-    local -a launch=("$python" "$entry" "${args[@]}")
-    if ((logged)); then
-        local -a console=("$python" "${WORKFLOW_CONSOLE:-$ROOT/f/0.log.py}" --log-dir "$out/logs"
-            --label "$command" --interval "$screen_interval")
-        ((verbose_screen == 0)) || console+=(--verbose)
-        launch=("${console[@]}" -- "${launch[@]}")
-    fi
     # The kernel charges the parent AND all descendants to the same cgroup.
     # The inner guard verifies the effective limits before launching Python.
     exec systemd-run --user --scope --quiet --unit="$unit" \
@@ -94,6 +104,10 @@ workflow_python() {
     local requested=$1 candidate
     shift
     if [[ -n $requested ]]; then printf '%s\n' "$requested"; return; fi
+    if [[ ${submit:-local} == hpc ]]; then
+        printf '%s\n' "${DIR_WORK}/.conda/envs/allele3-evolution/bin/python"
+        return
+    fi
     if [[ -n ${CONDA_PREFIX:-} && ${CONDA_DEFAULT_ENV:-} != base && -x $CONDA_PREFIX/bin/python ]]; then
         printf '%s\n' "$CONDA_PREFIX/bin/python"; return
     fi
@@ -113,8 +127,11 @@ workflow_launch() {
     shift 9
     positive_integer --memory-limit-gb "$memory"
     positive_integer --screen-log-interval "$interval"
-    ((memory <= 32)) || fail 'Memory cap must be at most 32 GiB on this shared host'
+    workflow_memory_check "$memory"
     export WORKFLOW_NAME=$label
     launch_workflow "$label" "$python" "$entry" "$out" "$memory" "$interval" \
         "$verbose" "$dry_run" "$logged" "$((1-logged))" "$@"
 }
+
+allele_execution_dispatch "$@"
+

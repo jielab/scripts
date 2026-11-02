@@ -49,6 +49,9 @@ def input_states(sample):
 
 
 def validate_snapshot(snapshot):
+    if snapshot.get("layout") == "partitioned":
+        from partitioned_build import validate_snapshot as validate_union
+        return validate_union(snapshot)
     if snapshot.get("status") != "complete" or not snapshot.get("identity"):
         raise RuntimeError("Only a complete database snapshot can be queried")
     db, tax = Path(snapshot["db_dir"]), Path(snapshot["taxonomy_dir"])
@@ -70,12 +73,15 @@ def validate_snapshot(snapshot):
 
 
 def resolve_native(cfg):
-    native = Path(cfg["tools_dir"]) / "kraken/bin/classify"
+    relative = "metag_union/bin/metag_classify" if cfg.get("database_layout", "single") == "partitioned" else "kraken/bin/classify"
+    native = Path(cfg["tools_dir"]) / relative
     native = native.resolve(strict=True)
     if not native.is_file() or not os.access(native, os.X_OK):
         raise RuntimeError(f"Native Kraken classify is not executable: {native}")
     probe = subprocess.run([str(native), "-h"], capture_output=True, text=True, timeout=15)
     help_text = probe.stdout + probe.stderr
+    if cfg.get("database_layout", "single") == "partitioned" and "--metag-hashes" not in help_text:
+        raise RuntimeError("Native classifier does not support the partitioned union catalog")
     # Upstream prints -c and -M on the same help line: do not anchor at line start.
     if probe.returncode or any(not re.search(r"(?:^|\s)-" + flag + r"(?:\s|$)", help_text)
                               for flag in ("H", "t", "o", "p", "T", "g", "Q", "S", "M")):
@@ -91,9 +97,15 @@ def classifier_command(native, snapshot, cfg, paired):
     if threads < 1 or groups < 1 or quality < 0 or not math.isfinite(confidence) or not 0 <= confidence <= 1:
         raise ValueError("Invalid classification threads/confidence/hit groups/base quality")
     db = Path(snapshot["db_dir"])
-    command = [str(native), "-H", str(db / "hash.k2d"), "-t", str(db / "taxo.k2d"),
+    union = snapshot.get("layout") == "partitioned"
+    if union != (cfg.get("database_layout", "single") == "partitioned"):
+        raise RuntimeError("Classifier layout and database snapshot disagree")
+    first_hash = snapshot["hashes"][0] if union else "hash.k2d"
+    command = [str(native), "-H", str(db / first_hash), "-t", str(db / "taxo.k2d"),
                "-o", str(db / "opts.k2d"), "-M", "-p", str(threads), "-T", str(confidence),
                "-g", str(groups), "-Q", str(quality)]
+    if union:
+        command += ["--metag-hashes", str(db / "hashes.txt")]
     if paired:
         command.append("-S")
     return command  # No filename: stdin. -P would instead require two input files.

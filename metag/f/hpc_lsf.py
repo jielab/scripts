@@ -34,7 +34,7 @@ _FIELDS = (
     "LSB_CGROUP_MEM_INCLUDE_CACHE", "LSB_JOB_MEMLIMIT", "LSB_RESOURCE_ENFORCE",
     "LSF_REPLACE_PIM_WITH_LINUX_CGROUP", "EGO_PIM_SWAP_REPORT", "MEMLIMIT",
     "RUNLIMIT", "SWAPLIMIT", "RES_REQ", "RESRSV_LIMIT", "UJOB_LIMIT",
-    "QJOB_LIMIT", "HJOB_LIMIT",
+    "QJOB_LIMIT", "HJOB_LIMIT", "ABS_RUNLIMIT",
 )
 _INDEX = "__LSB_JOBINDEX__"
 
@@ -156,7 +156,6 @@ def write_cmd(cfg, path, kind, command, job_name, array=None):
         "",
         "set -euo pipefail",
         "export submit=" + shlex.quote(os.environ.get('submit', 'hpc')) + " WORKFLOW_WORKER=1",
-        "export DATE_SCRATCH=" + shlex.quote(os.environ.get('DATE_SCRATCH', '2026-10-31')),
         "export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1",
         "export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1",
         f"cd -- {shlex.quote(str(code_root))}",
@@ -223,10 +222,15 @@ def _site_config_paths():
 def doctor(cfg):
     """Inspect local LSF commands and files only; return report without writing it."""
     timeout = min(60.0, float(_number(cfg.get("doctor_timeout_seconds", 15), "doctor_timeout_seconds")))
-    queues = sorted({_settings(cfg, kind)[0] for kind in ("prepare", "build", "classify", "convert")}
-                    | {str(cfg.get(f"{mode}_queue", "ser")) for mode in ("kunpeng_full", "kunpeng_memory")})
+    queues = {_settings(cfg, kind)[0] for kind in ("setup", "prepare", "build", "classify")}
+    if cfg.get("database_layout") == "partitioned":
+        queues |= {str(value["queue"]) for value in cfg.get("category_resources", {}).values() if "queue" in value}
+    else:
+        queues |= {_settings(cfg, "convert")[0]} | {str(cfg.get(f"{mode}_queue", "ser")) for mode in ("kunpeng_full", "kunpeng_memory")}
+    queues = sorted(queues)
     commands = [["lsid"], ["bsub", "-V"], ["bparams", "-a"]]
     commands += [["bqueues", "-l", queue] for queue in queues]
+    commands += [["bhosts", "hg_" + queue] for queue in queues]
     commands += [["lshosts", "-w"], ["busers"], ["blimits"]]
     paths = []
     df_targets = set()
@@ -300,9 +304,6 @@ class SubmissionError(RuntimeError):
 
 
 def local_submit(cfg, path):
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '0f'))
-    import submit_jobs
     text = Path(path).read_text()
     match = re.search(r'^#BSUB -J .*\[([0-9,:-]+)\]', text, re.M)
     indices = None
@@ -331,7 +332,7 @@ def local_submit(cfg, path):
     available = os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
     if job_bytes * concurrent > available:
         raise RuntimeError('Requested metag memory exceeds local RAM; use submit=hpc or an appropriate explicit config')
-    results = submit_jobs.run_local([path], jobs, indices)
+    results = _run_local([path], jobs, indices)
     result = {'schema': 1, 'job_id': 'local-' + uuid.uuid4().hex[:12],
               'status': 'submitted' if all(r['returncode'] == 0 for r in results) else 'failed',
               'command_path': str(path), 'results': results, 'submitted_at': utcnow()}
@@ -342,14 +343,27 @@ def local_submit(cfg, path):
     return result
 
 
-def submit_cmd(cfg, path, dependency=None):
+def _run_local(paths, jobs=1, indices=None):
+    """Explicit developer-only local runner; no external repository dependency."""
+    from concurrent.futures import ThreadPoolExecutor
+    def one(item):
+        path, index = item
+        env = {**os.environ, "submit": "local", "WORKFLOW_WORKER": "1"}
+        if index is not None:
+            env["LSB_JOBINDEX"] = str(index)
+        suffix = f".{index}" if index is not None else ""
+        with Path(str(path) + suffix + ".out").open("a") as out, Path(str(path) + suffix + ".err").open("a") as err:
+            process = subprocess.run(["bash", str(path)], stdout=out, stderr=err, env=env)
+        return {"cmd": str(path), "index": index, "returncode": process.returncode}
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        return list(pool.map(one, [(path, index) for path in paths for index in (indices or [None])]))
+
+
+def submit_cmd(cfg, path, dependency=None, expected_sha256=None):
     """Submit one script via stdin, record the real ID, and never auto-retry."""
     path = _path(path, "command path")
     if os.environ.get('submit') == 'local':
         return local_submit(cfg, path)
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '0f'))
-    from submit_jobs import bsub_process
     logs = _logs(cfg)
     argv = ["bsub", "-o", str(logs / f"{path.stem}.%J.%I.out"),
             "-e", str(logs / f"{path.stem}.%J.%I.err")]
@@ -367,9 +381,14 @@ def submit_cmd(cfg, path, dependency=None):
     # Keep this descriptor open for both the recorded hash and bsub's stdin.
     with path.open("rb") as handle:
         result["command_sha256"] = hashlib.sha256(handle.read()).hexdigest()
+        if expected_sha256 is not None and result["command_sha256"] != expected_sha256:
+            result.update(status="failed", error="Generated command changed before submission; not sent to bsub")
+            raise SubmissionError(result["error"], result)
         handle.seek(0)
         try:
-            process = bsub_process(argv, handle, timeout)
+            process = subprocess.run(argv, stdin=handle, capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", timeout=timeout,
+                                     env={**os.environ, "LC_ALL": "C"})
             result.update(stdout=process.stdout, stderr=process.stderr, returncode=process.returncode)
         except subprocess.TimeoutExpired as exc:
             result.update(stdout=_decoded(exc.stdout), stderr=_decoded(exc.stderr),
