@@ -10,6 +10,7 @@ from bisect import bisect_right
 from functools import lru_cache
 import gzip
 from pathlib import Path
+from runtime_paths import DATA
 import struct
 
 
@@ -206,7 +207,7 @@ def gwas_liftover_run(a):
 	for option, build in (("source_fasta", a.source_build), ("target_fasta", a.target_build)):
 		path = getattr(a, option, None)
 		if not path:
-			candidate = Path(f"/mnt/f/gen/1hgp/{build}/GRCH{build}.fasta.gz")
+			candidate = DATA / f"gen/1hgp/{build}/GRCH{build}.fasta.gz"
 			path = str(candidate) if all(Path(str(candidate) + ext).is_file() for ext in ("", ".fai", ".gzi")) else None
 		fasta_paths.append(path)
 	signature = dict(
@@ -1013,7 +1014,7 @@ def prepare_yap2018_mpb_cli():
 	p = argparse.ArgumentParser(description=__doc__)
 	for arg in ("input", "output", "qc-prefix"):
 		p.add_argument("--" + arg, required=True)
-	p.add_argument("--fasta", default="/mnt/f/gen/1hgp/37/GRCH37.fasta.gz")
+	p.add_argument("--fasta", default=str(DATA / "gen/1hgp/37/GRCH37.fasta.gz"))
 	prepare_yap2018_mpb_run(p.parse_args())
 
 

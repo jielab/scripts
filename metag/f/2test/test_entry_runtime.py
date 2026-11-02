@@ -1,5 +1,6 @@
 """Regression coverage for execution boundaries; no scheduler jobs are sent."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -45,7 +46,7 @@ class EntryRuntimeTests(unittest.TestCase):
             commands = list((root / 'work_dir/jobs').glob('parallel_setup_*/00.setup.cmd'))
             self.assertEqual(len(commands), 1)
             command = commands[0].read_text()
-            self.assertIn('export submit=hpc WORKFLOW_WORKER=1', command)
+            self.assertIn('export submit="${submit:-hpc}" WORKFLOW_WORKER=1', command)
             self.assertNotIn('DATE_SCRATCH', command)
             self.assertIn('parallel-setup-worker', command)
             self.assertIn(str(commands[0].parent / 'config.json'), command)
@@ -86,10 +87,10 @@ class EntryRuntimeTests(unittest.TestCase):
                 sources.write_text('kraken: {source_tag: second}\nkunpeng: {}\n')
                 self.assertNotEqual(first, hpc_common.code_identity())
 
-    def _local(self, memory, physical_gib, *, array=None, jobs=1, scope='site_host', cores=1):
+    def _local(self, memory, physical_gib, *, array=None, jobs=1, scope='site_host', cores=1, array_limit=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            label = 'fixture' + (f'[1-{array}]' if array else '')
+            label = 'fixture' + (f'[1-{array}]' if array else '') + (f'%{array_limit}' if array_limit else '')
             path = root / 'fixture.cmd'
             path.write_text(f'#BSUB -J "{label}"\n#BSUB -n {cores}\n'
                             f'#BSUB -R "span[hosts=1] rusage[mem={memory}]"\nexit 0\n')
@@ -101,7 +102,10 @@ class EntryRuntimeTests(unittest.TestCase):
                  patch.dict(os.environ, {'jobs_N': str(jobs)}), \
                  patch.object(hpc_lsf, '_run_local', return_value=[{'returncode': 0}]) as run:
                 try:
-                    return hpc_lsf.local_submit(cfg, path)
+                    result = hpc_lsf.local_submit(cfg, path)
+                    expected_concurrent = min(jobs, array, array_limit or jobs) if array else 1
+                    self.assertEqual(run.call_args.args[1], expected_concurrent)
+                    return result
                 except RuntimeError:
                     run.assert_not_called()
                     raise
@@ -120,6 +124,38 @@ class EntryRuntimeTests(unittest.TestCase):
     def test_array_concurrency_is_included_in_local_memory_budget(self):
         with self.assertRaisesRegex(RuntimeError, 'exceeds local RAM'):
             self._local('16GB', 32, array=4, jobs=4)
+
+    def test_local_array_honors_its_lsf_percent_limit(self):
+        self.assertEqual(self._local('16GB', 32, array=4, jobs=4, array_limit=1)['status'], 'submitted')
+
+    def test_local_submission_rejects_a_changed_frozen_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / 'changed.cmd'
+            path.write_text('exit 0\n')
+            original = hashlib.sha256(path.read_bytes()).hexdigest()
+            path.write_text('exit 1\n')
+            with patch.dict(os.environ, {'submit': 'local'}), \
+                 patch.object(hpc_lsf, '_run_local') as run:
+                with self.assertRaisesRegex(hpc_lsf.SubmissionError, 'changed before local execution'):
+                    hpc_lsf.submit_cmd({'work_dir': str(root)}, path, expected_sha256=original)
+                run.assert_not_called()
+
+    def test_plan_generated_in_hpc_mode_can_execute_explicitly_in_local_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = {'work_dir': str(root), 'code_root': str(SOURCE.parent),
+                   'setup_cores': 1, 'setup_memory_gib': 1, 'setup_hours': 1,
+                   'setup_queue': 'fixture', 'lsf_memory_scope': 'host'}
+            path = root / 'mode.cmd'
+            code = ('import os,sys; sys.path.insert(0, ' + repr(str(SOURCE)) + '); '
+                    'from hpc_common import require_compute; require_compute(); '
+                    'assert os.environ["submit"] == "local"')
+            with patch.dict(os.environ, {'submit': 'hpc'}):
+                hpc_lsf.write_cmd(cfg, path, 'setup', [sys.executable, '-c', code], 'fixture')
+            with patch.dict(os.environ, {'submit': 'local', 'jobs_N': '1'}):
+                receipt = hpc_lsf.submit_cmd(cfg, path, expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(receipt['status'], 'submitted')
 
 
 if __name__ == '__main__':

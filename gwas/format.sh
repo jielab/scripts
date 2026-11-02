@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
-source /mnt/d/scripts/0f/console.sh
-# Clean GWAS Catalog statistics and prepare MAGMA/clump/COJO/PGS outputs.
-# Defaults, CLI and project workflow live here; implementations live in f/.
-
+# Resolve paths and dispatch before any scientific work or input discovery.
+GWAS_ENTRY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$GWAS_ENTRY_ROOT/f/runtime.sh"
+gwas_runtime_init "format.sh" "$@" || exit $?
+set -- "${GWAS_ARGS[@]}"
+source "$GWAS_ENTRY_ROOT/../0f/console.sh"
 set -euo pipefail
 export LC_ALL=C
 
@@ -72,18 +67,19 @@ Example:
     ./format.sh mplot --label self --dir-out /mnt/f/gwas/self \
 	--dir-clean /mnt/f/gwas/self/raw/phe1/gwas --gwas phe1.regenie --grch 38 --hm3 FALSE --thin FALSE --add-panel none --run-cmd TRUE
 HELP
+	gwas_runtime_usage
 }
 
 
 # 🚩 Defaults: inputs, execution, plots, reference panels and sample sizes
-dir0=/mnt/d
+dir0=$DIR_WORK
 dir_raw_arg=""
 raw_file_arg=""
 n_total=""
 h2_sex=unknown
-h2_ref_ld="/mnt/f/LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore."
-h2_w_ld="/mnt/f/LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC."
-h2_merge_alleles="/mnt/f/LD/ldsc/hm3/w_hm3.snplist"
+h2_ref_ld="$GWAS_DATA_ROOT/LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore."
+h2_w_ld="$GWAS_DATA_ROOT/LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC."
+h2_merge_alleles="$GWAS_DATA_ROOT/LD/ldsc/hm3/w_hm3.snplist"
 h2_python=""
 h2_conda_env=ldsc
 dir_out_arg=""
@@ -562,30 +558,30 @@ if wants_magma && ((run_cmd_set == 0)); then run_cmd=TRUE; fi
 
 
 # 🚩 Resolve shared resources and project paths
-[[ -z "$phef" ]] && phef="$dir0/scripts/0f/phenotype.sh"
+[[ -z "$phef" ]] && phef="$SCRIPTS_ROOT/0f/phenotype.sh"
 phe_r="${phef%.sh}.R"
 perf_f="${SCRIPT_PATH%/*}/f/format.f.sh"
-[[ -z "$plot_f" ]] && plot_f="$dir0/scripts/0f/manhattan_plot.R"
+[[ -z "$plot_f" ]] && plot_f="$SCRIPTS_ROOT/0f/manhattan_plot.R"
 [[ -z "$mplot_r" ]] && mplot_r="${SCRIPT_PATH%/*}/f/format.R"
-if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$dir0/files/glist.${grch}.bed"; fi
-[[ -z "$hm3_file" ]] && hm3_file="/mnt/f/gen/hm3/hapmap3_r3.snp"
-[[ -z "$hm3_pos" ]] && hm3_pos="/mnt/f/gen/hm3/hapmap3_r3_grch{grch}.snplist"
-[[ -z "$chain" ]] && chain="$dir0/files/liftOver/hg19ToHg38.over.chain.gz"
+if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$GWAS_FILES_ROOT/glist.${grch}.bed"; fi
+[[ -z "$hm3_file" ]] && hm3_file="$GWAS_DATA_ROOT/gen/hm3/hapmap3_r3.snp"
+[[ -z "$hm3_pos" ]] && hm3_pos="$GWAS_DATA_ROOT/gen/hm3/hapmap3_r3_grch{grch}.snplist"
+[[ -z "$chain" ]] && chain="$GWAS_FILES_ROOT/liftOver/hg19ToHg38.over.chain.gz"
 if [[ "$grch" != auto ]]; then
-	[[ -z "$refGen_clump" ]] && refGen_clump="/mnt/f/gen/1kg/${grch}/pfile/"
-	[[ -z "$refGen_cojo" ]] && refGen_cojo="/mnt/f/gen/1kg/${grch}/pfile/${refGen_pop}/"
+	[[ -z "$refGen_clump" ]] && refGen_clump="$GWAS_DATA_ROOT/gen/1kg/${grch}/pfile/"
+	[[ -z "$refGen_cojo" ]] && refGen_cojo="$GWAS_DATA_ROOT/gen/1kg/${grch}/pfile/${refGen_pop}/"
 fi
-[[ -z "$magma_ref" ]] && magma_ref="/mnt/f/LD/magma/g1000_eur"
-[[ -z "$synonyms" ]] && synonyms="/mnt/f/annot/dbsnp/dbsnp151.synonyms"
+[[ -z "$magma_ref" ]] && magma_ref="$GWAS_DATA_ROOT/LD/magma/g1000_eur"
+[[ -z "$synonyms" ]] && synonyms="$GWAS_DATA_ROOT/annot/dbsnp/dbsnp151.synonyms"
 if [[ -z "$gene_loc" && "$grch" != auto ]]; then
-	[[ "$grch" == 37 ]] && gene_loc="$dir0/files/NCBI.37.gene.loc" || gene_loc="$dir0/files/NCBI.38.gene.loc"
+	[[ "$grch" == 37 ]] && gene_loc="$GWAS_FILES_ROOT/NCBI.37.gene.loc" || gene_loc="$GWAS_FILES_ROOT/NCBI.38.gene.loc"
 fi
 [[ "$grch" == 37 || "$grch" == 38 || "$grch" == auto ]] || {
 	echo "ERROR: --grch must be 37, 38, or auto" >&2
 	exit 2
 }
 # Keep non-interactive/background runs consistent with the normal workstation setup.
-[[ -d "$dir0/software/bin" ]] && export PATH="$dir0/software/bin:$PATH"
+[[ -d "$GWAS_SOFTWARE_ROOT/bin" ]] && export PATH="$GWAS_SOFTWARE_ROOT/bin:$PATH"
 
 if [[ -z "$label" ]]; then
 	if [[ -n "$dir_raw_arg" ]]; then
@@ -596,22 +592,22 @@ if [[ -z "$label" ]]; then
 		label=met
 	fi
 fi
-[[ -z "$cis_bed" && "$label" == prot ]] && cis_bed="/mnt/f/gwas/prot/pheno.bed"
+[[ -z "$cis_bed" && "$label" == prot ]] && cis_bed="$GWAS_DATA_ROOT/gwas/prot/pheno.bed"
 
 if [[ -n "$dir_out_arg" ]]; then
 	dir_out="$dir_out_arg"
 else
-	dir_out="/mnt/f/gwas/$label"
+	dir_out="$GWAS_DATA_ROOT/gwas/$label"
 fi
 # Durable harmonized GWAS may remain in F:/gwas; coordinator/cache/log files do not.
 if [[ -n ${GWAS_WORK_ROOT:-} ]]; then
 	project_work=$GWAS_WORK_ROOT
-elif [[ $dir_out == /mnt/f/gwas/* ]]; then
-	project_work=/mnt/d/analysis/gwas/format/${dir_out#/mnt/f/gwas/}
-elif [[ $dir_out == /mnt/d/analysis/* ]]; then
+elif [[ $dir_out == "$GWAS_DATA_ROOT/gwas/"* ]]; then
+	project_work="$GWAS_ANALYSIS_ROOT/format/${dir_out#"$GWAS_DATA_ROOT/gwas/"}"
+elif [[ $dir_out == "$GWAS_ANALYSIS_ROOT/"* ]]; then
 	project_work=$dir_out/work
 else
-	project_work=/mnt/d/analysis/gwas/format/external$(realpath -m -- "$dir_out")
+	project_work="$GWAS_ANALYSIS_ROOT/format/external$(realpath -m -- "$dir_out")"
 fi
 [[ -n "$rsid_cache" ]] || rsid_cache="$project_work/rsid"
 
@@ -663,14 +659,13 @@ fi
 
 gwas_format_maybe_background
 
-# Acquire before writing shared command lists. Use a local lock because project
-# directories can live on Windows drives with different file-lock semantics.
+# Acquire before writing shared command lists. The lock must be visible to
+# other HPC nodes that might run the same project/module.
 command -v flock >/dev/null 2>&1 || {
 	echo "ERROR: flock is required (util-linux)" >&2
 	exit 1
 }
-run_lock_key=$(printf '%s\n' "$(realpath -m "$dir_cmd")" | sha256sum | cut -d ' ' -f 1)
-exec {run_lock_fd}>"${TMPDIR:-/tmp}/gwas-format-${UID}-${run_lock_key}.lock"
+exec {run_lock_fd}>"$dir_cmd/.coordinator.lock"
 flock -n "$run_lock_fd" || {
 	echo "ERROR: another $step run is active for $dir_out/$category; wait for it to finish or stop it before retrying." >&2
 	exit 1
@@ -685,7 +680,7 @@ gwas_format_check_resources
 gwas_storage_configure
 
 log "label=$label step=$step hm3=$hm3_mode thin=$thin thin-chr-max=$thin_chr_max liftOver=$liftOver add-panel=$add_panel plot=${plot_width}x${plot_height}in@${plot_res}dpi write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
-log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:/mnt/f/gen/ukb/GRCh/imp>}"
+log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:$GWAS_DATA_ROOT/gen/ukb/GRCh/imp>}"
 if has_step pgs; then
 	write_pgs_step2_cmd
 fi

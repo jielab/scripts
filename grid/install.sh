@@ -19,7 +19,7 @@ Modules:
 Main options:
     GRID_ENV_NAME  Conda environment [grid]
     PRSFORMER_UPSTREAM_DIR  Source [/mnt/f/software/PRSformer]
-    --environment-file FILE  Explicit Conda recipe; HPC defaults to environment.hpc-cu126.yml
+    --environment-file FILE  Explicit Conda recipe; HPC defaults to environment.hpc.yml
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
     --device cuda           Allocate a GPU and require actual GPU runtime checks
     --dry-run  Print commands without changes
@@ -48,7 +48,7 @@ grid_workflow_entry install "$@"
 set -- "${GRID_ENTRY_ARGS[@]}"
 DRY_RUN=FALSE
 recipe=${GRID_ENV_RECIPE:-$ROOT/environment.yml}
-[[ ${submit:-local} != hpc || -n ${GRID_ENV_RECIPE:-} ]] || recipe=$ROOT/environment.hpc-cu126.yml
+[[ ${submit:-local} != hpc || -n ${GRID_ENV_RECIPE:-} ]] || recipe=$ROOT/environment.hpc.yml
 while (($#)); do
 	case $1 in
 		-h|--help|help) usage; exit 0 ;;

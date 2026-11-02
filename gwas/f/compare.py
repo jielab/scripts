@@ -11,6 +11,7 @@ import csv
 import itertools
 import math
 from pathlib import Path
+from runtime_paths import DATA, FILES, SOFTWARE, ANALYSIS
 import re
 import subprocess
 
@@ -177,9 +178,9 @@ from contextlib import contextmanager
 import sys
 from collections import Counter
 
-DEFAULT_REF = "/mnt/f/LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore."
-DEFAULT_WEIGHTS = "/mnt/f/LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC."
-DEFAULT_ALLELES = "/mnt/f/LD/ldsc/hm3/w_hm3.snplist"
+DEFAULT_REF = str(DATA / "LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.")
+DEFAULT_WEIGHTS = str(DATA / "LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.")
+DEFAULT_ALLELES = str(DATA / "LD/ldsc/hm3/w_hm3.snplist")
 AUTOSOMES = {str(c) for c in range(1, 23)}
 
 
@@ -350,8 +351,8 @@ def gwas_ldsc_main():
 """,
 	)
 	p.add_argument("--gwas-files", required=True, help="Comma-separated standardized GWAS files")
-	p.add_argument("--output-dir", default="/mnt/d/analysis/gwas/ldsc")
-	p.add_argument("--ldsc-software-dir", default="/mnt/d/software/ldsc")
+	p.add_argument("--output-dir", default=str(ANALYSIS / "ldsc"))
+	p.add_argument("--ldsc-software-dir", default=str(SOFTWARE / "ldsc"))
 	p.add_argument("--conda", default=shutil.which("conda") or str(Path.home() / "anaconda3/bin/conda"))
 	p.add_argument("--conda-env", default="ldsc")
 	p.add_argument("--python", help="Explicit LDSC-compatible interpreter; bypass conda")
@@ -594,7 +595,7 @@ def read_bed(text, omitted=None):
 
 def ld_blocks_main():
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("--output-dir", default="/mnt/f/LD/block")
+	parser.add_argument("--output-dir", default=str(DATA / "LD/block"))
 	args = parser.parse_args()
 	root = Path(args.output_dir)
 	root.mkdir(parents=True, exist_ok=True)
@@ -777,7 +778,7 @@ def gwas_compare_project_main():
 			p.error("--grch and --require-grch must agree")
 		checked_builds = require_build(files, a.require_grch)
 		a.grch = a.require_grch
-	out = Path(a.output_dir or ("/mnt/d/analysis/gwas/" + a.mode)).resolve()
+	out = Path(a.output_dir or (ANALYSIS / a.mode)).resolve()
 	if a.mode == "shiny":
 		a.grch = a.grch or "37"
 		builds = {str(f): build_of(f) for f in files}
@@ -842,9 +843,9 @@ def gwas_compare_project_main():
 						"--target-build",
 						a.grch,
 						"--chain",
-						"/mnt/d/files/liftOver/" + chain,
+						str(FILES / "liftOver" / chain),
 						"--liftOver",
-						"/mnt/d/software/bin/liftOver",
+						str(SOFTWARE / "bin/liftOver"),
 					],
 					check=True,
 				)

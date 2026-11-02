@@ -48,9 +48,9 @@ if [[ ${SCRIPT_CONSOLE_ACTIVE:-0} != 1 ]]; then
 	if [[ $_console_detach == 0 ]]; then
 		export SCRIPT_FOREGROUND=1
 		if [[ $_console_bypass == 1 || ${SCRIPT_VERBOSE:-0} == 1 || ${SCRIPT_CONSOLE_PASSTHROUGH:-0} == 1 ]]; then
-			exec python3 /mnt/d/scripts/0f/console_run.py --passthrough --script "${BASH_SOURCE[1]}" -- "$@"
+			exec python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/console_run.py" --passthrough --script "${BASH_SOURCE[1]}" -- "$@"
 		fi
-		exec python3 /mnt/d/scripts/0f/console_run.py --script "${BASH_SOURCE[1]}" -- "$@"
+		exec python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/console_run.py" --script "${BASH_SOURCE[1]}" -- "$@"
 	fi
 	unset _console_bypass _console_arg _console_detach
 fi

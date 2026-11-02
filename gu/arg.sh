@@ -5,6 +5,18 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source "$ROOT/f/scratch.sh"
 source "$ROOT/f/0.common.sh"
 gu_load_config
+arg_help=0
+for arg_option in "$@"; do
+	case "$arg_option" in -h|--help|--help-all) arg_help=1 ;; esac
+done
+if [[ $submit == hpc && -z ${LSB_JOBID:-} && $arg_help == 0 ]]; then
+	case "${1:-}" in
+		build|prep_gen)
+			echo 'ERROR: ARG construction in HPC mode requires an allocated LSF job. Use bash gu.sh hpc plan arg ... followed by bash gu.sh hpc submit RUN_DIR, or run this entry inside an allocated job.' >&2
+			exit 2 ;;
+	esac
+fi
+unset arg_help arg_option
 source "$ROOT/f/console.sh"
 
 

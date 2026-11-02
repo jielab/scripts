@@ -119,7 +119,7 @@ def load_config(config_path=None, root_override=None):
         raise ValueError("Unsupported HPC configuration schema")
     if cfg.get("database_layout", "single") not in ("single", "partitioned"):
         raise ValueError("database_layout must be single or partitioned")
-    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/work/sph-huang"))
+    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/data/sph-huangj"))
     root = Path(root_value).expanduser().absolute()
     cfg["root"] = str(root)
     for key in PATH_KEYS:

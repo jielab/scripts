@@ -271,6 +271,19 @@ class WorkflowTests(unittest.TestCase):
         jobs = hpc_workflow.build_jobs(a, extra)
         self.assertTrue(all("/some/prepared" in job.argv for job in jobs if ".c1." in job.key))
 
+    def test_explicit_coloc_switch_and_gpu_allocation_agree(self):
+        for switch, device, inherited, expected in (
+                ("TRUE", "auto", "FALSE", 1),
+                ("FALSE", "cuda", "TRUE", 0),
+                ("yes", "cpu", "FALSE", 1)):
+            with patch.dict(os.environ, {"submit": "hpc", "RUN_GPU_COLOC": inherited}):
+                args, extra = hpc_workflow.parse_cli(["c3_coloc", "--Y", "toy", "--biom", "prot",
+                    "--device", device, "--run-gpu-coloc", switch])
+                self.assertNotIn("--run-gpu-coloc", extra)
+                job = hpc_workflow.build_jobs(args, extra)[0]
+                self.assertEqual(job.resources["gpus"], expected)
+                self.assertEqual(job.env["RUN_GPU_COLOC"], "TRUE" if expected else "FALSE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -63,7 +63,7 @@ workflow_args() {
                     --jobs-N|--jobs_N) export jobs_N=$2 ;;
                     --wait) export SUBMIT_WAIT=${2^^} ;;
                     --date-scratch)
-                        if [[ $submit == hpc && $DIR_SCRATCH == /scratch/$DATE_SCRATCH/sph-huangj ]]; then unset DIR_SCRATCH; fi
+                        if [[ $submit == hpc && ${DIR_SCRATCH:-} == /scratch/$DATE_SCRATCH/sph-huangj ]]; then unset DIR_SCRATCH; fi
                         export DATE_SCRATCH=$2 ;;
                 esac
                 shift 2 ;;

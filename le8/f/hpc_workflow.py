@@ -22,6 +22,14 @@ MODULES = {"c1_correlate", "c1_reliability", "c2_cause", "c3_coloc", "c4_connect
            "c5_cellulation", "pgs_focus", "final", "share", "shiny", "install"}
 
 
+def bool_word(value):
+    if value.lower() in {"true", "1", "yes", "y"}:
+        return "TRUE"
+    if value.lower() in {"false", "0", "no", "n"}:
+        return "FALSE"
+    raise argparse.ArgumentTypeError("requires TRUE or FALSE")
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     p.set_defaults(modules=DEFAULT)
@@ -37,6 +45,8 @@ def parser():
     p.add_argument("--hours", type=float, default=float(os.getenv("LE8_HOURS", "72")))
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     p.add_argument("--eigh-backend", choices=["auto", "cpu", "cuda"], default=os.getenv("MRLINK2_EIGH_BACKEND", "auto"))
+    p.add_argument("--run-gpu-coloc", type=bool_word, choices=["TRUE", "FALSE"],
+                   help="Explicit C3 GPU switch; overrides --device and RUN_GPU_COLOC for C3")
     p.add_argument("--python", default=os.getenv("LE8_REPORT_PYTHON", os.getenv("PYTHON_BIN", "python3")))
     p.add_argument("--r-bin", default=os.getenv("R_BIN", "Rscript"))
     p.add_argument("--methods")
@@ -173,7 +183,9 @@ def build_jobs(a, extra=()):
                     continue
                 stages = ("c4_connect", "c4_panel_validation", "c4_explain") if module == "c4_connect" else (module,)
                 for stage in stages:
-                    gpu = ((module == "c3_coloc" and (a.device == "cuda" or os.getenv("RUN_GPU_COLOC") == "TRUE"))
+                    coloc_gpu = (a.run_gpu_coloc == "TRUE" if a.run_gpu_coloc is not None else
+                                 (a.device == "cuda" or os.getenv("RUN_GPU_COLOC") == "TRUE"))
+                    gpu = ((module == "c3_coloc" and coloc_gpu)
                            or (module == "c2_cause" and a.eigh_backend == "cuda"))
                     deps = [add(f"{scope}.{stage}", module, deps, trait, layer,
                         stage_env={"LE8_C4_STAGE": stage} if module == "c4_connect" else None, gpu=gpu)]

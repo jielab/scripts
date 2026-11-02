@@ -25,6 +25,13 @@ done
 if [[ ${1:-} == ibdmix && -z ${LSB_JOBID:-} && ${WORKFLOW_WORKER:-0} != 1 && ${GU_CMD_WORKER:-0} != 1 && $hpc_help == 0 && ( $# == 1 || ${2:-} == --* ) ]]; then
     exec "${GU_SUBMIT_PYTHON:-$SHARED_PYTHON}" "$F/hpc_batch.py" "$@"
 fi
+if [[ $submit == hpc && -z ${LSB_JOBID:-} && $hpc_help == 0 ]]; then
+    case "${1:-}" in
+        trace|trace-GPU|phyml|phyml-GPU)
+            echo "ERROR: $1 in HPC mode requires an allocated LSF job. Use bash gu.sh hpc plan ${1%-GPU} ... followed by bash gu.sh hpc submit RUN_DIR; --submit hpc alone does not submit this module." >&2
+            exit 2 ;;
+    esac
+fi
 unset hpc_help hpc_arg
 export GU_RESULTS_R=${GU_RESULTS_R:-$ROOT/f/results.R}
 export GU_PHYML_R=${GU_PHYML_R:-$F/phyml.R}

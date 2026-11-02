@@ -155,7 +155,7 @@ def write_cmd(cfg, path, kind, command, job_name, array=None):
         f"#BSUB -e {shlex.quote(str(logs / (stem + '.%J_%I.err')))}",
         "",
         "set -euo pipefail",
-        "export submit=" + shlex.quote(os.environ.get('submit', 'hpc')) + " WORKFLOW_WORKER=1",
+        'export submit="${submit:-hpc}" WORKFLOW_WORKER=1',
         "export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1",
         "export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1",
         f"cd -- {shlex.quote(str(code_root))}",
@@ -303,12 +303,21 @@ class SubmissionError(RuntimeError):
         self.result = result
 
 
-def local_submit(cfg, path):
-    text = Path(path).read_text()
-    match = re.search(r'^#BSUB -J .*\[([0-9,:-]+)\]', text, re.M)
+def local_submit(cfg, path, expected_sha256=None):
+    raw = Path(path).read_bytes()
+    command_sha256 = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is not None and command_sha256 != expected_sha256:
+        result = {'schema': 1, 'status': 'failed', 'job_id': None,
+                  'command_path': str(path), 'command_sha256': command_sha256,
+                  'error': 'Generated command changed before local execution'}
+        raise SubmissionError(result['error'], result)
+    text = raw.decode('utf-8')
+    match = re.search(r'^#BSUB -J .*\[([0-9,:-]+)\](?:%([1-9][0-9]*))?', text, re.M)
     indices = None
+    array_limit = None
     if match:
         indices = []
+        array_limit = int(match[2]) if match[2] else None
         for token in match[1].split(','):
             span, _, step = token.partition(':')
             bounds = list(map(int, span.split('-')))
@@ -328,14 +337,15 @@ def local_submit(cfg, path):
     jobs = int(os.environ.get('jobs_N', '8'))
     if not 1 <= jobs <= 8:
         raise ValueError('jobs_N must be 1..8')
-    concurrent = min(jobs, len(indices)) if indices is not None else 1
+    concurrent = min(jobs, len(indices), array_limit or jobs) if indices is not None else 1
     available = os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
     if job_bytes * concurrent > available:
         raise RuntimeError('Requested metag memory exceeds local RAM; use submit=hpc or an appropriate explicit config')
-    results = _run_local([path], jobs, indices)
+    results = _run_local([path], concurrent, indices)
     result = {'schema': 1, 'job_id': 'local-' + uuid.uuid4().hex[:12],
               'status': 'submitted' if all(r['returncode'] == 0 for r in results) else 'failed',
-              'command_path': str(path), 'results': results, 'submitted_at': utcnow()}
+              'command_path': str(path), 'command_sha256': command_sha256,
+              'results': results, 'submitted_at': utcnow()}
     receipt = _logs(cfg) / (Path(path).stem + '.local.' + uuid.uuid4().hex + '.json')
     atomic_json(receipt, result)
     if result['status'] != 'submitted':
@@ -363,7 +373,7 @@ def submit_cmd(cfg, path, dependency=None, expected_sha256=None):
     """Submit one script via stdin, record the real ID, and never auto-retry."""
     path = _path(path, "command path")
     if os.environ.get('submit') == 'local':
-        return local_submit(cfg, path)
+        return local_submit(cfg, path, expected_sha256=expected_sha256)
     logs = _logs(cfg)
     argv = ["bsub", "-o", str(logs / f"{path.stem}.%J.%I.out"),
             "-e", str(logs / f"{path.stem}.%J.%I.err")]

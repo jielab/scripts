@@ -68,6 +68,27 @@ def without(tokens, options):
     return result
 
 
+def score_subset(tokens):
+    """Use the native scorer's chromosome order and permanent subdirectory."""
+    text = option(tokens, {"--chrs", "--chr"}) or os.getenv("GRID_CHRS", "1-22")
+    chromosomes = []
+    for part in re.split(r"[,;\s]+", text):
+        if not part:
+            continue
+        if re.fullmatch(r"\d+-\d+", part):
+            first, last = map(int, part.split("-"))
+            chromosomes.extend(range(first, last + 1))
+        else:
+            part = part.replace("chr", "").replace("CHR", "")
+            if not part.isdigit():
+                raise ValueError("Invalid autosome list: " + text)
+            chromosomes.append(int(part))
+    chromosomes = list(dict.fromkeys(chromosomes))
+    if not chromosomes or any(c < 1 or c > 22 for c in chromosomes):
+        raise ValueError("Invalid autosome list: " + text)
+    return "" if chromosomes == list(range(1, 23)) else "chr" + ",".join(map(str, chromosomes))
+
+
 def _profile(args):
     cfg = json.loads(Path(args.hpc_config).read_text())
     if cfg.get("schema_version") != 1:
@@ -182,6 +203,21 @@ def build_jobs(args, extra):
         return key
 
     module = args.module
+    checking = "--check" in extra
+    if checking:
+        supported = ((args.entry == "pca" and module == "all")
+                     or (args.entry == "csx" and module in {"all", "weights", "score"})
+                     or (args.entry == "disco" and module in {"all", "score"})
+                     or (args.entry == "prsformer" and module == "prsformer2"))
+        if not supported:
+            raise ValueError(f"{args.entry} {module} does not support --check; use --plan-only to inspect its DAG")
+        # Native check paths validate inputs without preparing the shared cohort
+        # or fitting target models. Do not append ordinary downstream workers.
+        if args.entry in {"csx", "disco"}:
+            stage = "weights" if args.entry == "csx" and module != "score" else "score"
+            for trait in traits:
+                add(f"{trait}.check", stage, args.entry, module, [trait])
+            return jobs
     if args.entry in {"pca", "install"}:
         if module != "all":
             raise ValueError(f"{args.entry} accepts options without a positional module")
@@ -250,8 +286,12 @@ def build_jobs(args, extra):
                 parents = end
                 if not option(extra, {"--cohort", "--prepared"}):
                     parents = [add("shared.prepare", "prepare", "csx", "prepare", traits, end, passed=subset(extra, PREP_OPTIONS - {"--score-dir"}))]
+                fitted_options = subset(extra, FIT_OPTIONS)
+                chrom_subset = score_subset(extra)
+                if chrom_subset:
+                    fitted_options += ["--score-subset", chrom_subset]
                 for trait in traits:
-                    add(f"{trait}.targetfit", "targetfit", "csx", "targetfit", [trait], parents, passed=subset(extra, FIT_OPTIONS))
+                    add(f"{trait}.targetfit", "targetfit", "csx", "targetfit", [trait], parents, passed=fitted_options)
         elif module == "prepare":
             add("shared.prepare", "prepare", "csx", "prepare", traits, passed=extra)
         elif module == "targetfit":

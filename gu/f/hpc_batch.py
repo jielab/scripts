@@ -141,6 +141,21 @@ def preflight_axt(args):
         raise ValueError('Missing AXT resources (no jobs submitted): ' + ', '.join(dict.fromkeys(missing)))
 
 
+def worker_environment():
+    """Retain resolved project overrides when a saved .cmd is submitted later.
+
+    A copied runtime.env contains default expressions, not the caller's resolved
+    DIR_*/GU_* values. LSF inheritance alone does not preserve those values when
+    --run-cmd FALSE and the later submission happen in different shells.
+    """
+    exact = {'DIR_WORK', 'DIR_DATA', 'DIR_SCRATCH', 'DIR_SOFTWARE', 'CHECK_GRCH_SNP_LIST'}
+    prefixes = ('GU_', 'IBDMIX_', 'TRACE_', 'PHYML_', 'ARG_', 'UKB_')
+    excluded = {'GU_WORKER_CODE_ROOT', 'GU_SUBMIT_PYTHON', 'GU_HPC_PYTHON',
+                'GU_CMD_WORKER', 'GU_ENV_REEXEC'}
+    return {key: value for key, value in os.environ.items()
+            if key not in excluded and (key in exact or key.startswith(prefixes))}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--queue', default='short')
@@ -184,6 +199,7 @@ def main(argv=None):
     directory = Path(tempfile.mkdtemp(prefix='ibdmix-', dir=parent))
     (directory / 'runtime.env').write_bytes(env_file.read_bytes())
     scripts = []
+    environment = worker_environment()
     for post, cmd in pairs:
         for flag, value in [('--dir-out', str(base)), ('--GPU', get(args, '--GPU', 'FALSE').upper()),
                             ('--run-cmd', 'TRUE'), ('--foreground', 'TRUE'),
@@ -205,6 +221,7 @@ def main(argv=None):
             f'export GU_WORKER_CODE_ROOT={quote(str(ROOT))}',
             ': "${LSB_JOBID:?Submit this .cmd with bsub}"' if mode == 'hpc' else ':',
             f'export DATE_SCRATCH={quote(os.environ.get("DATE_SCRATCH", "2026-10-31"))}',
+            *[f'export {key}={quote(value)}' for key, value in sorted(environment.items())],
             f'source {quote(str(directory / "runtime.env"))}',
             f'cd {quote(str(ROOT))}',
             'exec ' + shlex.join(['bash', str(ROOT / 'gu.sh')] + cmd), '',

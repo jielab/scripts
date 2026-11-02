@@ -48,6 +48,25 @@ class PlanningTests(unittest.TestCase):
                 self.assertNotIn("--cohort", job.argv)
                 self.assertNotIn("--validation-n", job.argv)
 
+    def test_check_never_schedules_cohort_preparation_or_target_fitting(self):
+        for entry in ("csx", "disco"):
+            jobs = self.build(entry, extra=["--check"])
+            self.assertEqual(len(jobs), 3)
+            self.assertTrue(all(job.key.endswith(".check") for job in jobs))
+            self.assertTrue(all("--check" in job.argv and not job.depends for job in jobs))
+            self.assertTrue(all(job.argv[2] == "all" for job in jobs))
+        for entry, module in (("csx", "blocknet"), ("prsformer", "all"), ("grid", "all")):
+            with self.assertRaisesRegex(ValueError, "use --plan-only"):
+                self.build(entry, module, extra=["--check"])
+
+    def test_chromosome_subset_is_carried_to_its_own_target_evaluation(self):
+        for specification in ("21-22", "chr21;CHR22;21", "21,22"):
+            jobs = self.build("csx", options=["--traits", "height"], extra=["--chrs", specification])
+            fit = next(job for job in jobs if job.key.endswith("targetfit"))
+            self.assertEqual(planner.option(fit.argv, {"--score-subset"}), "chr21,22")
+        fit = self.build("csx", options=["--traits", "height"])[-1]
+        self.assertNotIn("--score-subset", fit.argv)
+
     def test_block_and_count_have_distinct_jobs_and_boundary_options(self):
         block = self.build("csx", "blocknet", options=["--traits", "height"],
                            extra=["--blocks", "1", "--ld-block-files", "ALL.37.bed"])
@@ -169,6 +188,21 @@ class PublicEntryTests(unittest.TestCase):
             result = subprocess.run(["bash", str(GRID/filename)], env=env, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("allocated workflow .cmd job", result.stderr)
+
+    def test_hpc_installer_resolves_an_existing_recipe_without_installing(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        conda = bin_dir / "conda"
+        conda.write_text("#!/usr/bin/env bash\nexit 0\n")
+        conda.chmod(0o755)
+        env = dict(self.env, PATH=str(bin_dir)+os.pathsep+os.environ["PATH"],
+                   WORKFLOW_WORKER="1", submit="hpc", SUBMIT="hpc", LSB_JOBID="test",
+                   WORKFLOW_RESOURCE_MANAGER="lsf", GRID_CONDA_ENV=str(self.root / "env"))
+        result = subprocess.run(["bash", str(GRID / "install.sh"), "--dry-run"],
+                                env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn(str(GRID / "environment.hpc.yml"), result.stdout)
+        self.assertFalse((self.root / "env").exists())
 
     def test_real_public_local_count_pipeline_completes_all_five_workers(self):
         from test_count_abm import exported_fixture

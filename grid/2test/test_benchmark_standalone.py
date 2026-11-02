@@ -108,3 +108,32 @@ def test_whole_group_roster_cannot_be_reselected_by_later_method(tmp_path):
     frozen_roster(frame,tmp_path/"a",200,31)
     with pytest.raises(ValueError,match="roster/settings changed"):
         frozen_roster(frame,tmp_path/"a",220,31)
+
+
+@pytest.mark.parametrize("method,filename", [("csx", "1csx.scores.rds"), ("disco", "2disco.scores.rds")])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_subset_reads_matching_score_and_preserves_genomewide_performance(tmp_path, monkeypatch, method, filename, explicit):
+    _, scores, args = fixture(tmp_path)
+    args.scores = None
+    args.score_subset = "chr22"
+    expected = tmp_path / "height" / "chr22" / filename
+    expected.parent.mkdir(parents=True)
+    scores.to_csv(expected, sep="\t", index=False)
+    if explicit:
+        args.scores = str(expected)
+        args.score_subset = ""
+    import target_benchmark
+    def read_score(path):
+        assert Path(path) == expected
+        return pd.read_csv(path, sep="\t", dtype={"id": str})
+    monkeypatch.setattr(target_benchmark, "table", read_score)
+    base = (Path(args.analysis_root) / "csx/height/targetfit" if method == "csx" else
+            Path(args.analysis_root) / "disco/height")
+    base.mkdir(parents=True)
+    previous = base / "performance.tsv"
+    previous.write_text("previous genome-wide result\n")
+    performance, receipt = evaluate(args, "height", method=method)
+    assert previous.read_text() == "previous genome-wide result\n"
+    assert (base / "chr22/performance.tsv").is_file()
+    assert performance.iloc[0].chromosome_subset == "chr22"
+    assert receipt["scores"] == str(expected.resolve())

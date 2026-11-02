@@ -483,7 +483,7 @@ def run(script, args):
 		stage_console = IbdmixConsole()
 	completion_only_gu = label == "gu" and args[:1] in (["phyml"], ["ibdmix"])
 	quiet_gu = completion_only_gu
-	default_log_dir = Path("/mnt/d/analysis") / script.parent.name / "logs"
+	default_log_dir = Path(os.environ.get("ANALYSIS_ROOT", "/mnt/d/analysis")) / script.parent.name / "logs"
 	directory = Path(os.environ.get("SCRIPT_LOG_DIR", default_log_dir))
 	directory.mkdir(parents=True, exist_ok=True)
 	log = directory / f"{label}.{datetime.datetime.now():%Y%m%d-%H%M%S}.{os.getpid()}.log"

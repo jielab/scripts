@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
-# A foreground Shiny server must keep its listening URL and live diagnostics.
-source /mnt/d/scripts/0f/console.sh
+# Resolve paths and dispatch before any scientific work or input discovery.
+GWAS_ENTRY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$GWAS_ENTRY_ROOT/f/runtime.sh"
+gwas_runtime_init "compare.sh" "$@" || exit $?
+set -- "${GWAS_ARGS[@]}"
+source "$GWAS_ENTRY_ROOT/../0f/console.sh"
 set -euo pipefail
 # Defaults, CLI and module commands live here. Project discovery/build alignment
 # analysis functions live in f/ and the Shiny application lives in shiny/.
@@ -74,6 +71,7 @@ Example:
     ./compare.sh compare --dir-project /mnt/f/gwas/4grid --anchor height.EUR --p-threshold 1e-6
     ./compare.sh compare --dir-project /mnt/f/gwas/4grid
 HELP
+	gwas_runtime_usage
 }
 
 
@@ -98,29 +96,29 @@ esac
 
 project_dir='' gwas_files='' category=common anchor=''
 grch='' require_grch='' check_only=FALSE
-output_dir="/mnt/d/analysis/gwas/$module"
+output_dir="$GWAS_ANALYSIS_ROOT/$module"
 
 # Comparison settings; these values are passed explicitly to the R helper.
 labels='' compare_beta=TRUE compare_eaf=TRUE
 p_threshold=5e-8 significant=first
 
 # LDSC settings; no fallback sample size is assumed.
-ldsc_software_dir=/mnt/d/software/ldsc
+ldsc_software_dir=$GWAS_SOFTWARE_ROOT/ldsc
 conda=$(type -P conda || true)
 conda=${conda:-$HOME/anaconda3/bin/conda}
 conda_env=ldsc ldsc_python=''
-merge_alleles=/mnt/f/LD/ldsc/hm3/w_hm3.snplist
-ref_ld_chr=/mnt/f/LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.
-w_ld_chr=/mnt/f/LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.
+merge_alleles=$GWAS_DATA_ROOT/LD/ldsc/hm3/w_hm3.snplist
+ref_ld_chr=$GWAS_DATA_ROOT/LD/ldsc/1000G/1000G_Phase3_ldscores/LDscore.
+w_ld_chr=$GWAS_DATA_ROOT/LD/ldsc/1000G/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.
 sample_size='' missing_n=error
 run_munge=TRUE run_h2=TRUE run_rg=TRUE run=TRUE
 
 # Interactive block viewer. All settings remain visible at the entry point.
-block_dir=/mnt/f/LD/block
-ld_dir=/mnt/f/LD/csx ld_python="$HOME/anaconda3/bin/python" ld_max_snps=300
+block_dir=$GWAS_DATA_ROOT/LD/block
+ld_dir=$GWAS_DATA_ROOT/LD/csx ld_python="${GWAS_LD_PYTHON:-python3}" ld_max_snps=300
 port=3841 host=127.0.0.1 launch_browser=FALSE max_points=12000 races=''
-chain_dir=/mnt/d/files/liftOver liftover_bin=/mnt/d/software/bin/liftOver
-reference_dir=/mnt/f/gen/1hgp gene_dir=/mnt/d/files
+chain_dir=$GWAS_FILES_ROOT/liftOver liftover_bin=$GWAS_SOFTWARE_ROOT/bin/liftOver
+reference_dir=$GWAS_DATA_ROOT/gen/1hgp gene_dir=$GWAS_FILES_ROOT
 
 
 # 🚩 Command-line arguments

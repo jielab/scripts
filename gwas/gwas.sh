@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 
-# Public directory options use --dir-XXX; legacy spellings remain compatible.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
-    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
-    unset SCRIPT_DIRECTORY_ARGS
-fi
-source /mnt/d/scripts/0f/console.sh
+# Resolve paths and dispatch before any scientific work or input discovery.
+GWAS_ENTRY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$GWAS_ENTRY_ROOT/f/runtime.sh"
+gwas_runtime_init "gwas.sh" "$@" || exit $?
+set -- "${GWAS_ARGS[@]}"
+source "$GWAS_ENTRY_ROOT/../0f/console.sh"
 set -euo pipefail
 set +H
 
@@ -60,6 +58,7 @@ Example:
     ./gwas.sh regenie --grch 37 --pheno-name height \
         --continuous-covariate-file continuous.tsv --categorical-covariate-file categorical.tsv
 HELP
+	gwas_runtime_usage
 }
 
 die() {
@@ -72,8 +71,8 @@ bool_word() {
 tool_path() {
 	if command -v "$1" >/dev/null 2>&1; then
 		command -v "$1"
-	elif [[ -x /mnt/d/software/bin/$1 ]]; then
-		echo "/mnt/d/software/bin/$1"
+	elif [[ -x $GWAS_SOFTWARE_ROOT/bin/$1 ]]; then
+		echo "$GWAS_SOFTWARE_ROOT/bin/$1"
 	else echo "$1"; fi
 }
 
@@ -101,23 +100,24 @@ step2_threads=''
 global_maf=1e-4
 [[ "$module" != regenie ]] || min_mac=5
 typed_dir=''
-imputed_dir='' phenotype_file=/mnt/d/data/ukb/common/ukb.phe covariate_file=''
+imputed_dir='' phenotype_file=$GWAS_PHENOTYPE_FILE covariate_file=''
 continuous_covariate_file='' categorical_covariate_file=''
 covariates_set=FALSE categorical_covariates_set=FALSE
 phenotypes=height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu
 type=auto event_col='' covariates=age,sex,tdi,PC1,PC2,PC3,PC4 categorical_covariates=''
-output_dir=/mnt/d/analysis/gwas/self/common
+output_dir=$GWAS_ANALYSIS_ROOT/self/common
 chromosomes=''
 extract='' keep='' sparse_grm=TRUE run=TRUE replace=FALSE
 plink2=$(tool_path plink2)
 plink=$(tool_path plink)
 regenie=$(tool_path regenie)
 rscript=$(tool_path Rscript)
-saige_dir=/mnt/d/software/SAIGE/extdata
+saige_dir=$GWAS_SOFTWARE_ROOT/SAIGE/extdata
 saige_rscript=$rscript
-for saige_env in "$HOME/anaconda3/envs/saige" "$HOME/miniforge3/envs/saige"; do
+for saige_env in "${SAIGE_ENV_DIR:-$DIR_WORK/.conda/envs/saige}" "$HOME/anaconda3/envs/saige" "$HOME/miniforge3/envs/saige"; do
 	if [[ -f "$saige_env/bin/createSparseGRM.R" ]]; then
 		saige_dir="$saige_env/bin"
+		export SAIGE_ENV_DIR="$saige_env"
 		saige_rscript="$here/f/gwas.f.sh"
 		break
 	fi
@@ -173,8 +173,8 @@ try:
 except (ValueError, AssertionError):
     sys.exit('ERROR: --global-maf must be > 0 and <= 0.5')
 PY
-typed_dir=${typed_dir:-/mnt/f/gen/ukb/$grch/typ}
-imputed_dir=${imputed_dir:-/mnt/f/gen/ukb/$grch/imp}
+typed_dir=${typed_dir:-$GWAS_DATA_ROOT/gen/ukb/$grch/typ}
+imputed_dir=${imputed_dir:-$GWAS_DATA_ROOT/gen/ukb/$grch/imp}
 selection_dir="$imputed_dir/.${module}"
 input_dir="$imputed_dir"
 if [[ "$module" == sparseGRM ]]; then

@@ -269,8 +269,8 @@ phe_header_names() {
 # discovery, scheduling, completion markers, and project metadata stay in the
 # caller.  STATUS_FILE reports the values wrappers need after a successful run.
 pgs_plink_calc() (
-    source /mnt/d/scripts/0f/cli_dirs.sh
-    script_directory_args /mnt/d/scripts/0f/phenotype.sh "$@"
+    source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/cli_dirs.sh"
+    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
     set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
     unset SCRIPT_DIRECTORY_ARGS
 	set +e
@@ -1381,7 +1381,8 @@ match_EAF() {
 
 		freq_prefix="$tmp_dir/chr${label}.freq"
 		plink_log="$tmp_dir/chr${label}.plink.stdout"
-		if ! plink2 --pfile "$prefix" "${pfile_modifier[@]}" --extract bed1 "$bed" \
+		if ! plink2 --threads "${GWAS_EAF_THREADS:-2}" --memory "${GWAS_EAF_MEMORY_MB:-2048}" \
+			--pfile "$prefix" "${pfile_modifier[@]}" --extract bed1 "$bed" \
 			"${keep_args[@]}" --freq cols=chrom,pos,ref,alt,eq,nobs --out "$freq_prefix" >"$plink_log" 2>&1; then
 			cat "$plink_log" >&2
 			rm -rf -- "$tmp_dir"

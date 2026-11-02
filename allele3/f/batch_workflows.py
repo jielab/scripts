@@ -307,15 +307,35 @@ def single_plan(entry,argv,mode,python):
         cmd=remove_options(argv,('--python',))+['--python',python]
         add_job(plan,'environment_check',['bash',absolute(entry),*cmd],python,resource=resources(1,4,1))
         return plan,[],out
-    out=option(argv,'--out','--dir-out','--store')
+    explicit_out=option(argv,'--out','--dir-out','--store')
+    action=argv[0] if argv and not argv[0].startswith('-') else 'run'
+    # Keep the public shell's fresh-run protections before adding a resolved
+    # --out to the worker. An invented default would otherwise satisfy that
+    # shell guard and authorize --replace TRUE against a completed store.
+    if name=='3.scan.sh' and action=='run' and not explicit_out:
+        raise ValueError('Fresh scan requires --out DIR (or --store DIR); select the intended output explicitly')
+    out=explicit_out
     if not out:
-        if name=='1.pca3D.sh': out=analysis+'/pca3d'
+        if name=='1.pca3D.sh':
+            out=os.environ.get('PCA3D_OUT')
+            if action=='run' and not out:
+                raise ValueError('PCA calculation requires --out DIR (or PCA3D_OUT); select the intended output explicitly')
+            out=out or analysis+'/pca3d'
         elif name=='2.herv.sh':
-            sample=option(argv,'--sample',default='HG00096');dataset=option(argv,'--dat','--gen',default='1kg')
-            out=analysis+'/herv/'+dataset+'/'+sample
+            out=os.environ.get('HERV_OUT') or os.environ.get('ALLELE_HERV_OUT')
+            sample=option(argv,'--sample',default=os.environ.get('HERV_SAMPLE','HG00096'))
+            dataset=option(argv,'--dat','--gen',default=os.environ.get('HERV_GEN','1kg'))
+            build=option(argv,'--build',default=os.environ.get('HERV_BUILD','38'))
+            selected_root=option(argv,'--dir-analysis-root',default=os.environ.get('HERV_ANALYSIS_ROOT'))
+            if not out:
+                if selected_root: out=selected_root+'/herv/'+dataset+'/'+sample
+                elif mode=='hpc': out=os.environ.get('DIR_SCRATCH',work)+'/allele3/herv/'+dataset+'/'+build+'/'+sample
+                else: out=data+'/gen/'+dataset+'/'+build+'/herv/'+sample
         elif name=='3.scan.sh': out=os.environ.get('ALLELE_SCAN_STORE',data+'/annot/gnomad/allele3')
-        elif argv[:1]==['research']: out=analysis+'/research/'+(argv[1] if len(argv)>1 else 'unknown')
-        else: out=analysis+'/final/herv_focus_20261028'
+        elif argv[:1]==['research']:
+            out=analysis+'/research/'+(argv[1] if len(argv)>1 else 'unknown')
+            if len(argv)>2 and argv[1]=='cohort' and argv[2] in {'plan','summarize'}: out+='/'+argv[2]
+        else: out=os.environ.get('ALLELE_HERV_FOCUS_OUT') or analysis+'/final/herv_focus_20261028'
         argv += ['--out',out]
     out=Path(absolute(out))
     if name=='allele3.sh' and (not argv or argv[0]!='research'):

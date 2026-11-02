@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import warnings
 
 import numpy as np
@@ -180,8 +181,23 @@ def evaluate(args, trait, method="csx"):
     from resume import run_lock
     root = Path(args.analysis_root)
     score_name = "1csx.scores.rds" if method == "csx" else "2disco.scores.rds"
-    score_path = Path(args.scores.format(trait=trait)) if args.scores else Path(args.score_dir) / trait / score_name
+    explicit_scores = Path(args.scores.format(trait=trait)) if args.scores else None
+    score_subset = getattr(args, "score_subset", "") or ""
+    # The native Disco scorer already passes its exact permanent score path.
+    # Recognize that existing subset layout without changing its score-cache key.
+    if (not score_subset and explicit_scores is not None and explicit_scores.name == score_name
+            and explicit_scores.parent.parent.name == trait
+            and re.fullmatch(r"chr\d+(?:,\d+)*", explicit_scores.parent.name)):
+        score_subset = explicit_scores.parent.name
+    if score_subset and not re.fullmatch(r"chr\d+(?:,\d+)*", score_subset):
+        raise ValueError("--score-subset requires a chromosome directory such as chr22 or chr21,22")
+    score_home = Path(args.score_dir) / trait
+    if score_subset:
+        score_home /= score_subset
+    score_path = explicit_scores if explicit_scores is not None else score_home / score_name
     out = (root / "csx" / trait / "targetfit") if method == "csx" else (root / "disco" / trait)
+    if score_subset:
+        out /= score_subset
     out.mkdir(parents=True, exist_ok=True)
     with analysis_guard(root), run_lock(out):
         frame, metadata = load_cohort(root, trait, cohort_source(args), args.prepared, args.group_col)
@@ -236,7 +252,8 @@ def evaluate(args, trait, method="csx"):
                 stage="test", status="completed", training_role="target_validation", test_used_for_fitting=False,
                 validation_N=int(fit.sum()), validation_observed_N=int(np.isfinite(frame.loc[fit, "y"]).sum()),
                 score_standardization=args.prs_standardization, covariates=",".join(covariates),
-                endpoint=metadata["endpoint_definition"], grouping_status=metadata["grouping_status"], **primary)
+                endpoint=metadata["endpoint_definition"], grouping_status=metadata["grouping_status"],
+                chromosome_subset=score_subset or "all_autosomes", **primary)
             row.update({"covariate_only_" + k: v for k, v in nuisance.items() if k not in {"N", "N_total", "N_missing_outcome"}})
             if not binary:
                 row["incremental_prediction_r2"] = primary["prediction_r2"] - nuisance["prediction_r2"]
@@ -255,7 +272,7 @@ def evaluate(args, trait, method="csx"):
                  local / "final_prs.tsv.gz", local / "roles.tsv.gz", truth_path, out / "performance.tsv", out / "coefficients.tsv"]
         receipt = dict(schema="grid.target_benchmark.1", status="completed", method=method, trait=trait,
             metadata=metadata, roster=roster_meta, scores=str(score_path.resolve()),
-            implementation_sha256=sha256(__file__), models=list(fitted),
+            implementation_sha256=sha256(__file__), models=list(fitted), chromosome_subset=score_subset or "all_autosomes",
             model_labels={name: value["method"] for name, value in fitted.items()},
             predictions_file=str((local / "final_prs.tsv.gz").resolve()), test_truth_file=str(truth_path.resolve()),
             endpoint=metadata["endpoint_definition"], task="binary" if binary else "continuous",
@@ -274,6 +291,7 @@ def parser(method="csx"):
     p.add_argument("--traits", "--trait", default="height,ldl,t2dm")
     p.add_argument("--score-dir", default=os.environ.get("GRID_SCORE_DIR", relocate("/mnt/f/gen/ukb/pgs")))
     p.add_argument("--scores", "--score-file", help="TSV/RDS; {trait} is expanded per trait")
+    p.add_argument("--score-subset", default="", help="Subset score directory, e.g. chr22; keeps its evaluation separate from genome-wide results")
     p.add_argument("--cohort", help="Optional standalone TSV: id, group_id, split, trait/y and covariates")
     p.add_argument("--prepared", help="Existing trusted GRID prepared.joblib alternative")
     p.add_argument("--block-config", default=str(GRID / "config/abm.blocks.json"),

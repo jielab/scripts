@@ -5,7 +5,7 @@
 # --config profiles/qiming.fresh.yml (or set both legacy keys to null).
 
 schema: 1
-root: /work/sph-huang
+root: /data/sph-huangj
 reference_raw: annot/metag/raw
 metadata_dir: analysis/metag_parallel/metadata
 library_dir: analysis/metag_parallel/lib

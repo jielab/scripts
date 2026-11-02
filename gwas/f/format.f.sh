@@ -1506,7 +1506,7 @@ if [[ ${1:-} == --worker ]]; then
 		python3 "${PERF_F%/*}/format.py" magma-ids \
 			--rows "$GWAS_POST_MAGMA_ROWS" --output "$mapped_rows" --snploc "$mapped_loc.raw" \
 			--audit "${QC_PREFIX}.magma.ids.tsv" --bim "${MAGMA_REF}.bim" \
-			--dbsnp "/mnt/f/annot/dbsnp/rsids-v154-hg${GRCH/37/19}.tsv.gz" \
+			--dbsnp "$DBSNP" \
 			--cache "$MAGMA_ANNOT_CACHE/rsid-map-v1/GRCh$GRCH" || return 1
 		sort -T "$GWAS_POST_TMP" -S "$GWAS_POST_SORT_MEMORY" -k1,1 -k2,2n -k3,3n -u "$mapped_loc.raw" >"$mapped_loc"
 		GWAS_POST_MAGMA_ROWS="$mapped_rows"
@@ -2070,8 +2070,8 @@ else
 		if [[ -n "$gene_loc" ]]; then
 			need_file "$gene_loc"
 		elif [[ "$grch" == auto ]]; then
-			need_file "$dir0/files/NCBI.37.gene.loc"
-			need_file "$dir0/files/NCBI.38.gene.loc"
+			need_file "$GWAS_FILES_ROOT/NCBI.37.gene.loc"
+			need_file "$GWAS_FILES_ROOT/NCBI.38.gene.loc"
 		else
 			echo "ERROR: no MAGMA gene-location file resolved for GRCh$grch" >&2
 			exit 1
@@ -2198,6 +2198,11 @@ else
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
+export GWAS_DATA_ROOT=$(q "$GWAS_DATA_ROOT") GWAS_FILES_ROOT=$(q "$GWAS_FILES_ROOT")
+export GWAS_SOFTWARE_ROOT=$(q "$GWAS_SOFTWARE_ROOT")
+export CHECK_GRCH_SNP_LIST=$(q "$CHECK_GRCH_SNP_LIST")
+export GWAS_TOOL_THREADS=$(q "$GWAS_TOOL_THREADS") GWAS_PLINK_MEMORY_MB=$(q "$GWAS_PLINK_MEMORY_MB")
+export PGS_PLINK_MEMORY_MB=$(q "$PGS_PLINK_MEMORY_MB")
 PGS_STEP_HEADER
 			printf 'DEFAULT_PROJECT=%q\nDEFAULT_CATEGORY=%q\nDEFAULT_LABEL=%q\n' "$dir_out" "$category" "$label"
 			cat <<'PGS_STEP_BODY'
@@ -2643,14 +2648,8 @@ PGS_STEP_BODY
 		n=$(wc -l <"$list" | tr -d ' ')
 
 		if [[ "$is_bsub" == "TRUE" ]]; then
-			log "Submitting $n command files to bsub; per-GWAS logs: $dir_log/$category/<GWAS>/<GWAS>.$step_key.log"
-			while read -r cmd; do
-				[[ -s "$cmd" ]] || continue
-				base=$(basename "$cmd" .cmd)
-				bsub -J "gwas_post_${step_key}_$base" -oo "$dir_log/$category/$base/$base.$step_key.bsub.log" -eo "$dir_log/$category/$base/$base.$step_key.bsub.err" \
-					"mkdir -p '$dir_log/$category/$base'; bash '$cmd' > '$dir_log/$category/$base/$base.$step_key.log' 2>&1"
-			done <"$list"
-			return 0
+			echo 'ERROR: use format.sh --submit hpc; nested bsub is not supported.' >&2
+			return 2
 		fi
 
 		log "Running $n command files locally (jobs=$jobs); per-GWAS logs: $dir_log/$category/<GWAS>/<GWAS>.$step_key.log"
@@ -2762,8 +2761,8 @@ PGS_STEP_BODY
 			if [[ -n "$mh_plot_bed" ]]; then
 				need_file "$mh_plot_bed"
 			else
-				need_file "$dir0/files/glist.37.bed"
-				need_file "$dir0/files/glist.38.bed"
+				need_file "$GWAS_FILES_ROOT/glist.37.bed"
+				need_file "$GWAS_FILES_ROOT/glist.38.bed"
 			fi
 		fi
 		if { has_step lead || wants_magma; } && [[ "$grch" != auto ]]; then
@@ -2870,6 +2869,11 @@ PGS_STEP_BODY
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
+export GWAS_DATA_ROOT=$(q "$GWAS_DATA_ROOT") GWAS_FILES_ROOT=$(q "$GWAS_FILES_ROOT")
+export GWAS_SOFTWARE_ROOT=$(q "$GWAS_SOFTWARE_ROOT")
+export CHECK_GRCH_SNP_LIST=$(q "$CHECK_GRCH_SNP_LIST")
+export GWAS_TOOL_THREADS=$(q "$GWAS_TOOL_THREADS") GWAS_PLINK_MEMORY_MB=$(q "$GWAS_PLINK_MEMORY_MB")
+export PGS_PLINK_MEMORY_MB=$(q "$PGS_PLINK_MEMORY_MB")
 FINAL=$(q "$final")
 THIN_OUT=$(q "${final%.gz}.thin.gz")
 GRCH=$(q "$grch")
@@ -2956,24 +2960,24 @@ THIN_CMD
 			fi
 		fi
 		gwas_hm3_pos=${hm3_pos//\{grch\}/$gwas_grch}
-		gwas_pgs_pfile_dir="${pgs_pfile_dir:-/mnt/f/gen/ukb/${gwas_grch}/imp}"
+		gwas_pgs_pfile_dir="${pgs_pfile_dir:-$GWAS_DATA_ROOT/gen/ukb/${gwas_grch}/imp}"
 		if has_step pgs; then
 			need_pgs_pfiles "$gwas_pgs_pfile_dir"
 		fi
 		gwas_gene_loc="$gene_loc"
 		if [[ -z "$gwas_gene_loc" ]]; then
-			[[ "$gwas_grch" == 37 ]] && gwas_gene_loc="$dir0/files/NCBI.37.gene.loc" || gwas_gene_loc="$dir0/files/NCBI.38.gene.loc"
+			[[ "$gwas_grch" == 37 ]] && gwas_gene_loc="$GWAS_FILES_ROOT/NCBI.37.gene.loc" || gwas_gene_loc="$GWAS_FILES_ROOT/NCBI.38.gene.loc"
 		fi
 		gwas_mh_plot_bed=""
 		gwas_mh_plot_bed="$mh_plot_bed"
-		[[ -n "$gwas_mh_plot_bed" ]] || gwas_mh_plot_bed="$dir0/files/glist.${gwas_grch}.bed"
+		[[ -n "$gwas_mh_plot_bed" ]] || gwas_mh_plot_bed="$GWAS_FILES_ROOT/glist.${gwas_grch}.bed"
 		if has_step format && [[ "$liftOver" == TRUE && "$gwas_grch" != 37 ]]; then
 			echo "ERROR: --liftover TRUE uses the GRCh37-to-GRCh38 chain, but $gwas was detected/configured as GRCh$gwas_grch" >&2
 			exit 1
 		fi
-		gwas_refGen_clump="${refGen_clump:-/mnt/f/gen/1kg/${gwas_grch}/pfile/}"
-		gwas_refGen_cojo="${refGen_cojo:-/mnt/f/gen/1kg/${gwas_grch}/pfile/${refGen_pop}/}"
-		gwas_refGen_id_dir="${refGen_id_dir:-/mnt/f/gen/1kg/${gwas_grch}/id}"
+		gwas_refGen_clump="${refGen_clump:-$GWAS_DATA_ROOT/gen/1kg/${gwas_grch}/pfile/}"
+		gwas_refGen_cojo="${refGen_cojo:-$GWAS_DATA_ROOT/gen/1kg/${gwas_grch}/pfile/${refGen_pop}/}"
+		gwas_refGen_id_dir="${refGen_id_dir:-$GWAS_DATA_ROOT/gen/1kg/${gwas_grch}/id}"
 		gwas_refGen_keep=""
 		if has_step lead || wants_magma || { has_step format && [[ "$fill_eaf" == TRUE ]]; }; then
 			if [[ "$refGen_pop" != ALL ]]; then
@@ -3018,7 +3022,12 @@ THIN_CMD
 #!/bin/bash
 set -euo pipefail
 export LC_ALL=C
-export PATH=$(q "$dir0/software/bin"):\$PATH
+export GWAS_DATA_ROOT=$(q "$GWAS_DATA_ROOT") GWAS_FILES_ROOT=$(q "$GWAS_FILES_ROOT")
+export GWAS_SOFTWARE_ROOT=$(q "$GWAS_SOFTWARE_ROOT")
+export CHECK_GRCH_SNP_LIST=$(q "$CHECK_GRCH_SNP_LIST")
+export GWAS_TOOL_THREADS=$(q "$GWAS_TOOL_THREADS") GWAS_PLINK_MEMORY_MB=$(q "$GWAS_PLINK_MEMORY_MB")
+export PGS_PLINK_MEMORY_MB=$(q "$PGS_PLINK_MEMORY_MB")
+export PATH=$(q "$GWAS_SOFTWARE_ROOT/bin"):\$PATH
 
 gwas_post_need_file(){
   [[ -s "\$1" ]] || { echo "ERROR: missing or empty file: \$1" >&2; exit 1; }
@@ -3044,15 +3053,7 @@ else
 fi
 mkdir -p "\$GWAS_POST_TMP_ROOT"
 # Isolate temporary files per process and remove them on exit.
-for stale_tmp in "\$GWAS_POST_TMP_ROOT"/run.*; do
-  [[ -d "\$stale_tmp" ]] || continue
-  stale_pid=\${stale_tmp##*.}
-  if [[ ! "\$stale_pid" =~ ^[1-9][0-9]*\$ ]] || ! kill -0 "\$stale_pid" 2>/dev/null; then
-    rm -rf -- "\$stale_tmp"
-  fi
-done
-GWAS_POST_TMP="\$GWAS_POST_TMP_ROOT/run.\$\$"
-mkdir -p "\$GWAS_POST_TMP"
+GWAS_POST_TMP=\$(mktemp -d "\$GWAS_POST_TMP_ROOT/run.\$(hostname -s).XXXXXX")
 export TMPDIR="\$GWAS_POST_TMP"
 gwas_post_cleanup_tmp(){
   rm -rf -- "\$GWAS_POST_TMP"
@@ -3130,7 +3131,7 @@ RSID_CACHE=$(q "$rsid_cache")
 EAF_CACHE=$(q "$eaf_cache")
 CHR_PREFIX=$(q "$chr_prefix")
 COL_MAP=$(q "$col_map")
-DBSNP=$(q "${dbsnp:-/mnt/f/annot/dbsnp/rsids-v154-hg${gwas_grch/37/19}.tsv.gz}")
+DBSNP=$(q "${dbsnp:-$GWAS_DATA_ROOT/annot/dbsnp/rsids-v154-hg${gwas_grch/37/19}.tsv.gz}")
 N_TOTAL=$(q "$n_total")
 H2_HELPER=$(q "${SCRIPT_PATH%/*}/f/format.py")
 LIFTOVER_HELPER=$(q "${SCRIPT_PATH%/*}/f/format.py")
@@ -3722,7 +3723,7 @@ gwas_post_prepare_gcta_bfile(){
   gwas_post_need_file "\${source}.fam"
   gwas_post_need_file "\$ma"
   rm -f -- "\${out}.bed" "\${out}.bim" "\${out}.fam" "\${out}.log" "\${out}.err"
-  run_tool "\$out" plink2 --bfile "\$source" --extract "\$ma" --make-bed --output-chr 26 --out "\$out"
+  run_tool "\$out" plink2 --threads "\$GWAS_TOOL_THREADS" --memory "\$GWAS_PLINK_MEMORY_MB" --bfile "\$source" --extract "\$ma" --make-bed --output-chr 26 --out "\$out"
   gwas_post_need_file "\${out}.bed"
   gwas_post_need_file "\${out}.bim"
   gwas_post_need_file "\${out}.fam"
@@ -3851,7 +3852,7 @@ if run_lead; then
         [[ -s "\${ref}.pvar" || ! -s "\${ref}.pvar.zst" ]] || pfile_modifier=(vzs)
         pfile_keep=()
         [[ -z "\$REFGEN_KEEP" ]] || pfile_keep=(--keep "\$REFGEN_KEEP")
-        run_tool "\$cp" plink2 --pfile "\$ref" "\${pfile_modifier[@]}" "\${pfile_keep[@]}" --clump "\$assoc" --clump-snp-field SNP --clump-p-field P --clump-p1 "\$P_LEAD" --clump-kb "\$CLUMP_KB" --out "\$cp"
+        run_tool "\$cp" plink2 --threads "\$GWAS_TOOL_THREADS" --memory "\$GWAS_PLINK_MEMORY_MB" --pfile "\$ref" "\${pfile_modifier[@]}" "\${pfile_keep[@]}" --clump "\$assoc" --clump-snp-field SNP --clump-p-field P --clump-p1 "\$P_LEAD" --clump-kb "\$CLUMP_KB" --out "\$cp"
       else
         gwas_post_log "skip plink2 chr\$chr: all significant IDs are ambiguous in the reference"
       fi
@@ -3870,7 +3871,7 @@ if run_lead; then
       # This floor excludes fixed alleles while retaining rare 1000G variants.
       # Permit the full [0,1] frequency difference, including inputs that carry
       # MAF in the frequency column. Missing/invalid values were filtered above.
-      gwas_post_run_cojo "\$jp" "\${QC_PREFIX}.\${tag}.cojo_empty" gcta --bfile "\$GCTA_BFILE" "\${GCTA_CHR_ARGS[@]}" \
+      gwas_post_run_cojo "\$jp" "\${QC_PREFIX}.\${tag}.cojo_empty" gcta --thread-num "\$GWAS_TOOL_THREADS" --bfile "\$GCTA_BFILE" "\${GCTA_CHR_ARGS[@]}" \
         --maf 1e-6 --diff-freq 1.0 --cojo-file "\$ma" --cojo-slct --cojo-p "\$P_LEAD" --out "\$jp"
       if [[ "\$GCTA_COJO_HAS_MATCH" == TRUE ]]; then cojo_has_matched_input=TRUE; fi
       if [[ "\$GCTA_COJO_NO_SNPS_SELECTED" == TRUE ]]; then cojo_has_empty_selection=TRUE; fi

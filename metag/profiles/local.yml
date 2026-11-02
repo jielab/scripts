@@ -1,0 +1,37 @@
+# Explicit local/WSL profile for the user's 96 GiB workstation.
+# Paths can be changed independently; this never moves or deletes existing caches.
+# A category/query whose uncapped estimate exceeds this budget is refused.
+schema: 1
+root: /mnt/f
+reference_raw: /mnt/f/annot/metag/raw
+reads_raw: /mnt/f/metag/raw
+metadata_dir: /mnt/d/analysis/metag_parallel/metadata
+library_dir: /mnt/f/annot/metag/lib_parallel
+output_dir: /mnt/d/analysis/metag_parallel/split
+work_dir: /mnt/d/analysis/metag_parallel/work
+tools_dir: /mnt/d/tools/metag_parallel
+legacy_library_dir: null
+legacy_metadata_dir: null
+setup_cores: 4
+setup_memory_gib: 8
+prepare_cores: 4
+prepare_threads: 4
+prepare_memory_gib: 8
+prepare_concurrency: 2
+build_cores: 16
+build_threads: 16
+build_memory_gib: 80
+category_resources:
+  viruses: {cores: 8, threads: 8, memory_gib: 32}
+  microbes: {cores: 16, threads: 16, memory_gib: 80}
+  plants: {cores: 16, threads: 16, memory_gib: 80}
+  invertebrates: {cores: 16, threads: 16, memory_gib: 80}
+  vertebrates: {cores: 16, threads: 16, memory_gib: 80}
+classify_cores: 16
+classify_threads: 14
+classify_workers: 1
+classify_memory_gib: 80
+classify_concurrency: 1
+worker_memory_gib: 4
+system_reserve_gib: 8
+min_free_gib: 20
