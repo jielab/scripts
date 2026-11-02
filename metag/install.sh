@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/f/scratch.sh"
 case "${1:-}" in
     doctor|setup|status|audit) exec bash "$HERE/f/entry.sh" "$@" ;;
 esac

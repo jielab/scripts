@@ -979,7 +979,7 @@ def build_database(cfg):
             temporary.replace(mapping)
             frozen_mapping = _file_record(mapping)
             binary = Path(cfg["tools_dir"]) / "kraken/bin"
-            threads = int(cfg.get("build_threads", 96))
+            threads = int(cfg.get("build_threads", 32))
             if threads <= 0:
                 raise RuntimeError("build_threads must be positive")
             base = ["-k", "35", "-l", "31", "-S", PARAMETERS["seed"], "-p", str(threads)]

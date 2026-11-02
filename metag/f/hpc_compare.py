@@ -164,7 +164,7 @@ def run_case(cfg, case, case_dir, snapshot=None):
     local.update(case["parameters"])
     local.update(classifier_engine=case["classifier_engine"], classify_workers=1,
                  output_dir=str(case_dir / "output"), work_dir=str(case_dir / "work"))
-    if int(local.get("classify_threads", 8)) + 2 > int(local.get("classify_cores", 96)):
+    if int(local.get("classify_threads", 8)) + 2 > int(local.get("classify_cores", 32)):
         raise RuntimeError("Comparison threads exceed the CPU allocation including parser overhead")
     snapshot = _snapshot(local) if snapshot is None else snapshot
     source_identity = snapshot.get("source_database_identity") or (snapshot["identity"] if case["classifier_engine"] == "kraken" else None)
@@ -294,27 +294,31 @@ def _assignments(record):
         raise RuntimeError(f"Assignment row count {count} differs from fragments {expected}")
 
 
-def _pair(left, right):
+def _check_pair_inputs(left, right):
     a, b = left["summary"], right["summary"]
     if (a["input_digest"], a["fragments"], a["paired"], left["source_database_identity"]) != (
             b["input_digest"], b["fragments"], b["paired"], right["source_database_identity"]):
         raise RuntimeError("Cannot compare different input bytes/order/count or source reference indexes")
-    counts = Counter()
-    status_pairs = Counter()
-    for one, two in itertools.zip_longest(_assignments(left), _assignments(right)):
-        if one is None or two is None or (one["ordinal"], one["r1"], one["r2"]) != (two["ordinal"], two["r1"], two["r2"]):
-            raise RuntimeError("Methods did not publish matching ordinal read pairs")
-        if one["species"] and two["species"]:
-            counts["same_species" if one["species"] == two["species"] else "different_species"] += 1
-        elif one["species"]:
-            counts["left_species_right_unresolved"] += 1
-        elif two["species"]:
-            counts["right_species_left_unresolved"] += 1
-        else:
-            counts["both_unresolved"] += 1
-        if (one["taxid"], one["status"]) == (two["taxid"], two["status"]):
-            counts["same_normalized_assignment"] += 1
-        status_pairs[one["status"] + ":" + two["status"]] += 1
+
+
+def _count_pair(one, two, counts, status_pairs):
+    if one is None or two is None or (one["ordinal"], one["r1"], one["r2"]) != (two["ordinal"], two["r1"], two["r2"]):
+        raise RuntimeError("Methods did not publish matching ordinal read pairs")
+    if one["species"] and two["species"]:
+        counts["same_species" if one["species"] == two["species"] else "different_species"] += 1
+    elif one["species"]:
+        counts["left_species_right_unresolved"] += 1
+    elif two["species"]:
+        counts["right_species_left_unresolved"] += 1
+    else:
+        counts["both_unresolved"] += 1
+    if (one["taxid"], one["status"]) == (two["taxid"], two["status"]):
+        counts["same_normalized_assignment"] += 1
+    status_pairs[one["status"] + ":" + two["status"]] += 1
+
+
+def _pair_result(left, right, counts, status_pairs):
+    a = left["summary"]
     both = counts["same_species"] + counts["different_species"]
     return {"sample_id": left["case"]["sample"]["sample_id"],
             "left_case": left["case"]["case_id"], "right_case": right["case"]["case_id"],
@@ -327,6 +331,88 @@ def _pair(left, right):
             "species_agreement_over_all_fragments": counts["same_species"] / a["fragments"],
             "status_pair_counts": json.dumps(dict(status_pairs), sort_keys=True),
             "interpretation": "agreement only; neither method is treated as ground truth"}
+
+
+def _pair(left, right):
+    """Two-case reference implementation, also useful for focused verification."""
+    _check_pair_inputs(left, right)
+    counts, status_pairs = Counter(), Counter()
+    for one, two in itertools.zip_longest(_assignments(left), _assignments(right)):
+        _count_pair(one, two, counts, status_pairs)
+    return _pair_result(left, right, counts, status_pairs)
+
+
+def _all_pairs(records):
+    """Read each compatible case once while accumulating all pairwise counts.
+
+    Memory holds one row per case and a fixed set of counters per pair, never
+    all fragments. An invalid case/pair removes only affected comparisons;
+    unrelated valid comparisons can still be reported as before.
+    """
+    pairs = list(itertools.combinations(range(len(records)), 2))
+    agreements, errors, compatible = {}, {}, set()
+
+    def fail(pair, exc):
+        left, right = (records[index] for index in pair)
+        errors.setdefault(pair, {"sample_id": left["case"]["sample"]["sample_id"],
+            "left_case": left["case"]["case_id"], "right_case": right["case"]["case_id"],
+            "error": f"{type(exc).__name__}: {exc}"})
+
+    for pair in pairs:
+        try:
+            _check_pair_inputs(*(records[index] for index in pair))
+            compatible.add(pair)
+        except Exception as exc:
+            fail(pair, exc)
+
+    # Input equality forms cohorts. Cases without any compatible partner need
+    # no second scan: summarize_cases() already validates each one separately.
+    pending = {index for pair in compatible for index in pair}
+    while pending:
+        first = min(pending)
+        members = [first] + sorted(index for index in pending - {first}
+                                   if (first, index) in compatible)
+        pending.difference_update(members)
+        counters = {pair: (Counter(), Counter())
+                    for pair in itertools.combinations(members, 2) if pair in compatible}
+        with ExitStack() as stack:
+            iterators = {}
+            for index in members:
+                iterator = iter(_assignments(records[index]))
+                iterators[index] = iterator
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    stack.callback(close)
+            active, finished = set(members), set()
+            while active and counters:
+                rows = {}
+                for index in sorted(active):
+                    try:
+                        rows[index] = next(iterators[index])
+                    except StopIteration:
+                        active.remove(index)
+                        finished.add(index)
+                    except Exception as exc:
+                        active.remove(index)
+                        for pair in list(counters):
+                            if index in pair:
+                                fail(pair, exc)
+                                del counters[pair]
+                for pair, (counts, status_pairs) in list(counters.items()):
+                    left, right = pair
+                    try:
+                        if left in finished and right in finished:
+                            agreements[pair] = _pair_result(records[left], records[right], counts, status_pairs)
+                            del counters[pair]
+                        else:
+                            _count_pair(rows.get(left), rows.get(right), counts, status_pairs)
+                    except Exception as exc:
+                        fail(pair, exc)
+                        del counters[pair]
+    # Preserve the previous report ordering even when incompatible inputs cause
+    # several independent cohorts to be scanned.
+    return ([agreements[pair] for pair in pairs if pair in agreements],
+            [errors[pair] for pair in pairs if pair in errors])
 
 
 def _truth_rows(path, sample_id, expected, taxonomy=None):
@@ -487,12 +573,9 @@ def summarize_cases(case_receipt_paths, out_dir, truth_path=None, taxonomy_dir=N
         grouped[record["case"]["sample"]["sample_id"]].append(record)
     agreements, truth_rows = [], []
     for sample_id, group in grouped.items():
-        for left, right in itertools.combinations(group, 2):
-            try:
-                agreements.append(_pair(left, right))
-            except Exception as exc:
-                errors.append({"sample_id": sample_id, "left_case": left["case"]["case_id"],
-                               "right_case": right["case"]["case_id"], "error": f"{type(exc).__name__}: {exc}"})
+        comparisons, pair_errors = _all_pairs(group)
+        agreements.extend(comparisons)
+        errors.extend(pair_errors)
         if truth_path:
             for record in group:
                 try:

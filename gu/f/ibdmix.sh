@@ -364,7 +364,7 @@ prepare_samples() {
 		d=$dirout/samples/$u
 		mkdir -p "$d"
 		bcftools query -l "$vcf" >"$d/actual.txt"
-		python3 "$helper" samples --panel "$sample_file" --actual "$d/actual.txt" --output "$d" "${background_args[@]}"
+		python3 "$helper" samples --panel "$sample_file" --actual "$d/actual.txt" --output "$d" ${background_args[@]+"${background_args[@]}"}
 	done
 	# Whole-run sample roster for downstream read-only population summaries.
 	cp "$dirout/samples/${analysis_units[0]}/ALL.txt" "$dirout/samples/ALL.txt"
@@ -619,7 +619,7 @@ run_ibdmix_caller() (
 		fi
 		log "GPU ACQUIRED device=$device"
 	fi
-	"$ibdmix_bin" "${ibdmix_options[@]}" "$@"
+	"$ibdmix_bin" ${ibdmix_options[@]+"${ibdmix_options[@]}"} "$@"
 )
 
 run_population() {
@@ -688,7 +688,7 @@ run_ref_unit() {
 			pids=("${pids[@]:1}")
 		fi
 	done <"$dirout/samples/$u/populations.tsv"
-	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	for pid in ${pids[@]+"${pids[@]}"}; do wait "$pid" || status=1; done
 	if ((status == 0)); then
 		persist_mask_qc "$u" "$ref" "$reused_population_calls"
 		log "REFERENCE DONE unit=$u ref=$ref elapsed_s=$((SECONDS-start))"
@@ -732,7 +732,7 @@ run_unit() {
 	if ((unit_core_end[$u] > 0)); then core_args=(--core-start "$((unit_core_start[$u] - 1))" --core-end "${unit_core_end[$u]}"); fi
 	python3 "$helper" finalize --raw-dir "$dirout/raw/$u" --populations "$dirout/samples/$u/populations.tsv" \
 		--output "$dirout/segments/$u.segments.tsv.gz" --chrom "${unit_chr[$u]}" --build "$genome_build" --locus "${unit_locus[$u]}" \
-		--min-bp "$len_cut" --lod "$lod_cut" "${core_args[@]}" "${background_args[@]}" "${denisovan_args[@]}" --refs "${refs[@]}"
+		--min-bp "$len_cut" --lod "$lod_cut" ${core_args[@]+"${core_args[@]}"} ${background_args[@]+"${background_args[@]}"} "${denisovan_args[@]}" --refs "${refs[@]}"
 	cleanup_unit
 	trap - ERR EXIT HUP INT TERM
 }
@@ -759,7 +759,7 @@ run_scan() {
 			pids=("${pids[@]:1}")
 		fi
 	done
-	for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+	for pid in ${pids[@]+"${pids[@]}"}; do wait "$pid" || status=1; done
 	((status == 0)) || {
 		echo "ERROR: one or more IBDmix units failed" >&2
 		exit 1

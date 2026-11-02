@@ -39,6 +39,7 @@ class SplitCliTests(unittest.TestCase):
             samples = [dict(sample_id='data/sample', dataset='data', sample='sample', r1=str(reads), r2=None)]
             with patch.object(cli, 'engine_resources', return_value=dict(cfg)), \
                  patch.object(cli, 'engine_snapshot', return_value={'identity': 'test'}), \
+                 patch.object(cli, '_database_states', return_value={}), \
                  patch.object(cli, 'effective_workers'), \
                  patch.object(hpc_query, 'discover_samples', return_value=samples):
                 path = cli.generate_split(cfg, ready_only=True, queue='spec')

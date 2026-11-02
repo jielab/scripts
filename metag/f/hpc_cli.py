@@ -26,7 +26,47 @@ def _cfg_identity(cfg):
     return fingerprint({k: v for k, v in cfg.items() if k != "config_path"})
 
 
+def _integrity_seal(cfg, expected=None, required_indexes=()):
+    """Optional persisted reference baseline; only cheap checks at job boundaries."""
+    value = cfg.get("integrity_seal")
+    if not value:
+        if expected is not None:
+            raise RuntimeError("Frozen integrity seal is no longer configured")
+        return None
+    from audit_integrity import verify_seal
+    path = Path(value).expanduser().resolve(strict=True)
+    observed = {"path": str(path), "sha256": sha256(path)}
+    if expected is not None and observed != expected:
+        raise RuntimeError("Integrity seal changed after job generation")
+    verified = verify_seal(path)
+    for key in ("reference_raw", "metadata_dir", "library_dir", "db_dir", "kunpeng_db_dir"):
+        if (Path(verified["paths"][key]).resolve() != Path(cfg[key]).resolve()):
+            raise RuntimeError(f"Integrity seal belongs to a different {key}")
+    for name in required_indexes:
+        index = verified["indexes"].get(name, {})
+        if index.get("status") != "complete":
+            raise RuntimeError(f"Integrity seal does not cover the completed {name} index; create a new seal")
+        if _read(Path(index["directory"]) / "database.json").get("identity") != index.get("identity"):
+            raise RuntimeError(f"Integrity seal does not match the current {name} database identity")
+    return observed
+
+
+def _required_sealed_indexes(kind, cfg, context):
+    if kind == "split":
+        return ("kraken" if cfg.get("classifier_engine", "kraken") == "kraken" else "kunpeng",)
+    if kind == "compare":
+        return sorted({"kraken" if case["classifier_engine"] == "kraken" else "kunpeng"
+                       for case in context["cases"]})
+    if kind == "convert":
+        return ("kraken",)
+    return ()
+
+
 def _new_plan(cfg, kind, context):
+    context = dict(context)
+    seal = _integrity_seal(cfg, required_indexes=_required_sealed_indexes(kind, cfg, context))
+    if seal is not None:
+        context["integrity_seal"] = seal
     code = code_identity()
     identity = fingerprint({"schema": 1, "kind": kind, "config": _cfg_identity(cfg),
                             "code": code, "context": context})
@@ -91,7 +131,7 @@ def generate_setup(cfg, metadata_source=None, download=True):
     folder, manifest = _new_plan(cfg, "setup", {"metadata_source": source, "download": download})
     path = folder / "00.setup.cmd"
     write_cmd(cfg, path, "setup", _command(folder / "config.json", "setup-worker", folder / "jobs.json"),
-              f"metag_setup_{manifest['identity'][:8]}")
+              f"metag_setup")
     manifest["commands"] = [{"role": "setup", "path": str(path)}]
     return _publish_plan(cfg, folder, manifest)
 
@@ -135,17 +175,17 @@ def generate_library(cfg, prepared=False):
         path = folder / "1.prepare.cmd"
         write_cmd(cfg, path, "prepare", _command(frozen, "prepare-worker", mf,
                   "--task-id", "__LSB_JOBINDEX__", "--stride", workers),
-                  f"metag_prepare_{manifest['identity'][:8]}",
+                  f"metag_prepare",
                   array=f"1-{workers}%{workers}")
         manifest["commands"].append({"role": "prepare", "path": str(path)})
     path = folder / "1.build.cmd"
     write_cmd(cfg, path, "build", _command(frozen, "build-worker", mf),
-              f"metag_build_{manifest['identity'][:8]}")
+              f"metag_build")
     manifest["commands"].append({"role": "build", "path": str(path), "depends_on": [] if prepared else "prepare"})
     if cfg.get("build_kunpeng", True):
         path = folder / "1.kunpeng.cmd"
         write_cmd(cfg, path, "convert", _command(frozen, "convert-worker", mf),
-                  f"metag_kunpeng_index_{manifest['identity'][:8]}")
+                  f"metag_kunpeng_index")
         manifest["commands"].append({"role": "convert", "path": str(path), "depends_on": "build"})
     result = _publish_plan(cfg, folder, manifest)
     print(f"Reference preparation tasks: {len(tasks)}; worker jobs: {workers}")
@@ -154,7 +194,13 @@ def generate_library(cfg, prepared=False):
 
 
 def _sample_states(sample):
-    return {key: file_state(sample[key]) for key in ("r1", "r2") if sample.get(key)}
+    from hpc_query import _runtime_state
+    return {key: _runtime_state(sample[key]) for key in ("r1", "r2") if sample.get(key)}
+
+
+def _database_states(snapshot):
+    from hpc_query import _database_runtime_states
+    return _database_runtime_states(snapshot)
 
 
 def balanced_batches(samples, size):
@@ -178,7 +224,7 @@ def generate_conversion(cfg):
     folder, manifest = _new_plan(cfg, "convert", {"source_database_identity": snapshot["identity"]})
     path = folder / "1.kunpeng.cmd"
     write_cmd(cfg, path, "convert", _command(folder / "config.json", "convert-worker", folder / "jobs.json"),
-              f"metag_kunpeng_index_{manifest['identity'][:8]}")
+              f"metag_kunpeng_index")
     manifest["commands"] = [{"role": "convert", "path": str(path)}]
     return _publish_plan(cfg, folder, manifest)
 
@@ -206,7 +252,8 @@ def generate_split(cfg, datasets=None, only=None, engine=None, ready_only=False,
         if old is None or amount > old[0]:
             largest[sample["dataset"]] = (amount, i)
     pilots = [largest[key][1] for key in sorted(largest)]
-    context = {"database_identity": snapshot["identity"], "samples": samples,
+    context = {"database_identity": snapshot["identity"],
+               "database_runtime_states": _database_states(snapshot), "samples": samples,
                "sample_states": states, "batches": batches, "pilot_indices": pilots}
     folder, manifest = _new_plan(cfg, "split", context)
     frozen, mf = folder / "config.json", folder / "jobs.json"
@@ -216,17 +263,17 @@ def generate_split(cfg, datasets=None, only=None, engine=None, ready_only=False,
         writer.writerows(samples)
     path = folder / "2.pilot.cmd"
     write_cmd(cfg, path, "pilot", _command(frozen, "pilot-worker", mf),
-              f"metag_pilot_{manifest['identity'][:8]}")
+              f"metag_pilot")
     manifest["commands"].append({"role": "pilot", "path": str(path)})
     for number in range(1, len(batches) + 1):
         path = folder / f"2.batch.{number:05d}.cmd"
         write_cmd(cfg, path, "classify", _command(frozen, "split-worker", mf, "--batch-id", number),
-                  f"metag_split_{manifest['identity'][:8]}_{number}")
+                  f"metag_split_{number}")
     for part, (first, count) in enumerate(_arrays(len(batches), cfg["max_array_size"]), 1):
         path = folder / f"2.split.array.{part:03d}.cmd"
         write_cmd(cfg, path, "classify", _command(frozen, "split-worker", mf,
                   "--batch-id", "__LSB_JOBINDEX__", "--offset", first - 1),
-                  f"metag_split_{manifest['identity'][:8]}_{part}",
+                  f"metag_split_{part}",
                   array=f"1-{count}%{min(cfg['classify_concurrency'], count)}")
         manifest["commands"].append({"role": "split", "path": str(path),
                                      "depends_on": ["pilot", "split"] if part > 1 else "pilot"})
@@ -234,6 +281,25 @@ def generate_split(cfg, datasets=None, only=None, engine=None, ready_only=False,
     print(f"Samples={len(samples)}, batch jobs={len(batches)}, requested workers/job={cfg['classify_workers']}")
     print("Submission helper waits for the operational pilot to succeed, then releases batch jobs.")
     return result
+
+
+def _compare_allocation(resources):
+    """Canonical allocation rendered by write_cmd(), including rounded limits."""
+    from hpc_lsf import _settings, _memory
+    queue, cores, memory, walltime = _settings(resources, "classify")
+    return {"queue": queue, "cores": cores, "memory_gib": float(memory),
+            "walltime": walltime, "memory_request": _memory(resources, memory, cores)}
+
+
+def _validate_compare_allocation(context, case_index, resources, group=None):
+    """Require a case's runtime budget to match its frozen submission group."""
+    membership = [name for name, indices in context["groups"].items() if case_index in indices]
+    if len(membership) != 1 or (group is not None and group != membership[0]):
+        raise RuntimeError("Comparison case does not belong to exactly one submitted resource group")
+    descriptor = context.get("group_resources", {}).get(membership[0])
+    if not descriptor or descriptor.get("allocation") != _compare_allocation(resources):
+        raise RuntimeError("Comparison worker allocation differs from its generated array request")
+    return descriptor
 
 
 def generate_compare(cfg, datasets=None, only=None, methods=None, repeats=None,
@@ -257,23 +323,33 @@ def generate_compare(cfg, datasets=None, only=None, methods=None, repeats=None,
     cases = make_cases(samples, methods=chosen, repeats=cfg["compare_repeats"] if repeats is None else repeats,
                        limit=cfg["compare_fragments"] if limit is None else limit, profiles=profile_values)
     methods_used = sorted({c["classifier_engine"] for c in cases})
-    snapshots = {}
+    snapshots, database_states = {}, {}
     sources = set()
     for method in methods_used:
         resources = engine_resources(cfg, method, benchmark=True)
         snapshot = engine_snapshot(resources)
         effective_workers(resources, snapshot)
         snapshots[method] = snapshot["identity"]
+        database_states[method] = _database_states(snapshot)
         sources.add(snapshot.get("source_database_identity", snapshot["identity"]))
     if len(sources) != 1:
         raise RuntimeError("Comparison engines must use the same verified source reference index")
-    groups = {}
+    groups, group_resources = {}, {}
     for i, case in enumerate(cases):
-        key = ("matched" if cfg.get("compare_placement", "matched") == "matched" else
-               "memory" if case["classifier_engine"] == "kunpeng_memory" else "full")
+        resources = engine_resources(cfg, case["classifier_engine"], benchmark=True)
+        allocation = _compare_allocation(resources)
+        matched = cfg.get("compare_placement", "matched") == "matched"
+        cohort = "memory" if not matched and case["classifier_engine"] == "kunpeng_memory" else "full"
+        key = "matched" if matched else f"{cohort}_{fingerprint(allocation)[:12]}"
+        descriptor = {"cohort": cohort, "allocation": allocation}
+        if key in group_resources and group_resources[key] != descriptor:
+            raise RuntimeError("Comparison resource group contains different allocations")
         groups.setdefault(key, []).append(i)
+        group_resources[key] = descriptor
     truth_file = str(Path(truth).resolve(strict=True)) if truth else None
-    context = {"cases": cases, "groups": groups, "database_identities": snapshots,
+    context = {"cases": cases, "groups": groups, "group_resources": group_resources,
+               "database_identities": snapshots,
+               "database_runtime_states": database_states,
                "source_database_identity": next(iter(sources)),
                "sample_states": {s["sample_id"]: _sample_states(s) for s in samples},
                "truth": ({"path": truth_file, "state": file_state(truth_file), "sha256": sha256(truth_file)}
@@ -284,22 +360,29 @@ def generate_compare(cfg, datasets=None, only=None, methods=None, repeats=None,
         resources = engine_resources(cfg, case["classifier_engine"], benchmark=True)
         path = folder / f"3.case.{index:05d}.cmd"
         write_cmd(resources, path, "classify", _command(frozen, "compare-worker", mf, "--case-id", index),
-                  f"metag_compare_{manifest['identity'][:8]}_{index}")
-    for group, indices in groups.items():
+                  f"metag_compare_{index}")
+    previous_role = {}
+    for group_number, (group, indices) in enumerate(groups.items(), 1):
         resources = engine_resources(cfg, cases[indices[0]]["classifier_engine"], benchmark=True)
-        concurrency = cfg["compare_concurrency_memory"] if group == "memory" else cfg["compare_concurrency_full"]
+        cohort = group_resources[group]["cohort"]
+        concurrency = cfg[f"compare_concurrency_{cohort}"]
         role = f"compare_{group}"
         for part, (first, count) in enumerate(_arrays(len(indices), cfg["max_array_size"]), 1):
             path = folder / f"3.compare.{group}.{part:03d}.cmd"
             write_cmd(resources, path, "classify", _command(frozen, "compare-worker", mf,
                       "--case-id", "__LSB_JOBINDEX__", "--group", group, "--offset", first - 1),
-                      f"metag_compare_{manifest['identity'][:8]}_{group}_{part}",
+                      f"metag_compare_{cohort}_{group_number}_{part}",
                       array=f"1-{count}%{min(concurrency, count)}")
+            # Distinct allocations need distinct arrays. Serializing those arrays
+            # within each cohort prevents splitting groups from multiplying the
+            # configured full/memory concurrency limit.
+            parent = role if part > 1 else previous_role.get(cohort)
             manifest["commands"].append({"role": role, "path": str(path),
-                **({"depends_on": role, "dependency_condition": "ended"} if part > 1 else {})})
+                **({"depends_on": parent, "dependency_condition": "ended"} if parent else {})})
+        previous_role[cohort] = role
     path = folder / "3.summary.cmd"
     write_cmd(cfg, path, "compare_summary", _command(frozen, "compare-summary-worker", mf),
-              f"metag_compare_summary_{manifest['identity'][:8]}")
+              f"metag_compare_summary")
     manifest["commands"].append({"role": "compare_summary", "path": str(path),
         "depends_on": [f"compare_{key}" for key in groups], "dependency_condition": "ended"})
     result = _publish_plan(cfg, folder, manifest)
@@ -323,6 +406,10 @@ def _validate_job_plan(cfg, path, kind=None):
         raise RuntimeError("Code changed after .cmd generation; regenerate commands before running this job")
     if plan.get("config_identity") != _cfg_identity(cfg):
         raise RuntimeError("Frozen job configuration changed")
+    seal = _integrity_seal(cfg, plan["context"].get("integrity_seal"),
+                           _required_sealed_indexes(plan["kind"], cfg, plan["context"]))
+    if seal != plan["context"].get("integrity_seal"):
+        raise RuntimeError("Frozen job plan has no matching integrity seal")
     for command in plan["commands"]:
         if sha256(command["path"]) != command.get("sha256"):
             raise RuntimeError(f"Generated .cmd changed: {command['path']}; update hpc.yml and regenerate")
@@ -446,10 +533,17 @@ def run_worker(args, cfg):
             truth = context.get("truth")
             if truth and (file_state(truth["path"]) != truth["state"] or sha256(truth["path"]) != truth["sha256"]):
                 raise RuntimeError("Truth labels changed after comparison generation")
-            source_cfg = dict(cfg, classifier_engine="kraken")
+            # Use a taxonomy that was actually frozen for these cases. A
+            # Kun-Peng-only comparison need not reopen an unrecorded Kraken
+            # snapshot just to calculate truth metrics.
+            selected = "kraken" if "kraken" in context["database_identities"] else sorted(context["database_identities"])[0]
+            source_cfg = dict(cfg, classifier_engine=selected)
             snap = engine_snapshot(source_cfg)
-            if snap["identity"] != context["source_database_identity"]:
+            if (snap["identity"] != context["database_identities"][selected] or
+                    snap.get("source_database_identity", snap["identity"]) != context["source_database_identity"]):
                 raise RuntimeError("Reference changed before comparison summary")
+            if _database_states(snap) != context["database_runtime_states"][selected]:
+                raise RuntimeError("Index/taxonomy runtime state changed before comparison summary")
             report = summarize_cases([folder / "cases" / c["case_id"] / "case.json" for c in cases],
                                      folder / "report", truth_path=truth["path"] if truth else None,
                                      taxonomy_dir=snap["taxonomy_dir"])
@@ -466,9 +560,12 @@ def run_worker(args, cfg):
         if _sample_states(sample) != context["sample_states"][sample["sample_id"]]:
             raise RuntimeError("Comparison FASTQ changed after job generation")
         resources = engine_resources(cfg, case["classifier_engine"], benchmark=True)
+        _validate_compare_allocation(context, indices[position], resources, args.group)
         snapshot = engine_snapshot(resources)
         if snapshot["identity"] != context["database_identities"][case["classifier_engine"]]:
             raise RuntimeError("Comparison database changed after job generation")
+        if _database_states(snapshot) != context["database_runtime_states"][case["classifier_engine"]]:
+            raise RuntimeError("Comparison index/taxonomy runtime state changed after job generation")
         resources = effective_workers(resources, snapshot)
         run_case(resources, case, folder / "cases" / case["case_id"], snapshot=snapshot)
         return
@@ -500,6 +597,8 @@ def run_worker(args, cfg):
     snapshot = engine_snapshot(cfg)
     if snapshot["identity"] != plan["context"]["database_identity"]:
         raise RuntimeError("Database changed after job generation")
+    if _database_states(snapshot) != plan["context"]["database_runtime_states"]:
+        raise RuntimeError("Index/taxonomy runtime state changed after job generation")
     cfg = effective_workers(cfg, snapshot)
     context = plan["context"]
     if args.command == "pilot-worker":
@@ -576,11 +675,11 @@ def queue_name(value):
 
 def parser():
     examples = """Copyable HPC commands (run in /work/sph-huangj/scripts/metag):
-  # Reuse completed reference preparation; build: smp/4096 GiB, index: spec/160 GiB.
-  ./metag.sh library --prepared --build-queue smp --convert-queue spec --submit TRUE
+  # Reuse completed reference preparation; build: smp/4096 GiB, index: short/40 cores/160 GiB.
+  ./metag.sh library --prepared --build-queue smp --convert-queue short --submit TRUE
 
   # Index conversion only, AFTER the Kraken database build has completed:
-  ./metag.sh library --kunpeng --convert-queue spec --submit TRUE
+  ./metag.sh library --kunpeng --convert-queue short --submit TRUE
 
   # Split ready input samples; keep the 4096 GiB smp queue:
   ./metag.sh split --engine kraken --ready-only --submit TRUE --queue smp
@@ -611,7 +710,7 @@ Shell entry points accept --date-scratch YYYY-MM-DD (default: 2026-10-31).
     obj.add_argument("--kunpeng", action="store_true", help="Only convert an already completed Kraken index")
     obj.add_argument("--queue", choices=("short", "spec", "ser"), help="Reference preparation queue only (not build or index conversion)")
     obj.add_argument("--build-queue", type=queue_name, help="Build queue (configured default smp, 4096 GiB)")
-    obj.add_argument("--convert-queue", type=queue_name, help="Kunpeng index conversion queue (configured default ser; memory from 0f/0os.sh: local 32 / HPC 160 GiB); spec is suitable")
+    obj.add_argument("--convert-queue", type=queue_name, help="Kunpeng index conversion queue (configured default short, 40 cores; memory from 0f/0os.sh: local 32 / HPC 160 GiB)")
     obj.epilog = examples
     obj = command("split", "Classify reads and split by species using pilot and batch jobs")
     obj.add_argument("--queue", type=queue_name, help="Queue for both pilot and all split batches; CPU/memory requests remain unchanged")
@@ -696,10 +795,14 @@ def main(argv=None):
         status(cfg)
     elif args.command == "audit":
         value = engine_snapshot(dict(cfg, classifier_engine=args.engine))
-        print("Quick audit: file identity/size/timestamps and native options; no TB-scale content rehash.")
+        print("Quick audit: receipt structure, recorded paths/sizes and native options; no content or timestamp audit. Use f/audit_integrity.py for a separate verified baseline.")
         print(json.dumps(value, indent=2))
     else:
         run_worker(args, cfg)
+        # With a sealed reference baseline, also detect reference changes made
+        # during a long compute stage. Downstream done() dependencies stay blocked.
+        if cfg.get("integrity_seal"):
+            _integrity_seal(cfg, _read(args.job_plan)["context"].get("integrity_seal"))
     return 0
 
 

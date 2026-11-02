@@ -1,0 +1,22 @@
+# Benchmark candidate, not a measured optimum. Confirm the site accepts 5120 GiB.
+# Use with --methods kraken,kunpeng_full --placement matched.
+# Complete this run and record its immutable jobs.json before creating the next plan.
+schema: 1
+build_memory_gib: 5120
+classify_queue: smp
+classify_cores: 24
+classify_threads: 16
+classify_workers: 1
+classify_memory_gib: 5120
+classify_concurrency: 1
+kunpeng_full_queue: smp
+kunpeng_full_cores: 24
+kunpeng_full_threads: 16
+kunpeng_full_workers: 1
+kunpeng_full_memory_gib: 5120
+kunpeng_full_concurrency: 1
+compare_threads: 16
+compare_cores: 24
+compare_concurrency_full: 1
+compare_repeats: 1
+compare_placement: matched

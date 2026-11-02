@@ -21,10 +21,10 @@ from hpc_common import PATH_KEYS, atomic_json, utcnow
 _DEFAULTS = {
     "setup": ("ser", 8, 16, 24),
     "prepare": ("ser", 8, 32, 72),
-    "build": ("smp", 96, 4096, 168),
-    "pilot": ("smp", 96, 4096, 168),
-    "classify": ("smp", 96, 4096, 168),
-    "convert": ("ser", 2, None, 72),
+    "build": ("smp", 32, 4096, 168),
+    "pilot": ("smp", 32, 4096, 168),
+    "classify": ("smp", 32, 4096, 168),
+    "convert": ("short", 40, None, 72),
     "compare_summary": ("ser", 2, 16, 24),
 }
 _FALLBACK = {"setup": "prepare", "pilot": "classify"}
@@ -314,11 +314,24 @@ def local_submit(cfg, path):
             indices.extend(range(bounds[0], bounds[-1]+1, int(step or 1)))
     # Full databases can require terabytes. Fail before work if this host
     # cannot supply the same algorithm's requested memory; never downsample.
-    required = re.search(r'rusage\[mem=([0-9.]+)', text)
+    required = re.search(r'rusage\[mem=([0-9.]+)([KMGT]?B)(/host)?\]', text)
+    if required is None:
+        raise RuntimeError('Cannot establish the local memory request from the generated .cmd')
+    units = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
+    job_bytes = float(required[1]) * units[required[2]]
+    if not required[3] and cfg.get('lsf_memory_scope') == 'site_task':
+        cores = re.search(r'^#BSUB -n ([1-9][0-9]*)$', text, re.M)
+        if cores is None:
+            raise RuntimeError('Per-task memory needs an explicit CPU request')
+        job_bytes *= int(cores[1])
+    jobs = int(os.environ.get('jobs_N', '8'))
+    if not 1 <= jobs <= 8:
+        raise ValueError('jobs_N must be 1..8')
+    concurrent = min(jobs, len(indices)) if indices is not None else 1
     available = os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
-    if required and float(required[1]) * 1024**2 > available:
+    if job_bytes * concurrent > available:
         raise RuntimeError('Requested metag memory exceeds local RAM; use submit=hpc or an appropriate explicit config')
-    results = submit_jobs.run_local([path], int(os.environ.get('jobs_N', '8')), indices)
+    results = submit_jobs.run_local([path], jobs, indices)
     result = {'schema': 1, 'job_id': 'local-' + uuid.uuid4().hex[:12],
               'status': 'submitted' if all(r['returncode'] == 0 for r in results) else 'failed',
               'command_path': str(path), 'results': results, 'submitted_at': utcnow()}

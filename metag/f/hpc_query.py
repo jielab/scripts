@@ -210,6 +210,37 @@ def _sync_directory(path):
         os.close(descriptor)
 
 
+def _runtime_state(path):
+    """Cheap local change detection, separate from portable size-only receipts.
+
+    This is conservative about metadata changes and is not a content checksum.
+    Keep reference/preparation receipt identities unchanged; query publication
+    additionally records these guards for its own inputs and output files.
+    """
+    value = Path(path).stat()
+    return {"size": value.st_size, "mtime_ns": value.st_mtime_ns,
+            "ctime_ns": value.st_ctime_ns}
+
+
+def _input_runtime_states(sample):
+    result = []
+    for mate in ("r1", "r2"):
+        if sample.get(mate) is not None:
+            path = Path(sample[mate]).resolve(strict=True)
+            result.append({"path": str(path), "state": _runtime_state(path)})
+    return result
+
+
+def _database_runtime_states(snapshot):
+    result = {}
+    for directory, records in ((snapshot["db_dir"], snapshot["files"]),
+                               (snapshot["taxonomy_dir"], snapshot["taxonomy_files"])):
+        for name in records:
+            path = (Path(directory) / name).resolve(strict=True)
+            result[str(path)] = _runtime_state(path)
+    return result
+
+
 def _manifest(folder, exclude=()):
     result = {}
     for path in sorted(Path(folder).rglob("*")):
@@ -219,7 +250,8 @@ def _manifest(folder, exclude=()):
         if path.is_file() and name not in exclude:
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
-            result[name] = {"state": file_state(path), "sha256": sha256(path)}
+            result[name] = {"state": file_state(path), "runtime_state": _runtime_state(path),
+                            "sha256": sha256(path)}
     return result
 
 
@@ -248,7 +280,12 @@ def _complete(folder, identity, verify_hashes=False):
         path = folder / name
         if Path(name).is_absolute() or ".." in Path(name).parts or file_state(path) != item["state"]:
             raise RuntimeError(f"Completed output changed: {path}")
-        if verify_hashes and sha256(path) != item["sha256"]:
+        runtime_state = item.get("runtime_state")
+        if runtime_state is not None and _runtime_state(path) != runtime_state:
+            raise RuntimeError(f"Completed output changed: {path}")
+        # Legacy output receipts have no local change guard; size alone cannot
+        # justify reuse.  Validate their recorded content hashes instead.
+        if (verify_hashes or runtime_state is None) and sha256(path) != item["sha256"]:
             raise RuntimeError(f"Completed output hash mismatch: {path}")
     return saved
 
@@ -257,6 +294,8 @@ def _context(cfg, sample, snapshot, limit):
     native = resolve_native(cfg)
     source = Path(__file__).resolve().parent
     return {"schema": SCHEMA, "sample": sample, "inputs": input_states(sample),
+            "input_runtime_states": _input_runtime_states(sample),
+            "database_runtime_states": _database_runtime_states(snapshot),
             "classifier_engine": _engine(cfg),
             "engine_parameters": kunpeng_query.parameters(cfg) if _engine(cfg) != "kraken" else {},
             "database_identity": snapshot["identity"], "database_files": snapshot["files"],
@@ -277,7 +316,11 @@ def _context(cfg, sample, snapshot, limit):
 def _verify_sources(sample, snapshot, context):
     if input_states(sample) != context["inputs"]:
         raise RuntimeError("Original FASTQ files changed since this run began")
+    if _input_runtime_states(sample) != context["input_runtime_states"]:
+        raise RuntimeError("Original FASTQ runtime state changed since this run began")
     validate_snapshot(snapshot)
+    if _database_runtime_states(snapshot) != context["database_runtime_states"]:
+        raise RuntimeError("Database or taxonomy runtime state changed since this run began")
     if sha256(context["native"]["path"]) != context["native"]["sha256"]:
         raise RuntimeError("Native executable changed during this sample")
     source = Path(__file__).resolve().parent
@@ -287,9 +330,17 @@ def _verify_sources(sample, snapshot, context):
 
 def _roots(cfg):
     out, work = Path(cfg["output_dir"]).resolve(), Path(cfg["work_dir"]).resolve()
+    # work_dir also contains scheduler plans, metadata and library directories
+    # in the default HPC layout.  Only its queries/ subtree is sample scratch
+    # that this module can create or recursively remove.
+    query_root = work / "queries"
+    if query_root.resolve() != query_root:
+        raise RuntimeError(f"Symlink/alias in query work root: {query_root}")
+    if out == query_root or out in query_root.parents or query_root in out.parents:
+        raise RuntimeError(f"Query output and scratch roots overlap: {out} / {query_root}")
     for key in ("reads_raw", "reference_raw", "metadata_dir", "library_dir", "tools_dir"):
         protected = Path(cfg[key]).resolve()
-        for path in (out, work):
+        for path in (out, query_root):
             if path == protected or protected in path.parents or path in protected.parents:
                 raise RuntimeError(f"Writable query root overlaps protected {key}: {path}")
     return _directory(out), _directory(work)
@@ -322,6 +373,7 @@ def _publish_sample(cfg, sample, snapshot, limit):
     with locked(lock):
         completed = _complete(target, identity, bool(cfg.get("verify_output_hashes", False)))
         if completed:
+            _verify_sources(sample, snapshot, context)
             return {"status": "skipped", "sample_id": sample["sample_id"], "identity": identity,
                     "output": str(target), "summary": completed["summary"]}
         if target.exists() or target.is_symlink():
@@ -413,7 +465,9 @@ def _publish_sample(cfg, sample, snapshot, limit):
                                           if name == "species.tar" or name.startswith("species/")),
                        timing_note="Outer summary includes archiving and validation; archive-internal summary precedes archiving")
         atomic_json(stage / "summary.json", summary)
-        outputs["summary.json"] = {"state": file_state(stage / "summary.json"), "sha256": sha256(stage / "summary.json")}
+        outputs["summary.json"] = {"state": file_state(stage / "summary.json"),
+                                   "runtime_state": _runtime_state(stage / "summary.json"),
+                                   "sha256": sha256(stage / "summary.json")}
         atomic_json(stage / "complete.json", {"schema": SCHEMA, "status": "complete",
                     "identity": identity, "completed_utc": utcnow(), "summary": summary, "outputs": outputs})
         if target.exists() or target.is_symlink():

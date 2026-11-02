@@ -7,7 +7,6 @@ import fcntl
 import hashlib
 import json
 import yaml
-import yaml
 import math
 import os
 from pathlib import Path
@@ -103,12 +102,6 @@ def read_config_file(path):
     return yaml.safe_load(text) if path.suffix in (".yml", ".yaml") else json.loads(text)
 
 
-def read_config_file(path):
-    path = Path(path)
-    text = path.read_text(encoding="utf-8")
-    return yaml.safe_load(text) if path.suffix in (".yml", ".yaml") else json.loads(text)
-
-
 def load_config(config_path=None, root_override=None):
     defaults = read_config_file(CODE_ROOT / "hpc.yml")
     source = Path(config_path or os.environ.get("METAG_HPC_CONFIG", CODE_ROOT / "hpc.yml"))
@@ -147,6 +140,9 @@ def load_config(config_path=None, root_override=None):
     if cfg.get("reference_taxid_map"):
         mapping = Path(cfg["reference_taxid_map"]).expanduser()
         cfg["reference_taxid_map"] = str(mapping if mapping.is_absolute() else root / mapping)
+    if cfg.get("integrity_seal"):
+        seal = Path(cfg["integrity_seal"]).expanduser()
+        cfg["integrity_seal"] = str(seal if seal.is_absolute() else root / seal)
     for key in ("prepare_threads", "prepare_cores", "prepare_max_files", "prepare_concurrency",
                 "setup_cores", "build_cores", "build_threads", "classify_cores",
                 "classify_threads", "classify_workers", "classify_concurrency",
@@ -237,7 +233,13 @@ def code_identity():
     bundled = CODE_ROOT / "f" / "vendor" / "kun_peng-linux-x86_64"
     if bundled.is_file():
         paths.append(bundled)
-    return fingerprint({str(p.relative_to(CODE_ROOT)): sha256(p) for p in paths})
+    files = {str(p.relative_to(CODE_ROOT)): sha256(p) for p in paths}
+    # The shell environment and submission implementation now live outside
+    # metag/. Queued plans must reject changes to these executed dependencies.
+    for name in ("0os.sh", "submit_jobs.py"):
+        path = CODE_ROOT.parent / "0f" / name
+        files["../0f/" + name] = sha256(path)
+    return fingerprint(files)
 
 
 def require_compute(allow_local=False):

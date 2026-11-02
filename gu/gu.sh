@@ -1113,7 +1113,7 @@ PYROOT
 		local -a restore_run_args=()
 		case "$METHOD" in phyml) restore_run=${PHYML_OUT:-} ;; ibdmix) restore_run=${IBDMIX_OUT:-} ;; trace) restore_run=${TRACE_OUT:-} ;; *) restore_run= ;; esac
 		[[ -z $restore_run ]] || restore_run_args=(--run "$restore_run")
-		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD" "${restore_run_args[@]}")
+		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD" ${restore_run_args[@]+"${restore_run_args[@]}"})
 	else
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD")
 	fi
@@ -1647,7 +1647,7 @@ PYKEY
 			pids+=("$!")
 			while ((${#pids[@]} >= jobs)); do
 				active=()
-				for pid in "${pids[@]}"; do
+				for pid in ${pids[@]+"${pids[@]}"}; do
 					if kill -0 "$pid" 2>/dev/null; then
 						active+=("$pid")
 					else
@@ -1656,11 +1656,11 @@ PYKEY
 						if ! wait "$pid"; then status=1; fi
 					fi
 				done
-				pids=("${active[@]}")
+				pids=(${active[@]+"${active[@]}"})
 				if ((${#pids[@]} >= jobs)); then sleep 0.2; fi
 			done
 		done <"$list"
-		for pid in "${pids[@]}"; do
+		for pid in ${pids[@]+"${pids[@]}"}; do
 			if ! wait "$pid"; then status=1; fi
 		done
 		[[ -z $pending_list ]] || rm -f "$pending_list"
@@ -2332,7 +2332,7 @@ PYCONTRACT
 				else
 					gu_check_log "convert whole chromosome pfile chr$c=$pbase -> $prepared (single-run temporary VCF)"
 				fi
-				plink2 "${pfile_args[@]}" "${sample_args[@]}" "${extract_args[@]}" --threads "${GU_PREP_THREADS:-2}" --memory "${GU_PREP_MEMORY_MB:-2048}" --export vcf bgz id-paste=iid --out "$part_prefix" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "pfile-to-VCF conversion failed for $pbase"
+				plink2 "${pfile_args[@]}" ${sample_args[@]+"${sample_args[@]}"} ${extract_args[@]+"${extract_args[@]}"} --threads "${GU_PREP_THREADS:-2}" --memory "${GU_PREP_MEMORY_MB:-2048}" --export vcf bgz id-paste=iid --out "$part_prefix" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "pfile-to-VCF conversion failed for $pbase"
 				tabix -f -p vcf "$part_prefix.vcf.gz" >>"$GU_CHECK_LOG" 2>&1 || gu_check_fail "VCF indexing failed for $part_prefix.vcf.gz"
 				mv -f "$part_prefix.vcf.gz" "$prepared"
 				mv -f "$part_prefix.vcf.gz.tbi" "$prepared.tbi"
@@ -2694,7 +2694,7 @@ PYUKBSCORING
 				ukb_env+=("GU_LOCI_FILE=$call_loci")
 			fi
 		fi
-		env "${ukb_env[@]}" GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$call_archaic" dirarch="$call_archaic" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$call_loci" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
+		env ${ukb_env[@]+"${ukb_env[@]}"} GU_ACTION="$ga" IBDMIX_LOCUS_FLANK_BP=0 dir0="$GU_DATA_ROOT" dir_ref="$GU_REF_ROOT" dir_archaic="$call_archaic" dirarch="$call_archaic" dirmod="$GU_TARGET_ROOT" sample_file="$GU_SAMPLE_PANEL" dirscript="$F" dirsoft="$IBDMIX_RUNTIME" GRCH="$GU_BUILD" genome_build="b$GU_BUILD" dirout="$IBDMIX_OUT" selected_loci="$call_loci" chrs="$GU_CHRS" refs="${IBDMIX_REFS:-}" lod_cut="${IBDMIX_LOD:-4}" len_cut="${IBDMIX_MIN_BP:-50000}" job_of_chr="${IBDMIX_JOB_OF_CHR:-1}" job_in_chr="${IBDMIX_JOB_IN_CHR:-1}" bash "$F/ibdmix.sh"
 	}
 
 	run_trace_request() {
@@ -2771,8 +2771,8 @@ PYUKBSCORING
 					case "$METHOD" in phyml) publication_run=$PHYML_OUT ;; ibdmix) publication_run=$IBDMIX_OUT ;; trace) publication_run=$TRACE_OUT ;; esac
 					publication_args+=(--run "$publication_run")
 				fi
-				python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method "$METHOD" "${publication_args[@]}"
-				python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method "$METHOD" "${publication_args[@]}"
+				python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method "$METHOD" ${publication_args[@]+"${publication_args[@]}"}
+				python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method "$METHOD" ${publication_args[@]+"${publication_args[@]}"}
 			fi
 			;;
 	esac
