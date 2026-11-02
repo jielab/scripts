@@ -22,7 +22,7 @@ SOURCE = Path(__file__).resolve().parent
 DEFAULT_STAGES = ("primary", "archaic", "summary", "spatial", "windows", "alleles", "time", "selection", "candidates", "genotypes", "ld", "report")
 STAGES = DEFAULT_STAGES
 PREFIX = "AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes"
-SCAN_STORE = "/mnt/f/annot/gnomad/allele3"
+SCAN_STORE = "/mnt/f/annot/allele3/gnomad/allele3"
 
 
 def now():

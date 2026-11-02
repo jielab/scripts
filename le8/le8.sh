@@ -178,8 +178,8 @@ le8_main() {
 	export C4_FOCUS_BUDGETS=${C4_FOCUS_BUDGETS:-5,10,50}
 	export C4_MODULE_BOOT=${C4_MODULE_BOOT:-100} C4_MODULE_STABILITY=${C4_MODULE_STABILITY:-0.70}
 	# Author-published CIGMA inference remains labelled as external evidence.
-	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/f/annot/cigma/chen2026/cigma.results.csv ]]; then
-		export C5_CIGMA_RESULTS=/mnt/f/annot/cigma/chen2026/cigma.results.csv
+	if [[ -z ${C5_CIGMA_RESULTS:-} && -s /mnt/f/annot/le8/cigma/chen2026/cigma.results.csv ]]; then
+		export C5_CIGMA_RESULTS=/mnt/f/annot/le8/cigma/chen2026/cigma.results.csv
 	fi
 	if [[ $# -gt 0 && $1 != -* ]]; then
 		modules=$1

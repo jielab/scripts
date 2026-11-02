@@ -31,7 +31,7 @@ from allele_common import dump_json, fingerprint, stable_hash
 
 SCHEMA = "allele3-scan-store-1.0"
 DEFAULT_SOURCE = "/mnt/d/analysis/allele3/final/gnomad_local"
-DEFAULT_STORE = "/mnt/f/annot/gnomad/allele3"
+DEFAULT_STORE = "/mnt/f/annot/allele3/gnomad/allele3"
 OWNED = {"relocation.json", "adoption_receipt.json", "adoption_state.json", ".adoption-transfer"}
 FP_KEYS = ("size", "mtime_ns", "edge_sha256")
 
@@ -459,7 +459,7 @@ def scan_command(store, extra):
                 ("--architecture-annotation-cache", str(store / "annotations")),
                 ("--architecture-low-mappability-bed", os.environ.get("ALLELE_LOW_MAPPABILITY_BED", "/mnt/d/files/allele3/umap/hg38.k100.lt1.bed.gz"))]
     if not has("--vcf", "--dir-vcf", "--vcf-dir"):
-        command += ["--dir-vcf", os.environ.get("ALLELE_VCF_DIR", "/mnt/f/annot/gnomad/sites")]
+        command += ["--dir-vcf", os.environ.get("ALLELE_VCF_DIR", "/mnt/f/annot/allele3/gnomad/sites")]
     if not has("--dir-cache", "--cache-dir"):
         # Do not inherit an old D:-drive ALLELE_CACHE_DIR for a new permanent scan.
         command += ["--dir-cache", str(store / "shards")]

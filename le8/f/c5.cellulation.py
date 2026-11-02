@@ -871,7 +871,7 @@ def kinship_from_dosage(dosage,min_maf=.05,max_missing=.02):
 
 # ---------------- LE8 integration; original public interfaces and output names retained ----------------
 def default_cell_atlas():
-    return Path(os.getenv("C5_CELL_ATLAS","F:/annot/cellage/atlas.csv" if os.name=="nt" else "/mnt/f/annot/cellage/atlas.csv"))
+    return Path(os.getenv("C5_CELL_ATLAS","F:/annot/le8/cellage/atlas.csv" if os.name=="nt" else "/mnt/f/annot/le8/cellage/atlas.csv"))
 
 
 def import_cellage(repo,output):

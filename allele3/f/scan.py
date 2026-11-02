@@ -1352,7 +1352,7 @@ from allele_common import VERSION, code_hash, dump_json, fingerprint, stable_has
 from allele_common import FastaContext, _backend, _chromosomes, _file_chrom, discover_inputs, read_header, validate_count_header, parse_region
 from allele_common import make_callable
 
-DEFAULT_VCF = "/mnt/f/annot/gnomad/sites"
+DEFAULT_VCF = "/mnt/f/annot/allele3/gnomad/sites"
 DEFAULT_FASTA = "/mnt/f/gen/1hgp/38/GRCH38.fasta.gz"
 DEFAULT_OUT = "/mnt/d/analysis/allele3/gnomad_local"
 
