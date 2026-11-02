@@ -716,7 +716,7 @@ if (.final_mode == "joint") {
 			distinct()
 		write.csv(universe, file.path(root, "c5.cell_assay_universe.csv"), row.names = FALSE)
 		write.csv(p, file.path(root, "c5.cell_panels.csv"), row.names = FALSE)
-		atlas <- Sys.getenv("C5_CELL_ATLAS", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/annot/le8/cellage/atlas.csv" else "/mnt/f/annot/le8/cellage/atlas.csv")
+		atlas <- Sys.getenv("C5_CELL_ATLAS", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/annot/cellage/atlas.csv" else "/mnt/f/annot/cellage/atlas.csv")
 		code <- file.path(fdir, "c5.cellulation.py")
 		status <- system2(Sys.getenv("PYTHON_BIN", "python3"), vapply(c(
 			code, "--annotate", "--universe", file.path(

@@ -16,7 +16,7 @@ Modules:
   verify   Check the permanent store
 
 Options:
-  --out DIR, --store DIR  Output/store [/mnt/f/annot/allele3/gnomad/allele3; run requires --out]
+  --out DIR, --store DIR  Output/store [/mnt/f/annot/gnomad/allele3; run requires --out]
   --source DIR           Adoption source [/mnt/d/analysis/allele3/final/gnomad_local]
   --replace TRUE|FALSE   Recalculate or resume [TRUE]
   --dry-run, --preflight Inspect metadata only
@@ -25,14 +25,14 @@ Options:
 
 Examples:
   ./3.scan.sh [run|plan|adopt|verify]
-  ./3.scan.sh --out /mnt/f/annot/allele3/gnomad/allele3
+  ./3.scan.sh --out /mnt/f/annot/gnomad/allele3
 HELP
 }
 
 main() {
     local action=run explicit_action=0 arg python=${ALLELE_PYTHON:-} native=0 full_help=0 verbose=0
     local memory=${ALLELE_MEMORY_LIMIT_GB:-16} interval=${ALLELE_SCREEN_LOG_INTERVAL:-300}
-    local store=${ALLELE_SCAN_STORE:-/mnt/f/annot/allele3/gnomad/allele3}
+    local store=${ALLELE_SCAN_STORE:-/mnt/f/annot/gnomad/allele3}
     local -a args=()
     local explicit_store=0 replace=${ALLELE_SCAN_REPLACE:-TRUE}
     if (($#)) && [[ $1 != -* ]]; then action=$1; explicit_action=1; shift; fi
@@ -71,7 +71,7 @@ main() {
         "$HOME/anaconda3/envs/allele3-evolution/bin/python3")
     local entry=$ROOT/f/scan_store.py
     if ((full_help)); then entry=$ROOT/f/scan.py; args=(--help); fi
-    printf '[configured scan store] %s\n' "${ALLELE_SCAN_STORE:-/mnt/f/annot/allele3/gnomad/allele3}"
+    printf '[configured scan store] %s\n' "${ALLELE_SCAN_STORE:-/mnt/f/annot/gnomad/allele3}"
     printf '[mode] scan-%s; replace=%s; selected store/output=%s\n' "$action" "$replace" "$store"
     launch_workflow "scan-$action" "$python" "$entry" "${ALLELE_SCAN_LOG_OUT:-${ALLELE_ANALYSIS_ROOT:-/mnt/d/analysis/allele3}/scan_operations}" "$memory" "$interval" \
         "$verbose" 0 "$((1-native))" "$native" "${args[@]}"

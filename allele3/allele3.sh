@@ -21,7 +21,7 @@ Modules:
 
 Options:
   --out DIR              Output [/mnt/d/analysis/allele3]
-  --scan-dir DIR         Scan input [/mnt/f/annot/allele3/gnomad/allele3]
+  --scan-dir DIR         Scan input [/mnt/f/annot/gnomad/allele3]
   --archaic-root DIR     GU raw cohorts [/mnt/f/analysis/gu]
   --archaic-datasets LIST  Names/globs [1kg]; auto selects all complete cohorts
   --archaic-chromosomes S  auto includes available X/Y separately; or autosomes,X,Y / X,Y
