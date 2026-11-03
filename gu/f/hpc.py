@@ -196,7 +196,7 @@ def discover_genotypes(prefix: str, chromosomes: list[str]) -> list[dict]:
             if Path(str(base) + ".pgen").is_file():
                 pvar = next((Path(str(base) + s) for s in (".pvar", ".pvar.zst") if Path(str(base) + s).is_file()), None)
                 if pvar is None or not Path(str(base) + ".psam").is_file():
-                    die(f"Incomplete PLINK2 dataset: {base}")
+                    die(f"missing {base}.pvar[.zst] or {base}.psam (incomplete PLINK2 dataset)")
                 for p in [Path(str(base) + ".pgen"), pvar, Path(str(base) + ".psam")]:
                     records.append({"chrom": c, **input_stat(p)})
                 found = True
@@ -205,11 +205,11 @@ def discover_genotypes(prefix: str, chromosomes: list[str]) -> list[dict]:
                 if p.is_file():
                     idx = next((Path(str(p) + s) for s in (".csi", ".tbi") if Path(str(p) + s).is_file()), None)
                     if idx is None:
-                        die(f"Input must be indexed before submission: {p}")
+                        die(f"missing {p}.csi or {p}.tbi (input must be indexed before submission)")
                     records += [{"chrom": c, **input_stat(v)} for v in (p, idx)]
                     found = True
         if not found:
-            die(f"No input genotype dataset for chr{c} at prefix {prefix}.")
+            die(f"missing {prefix}{c}.pgen (+ .pvar[.zst], .psam), or {prefix}{c}.vcf.gz (+ .tbi/.csi)")
     return records
 
 
@@ -247,7 +247,16 @@ def common_gu(plan: dict, output: str, selection: str | None = None) -> list[str
 def plan_run(args) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", args.target):
         die("Target must be a plain dataset name.")
-    run = persistent_path(args.run_dir or str(Path(os.environ.get("SCRATCH_ANALYSIS_ROOT", "/scratch/" + "2026-10-31" + "/sph-huangj/analysis")) / "gu" / args.target / args.method))
+    if args.method == "ibdmix":
+        parent = Path(args.dir_target).expanduser().resolve().parent
+        if parent.name in {"pfile", "imp", "hap", "vcf", "bfile", "bed"}:
+            genotype_root = parent.parent
+        else:
+            genotype_root = Path(os.environ.get("GU_REF_ROOT", os.environ.get("DIR_GEN", "/work/sph-huangj/data/gen"))) / args.target / args.grch
+        default_run = genotype_root / "ibdmix"
+    else:
+        default_run = Path(os.environ.get("SCRATCH_ANALYSIS_ROOT", "/scratch/2026-11-03/sph-huangj/analysis")) / "gu" / args.target / args.method
+    run = persistent_path(args.run_dir or str(default_run))
     if run.exists() and any(run.iterdir()):
         die(f"Plan directory is not empty: {run}. Use a new run name or submit the existing plan.")
     chromosomes = chroms(args.chr)
@@ -282,14 +291,14 @@ def plan_run(args) -> None:
     panel = snapshot_file(args.sample_panel, run, "samples.txt")
     loci = snapshot_file(args.loci, run, "loci.jma.cojo")
     plan = {"version": VERSION, "created": now(), "run_dir": str(run),
-            "date_scratch": os.environ.get("DATE_SCRATCH", "2026-10-31"),
+            "date_scratch": os.environ.get("DATE_SCRATCH", "2026-11-03"),
             "source_root": str(ROOT), "source_sha256": code, "environment": env_file,
             "environment_sha256": sha(Path(env_file)), "method": args.method,
             "grch": args.grch, "target": args.target, "dir_target": str(Path(args.dir_target).resolve()),
             "dir_gen": str(Path(args.dir_gen).resolve()) if args.dir_gen else None,
             "arg_dir": str(Path(args.arg_dir).resolve()) if args.arg_dir else None,
             "arg_method": args.arg_method, "queue": args.queue,
-            "dir_map": str(Path(args.dir_map or f"/data/sph-huangj/gen/hm3/{args.grch}/gmap").resolve()),
+            "dir_map": str(Path(args.dir_map or f"/work/sph-huangj/data/gen/hm3/{args.grch}/gmap").resolve()),
             "threads": args.threads, "slots": args.threads + 1,
             "memory_gb": args.memory_gb, "walltime": args.walltime,
             "max_running": args.max_running, "array_size": args.array_size,
@@ -791,6 +800,7 @@ def bsub_args(plan: dict, stage: str, name: str, dependency: str | None, count: 
         slots = max(40, slots)
     memory = (4 if stage in {"prepare", "merge"} else plan["memory_gb"]) * 1024
     reservation = math.ceil(memory / slots) if plan["rusage_memory_mode"] == "per-slot" else memory
+    reservation = str(reservation) + ("/host" if plan["rusage_memory_mode"] == "host" else "")
     job_name = name + (f"[1-{count}]%{cap}" if count else "")
     args = ["bsub", "-q", plan["queue"], "-n", str(slots), "-R", f"span[hosts=1] rusage[mem={reservation}]",
             "-M", str(memory // 1024) + "GB",
@@ -928,19 +938,19 @@ def status(args) -> None:
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, epilog="Shell entry point: --date-scratch YYYY-MM-DD (default: 2026-10-31).")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, epilog="Shell entry point: --date-scratch YYYY-MM-DD (default: 2026-11-03).")
     sub = p.add_subparsers(dest="action", required=True)
     q = sub.add_parser("plan", help="Validate input paths and write an immutable plan; never submit jobs")
     q.add_argument("method", choices=["ibdmix", "trace", "phyml", "arg", "arg-trace"])
-    q.add_argument("--run-dir", help="Override dated scratch output; default analysis/gu/TARGET/METHOD")
+    q.add_argument("--run-dir", help="Override plan output; IBDmix defaults beside input genotypes in BUILD/ibdmix")
     q.add_argument("--env-file", required=True)
-    q.add_argument("--queue", default="short")
+    q.add_argument("--queue", default=os.getenv("GU_QUEUE", "33"))
     q.add_argument("--threads", type=positive, default=4)
     q.add_argument("--memory-gb", type=positive, default=32)
     q.add_argument("--walltime", default="168:00")
     q.add_argument("--max-running", type=positive, default=64)
     q.add_argument("--array-size", type=positive, default=500)
-    q.add_argument("--rusage-memory-mode", choices=["per-job", "per-slot"], default="per-job",
+    q.add_argument("--rusage-memory-mode", choices=["per-job", "per-slot", "host"], default="host",
                    help="How this cluster interprets rusage[mem]; per-job is conservative if uncertain (can over-reserve on per-slot sites)")
     q.add_argument("--grch", choices=["37", "38"], default="37")
     q.add_argument("--chr", default="1-22,X")
@@ -955,7 +965,7 @@ def parser():
     q.add_argument("--loci")
     q.add_argument("--dir-arg", dest="arg_dir")
     q.add_argument("--dir-gen")
-    q.add_argument("--dir-map", help="ARG recombination map directory; default /data/sph-huangj/gen/hm3/GRCH/gmap")
+    q.add_argument("--dir-map", help="ARG recombination map directory; default /work/sph-huangj/data/gen/hm3/GRCH/gmap")
     q.add_argument("--arg-method", choices=["threads", "needle", "tsinfer"], default="threads")
     for name in ("submit", "status"):
         q = sub.add_parser(name)

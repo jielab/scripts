@@ -89,18 +89,21 @@ class WorkflowTests(unittest.TestCase):
                 result = subprocess.run(
                     ["bash", str(pipeline.ROOT / "4.prsformer.sh"), "all",
                      "--traits", "height,ldl", "--analysis-root", str(root), flag],
-                    env=dict(os.environ, GRID_PYTHON=sys.executable, SCRIPT_LOG_DIR=str(Path(tmp) / "logs")),
+                    env=dict(os.environ, GRID_PYTHON=sys.executable, SCRIPT_LOG_DIR=str(Path(tmp) / "logs"),
+                             WORKFLOW_WORKER="1", submit="local", SUBMIT="local"),
                     capture_output=True, text=True, check=True)
                 self.assertFalse(root.exists())
                 output = result.stdout
                 if flag == "--dry-run":
-                    self.assertLess(output.index("PRSformer plan:"), output.index("PRSformer2 plan:"))
-                    self.assertIn("PRSformer plan:", output)
-                    self.assertIn("PRSformer2 plan:", output)
-                    self.assertEqual(output.count("independent traits in order: height -> ldl"), 2)
-                    for module in ("prsformer", "prsformer2"):
-                        for trait in ("height", "ldl"):
-                            self.assertIn(str(root / module / trait), output)
+                    plans = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
+                    self.assertEqual([plan["module"] for plan in plans], ["prsformer", "prsformer2"])
+                    self.assertEqual([plan["training_mode"] for plan in plans],
+                                     ["independent_trait_adaptation", "exploratory_extension"])
+                    for plan in plans:
+                        self.assertEqual(plan["traits"], "height,ldl")
+                        self.assertEqual(plan["analysis_root"], str(root))
+                        self.assertEqual(plan["shared_cache"], str(root / "prsformer/cache"))
+                        self.assertTrue(plan["owns_test_evaluation"])
                 else:
                     self.assertIn("usage: ./4.prsformer.sh prsformer ", output)
                     self.assertIn("usage: ./4.prsformer.sh prsformer2 ", output)

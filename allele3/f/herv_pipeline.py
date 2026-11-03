@@ -517,7 +517,7 @@ def parser():
     p.add_argument("--kg-sample-panel", default=os.environ.get("ALLELE_1KG_PANEL", "/mnt/f/gen/1kg/38/samples.txt"))
     p.add_argument("--kg-vcf-pattern", default="chr{chrom}.vcf.gz")
     p.add_argument("--kg-min-ac", type=int, default=2)
-    p.add_argument('--archaic-root', default=os.environ.get('ALLELE_ARCHAIC_ROOT', '/mnt/f/analysis/gu'))
+    p.add_argument('--archaic-root', default=os.environ.get('ALLELE_ARCHAIC_ROOT', str(Path(os.environ.get('DIR_GEN', '/mnt/f/gen')))))
     p.add_argument('--archaic-datasets', default=os.environ.get('ALLELE_ARCHAIC_DATASETS', '1kg'), help='Comma-separated names/globs [default: %(default)s]; auto selects all complete 1kg/ukbNNN datasets')
     p.add_argument('--archaic-references', default='Altai,Chagyr,Denisova,Denisova25,Vindija', help='Explicit tested reference set; .2013 references are opt-in only')
     p.add_argument('--archaic-module', choices=('auto', 'ibdmix', 'ibdmix-GPU'), default='auto')

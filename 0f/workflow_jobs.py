@@ -83,7 +83,7 @@ def resources(values):
     unknown = set(values) - {"queue", "cores", "memory_gib", "hours", "gpus", "gpu_model", "memory_scope"}
     if unknown:
         raise ValueError(f"Unknown resource keys: {sorted(unknown)}")
-    r = dict(queue="ser", cores=8, memory_gib=32, hours=24, gpus=0, memory_scope="host")
+    r = dict(queue=os.environ.get("HPC_CPU_QUEUE", "33"), cores=8, memory_gib=32, hours=24, gpus=0, memory_scope="host")
     r.update(values)
     r["queue"] = text(r["queue"], "queue")
     if not KEY.fullmatch(r["queue"]):
@@ -141,7 +141,8 @@ def normalized(jobs, common_env=None):
 def write_plan(jobs, out_dir, *, mode="hpc", name="workflow", common_env=None):
     if mode not in {"local", "hpc"} or not KEY.fullmatch(name):
         raise ValueError("Invalid mode or plan name")
-    ordered = normalized(jobs, common_env)
+    shared = {k:v for k,v in os.environ.items() if k.startswith(('DIR_', 'HPC_', '_OS_DEFAULT_')) or k in ('ANALYSIS_ROOT', 'DATE_SCRATCH')}
+    ordered = normalized(jobs, {**shared, **(common_env or {})})
     root = Path(out_dir).expanduser().resolve()
     text(root, "plan directory")
     fingerprint = hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()

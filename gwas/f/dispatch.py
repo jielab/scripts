@@ -94,7 +94,7 @@ def build(entry, argv):
                           integer(os.environ.get("GWAS_EAF_THREADS", "2"), "GWAS_EAF_THREADS"),
                           integer(os.environ.get("GWAS_CLEAN_COMP_THREADS", "1"), "GWAS_CLEAN_COMP_THREADS"))
     required_cores = count * per_process
-    queue = os.environ.get("GWAS_QUEUE", os.environ.get("LSB_QUEUE", "short"))
+    queue = os.environ.get("GWAS_QUEUE", os.environ.get("HPC_CPU_QUEUE", "33"))
     cores = integer(os.environ.get("GWAS_CORES", str(max(40 if mode == "hpc" and queue == "short" else 1, required_cores))), "--cores")
     if cores < required_cores or (mode == "hpc" and queue == "short" and cores < 40):
         raise ValueError(f"--cores must cover {required_cores} concurrent worker threads; short requires >=40")

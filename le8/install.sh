@@ -66,6 +66,7 @@ r_bin=${R_BIN:-Rscript}
 install_r=TRUE
 while (($#)); do
     case "$1" in
+    --check) mode=check; shift ;;
     --report) profile=report; shift ;;
     --abm) profile=abm; shift ;;
     --all) profile=abm; shift ;;
@@ -88,10 +89,12 @@ Main options:
     --python FILE --r-bin FILE  Interpreters
     --no-r  Skip R packages
     --print-environment le8|cigma  Print environment recipe
+    --check  Check installed Python/R dependencies without data or downloads
     --dry-run  Print commands without installing
     -h, --help  Show options and examples below
 
 Example:
+    source /work/sph-huangj/scripts/0f/0os.sh
     # Dependency groups (choose the group needed for this installation):
     ./install.sh --report
     ./install.sh --abm
@@ -113,12 +116,21 @@ trap 'rm -f -- "$requirement_file"' EXIT
 run() {
     if [[ $dry_run == TRUE ]]; then printf '%q ' "$@"; printf '\n'; else "$@"; fi
 }
+if [[ $mode == check ]]; then
+    "$python_bin" -c 'import numpy,scipy,pandas,sklearn,lightgbm,pyreadr,pyarrow,bitarray,duckdb,torch; print("LE8 Python dependencies PASS")'
+    "$python_bin" -m pip check
+    "$r_bin" --vanilla -e 'p<-c("data.table","ggplot2","openxlsx","brglm2","doParallel","callr","glmnet","coloc","susieR","clusterProfiler","org.Hs.eg.db","GO.db","DANDELION","shiny","jsonlite","digest"); m<-p[!vapply(p,requireNamespace,logical(1),quietly=TRUE)]; if(length(m)) stop("missing R packages: ",paste(m,collapse=", ")); cat("LE8 R dependencies PASS\n")'
+    exit 0
+fi
 if [[ $mode == conda ]]; then
     environment_recipe "$environment_name" > "$requirement_file"
     [[ $environment_name != cigma ]] || environment_name=le8-cigma
     if [[ $dry_run == TRUE ]]; then cat "$requirement_file"; fi
     conda_bin=${CONDA_EXE:-conda}
     run "$conda_bin" env update --name "$environment_name" --file "$requirement_file"
+    if [[ $environment_name == le8 ]]; then
+        run "$conda_bin" run -n le8 Rscript --vanilla -e 'if(!requireNamespace("DANDELION",quietly=TRUE)) install.packages("https://cloud.r-project.org/src/contrib/DANDELION_0.1.0.tar.gz",repos=NULL,type="source")'
+    fi
     exit 0
 fi
 if ! command -v "$python_bin" >/dev/null 2>&1; then
@@ -135,7 +147,7 @@ environment_recipe le8 | awk -v profile="$profile" '
   }
 ' > "$requirement_file"
 if [[ $dry_run == TRUE ]]; then cat "$requirement_file"; fi
-run "$python_bin" -m pip install -r "$requirement_file"
+run "$python_bin" -m pip install --extra-index-url https://download.pytorch.org/whl/cu126 -r "$requirement_file"
 if [[ $install_r == TRUE ]]; then
     mapfile -t r_packages < <(environment_recipe le8 | sed -n 's/.* # cran://p')
     run "$r_bin" - "${r_packages[@]}" <<'R_INSTALL'
@@ -143,5 +155,6 @@ if [[ $install_r == TRUE ]]; then
 p <- commandArgs(trailingOnly=TRUE)
 m <- p[!vapply(p, requireNamespace, logical(1), quietly=TRUE)]
 if (length(m)) install.packages(m, repos="https://cloud.r-project.org")
+if(!requireNamespace("DANDELION",quietly=TRUE)) install.packages("https://cloud.r-project.org/src/contrib/DANDELION_0.1.0.tar.gz",repos=NULL,type="source")
 R_INSTALL
 fi

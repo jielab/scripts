@@ -26,6 +26,26 @@ class BatchTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_default_result_locations_follow_input_genotypes(self):
+        with patch.dict(os.environ, {'GU_REF_ROOT': '/work/sph-huangj/data/gen'}):
+            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb'])), '/work/sph-huangj/data/gen/ukb/37')
+            self.assertEqual(str(batch.result_base(['ibdmix','--dir-target','/mnt/f/gen/1kg/37/pfile/chr'])), '/mnt/f/gen/1kg/37')
+            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb','--postfix','013'])), '/work/sph-huangj/data/gen/ukb/37/cohort')
+
+    def test_missing_rscript_fails_before_submission(self):
+        with patch.dict(os.environ, {'GU_RESULTS_RSCRIPT':str(self.root/'missing/Rscript')}):
+            with self.assertRaisesRegex(ValueError, 'missing .*/missing/Rscript'):
+                batch.preflight_publication()
+
+    def test_running_snapshot_keeps_helper_after_live_edit(self):
+        project=self.root/'scripts/gu';(project/'f').mkdir(parents=True)
+        helper=project/'f/ukb_prepare.py';helper.write_text('original helper')
+        plan=self.root/'plan';plan.mkdir()
+        with patch.object(batch,'ROOT',project): frozen=batch.snapshot_code(plan)
+        helper.unlink()
+        self.assertEqual((frozen/'f/ukb_prepare.py').read_text(),'original helper')
+        self.assertTrue((plan/'code.sha256.json').is_file())
+
     def test_padding_and_lists(self):
         self.assertEqual(batch.expand('[013-051]'), [f'{i:03}' for i in range(13, 52)])
         self.assertEqual(batch.expand('013,015,049'), ['013', '015', '049'])
@@ -57,7 +77,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([p for p, _ in batch.cohorts(args)], ['001', '003'])
 
     def run_main(self, args, fake):
-        with patch.object(batch, 'ROOT', self.root), patch.dict(os.environ, {'GU_ANALYSIS_BASE': str(self.root)}), patch.object(batch.subprocess, 'run', fake), patch.object(batch, 'preflight_axt'):
+        with patch.object(batch, 'ROOT', self.root), patch.dict(os.environ, {'GU_ANALYSIS_BASE': str(self.root)}), patch.object(batch.subprocess, 'run', fake), patch.object(batch, 'preflight_axt'), patch.object(batch, 'preflight_inputs'), patch.object(batch, 'preflight_publication'), patch.object(batch, 'snapshot_code', return_value=self.root):
             return batch.main(args)
 
     def test_dry_run_never_submits_and_worker_runs(self):

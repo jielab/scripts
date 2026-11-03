@@ -39,8 +39,9 @@ def parser():
                    default=Path(os.environ.get("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8")))
     p.add_argument("--cores", type=int, default=int(os.getenv("N_CORES", "8")))
     p.add_argument("--memory-limit-gb", type=float, default=float(os.getenv("LE8_MEMORY_LIMIT_GB", "32")))
-    p.add_argument("--queue", default=os.getenv("LE8_QUEUE", "ser"))
-    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", "gpu"))
+    p.add_argument("--queue", default=os.getenv("LE8_QUEUE", "33"))
+    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", "4v100-16-e5"))
+    p.add_argument("--gpu-memory-limit-gb", type=float, default=float(os.getenv("HPC_GPU_MEMORY_GIB", "56")))
     p.add_argument("--gpu-cores", type=int, default=int(os.getenv("LE8_GPU_CORES", "20")))
     p.add_argument("--hours", type=float, default=float(os.getenv("LE8_HOURS", "72")))
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
@@ -157,13 +158,15 @@ def build_jobs(a, extra=()):
             env["RUN_GPU_COLOC"] = "TRUE"
         if gpu and module == "c2_cause":
             env["MRLINK2_EIGH_BACKEND"] = "cuda"
+        memory = min(a.memory_limit_gb, a.gpu_memory_limit_gb) if gpu else a.memory_limit_gb
+        env.update(LE8_RESOURCE_MEMORY_GIB=f"{memory:g}", LE8_MEMORY_LIMIT_GB=f"{memory:g}")
         env.update(stage_env or {})
         argv = ["bash", str(ROOT / "le8.sh"), module, *common,
-                "--Y", trait or a.Y, "--biom", layer or a.biom, "--cores", str(allocated_cores), *tail]
+                "--Y", trait or a.Y, "--biom", layer or a.biom, "--cores", str(allocated_cores), "--memory-limit-gb", f"{memory:g}", *tail]
         if module == "c1_correlate":
             argv += ["--methods", ",".join(methods)]
         jobs.append(Job(key, argv, list(deps), dict(queue=a.gpu_queue if gpu else a.queue,
-            cores=allocated_cores, memory_gib=a.memory_limit_gb, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
+            cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
         return key
 
     terminals = []

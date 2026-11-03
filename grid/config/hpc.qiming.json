@@ -10,9 +10,9 @@
     "memory_scope": "host"
   },
   "gpu": {
-    "queue": "4a100-80",
-    "cores": 20,
-    "memory_gib": 160,
+    "queue": "4v100-16-e5",
+    "cores": 8,
+    "memory_gib": 56,
     "hours": 120,
     "gpus": 1
   },

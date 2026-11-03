@@ -36,10 +36,11 @@ Main options:
     -h, --help                   Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/gwas
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/gwas
 
     # Main GWAS: raw downloads -> standardized tables -> MAGMA/lead SNPs -> plots/PGS.
-    ./format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/f/gwas/main \
+    ./format.sh format --dir-raw ${DIR_DAT}/Downloads --dir-out ${DIR_GWAS}/main \
       --grch auto --hm3 FALSE --run-cmd TRUE --foreground TRUE --jobs 4
     ./format.sh magma --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
     ./format.sh lead --label main --grch auto --run-cmd TRUE --foreground TRUE --jobs 4
@@ -48,24 +49,24 @@ Example:
     # Local PGS runs merge full-precision scores automatically after scoring.
 
     # Optional protein cis extraction after formatting the prot project.
-    ./format.sh cis --label prot --grch 38 --cis-bed /mnt/f/gwas/prot/pheno.bed --run-cmd TRUE --foreground TRUE --jobs 4
+    ./format.sh cis --label prot --grch 38 --cis-bed ${DIR_GWAS}/prot/pheno.bed --run-cmd TRUE --foreground TRUE --jobs 4
 
     # 为已有 GWAS 仅生成 .thin.gz；跳过有效结果，8 个 GWAS 并发。
     # 在同一个 Bash / WSL 终端复制运行完整一段。
-    cd /mnt/d/scripts/gwas
+    cd /work/sph-huangj/scripts/gwas
     for project in 4grid main met prot; do
       ./format.sh thin \
-        --dir-out "/mnt/f/gwas/$project" --label "$project" --category common \
+        --dir-out "${DIR_GWAS}/$project" --label "$project" --category common \
         --grch auto --hm3 FALSE --thin TRUE --thin-chr-max 10000 \
         --replace FALSE --run-cmd TRUE --foreground TRUE --jobs 8 || break
     done
 
-    ./format.sh format --dir-raw /mnt/d/Downloads --dir-out /mnt/f/gwas/main
+    ./format.sh format --dir-raw ${DIR_DAT}/Downloads --dir-out ${DIR_GWAS}/main
     ./format.sh thin,mplot --label main --jobs 2 --run-cmd TRUE
 
     # 仅仅画图
-    ./format.sh mplot --label self --dir-out /mnt/f/gwas/self \
-	--dir-clean /mnt/f/gwas/self/raw/phe1/gwas --gwas phe1.regenie --grch 38 --hm3 FALSE --thin FALSE --add-panel none --run-cmd TRUE
+    ./format.sh mplot --label self --dir-out ${DIR_GWAS}/self \
+	--dir-clean ${DIR_GWAS}/self/raw/phe1/gwas --gwas phe1.regenie --grch 38 --hm3 FALSE --thin FALSE --add-panel none --run-cmd TRUE
 HELP
 	gwas_runtime_usage
 }

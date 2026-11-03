@@ -132,7 +132,7 @@ class HPC(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("--memory-limit-gb") + 1], "96")
             self.assertIn("--dir-gen4arg", cmd)
             self.assertIn("--dir-arg", cmd)
-            self.assertEqual(cmd[cmd.index("--dir-map") + 1], "/data/sph-huangj/gen/hm3/37/gmap")
+            self.assertEqual(cmd[cmd.index("--dir-map") + 1], "/work/sph-huangj/data/gen/hm3/37/gmap")
 
     def test_fresh_reference_defaults_and_cli(self):
         plan = self.make_plan()
@@ -154,7 +154,7 @@ class HPC(unittest.TestCase):
     def test_runtime_configuration_is_part_of_plan_identity(self):
         runtime = self.root / "f" / "runtime.env"
         runtime.parent.mkdir()
-        runtime.write_text('export GU_DATA_ROOT="/data/sph-huangj"\n')
+        runtime.write_text('export GU_DATA_ROOT="/work/sph-huangj/data"\n')
         plan = self.make_plan()
         self.assertIn(str(runtime), plan["source_sha256"])
         runtime.write_text('export GU_DATA_ROOT="/different/data"\n')
@@ -164,11 +164,11 @@ class HPC(unittest.TestCase):
     def test_deployed_commands_use_hpc_paths(self):
         plan = self.make_plan()
         plan.update(source_root="/work/sph-huangj/scripts.HPC/gu",
-                    dir_target="/data/sph-huangj/gen/ukb/37/imp/chr", target="ukb",
-                    archaic_path="/data/sph-huangj/gen/archaic/37/vcf",
-                    environment="/data/sph-huangj/analysis/gu/test/inputs/runtime.env")
+                    dir_target="/work/sph-huangj/data/gen/ukb/37/imp/chr", target="ukb",
+                    archaic_path="/work/sph-huangj/data/gen/archaic/37/vcf",
+                    environment="/work/sph-huangj/data/analysis/gu/test/inputs/runtime.env")
         with patch.object(hpc, "ROOT", Path(plan["source_root"])):
-            command = hpc.common_gu(plan, "/data/sph-huangj/analysis/gu/test/tasks/batch00001/chr1")
+            command = hpc.common_gu(plan, "/work/sph-huangj/data/analysis/gu/test/tasks/batch00001/chr1")
             plan["tasks"][0]["command"] = command
             hpc.render_jobs(plan)
         self.assertEqual(command[1], "/work/sph-huangj/scripts.HPC/gu/gu.sh")

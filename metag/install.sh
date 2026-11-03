@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ${1:-} == --software-only ]]; then
+    shift
+    source "$HERE/f/env.sh"
+    workflow_args "$@"
+    set -- "${WORKFLOW_ARGS[@]}"
+    exec "$METAG_PYTHON" "$HERE/f/install_tools.py" "$@"
+fi
 case "${1:-}" in
     -h|--help|help)
         cat <<'HELP'
 Usage: bash install.sh [setup] [options]
 Install the pinned CPU tools through the local / LSF setup workflow.
 
+  --software-only     Install/verify tools without reference or cohort data (put first)
   --config FILE       Runtime paths/resources (defaults: hpc.yml)
   --submit FALSE      Generate setup commands without running or submitting them
   --submit TRUE       Run/submit the generated setup commands

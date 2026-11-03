@@ -35,7 +35,7 @@ def _require_partitioned(cfg):
                 "legacy_library_dir", "legacy_metadata_dir", "parallel_reference_dir"):
         if cfg.get(key):
             path = Path(cfg[key]).expanduser().resolve()
-            if path == Path("/scratch") or Path("/scratch") in path.parents:
+            if (path == Path("/scratch") or Path("/scratch") in path.parents) and cfg.get("allow_scratch") is not True:
                 raise ValueError(f"{key} points into auto-purged /scratch: {path}. Copy it to persistent project storage and update hpc.yml before generating resumable production jobs.")
 
 

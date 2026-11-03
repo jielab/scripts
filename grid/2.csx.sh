@@ -30,11 +30,11 @@ Benchmark/block options: --analysis-root DIR --traits LIST --validation-n 5000
     ./2.csx.sh targetfit --help and ./2.csx.sh blocknet --help list full options.
 
 Default permanent paths (outside the analysis output directory):
-    READ GWAS / WRITE final SNP weights: /mnt/f/gwas/4grid/common
+    READ GWAS / WRITE final SNP weights: ${DIR_GWAS}/4grid/common
       Weights beside each source GWAS: <GWAS-without-.gz><suffix>.csx.gz.
-    WRITE scores: /mnt/f/gen/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
-    READ LD references: /mnt/f/LD/csx
-    READ genotypes: /mnt/f/gen/ukb/37/typ (fallback: /mnt/f/gen/ukb/37/hap)
+    WRITE scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
+    READ LD references: ${DIR_LD}/csx
+    READ genotypes: ${DIR_GEN}/ukb/37/typ (fallback: ${DIR_GEN}/ukb/37/hap)
     --dir-gwas / --dir-score change these permanent destinations.
     Changing --dir-output-root alone does not relocate weights/scores.
 
@@ -43,21 +43,22 @@ Main options:
     --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
     --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
     --stage all|weights|score      Default: all.
-    --dir-gwas DIR                /mnt/f/gwas/4grid/common
-    --dir-gen DIR                 /mnt/f/gen/ukb/37/typ; falls back to hap when typ is absent.
+    --dir-gwas DIR                ${DIR_GWAS}/4grid/common
+    --dir-gen DIR                 ${DIR_GEN}/ukb/37/typ; falls back to hap when typ is absent.
     --bim-prefix PREFIX           Optional existing BIM; default: --dir-gen/ukb_array, built from chr*.pvar/.bim.
     --memory-cap-gb N             16 GiB RAM for the entire invocation, including all parallel jobs.
     --jobs N / --threads N        Parallel chromosomes / scoring threads per job (4 / 8).
-    --dir-score DIR              Default: /mnt/f/gen/ukb/pgs for both CPU and CUDA.
+    --dir-score DIR              Default: ${DIR_GEN}/ukb/pgs for both CPU and CUDA.
     --backend MODE               auto (default): detect CUDA, otherwise use CPU.
-    --dir-output-root DIR            /mnt/d/analysis/grid; inference/logs/reports go into csx/.
+    --dir-output-root DIR            ${ANALYSIS_ROOT}/grid; inference/logs/reports go into csx/.
     --replace TRUE|FALSE         Default FALSE; reuse only matching saved results.
     --check                      Validate inputs and prepare target SNP metadata; no inference/scoring.
     --dry-run TRUE               Same preflight/plan behavior; no completion markers.
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/grid
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/grid
     ./2.csx.sh                         # Automatically detect CPU/CUDA; run all traits.
     ./2.csx.sh --trait height --chrs 22 --check
     ./2.csx.sh --traits height,ldl,t2dm --check

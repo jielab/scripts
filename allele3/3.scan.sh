@@ -16,8 +16,8 @@ Modules:
   verify   Check the permanent store
 
 Options:
-  --out DIR, --store DIR  Output/store [/mnt/f/annot/gnomad/allele3; run requires --out]
-  --source DIR           Adoption source [/mnt/d/analysis/allele3/final/gnomad_local]
+  --out DIR, --store DIR  Output/store [${DIR_ANNOT}/gnomad/allele3; run requires --out]
+  --source DIR           Adoption source [${ANALYSIS_ROOT}/allele3/final/gnomad_local]
   --replace TRUE|FALSE   Recalculate or resume [TRUE]
   --dry-run, --preflight Inspect metadata only
   --help-full            Show detailed scanner options
@@ -35,8 +35,9 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
+    source /work/sph-huangj/scripts/0f/0os.sh
   ./3.scan.sh [run|plan|adopt|verify]
-  ./3.scan.sh --out /mnt/f/annot/gnomad/allele3
+  ./3.scan.sh --out ${DIR_ANNOT}/gnomad/allele3
 HELP
 }
 

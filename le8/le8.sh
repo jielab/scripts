@@ -63,8 +63,8 @@ Main options:
     --queue NAME --gpu-queue NAME --hours N  LSF resources [ser,gpu,72]
     --Y CSV, --trait CSV  Outcomes [cvd_cad,ra]
     --biom CSV            Omic layers [prot,met]
-    --dir-analysis-root DIR   Results [/mnt/d/analysis/le8]
-    --dir-ukb-phe DIR         Phenotype/omics inputs [/mnt/d/data/ukb]
+    --dir-analysis-root DIR   Results [${ANALYSIS_ROOT}/le8]
+    --dir-ukb-phe DIR         Phenotype/omics inputs [${DIR_UKB}]
     --cores N             CPU budget [8]
     --memory-limit-gb N   Process-tree RAM cap [32]
     --replace TRUE|FALSE  Default replacement policy for selected stages [FALSE]
@@ -100,7 +100,8 @@ Deployment and results:
     Compare full population and the same selected people, including complements.
 
 Example:
-    cd /mnt/d/scripts/le8
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/le8
     ./le8.sh --Y cvd_cad --biom prot,met --preflight
     ./le8.sh --Y cvd_cad --biom prot,met
     ./le8.sh c1_correlate --Y ra,sle2,ad,epilepsy,mi,cvd_afib,cvd_abaneu,cvd_htn,copd,asthma,masld,amr --biom prot,met --replace TRUE
@@ -199,7 +200,7 @@ le8_main() {
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
-	export UKB_PHE=${UKB_PHE:-${DIR_WORK:-/mnt/d}/data/ukb}
+	export UKB_PHE=${UKB_PHE:-${DIR_UKB:-${DIR_DAT:-/mnt/d}/ukb}}
 	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-${DIR_DATA:-/mnt/f}/gen/ukb/37/typ/ukb_rel.dat}
 	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}
 	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}

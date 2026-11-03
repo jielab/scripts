@@ -151,10 +151,10 @@ def sha(path):
 def relocated_output_stamp(record):
     """Resolve verified output receipts after the /data-to-scratch migration."""
     path = Path(record['path'])
-    previous = Path('/data/sph-huangj/analysis/ld')
+    previous = Path('/work/sph-huangj/data/analysis/ld')
     if path.is_relative_to(previous):
         base = Path(os.environ.get('SCRATCH_ANALYSIS_ROOT',
-                    f"/scratch/{os.environ.get('DATE_SCRATCH', '2026-10-31')}/sph-huangj/analysis")) / 'ld'
+                    f"/scratch/{os.environ.get('DATE_SCRATCH', '2026-11-03')}/sph-huangj/analysis")) / 'ld'
         path = base / path.relative_to(previous)
     return dict(record, path=str(path.resolve()))
 
@@ -251,19 +251,23 @@ class Pipeline:
         self.input_format = os.environ.get('INPUT_FORMAT', 'pgen')
         if self.input_format not in ('vcf', 'pgen'):
             raise Stop('INPUT_FORMAT must be vcf or pgen')
-        self.pfile_dir = Path(os.environ.get('PFILE_DIR', f'/data/sph-huangj/gen/1kg/{self.genome_build}/pfile')).expanduser().resolve()
-        self.out = Path(os.environ.get('OUT', f'/scratch/{os.environ.get("DATE_SCRATCH", "2026-10-31")}/sph-huangj/analysis/ld/{self.genome_build}')).expanduser().resolve()
+        self.pfile_dir = Path(os.environ.get('PFILE_DIR', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/pfile')).expanduser().resolve()
+        self.out = Path(os.environ.get('OUT', f'/scratch/{os.environ.get("DATE_SCRATCH", "2026-11-03")}/sph-huangj/analysis/ld/{self.genome_build}')).expanduser().resolve()
         self.work = self.out / 'rebuild_v2'
         self.tmp_parent = Path(os.environ.get('LD_TMP_DIR', str(self.out / 'tmp'))).expanduser().resolve()
         self.resume_dir = (Path(os.environ['LD_RESUME_DIR']).expanduser().resolve()
                            if os.environ.get('LD_RESUME_DIR') else None)
-        self.vcf_dir = Path(os.environ.get('VCF_DIR', f'/data/sph-huangj/gen/1kg/{self.genome_build}/vcf')).expanduser().resolve()
-        self.panel = Path(os.environ.get('PANEL', f'/data/sph-huangj/gen/1kg/{self.genome_build}/samples.txt')).expanduser().resolve()
+        self.vcf_dir = Path(os.environ.get('VCF_DIR', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/vcf')).expanduser().resolve()
+        self.panel = Path(os.environ.get('PANEL', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/samples.txt')).expanduser().resolve()
         self.chroms = parse_chroms(os.environ.get('CHRS', '1-22'))
         self.threads = positive_int('THREADS', 8)
         self.parallel_chroms = positive_int('PARALLEL_CHROMS', 1)
         self.memory_mb = positive_int('MEMORY_MB', 4096)
         self.confirmations = positive_int('STABLE_CONFIRMATIONS', 2)
+        extension = os.environ.get('AUTO_EXTEND_D', 'TRUE').upper()
+        if extension not in ('TRUE', 'FALSE'):
+            raise Stop('AUTO_EXTEND_D must be TRUE or FALSE')
+        self.auto_extend_d = extension == 'TRUE'
         # At least two independent larger-D comparisons by default.
         raw_grid = os.environ.get('D_GRID_KB', '250,500,1000,2000,5000,10000')
         self.grid = [int(x) for x in raw_grid.split(',')]
@@ -1113,7 +1117,9 @@ class Pipeline:
         old_policy = old_check.get('policy') if isinstance(old_check, dict) else 'error'
         if (not isinstance(old_grid, list) or not old_grid
                 or any(type(d) is not int or d < 1 for d in old_grid)
-                or old_grid != sorted(set(old_grid)) or distances[:len(old_grid)] != old_grid
+                or old_grid != sorted(set(old_grid))
+                or not (distances[:len(old_grid)] == old_grid or
+                        (self.auto_extend_d and old_grid[:len(distances)] == distances))
                 or record.get('D_kb') not in old_grid
                 or record.get('stable_confirmations_required') != self.confirmations
                 or type(old_tolerance) not in (int, float) or not math.isfinite(old_tolerance) or old_tolerance < 0
@@ -1159,6 +1165,7 @@ class Pipeline:
         return selected, record
 
     def evaluate_chromosome(self, chrom, distances):
+        distances = list(distances)  # chromosome-local evidence, never mutate another worker's grid
         reused = self.reuse_selection(chrom, distances)
         if reused is not None:
             return reused
@@ -1167,6 +1174,22 @@ class Pipeline:
             self.partitions(pop, chrom, distances)
         snapshots = self.summarize(chrom, distances)
         selected = choose_distance(snapshots, distances, self.confirmations)
+        # MAX_D_KB is the initial budget. Unstable chromosomes alone may extend
+        # to their observed full span. Existing partitions remain validated/reused.
+        while selected is None and self.auto_extend_d:
+            span_kb = max(math.ceil((self.pgen_cache[(p, chrom)][1]['qc']['last_position'] -
+                                    self.pgen_cache[(p, chrom)][1]['qc']['first_position']) / 1000)
+                          for p in POPS)
+            if distances[-1] >= span_kb:
+                raise Stop(f'chr{chrom}: full-span evidence did not pass; refusing publication')
+            following = min(2 * distances[-1], span_kb)
+            note(f'EXTEND chr{chrom}: boundaries not stable through {distances[-1]} kb; '
+                 f'testing {following} kb (full span {span_kb} kb). Stability criteria unchanged.')
+            distances.append(following)
+            for pop in POPS:
+                self.partitions(pop, chrom, distances)
+            snapshots = self.summarize(chrom, distances)
+            selected = choose_distance(snapshots, distances, self.confirmations)
         if selected is None:
             latest = snapshots[distances[-1]]
             suffix_start = len(distances) - 1
@@ -1306,7 +1329,7 @@ class Pipeline:
                         raise Stop(f'chr{chrom} worker failed (exit {process.exitcode}); see run logs. '
                                    'Other workers will stop; rerun to reuse validated results.')
                     record = read_json(self.work / 'selected' / f'chr{chrom}.json')
-                    if not isinstance(record, dict) or record.get('D_kb') not in distances:
+                    if not isinstance(record, dict) or record.get('D_kb') not in record.get('tested_grid_kb', []):
                         raise Stop(f'chr{chrom} worker did not produce a valid selection record')
                     results[chrom] = (record['D_kb'], record)
                 if active:

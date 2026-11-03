@@ -6,6 +6,9 @@ set -eo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # shellcheck source=f/0.common.sh
 source "$ROOT/f/0.common.sh"
+source "$ROOT/../0f/0os.sh"
+workflow_args "$@"
+set -- "${WORKFLOW_ARGS[@]}"
 gu_load_config
 ENV_NAME=${GU_ENV_NAME:-gu}
 SOFT=${GU_SOFT:-$HOME/.local/share/gu}
@@ -71,10 +74,17 @@ install_singer() (
 	set -euo pipefail
 	runtime=${GU_SINGER_ENV:-$HOME/.venvs/gu-singer}
 	prefix=${GU_SINGER_HOME:-$HOME/software/singer-0.1.9}
-	archive=$(mktemp --suffix=.tar.gz)
-	trap 'rm -f "$archive"' EXIT
-	/usr/bin/curl -fL --retry 3 -o "$archive" https://raw.githubusercontent.com/popgenmethods/SINGER/eb8e39b1a15be4a9a4df4fdaab61847bf73515d7/releases/singer-0.1.9-beta-linux-x86_64.tar.gz
-	printf '%s  %s\n' accd2cf432092aec64f27ddc88a25098974060f25d54e477c0603afbad8e91b8 "$archive" | sha256sum -c -
+	archive=${GU_SINGER_ARCHIVE:-$SOFT/sources/singer-0.1.9-beta-linux-x86_64.tar.gz}
+    if [[ ! -s $archive ]]; then
+        [[ -z ${GU_SINGER_ARCHIVE:-} ]] || { echo "missing $GU_SINGER_ARCHIVE" >&2; exit 2; }
+        mkdir -p "$(dirname -- "$archive")"
+        pending=$(mktemp --suffix=.tar.gz)
+        trap 'rm -f "$pending"' EXIT
+        /usr/bin/curl -fL --connect-timeout 20 --max-time 600 --retry 2 -o "$pending" https://raw.githubusercontent.com/popgenmethods/SINGER/eb8e39b1a15be4a9a4df4fdaab61847bf73515d7/releases/singer-0.1.9-beta-linux-x86_64.tar.gz
+        printf '%s  %s\n' accd2cf432092aec64f27ddc88a25098974060f25d54e477c0603afbad8e91b8 "$pending" | sha256sum -c -
+        cp "$pending" "$archive"
+    fi
+    printf '%s  %s\n' accd2cf432092aec64f27ddc88a25098974060f25d54e477c0603afbad8e91b8 "$archive" | sha256sum -c -
 	mkdir -p "$prefix"
 	tar -xzf "$archive" -C "$prefix" --strip-components=1
 	if [[ ! -d $runtime/conda-meta ]]; then "${GU_SINGER_PYTHON:-python3}" -m venv "$runtime"; fi
@@ -252,17 +262,19 @@ die() {
 	echo "ERROR: $*" >&2
 	exit 1
 }
-have_env() { "$CONDA_EXE_PATH" env list | awk 'NF && $1 !~ /^#/ {print $1}' | grep -Fxq "$ENV_NAME"; }
+have_env() { [[ -d "$GU_ENV_PREFIX/conda-meta" ]]; }
 activate() {
 	source "$CONDA_BASE_PATH/etc/profile.d/conda.sh"
-	conda activate "$ENV_NAME"
+	conda activate "$GU_ENV_PREFIX"
 	# The shared diagnostic wrapper was sourced before conda activation.
 	GU_BCFTOOLS_BIN=$(type -P bcftools)
 }
 check() {
 	local bad=0 cmd plugin_help
-	[[ ${CONDA_DEFAULT_ENV:-} == "$ENV_NAME" ]] || activate
+	local F=$ROOT/f
+	[[ ${CONDA_PREFIX:-} == "$GU_ENV_PREFIX" ]] || activate
 	export BCFTOOLS_PLUGINS="$CONDA_PREFIX/libexec/bcftools"
+	gu_check_publication || bad=1
 	for cmd in python python3 bcftools bgzip tabix bedtools samtools plink2 bgenix phyml cmake; do
 		command -v "$cmd" >/dev/null 2>&1 || {
 			echo "MISSING command: $cmd" >&2
@@ -343,7 +355,7 @@ check_references() {
 
 check_ibdmix() {
     local bad=0 cmd
-    [[ ${CONDA_DEFAULT_ENV:-} == "$ENV_NAME" ]] || activate
+    [[ ${CONDA_PREFIX:-} == "$GU_ENV_PREFIX" ]] || activate
     export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
     export BCFTOOLS_PLUGINS="$CONDA_PREFIX/libexec/bcftools"
     for cmd in python3 bcftools bgzip tabix bedtools samtools plink2; do
@@ -386,9 +398,9 @@ fi
 # be reused explicitly for the offline build; the health check still runs.
 if [[ ${GU_INSTALL_ENV_READY:-0} != 1 ]]; then
 	if have_env; then
-		"$CONDA_EXE_PATH" env update -n "$ENV_NAME" -f "$YML"
+		"$CONDA_EXE_PATH" env update -p "$GU_ENV_PREFIX" -f "$YML"
 	else
-		"$CONDA_EXE_PATH" env create -n "$ENV_NAME" -f "$YML"
+		"$CONDA_EXE_PATH" env create -p "$GU_ENV_PREFIX" -f "$YML"
 	fi
 fi
 activate

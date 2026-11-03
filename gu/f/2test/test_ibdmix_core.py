@@ -169,7 +169,7 @@ class IntegrationTests(unittest.TestCase):
                         subject.resume_command(path)
 
     def test_optional_references_require_explicit_selection(self):
-        result = subprocess.run(["python3", str(ROOT / "f/ibdmix.py"), "normalize-refs", "altai.2013,denisova.2013"], check=True, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(ROOT / "f/ibdmix.py"), "normalize-refs", "altai.2013,denisova.2013"], check=True, capture_output=True, text=True)
         self.assertEqual(result.stdout.strip(), "Altai.2013 Denisova.2013")
         self.assertEqual(subject.DEFAULT_REFERENCES, ("Altai", "Chagyr", "Denisova", "Denisova25", "Vindija"))
         self.assertNotIn("Altai.2013", subject.DEFAULT_REFERENCES)

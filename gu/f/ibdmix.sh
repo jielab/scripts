@@ -38,14 +38,14 @@ case "${1:-}" in
 	build-prepare)
 		shift
 		here=$F
-		prefix=${IBDMIX_HTSLIB_PREFIX:-${CONDA_PREFIX:-/usr}}
+		prefix=${IBDMIX_HTSLIB_PREFIX:-${GU_ENV_PREFIX:-${CONDA_PREFIX:-/usr}}}
 		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-prepare/prepare}
 		compiler=${CXX:-g++}
 		[[ -s $prefix/include/htslib/vcf.h ]] || { echo "ERROR: HTSlib headers missing under $prefix" >&2; exit 2; }
 		mkdir -p "$(dirname -- "$out")"
 		exec 8>"$out.build.lock"
 		flock 8
-		if [[ ${1:-} == --if-needed && -x $out && $out -nt $here/ibdmix.prepare.cc && $out -nt $here/ibdmix.sh ]]; then exit 0; fi
+		if [[ ${1:-} == --if-needed && -x $out && $out -nt $here/ibdmix.prepare.cc && $out -nt $here/ibdmix.sh ]] && "$out" --version >/dev/null 2>&1; then exit 0; fi
 		tmp=$out.build.$$
 		trap 'rm -f "$tmp"' EXIT
 		"$compiler" -O3 -std=c++17 -Wall -Wextra -Werror -I"$prefix/include" \

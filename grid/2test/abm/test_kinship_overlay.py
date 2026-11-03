@@ -57,7 +57,7 @@ class KinshipOverlayTests(unittest.TestCase):
             root = Path(tmp)
             cache, original, _ = fixture(root)
             args = SimpleNamespace(data=str(cache / "data.tsv.gz"), variants=str(cache / "variants.tsv.gz"),
-                                   genotypes=str(cache / "genotypes.npy"), seed=20260904)
+                                   genotypes=str(cache / "genotypes.npy"), analysis_root=str(root), seed=20260904)
             data, labels, identity, _ = read_inputs(args, ["height"])
             self.assertEqual(data.eid.tolist(), original.eid.tolist())
             self.assertEqual(data.loc[0, "split"], "unused")
@@ -80,7 +80,7 @@ class KinshipOverlayTests(unittest.TestCase):
             path = root / "roles.tsv"
             roles.to_csv(path, sep="\t", index=False)
             args = SimpleNamespace(data=str(cache / "data.tsv.gz"), variants=str(cache / "variants.tsv.gz"),
-                                   genotypes=str(cache / "genotypes.npy"), calibration_roles=str(path))
+                                   genotypes=str(cache / "genotypes.npy"), analysis_root=str(root), calibration_roles=str(path))
             d, *_ = read_inputs(args, ["height"])
             self.assertEqual(d.loc[0, "split"], "unused")
             self.assertEqual(d.split.eq("prediction_calibration").sum(), 10)

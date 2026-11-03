@@ -82,7 +82,7 @@ def worker_env(python, resource):
     return result
 
 
-def resources(cores=1, memory=8, hours=24, queue='ser'):
+def resources(cores=1, memory=8, hours=24, queue='33'):
     r=dict(queue=os.environ.get('ALLELE_JOB_QUEUE',queue),
            cores=int(os.environ.get('ALLELE_JOB_CORES',cores)),
            memory_gib=int(os.environ.get('ALLELE_JOB_MEMORY_GIB',memory)),

@@ -19,7 +19,7 @@ allele_execution_init() {
     # switching mode unsets DIR_SCRATCH; a following --date-scratch would then
     # read it under set -u. Preselection avoids that order-sensitive case
     # without changing the shared file.
-    local i chosen_mode=${submit:-${SUBMIT:-auto}} chosen_date=${DATE_SCRATCH:-2026-10-31}
+    local i chosen_mode=${submit:-${SUBMIT:-auto}} chosen_date=${DATE_SCRATCH:-2026-11-03}
     for ((i=0;i<${#expanded[@]};i++)); do
         case "${expanded[i]}" in
             --submit) [[ $((i+1)) -lt ${#expanded[@]} ]] || fail '--submit needs local or hpc'; chosen_mode=${expanded[i+1]} ;;
@@ -29,7 +29,7 @@ allele_execution_init() {
     case "$chosen_mode" in auto|local|hpc) ;; *) fail '--submit needs local or hpc' ;; esac
     if [[ ${submit:-${SUBMIT:-auto}} != auto && $chosen_mode != "${submit:-$SUBMIT}" ]]; then
         unset DIR_WORK DIR_DATA DIR_SCRATCH DIR_SOFTWARE SHARED_PYTHON
-    elif [[ ${DIR_SCRATCH:-} == /scratch/${DATE_SCRATCH:-2026-10-31}/sph-huangj && $chosen_date != ${DATE_SCRATCH:-2026-10-31} ]]; then
+    elif [[ ${DIR_SCRATCH:-} == /scratch/${DATE_SCRATCH:-2026-11-03}/sph-huangj && $chosen_date != ${DATE_SCRATCH:-2026-11-03} ]]; then
         unset DIR_SCRATCH
     fi
     export submit=$chosen_mode SUBMIT=$chosen_mode DATE_SCRATCH=$chosen_date

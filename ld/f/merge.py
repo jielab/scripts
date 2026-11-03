@@ -8,7 +8,7 @@ def merge():
     # Final publication always covers all autosomes, even after a subset run.
     os.environ['CHRS'] = '1-22'
     pipeline = Pipeline()
-    missing = [str(c) for c in pipeline.chroms
+    missing = [str(pipeline.out / f'chr{c}' / 'rebuild_v2' / 'COMPLETE.json') for c in pipeline.chroms
                if not (pipeline.out / f'chr{c}' / 'rebuild_v2' / 'COMPLETE.json').is_file()]
     if missing:
         raise Stop('chr1-22 results are required; missing completion records: ' + ', '.join(missing))

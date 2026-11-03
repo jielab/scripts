@@ -680,13 +680,13 @@ def queue_name(value):
 def parser():
     examples = """Copyable HPC commands (run in /work/sph-huangj/scripts/metag):
   # Reuse completed reference preparation; build: smp/4096 GiB, index: short/40 cores/160 GiB.
-  ./metag.sh library --prepared --build-queue smp --convert-queue short --submit TRUE
+  ./metag.sh library --prepared --build-queue v3-6t --convert-queue 38 --submit TRUE
 
   # Index conversion only, AFTER the Kraken database build has completed:
-  ./metag.sh library --kunpeng --convert-queue short --submit TRUE
+  ./metag.sh library --kunpeng --convert-queue 38 --submit TRUE
 
   # Split ready input samples; keep the 4096 GiB smp queue:
-  ./metag.sh split --engine kraken --ready-only --submit TRUE --queue smp
+  ./metag.sh split --engine kraken --ready-only --submit TRUE --queue v3-6t
 
 --submit FALSE generates .cmd files without submitting (default).
 Queue overrides do not change CPU or memory requests.
@@ -712,7 +712,7 @@ Shell entry points accept --date-scratch YYYY-MM-DD (default: 2026-10-31).
     obj.add_argument("--prepared", action="store_true", help="Validate completed preparation receipts and skip prepare jobs")
     obj.add_argument("--submit", default=False, type=submit_bool, metavar="TRUE|FALSE", help="TRUE submits jobs; FALSE only generates commands (default FALSE)")
     obj.add_argument("--kunpeng", action="store_true", help="Only convert an already completed Kraken index")
-    obj.add_argument("--queue", choices=("short", "spec", "ser"), help="Reference preparation queue only (not build or index conversion)")
+    obj.add_argument("--queue", help="Reference preparation queue only (not build or index conversion)")
     obj.add_argument("--build-queue", type=queue_name, help="Build queue (configured default smp, 4096 GiB)")
     obj.add_argument("--convert-queue", type=queue_name, help="Kunpeng index conversion queue (configured default short, 40 cores; memory from 0f/0os.sh: local 32 / HPC 160 GiB)")
     obj.epilog = examples

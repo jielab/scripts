@@ -542,7 +542,7 @@ def configure_roster(args, *, settings=None, dry_run=False):
     )
     if args.group_file:
         args.group_file = str(resolve_cohort_path(args.group_file))
-    phe = args.ukb_phe or os.getenv("UKB_PHE", "/mnt/d/data/ukb")
+    phe = args.ukb_phe or os.getenv("UKB_PHE", "/mnt/d/ukb")
     if not args.group_file and not args.group_col:
         source = Path(getattr(args, "ukb_rel_file", None) or os.getenv("LE8_UKB_REL_FILE", DEFAULT_UKB_REL_FILE))
         # stat() propagates permission/I/O errors; only genuine absence permits fallback.

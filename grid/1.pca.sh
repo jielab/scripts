@@ -16,32 +16,33 @@ Modules:
     projection -> distance -> ancestry  Automatic pipeline stages
 
 Default permanent paths (outside the analysis output directory):
-    WRITE PCA: /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
-    WRITE distances: /mnt/f/gen/ukb/pca_proj/ukb_reference_distances.tsv.gz
-    WRITE ancestry: /mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
-    READ genotypes: /mnt/f/gen/ukb/37/imp
-    READ weights: /mnt/d/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
-    READ centers: /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
+    WRITE PCA: ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    WRITE distances: ${DIR_GEN}/ukb/pca_proj/ukb_reference_distances.tsv.gz
+    WRITE ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+    READ genotypes: ${DIR_GEN}/ukb/37/imp
+    READ weights: ${DIR_FILES}/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+    READ centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
     --pca-file changes the PCA/distance directory; --ancestry-file overrides ancestry.
     Changing --dir-output-root alone does not relocate these permanent files.
 
 Main options:
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
     --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
-    --dir-imp DIR                 /mnt/f/gen/ukb/37/imp (chr*.pgen/pvar/psam)
-    --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    --dir-imp DIR                 ${DIR_GEN}/ukb/37/imp (chr*.pgen/pvar/psam)
+    --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --cov-pcs N / --distance-pcs N 20 / 10; require 5 <= distance <= covariate PCs.
     --jobs N                     At most 4 concurrent chromosomes, memory-limited.
-    --dir-output-root DIR             /mnt/d/analysis/grid (reports and projection cache).
+    --dir-output-root DIR             ${ANALYSIS_ROOT}/grid (reports and projection cache).
     --replace TRUE|FALSE          Default FALSE. TRUE rebuilds projection and QC.
     --check                       Validate existing projection or genotype inputs.
     --dry-run TRUE                Same preflight/plan behavior; no analysis.
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/grid
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/grid
     ./1.pca.sh --check
-    ./1.pca.sh --dir-imp /mnt/f/gen/ukb/37/imp --jobs 4
+    ./1.pca.sh --dir-imp ${DIR_GEN}/ukb/37/imp --jobs 4
     ./1.pca.sh --replace TRUE --jobs 4
 
     ./1.pca.sh --jobs 2

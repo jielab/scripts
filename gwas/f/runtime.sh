@@ -61,7 +61,7 @@ gwas_runtime_init() {
     export GWAS_SOFTWARE_ROOT=${GWAS_SOFTWARE_ROOT:-$DIR_SOFTWARE}
     export GWAS_ANALYSIS_ROOT=${GWAS_ANALYSIS_ROOT:-$ANALYSIS_ROOT/gwas}
     export GWAS_PHENOTYPE_FILE=${GWAS_PHENOTYPE_FILE:-${OS_SNP_LIST%/*}/ukb.phe}
-    export CHECK_GRCH_SNP_LIST=${CHECK_GRCH_SNP_LIST:-${legacy_root:+$legacy_root/data/ukb/common/snp.lst}}
+    export CHECK_GRCH_SNP_LIST=${CHECK_GRCH_SNP_LIST:-${legacy_root:+$legacy_root/ukb/common/snp.lst}}
     export CHECK_GRCH_SNP_LIST=${CHECK_GRCH_SNP_LIST:-$OS_SNP_LIST}
     export GWAS_TOOL_THREADS=${GWAS_TOOL_THREADS:-2} GWAS_PLINK_MEMORY_MB=${GWAS_PLINK_MEMORY_MB:-8192}
     export PGS_PLINK_MEMORY_MB=${PGS_PLINK_MEMORY_MB:-8192}
@@ -96,7 +96,7 @@ Local/HPC execution (all three entry points):
     --submit auto|local|hpc       Auto detects LSF; HPC runs on a compute node
     --plan-only                  Write .cmd/plan.json without scanning data or running
     --run-cmd TRUE|FALSE          Execute or only prepare (format/gwas)
-    --queue NAME --cores N        LSF queue/CPU allocation [short / derived from workers]
+    --queue NAME --cores N        LSF queue/CPU allocation [33 / derived from workers]
     --memory-gb N --hours N       Total job RAM GiB / walltime hours [derived / 120]
     --tool-threads N --tool-memory-mb N  format PLINK/GCTA threads and PLINK RAM MiB [2/8192]
     --runtime-env FILE            Optional compute-node environment setup script

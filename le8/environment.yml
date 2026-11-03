@@ -4,7 +4,7 @@ name: le8
 channels:
   - conda-forge
   - bioconda
-  - defaults
+  - nodefaults
 dependencies:
   - python=3.12
   - pip
@@ -72,6 +72,7 @@ dependencies:
   - r-jsonlite # cran:jsonlite
   - r-r.utils # cran:R.utils
   - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu126
       - setuptools<82
-      - torch==2.12.0 # pip:abm
+      - torch==2.12.0+cu126 # pip:abm
       - gpu-coloc==0.6.5

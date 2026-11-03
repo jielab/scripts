@@ -36,7 +36,7 @@ Modules:
     index-cis  Sort canonical cis files, convert to BGZF and create indexes
 
 Main options:
-    --dir-data-root DIR       GWAS parent [/mnt/d/data/gwas]
+    --dir-data-root DIR       GWAS parent [${DIR_GWAS}]
     --projects CSV        Projects [main,prot,met]
     --jobs N --threads N  Concurrent files / bgzip threads [6 / 2]
     --sort-memory SIZE   Sort memory per file [512M]
@@ -263,7 +263,7 @@ Main options:
 Example:
     ./f/c2.cause.sh mr-link2 \
       --jobs c2_cause/link2/c2.link2.jobs.tsv \
-      --cad-gwas /mnt/d/data/gwas/main/common/cvd_cad/gwas/cvd_cad.gz \
+      --cad-gwas ${DIR_GWAS}/main/common/cvd_cad/gwas/cvd_cad.gz \
       --reference-pfile-dir /mnt/f/gen/1kg/38/pfile \
       --reference-pop EUR \
       --reference-id-dir /mnt/f/gen/1kg/38/id \

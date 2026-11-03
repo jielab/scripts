@@ -64,11 +64,11 @@ case "${1:-}:${2:-}" in
 	ukb:inspect-pgen | ukb:make-panel-pgen | ukb:pilot | ukb:pgen-vcf)
 		# This early entry returns before the normal logging setup below.
 		SCRIPT_CONSOLE_PASSTHROUGH=1 source "$ROOT/f/console.sh" "${GU_ORIGINAL_ARGS[@]}"
-		if [[ ${CONDA_DEFAULT_ENV:-} != ${GU_ENV_NAME:-gu} && ${GU_ENV_REEXEC:-0} != 1 ]]; then
+		if [[ ${CONDA_PREFIX:-} != "$GU_ENV_PREFIX" && ${GU_ENV_REEXEC:-0} != 1 ]]; then
 			conda_owner=${GU_CONDA_EXE:-${GU_CONDA_BASE:-$HOME/anaconda3}/bin/conda}
 			[[ -x $conda_owner ]] || { echo "ERROR: activate the GU conda environment before UKB preparation" >&2; exit 2; }
 			export GU_ENV_REEXEC=1
-			exec "$conda_owner" run --no-capture-output -n "${GU_ENV_NAME:-gu}" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
+			exec "$conda_owner" run --no-capture-output -p "$GU_ENV_PREFIX" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 		fi
 		shift
 		exec bash "$F/ukb_prepare.sh" ukb "$@"
@@ -218,7 +218,7 @@ Modules:
     hpc plan|submit|status|retry  Advanced LSF orchestration (formerly gu-hpc.sh)
 
 Main options:
-    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; pass the original date to resume
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-11-03]
     --GPU TRUE|FALSE           IBDmix backend; default FALSE
     --grch 37|38               Input coordinate build (built-in IBDmix masks: 37)
     --target NAME --dir-target PREFIX
@@ -235,18 +235,21 @@ Main options:
     --resource-guard MODE     auto|systemd|scheduler|ulimit (see README)
     --run-cmd FALSE           On HPC login: generate cohort .cmd files without bsub
     --submit local|hpc --jobs-N 1..8 --wait TRUE|FALSE  Shared .cmd scheduling
-    --queue short --slots 40 --walltime 144:00  HPC submission resources
+    --queue 33 --slots 40 --walltime 144:00  HPC submission resources
     --foreground TRUE|FALSE   Default TRUE
     --replace-ibdmix TRUE|FALSE  Explicitly replace incompatible outputs
     --auto-final TRUE|FALSE   Default FALSE; aggregate after all workers finish
     -h, --help                Show help
 
-Examples (first source ./f/runtime.env so shell variables expand):
-    ./gu.sh ibdmix --chr 22 --grch 37 --target 1kg --dir-target /data/1kg/37/pfile/chr --dir-out /results/gu/1kg
-    ./gu.sh ibdmix --GPU FALSE --grch 37 --target ukb --chr 1-22,X --dir-target "$GU_REF_ROOT/ukb/37/imp/chr" --dir-out "$GU_ANALYSIS_BASE/ukb" --postfix '[013-049]' --keep-psam "$GU_REF_ROOT/ukb/37/imp/chr1.psam,10000,[013-049]" --keep-males
-    ./gu.sh final --dir-out $GU_ANALYSIS_BASE/ukb --postfix 001
-    ./gu.sh shiny --dir-out $GU_ANALYSIS_BASE/ukb --postfix 001
-    ./gu.sh trace --chr '1 2 22' --dir-arg /data/1kg/37/arg.tsinfer --target 1kg --dir-target /data/1kg/37/pfile/chr --dir-out /results/gu/trace1kg
+Examples:
+    cd /work/sph-huangj/scripts/gu
+    source ./f/runtime.env
+    ./gu.sh ibdmix --chr 22 --grch 37 --target 1kg --dir-target "$GU_REF_ROOT/1kg/37/pfile/chr"
+    ./gu.sh ibdmix --GPU FALSE --grch 37 --target ukb --chr 1-22,X --dir-target "$GU_REF_ROOT/ukb/37/imp/chr" --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix '[013-049]' --keep-psam "$GU_REF_ROOT/ukb/37/imp/chr1.psam,10000,[013-049]" --keep-males
+    ./gu.sh final --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix 013
+    ./gu.sh shiny --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix 013
+    ./gu.sh hpc plan trace --env-file ./f/hpc.runtime.env --chr 1,2,22 --dir-arg "$GU_REF_ROOT/1kg/37/arg.tsinfer" --target 1kg --dir-target "$GU_REF_ROOT/1kg/37/pfile/chr" --run-dir "$GU_ANALYSIS_BASE/trace1kg"
+    ./gu.sh hpc submit "$GU_ANALYSIS_BASE/trace1kg"
 
 On the HPC login node, ibdmix submits one independent LSF job per postfix.
 Use --run-cmd FALSE to inspect the generated .cmd files first.
@@ -456,7 +459,7 @@ HELP
 				shift 2
 				;;
 			--keep)
-				[[ $# -ge 2 && -s $2 ]] || { echo "ERROR: --keep requires a nonempty PLINK sample list" >&2; exit 2; }
+				[[ $# -ge 2 && -s $2 ]] || { echo "missing ${2:-<--keep FILE>} (nonempty PLINK sample list required)" >&2; exit 2; }
 				GU_KEEP=$(realpath -- "$2"); KEEP_SET=1; shift 2 ;;
 			--keep-psam)
 				[[ $# -ge 2 && -n ${2:-} ]] || { echo "ERROR: --keep-psam requires FILE,CHUNK_SIZE,CHUNK_INDEX" >&2; exit 2; }
@@ -1011,23 +1014,24 @@ HELP
 	# files.  Re-exec does not run EXIT traps, so doing this later would strand the
 	# first process's region workspace.
 	ENV_NAME=${GU_ENV_NAME:-gu}
-	if [[ ${CONDA_DEFAULT_ENV:-} != "$ENV_NAME" && ${GU_ENV_REEXEC:-0} != 1 ]]; then
+	if [[ ${CONDA_PREFIX:-} != "$GU_ENV_PREFIX" && ${GU_ENV_REEXEC:-0} != 1 ]]; then
 		conda_owner=""
 		for conda_exe in "${GU_CONDA_EXE:-}" "$HOME/anaconda3/bin/conda" "$HOME/miniconda3/bin/conda" /opt/conda/bin/conda "$(command -v conda 2>/dev/null || true)"; do
 			[[ -n $conda_exe && -x $conda_exe ]] || continue
-			if "$conda_exe" run -n "$ENV_NAME" true >/dev/null 2>&1; then
+			if "$conda_exe" run -p "$GU_ENV_PREFIX" true >/dev/null 2>&1; then
 				conda_owner=$conda_exe
 				break
 			fi
 		done
 		[[ -n $conda_owner ]] || {
-			echo "ERROR: Conda environment '$ENV_NAME' is not installed or discoverable; run ./install.sh" >&2
+			echo "ERROR: missing Conda environment $GU_ENV_PREFIX; run ./install.sh" >&2
 			exit 1
 		}
 		export GU_ENV_REEXEC=1
-		exec "$conda_owner" run --no-capture-output -n "$ENV_NAME" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
+		exec "$conda_owner" run --no-capture-output -p "$GU_ENV_PREFIX" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 	fi
 
+	if [[ $METHOD == ibdmix || $METHOD == phyml || $METHOD == trace || $METHOD == final ]]; then gu_check_publication || return $?; fi
 	GU_DATA_ROOT=${GU_DATA_ROOT:?runtime configuration required}
 	GU_REF_ROOT=${GU_REF_ROOT:?runtime configuration required}
 	if [[ $METHOD == trace && $TRACE_BACKEND == cuda ]]; then
@@ -1045,6 +1049,10 @@ HELP
 				output_base=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}}
 			fi
 		fi
+        if [[ $METHOD == ibdmix && -z $output_base ]]; then
+            output_base=$(gu_ibdmix_result_base "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "${GRCH_INPUT:-${GU_BUILD:-37}}" "$TARGET_DIR_INPUT") || return $?
+            [[ -z $POSTFIX_INPUT ]] || output_base=$output_base/cohort
+        fi
 		output_root=$(gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$output_base" "$POSTFIX_INPUT") || return $?
 		if [[ ($METHOD == final || $METHOD == shiny) && -s $output_root/gu-target.env ]]; then
 			source "$output_root/gu-target.env"

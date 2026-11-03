@@ -128,6 +128,13 @@ def _resources(args, config, stage):
         r["cores"] = 40
     if args.threads and args.threads > int(r["cores"]) and stage not in {"architecture", "final", "evaluate", "targetfit"}:
         raise ValueError(f"--threads exceeds allocated cores for {stage}")
+    if not local and not (args.gpu_queue if wants_gpu else args.queue) and os.environ.get('HPC_CPU_QUEUE'):
+        if wants_gpu:
+            r['queue'] = os.environ['HPC_GPU_QUEUE']
+        else:
+            memory = float(r['memory_gib']); cores = int(r['cores'])
+            tier = 'HPC_CPU_QUEUE' if memory <= 180 and cores <= 40 else 'HPC_MEDIUM_QUEUE' if memory <= 480 and cores <= 64 else 'HPC_HIGHMEM_QUEUE' if memory <= 960 and cores <= 120 else 'HPC_HUGEMEM_QUEUE'
+            r['queue'] = os.environ[tier]
     return resources(r)
 
 
@@ -203,7 +210,7 @@ def build_jobs(args, extra):
         return key
 
     module = args.module
-    checking = "--check" in extra
+    checking = "--check" in extra and args.entry != "install"
     if checking:
         supported = ((args.entry == "pca" and module == "all")
                      or (args.entry == "csx" and module in {"all", "weights", "score"})
@@ -341,7 +348,7 @@ def parser():
     p.add_argument("--traits", "--trait", default="height,ldl,t2dm")
     p.add_argument("--analysis-root", "--output-root", "--dir-analysis-root", "--dir-output-root",
                    default=os.getenv("GRID_OUTPUT_ROOT", "/mnt/d/analysis/grid"))
-    p.add_argument("--hpc-config", default=str(ROOT / "config/hpc.json"))
+    p.add_argument("--hpc-config", default=os.getenv("GRID_HPC_CONFIG", str(ROOT / "config/hpc.json")))
     p.add_argument("--job-dir")
     p.add_argument("--resume-plan", type=Path)
     p.add_argument("--queue")

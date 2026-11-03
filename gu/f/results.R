@@ -62,7 +62,8 @@ result_stream_workbook <- function(tables, path, sources = character(), metadata
  }
  job <- file.path(directory, 'workbook.json')
  jsonlite::write_json(spec, job, auto_unbox = TRUE, null = 'null')
- code <- Sys.getenv('RESULTS_PY', '/work/sph-huangj/scripts.HPC/gu/f/results.py')
+ code <- Sys.getenv('RESULTS_PY')
+ if (!nzchar(code) || !file.exists(code)) stop('missing RESULTS_PY: ', code, '; source GU runtime before publication')
  status <- system2(Sys.getenv('RESULTS_PYTHON', 'python3'), c(shQuote(code), 'stream-workbook', shQuote(job), shQuote(path)))
  if (status != 0L) stop('Workbook publication failed: ', path)
  invisible(path)

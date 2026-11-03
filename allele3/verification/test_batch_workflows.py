@@ -49,6 +49,9 @@ def clean_environment():
              "SCRIPTS_ROOT", "SHARED_PYTHON", "jobs_N", "SUBMIT_WAIT"}
     prefixes = ("ALLELE_", "PCA3D_", "HERV_", "DIR_", "OS_", "LSB_", "WORKFLOW_")
     env = {k:v for k,v in os.environ.items() if k not in exact and not k.startswith(prefixes)}
+    # Preserve a real allocation for tiny local fixtures on a compute node.
+    if os.environ.get("LSB_JOBID"):
+        env["LSB_JOBID"] = os.environ["LSB_JOBID"]
     env.update(PYTHONDONTWRITEBYTECODE="1", ALLELE_PLANNER_PYTHON=sys.executable)
     return env
 
@@ -178,14 +181,14 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                 plan = json.loads((jobs/"plan.json").read_text())
                 windows = json.loads((jobs/"allofus_windows.json").read_text())
                 roots = plan["provenance"]["roots"]
-                self.assertEqual(roots["data"], "/data/sph-huangj")
+                self.assertEqual(roots["data"], "/work/sph-huangj/data")
                 self.assertEqual(roots["work"], "/work/sph-huangj")
                 self.assertEqual(roots["analysis"], f"/scratch/{date}/sph-huangj/analysis/allele3")
-                self.assertEqual(windows["source"], "/data/sph-huangj/annot/allele3/allofus/hg38_allofus.txt.gz")
+                self.assertEqual(windows["source"], "/work/sph-huangj/data/annot/allele3/allofus/hg38_allofus.txt.gz")
                 for job in plan["jobs"]:
                     self.assertEqual(job["env"]["DIR_SCRATCH"], f"/scratch/{date}/sph-huangj")
-                    self.assertEqual(job["env"]["ALLELE_VCF_DIR"], "/data/sph-huangj/annot/gnomad/sites")
-                    self.assertEqual(job["env"]["ALLELE_ARCHAIC_ROOT"], "/data/sph-huangj/analysis/gu")
+                    self.assertEqual(job["env"]["ALLELE_VCF_DIR"], "/work/sph-huangj/data/annot/gnomad/sites")
+                    self.assertEqual(job["env"]["ALLELE_ARCHAIC_ROOT"], "/work/sph-huangj/data/gen")
                     self.assertEqual(job["argv"][0], "/work/sph-huangj/.conda/envs/allele3-evolution/bin/python")
                     resolved_paths = {k:v for k,v in job["env"].items()
                                       if k not in {"PATH", "SCRIPTS_ROOT", "ALLELE_OS_CONFIG"} and v.startswith("/")}

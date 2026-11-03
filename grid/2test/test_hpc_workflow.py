@@ -72,7 +72,7 @@ class PlanningTests(unittest.TestCase):
                            extra=["--blocks", "1", "--ld-block-files", "ALL.37.bed"])
         self.assertEqual([j.key for j in block], ["shared.prepare", "height.blockprepare", "height.blocknet"])
         self.assertEqual(block[-1].resources["gpus"], 1)
-        self.assertEqual(block[-1].resources["cores"], 20)
+        self.assertEqual(block[-1].resources["cores"], 8)
         self.assertIn("ALL.37.bed", block[-2].argv)
         count = self.build("grid", options=["--traits", "height,ldl"],
                            extra=["--input-manifest", "/tmp/{trait}.json"])
@@ -115,7 +115,7 @@ class PlanningTests(unittest.TestCase):
 
     def test_explicit_gpu_and_cpu_requests(self):
         gpu = self.build("grid", "twins", options=["--traits", "height", "--device", "cuda"])[0]
-        self.assertEqual(gpu.resources["queue"], "gpu")
+        self.assertEqual(gpu.resources["queue"], "4v100-16-e5")
         self.assertEqual(gpu.resources["gpus"], 1)
         cpu = self.build("csx", "blocknet", options=["--traits", "height", "--device", "cpu"])[-1]
         self.assertEqual(cpu.resources["gpus"], 0)
@@ -143,6 +143,8 @@ class PlanningTests(unittest.TestCase):
             self.assertFalse(any(j.key.endswith(".twins") for j in jobs))
         install = self.build("install")[0]
         self.assertEqual(install.argv, ["bash", str(GRID/"install.sh")])
+        check = self.build("install", extra=["--check"])[0]
+        self.assertEqual(check.argv, ["bash", str(GRID/"install.sh"), "--check"])
 
 
 class PublicEntryTests(unittest.TestCase):

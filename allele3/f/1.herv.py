@@ -1172,8 +1172,9 @@ def repeatmasker_path(args):
     installed = shutil.which('RepeatMasker')
     if installed:
         return Path(installed)
-    candidates=[conda_root()/'envs'/env/'bin/RepeatMasker'
-                for env in ['herv-repeatmasker','allele3-repeatmasker','metag-repeatmasker']]
+    candidates=[Path(sys.executable).absolute().parent/'RepeatMasker'] + [
+        conda_root()/'envs'/env/'bin/RepeatMasker'
+        for env in ['herv-repeatmasker','allele3-repeatmasker','metag-repeatmasker']]
     return next((p for p in candidates if p.is_file()),candidates[0])
 
 

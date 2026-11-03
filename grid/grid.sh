@@ -24,6 +24,7 @@ GRID transparent count ABM:
   cleanup       Existing cache maintenance utility (preview by default).
 
 Examples:
+    source /work/sph-huangj/scripts/0f/0os.sh
   ./grid.sh all --submit local --traits height,ldl,t2dm --plan-only
   ./grid.sh all --submit hpc --traits height,ldl,t2dm --plan-only
   ./grid.sh all --traits height,ldl,t2dm --device auto
@@ -37,7 +38,7 @@ Common options:
   --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
   --hpc-config FILE --queue NAME --gpu-queue NAME --job-cores N --job-memory-gb N
   --traits CSV          Default: height,ldl,t2dm
-  --analysis-root DIR   Default: /mnt/d/analysis/grid
+  --analysis-root DIR   Default: ${ANALYSIS_ROOT}/grid
   --config FILE_OR_DIR  Default: config/count_abm.json
   --block-config FILE   Producer block-input configuration (one or four LD maps)
   --prepared FILE       Existing trusted GRID prepared cohort

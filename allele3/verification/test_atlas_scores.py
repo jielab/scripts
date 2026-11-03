@@ -67,7 +67,7 @@ class AtlasScoresTests(unittest.TestCase):
 
     def test_default_data_root_follows_execution_environment(self):
         from unittest.mock import patch
-        for root in ('/mnt/f', '/data/sph-huangj'):
+        for root in ('/mnt/f', '/work/sph-huangj/data'):
             with self.subTest(root=root), patch.dict(os.environ, DIR_DATA=root):
                 self.assertEqual(self.args().dir_data, root)
 

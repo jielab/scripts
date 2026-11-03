@@ -5,6 +5,14 @@ channels:
   - nodefaults
 dependencies:
   - python=3.11
+  - r-base
+  - r-data.table
+  - r-jsonlite
+  - r-digest
+  - r-dbi
+  - r-rsqlite
+  - r-ape
+  - r-r.utils
   - pip
   - setuptools>=70
   - wheel

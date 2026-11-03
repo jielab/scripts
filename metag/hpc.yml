@@ -1,20 +1,21 @@
 # QiMing example, based on the supplied 2026.1 cluster sheet.
-# EDIT root and legacy paths to your actual persistent project directories.
-# Artifacts needed for restart MUST live outside automatically purged scratch.
-# This file reuses existing preparation. For a fresh build use
-# --config profiles/qiming.fresh.yml (or set both legacy keys to null).
+# Roots come from 0f/0os.sh; all preparation and analysis starts fresh.
+# No TaiYi analysis output or legacy cache is required.
+# Scratch expires after 8 days; copy results needed longer to persistent storage.
 
 schema: 1
-root: /data/sph-huangj
-reference_raw: annot/metag/raw
-metadata_dir: analysis/metag_parallel/metadata
-library_dir: analysis/metag_parallel/lib
-reads_raw: metag/raw
-output_dir: analysis/metag_parallel/split
-work_dir: analysis/metag_parallel/work
-tools_dir: tools/metag_parallel
-legacy_library_dir: cache/metag_legacy/lib_hpc
-legacy_metadata_dir: cache/metag_legacy/metadata_hpc
+# Explicit user deployment choice; scratch expires after 8 days.
+allow_scratch: true
+root: "{dir_data}"
+reference_raw: "{metag_reference_raw}"
+metadata_dir: "{metag_state}/metadata"
+library_dir: "{metag_state}/lib"
+reads_raw: "{metag_reads_raw}"
+output_dir: "{metag_state}/split"
+work_dir: "{metag_state}/work"
+tools_dir: "{metag_tools}"
+legacy_library_dir: null
+legacy_metadata_dir: null
 database_layout: partitioned
 parallel_reference_dir: null
 reference_taxid_map: null
@@ -22,15 +23,15 @@ prepare_target_gib: 2
 prepare_max_files: 1000
 prepare_threads: 8
 prepare_concurrency: 16
-prepare_queue: '38'
+prepare_queue: '${HPC_MEDIUM_QUEUE}'
 prepare_cores: 8
 prepare_memory_gib: 64
 prepare_hours: 120
-setup_queue: '33'
+setup_queue: '${HPC_CPU_QUEUE}'
 setup_cores: 8
 setup_memory_gib: 32
 setup_hours: 48
-build_queue: 2t50c
+build_queue: '${HPC_HUGEMEM_QUEUE}'
 build_cores: 64
 build_threads: 64
 build_memory_gib: 1792
@@ -39,14 +40,14 @@ build_soft_hours: 110
 checkpoint_headroom_hours: 10
 checkpoint_hours: 4
 category_resources:
-  viruses: {queue: '33', cores: 8, threads: 8, memory_gib: 48, hours: 120}
-  microbes: {queue: '38', cores: 32, threads: 32, memory_gib: 448, hours: 120}
-  plants: {queue: 1t81c, cores: 64, threads: 64, memory_gib: 896, hours: 120}
-  invertebrates: {queue: 1t81c, cores: 64, threads: 64, memory_gib: 896, hours: 120}
-  vertebrates: {queue: 2t50c, cores: 64, threads: 64, memory_gib: 1792, hours: 120}
+  viruses: {queue: '${HPC_CPU_QUEUE}', cores: 8, threads: 8, memory_gib: 48, hours: 120}
+  microbes: {queue: '${HPC_MEDIUM_QUEUE}', cores: 32, threads: 32, memory_gib: 448, hours: 120}
+  plants: {queue: '${HPC_HIGHMEM_QUEUE}', cores: 64, threads: 64, memory_gib: 896, hours: 120}
+  invertebrates: {queue: '${HPC_HIGHMEM_QUEUE}', cores: 64, threads: 64, memory_gib: 896, hours: 120}
+  vertebrates: {queue: '${HPC_HUGEMEM_QUEUE}', cores: 64, threads: 64, memory_gib: 1792, hours: 120}
 # Queries must fit the SUM of category hashes. Capacity is checked after build.
 # If 1792 GiB is insufficient, use profiles/qiming.6t-query.yml.
-classify_queue: 2t50c
+classify_queue: '${HPC_HUGEMEM_QUEUE}'
 classify_cores: 32
 classify_threads: 30
 classify_workers: 1
@@ -76,18 +77,18 @@ kunpeng_input_compression: gzip
 kunpeng_buffer_bytes: 16777216
 kunpeng_batch_size: 4
 kunpeng_max_work_gib: 256
-convert_queue: '38'
+convert_queue: '${HPC_MEDIUM_QUEUE}'
 convert_cores: 40
 convert_memory_gib: 160
 convert_hours: 72
-kunpeng_full_queue: smp
+kunpeng_full_queue: '${HPC_HUGEMEM_QUEUE}'
 kunpeng_full_cores: 32
 kunpeng_full_threads: 30
 kunpeng_full_workers: 1
 kunpeng_full_memory_gib: 4096
 kunpeng_full_hours: 168
 kunpeng_full_concurrency: 2
-kunpeng_memory_queue: ser
+kunpeng_memory_queue: '${HPC_CPU_QUEUE}'
 kunpeng_memory_cores: 24
 kunpeng_memory_threads: 16
 kunpeng_memory_workers: 1
@@ -101,7 +102,7 @@ compare_repeats: 2
 compare_fragments: 1000000
 compare_concurrency_full: 2
 compare_concurrency_memory: 4
-compare_summary_queue: '33'
+compare_summary_queue: '${HPC_CPU_QUEUE}'
 compare_summary_cores: 2
 compare_summary_memory_gib: 16
 compare_summary_hours: 24

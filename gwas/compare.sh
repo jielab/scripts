@@ -31,8 +31,9 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/gwas
-    gwas_root=/mnt/f/gwas/4grid/common
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/gwas
+    gwas_root=${DIR_GWAS}/4grid/common
 
     # 1. All 15 GWAS: height.EUR versus the other 14, using only SNPs with
     # P <= 5e-8 in height.EUR. Inputs must share a build for CHR/POS matching.
@@ -42,7 +43,7 @@ Example:
       --project-dir "${gwas_root%/*}" --category "${gwas_root##*/}" --anchor height.EUR \
       --compare-beta TRUE --compare-EAF TRUE \
       --p-threshold 5e-8 --significant first \
-      --output-dir /mnt/d/analysis/gwas/4grid/compare
+      --output-dir ${ANALYSIS_ROOT}/gwas/4grid/compare
 
     # 2. All 15 GWAS: h2 and all 105 pairwise genetic correlations, with rg.png.
     # Reuse <trait>/gwas/<trait>.sumstats.gz beside each <trait>.gz; do not munge.
@@ -52,7 +53,7 @@ Example:
     ./compare.sh ldsc \
       --project-dir "${gwas_root%/*}" --category "${gwas_root##*/}" \
       --run-munge FALSE --run-h2 TRUE --run-rg TRUE --run TRUE \
-      --output-dir /mnt/d/analysis/gwas/4grid/ldsc
+      --output-dir ${ANALYSIS_ROOT}/gwas/4grid/ldsc
 
     # 3. R Shiny: the same six height tracks (EUR, AFR, EAS, HIS, SAS, ALL).
     # Generate .thin.gz first using format.sh thin (see its examples).
@@ -65,11 +66,11 @@ Example:
     gwas_csv=$(IFS=,; echo "${gwas_files[*]}")
     ./compare.sh shiny \
       --gwas-files "$gwas_csv" \
-      --block-dir /mnt/f/LD/block --ld-dir /mnt/f/LD/csx --port 3841 \
-      --output-dir "/mnt/d/analysis/gwas/4grid/shiny/$trait"
+      --block-dir ${DIR_LD}/block --ld-dir ${DIR_LD}/csx --port 3841 \
+      --output-dir "${ANALYSIS_ROOT}/gwas/4grid/shiny/$trait"
 
-    ./compare.sh compare --dir-project /mnt/f/gwas/4grid --anchor height.EUR --p-threshold 1e-6
-    ./compare.sh compare --dir-project /mnt/f/gwas/4grid
+    ./compare.sh compare --dir-project ${DIR_GWAS}/4grid --anchor height.EUR --p-threshold 1e-6
+    ./compare.sh compare --dir-project ${DIR_GWAS}/4grid
 HELP
 	gwas_runtime_usage
 }

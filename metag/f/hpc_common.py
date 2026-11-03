@@ -109,6 +109,14 @@ def load_config(config_path=None, root_override=None):
         raise ValueError("HPC configuration must be a mapping")
     cfg = dict(defaults)
     cfg.update(values)
+    queues = {'HPC_CPU_QUEUE': '33', 'HPC_MEDIUM_QUEUE': '38', 'HPC_HIGHMEM_QUEUE': '1t81c', 'HPC_HUGEMEM_QUEUE': 'v3-6t'}
+    def resolve_queues(value):
+        if isinstance(value, dict): return {k: resolve_queues(v) for k,v in value.items()}
+        if isinstance(value, list): return [resolve_queues(v) for v in value]
+        for name, fallback in queues.items():
+            if value == '${' + name + '}': return os.environ.get(name, fallback)
+        return value
+    cfg = resolve_queues(cfg)
     # Resolve only unfrozen defaults; generated config.json keeps numeric budgets.
     if cfg.get("convert_memory_gib") == "default":
         budget = os.environ.get("MEMORY_DEFAULT_GIB", "160")
@@ -119,12 +127,20 @@ def load_config(config_path=None, root_override=None):
         raise ValueError("Unsupported HPC configuration schema")
     if cfg.get("database_layout", "single") not in ("single", "partitioned"):
         raise ValueError("database_layout must be single or partitioned")
-    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/data/sph-huangj"))
+    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/work/sph-huangj/data"))
     root = Path(root_value).expanduser().absolute()
     cfg["root"] = str(root)
     for key in PATH_KEYS:
-        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", "/scratch/" + "2026-10-31" + "/sph-huangj/analysis")
-        value = Path(str(cfg[key]).replace("{scratch_analysis}", scratch).replace("{scratch_root}", str(Path(scratch).parent))).expanduser()
+        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", str(Path(os.environ.get("DIR_TMP", "/scratch/2026-11-03/sph-huangj")) / "analysis"))
+        text = str(cfg[key]).replace("{scratch_analysis}", scratch).replace("{scratch_root}", str(Path(scratch).parent))
+        for token, variable, fallback in (
+            ("{metag_reference_raw}", "METAG_REFERENCE_RAW", str(root / "annot/metag/raw")),
+            ("{metag_reads_raw}", "METAG_READS_RAW", str(root / "metag/raw")),
+            ("{metag_state}", "METAG_STATE_ROOT", str(root / "analysis/metag_parallel")),
+            ("{metag_tools}", "METAG_TOOLS_DIR", str(root / "tools/metag_parallel")),
+        ):
+            text = text.replace(token, os.environ.get(variable, fallback) if not root_override else fallback)
+        value = Path(text).expanduser()
         cfg[key] = str(value if value.is_absolute() else root / value)
     for key in ("legacy_library_dir", "legacy_metadata_dir", "parallel_reference_dir"):
         if cfg.get(key):

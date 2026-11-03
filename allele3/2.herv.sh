@@ -11,7 +11,7 @@ usage() {
 Usage: ./2.herv.sh [OPTIONS]
 
 Reconstruct phased genomes and annotate HERVs with RepeatMasker; no subcommands.
-Default: recalculate into /mnt/f/gen/DAT/BUILD/herv/SAMPLE.
+Default: recalculate into ${DIR_GEN}/DAT/BUILD/herv/SAMPLE.
 
 Options:
   --out DIR              Override the dataset/build/sample output directory
@@ -42,8 +42,9 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
+    source /work/sph-huangj/scripts/0f/0os.sh
   ./2.herv.sh [OPTIONS]
-  ./2.herv.sh --out /mnt/f/gen/1kg/38/herv/HG00096
+  ./2.herv.sh --out ${DIR_GEN}/1kg/38/herv/HG00096
 HELP
 }
 

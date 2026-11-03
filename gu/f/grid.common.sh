@@ -139,19 +139,19 @@ grid_configure() {
 	GRID_THREADS=${GRID_THREADS:-8}
 	GRID_REPLACE=${GRID_REPLACE:-FALSE}
 	GRID_DRY_RUN=${GRID_DRY_RUN:-FALSE}
-	GRID_GWAS_DIR=${GRID_GWAS_DIR:-/mnt/f/gwas/4grid/common}
+	GRID_GWAS_DIR=${GRID_GWAS_DIR:-${DIR_GWAS}/4grid/common}
 	if [[ -z ${GRID_TARGET_DIR+x} ]]; then
-		GRID_TARGET_DIR=/mnt/f/gen/ukb/37/typ
-		if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s /mnt/f/gen/ukb/37/hap/chr1.pgen ]]; then
-			GRID_TARGET_DIR=/mnt/f/gen/ukb/37/hap
+		GRID_TARGET_DIR=${DIR_GEN}/ukb/37/typ
+		if [[ ! -s $GRID_TARGET_DIR/chr1.pgen && ! -s $GRID_TARGET_DIR/chr1.bed && -s ${DIR_GEN}/ukb/37/hap/chr1.pgen ]]; then
+			GRID_TARGET_DIR=${DIR_GEN}/ukb/37/hap
 		fi
 	fi
-	GRID_IMP_DIR=${GRID_IMP_DIR:-/mnt/f/gen/ukb/37/imp}
-	GRID_PHE_FILE=${GRID_PHE_FILE:-/mnt/d/data/ukb/Rdata/phe.rds}
-	GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}
+	GRID_IMP_DIR=${GRID_IMP_DIR:-${DIR_GEN}/ukb/37/imp}
+	GRID_PHE_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/phe.rds}
+	GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}
 	export GRID_CSX_BACKEND=${GRID_CSX_BACKEND:-cpu} GRID_CSX_GPU=${GRID_CSX_GPU:-0}
 	GRID_KEEP=${GRID_KEEP:-}
-	GRID_REMOVE=${GRID_REMOVE:-/mnt/d/files/ukb.exclude.id}
+	GRID_REMOVE=${GRID_REMOVE:-${DIR_FILES}/ukb.exclude.id}
 	GRID_N_GWAS=${GRID_N_GWAS:-}
 
 	# PRS-CSx.
@@ -159,7 +159,7 @@ grid_configure() {
 	GRID_BIM_EXPLICIT=${GRID_BIM_EXPLICIT:-FALSE}
 	GRID_SNPINFO_EXPLICIT=${GRID_CSX_SNPINFO:+TRUE}
 	GRID_SNPINFO_EXPLICIT=${GRID_SNPINFO_EXPLICIT:-FALSE}
-	GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-/mnt/f/LD/csx}
+	GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-${DIR_LD}/csx}
 	GRID_CSX_SNPINFO=${GRID_CSX_SNPINFO:-$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3}
 	GRID_CSX_BIM_PREFIX=${GRID_CSX_BIM_PREFIX:-}
 	GRID_PHI=${GRID_PHI:-1e-2}
@@ -170,8 +170,8 @@ grid_configure() {
 	GRID_SUMSTATS_CHUNK=${GRID_SUMSTATS_CHUNK:-500000}
 
 	# PCA/ancestry/DiscoDivas.
-	GRID_MED_FILE=${GRID_MED_FILE:-/mnt/d/files/DiscoDivas/med.g1000.4pop.tsv}
-	GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-/mnt/d/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight}
+	GRID_MED_FILE=${GRID_MED_FILE:-${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv}
+	GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-${DIR_FILES}/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight}
 	GRID_COV_PCS=${GRID_COV_PCS:-20}
 	GRID_DISTANCE_PCS=${GRID_DISTANCE_PCS:-10}
 	GRID_PCA_FILE=${GRID_PCA_FILE:-}
@@ -182,7 +182,7 @@ grid_configure() {
 
 	# ARG-Needle. The phased BGENs are UKB Field 22438, GRCh37.
 	GRID_ARG_ACTION=${GRID_ARG_ACTION:-check}
-	GRID_ARG_HAP_DIR=${GRID_ARG_HAP_DIR:-/mnt/f/gen/ukb/37/hap}
+	GRID_ARG_HAP_DIR=${GRID_ARG_HAP_DIR:-${DIR_GEN}/ukb/37/hap}
 	GRID_ARG_MAP_DIR=${GRID_ARG_MAP_DIR:-}
 	GRID_ARG_MAP_PATTERN=${GRID_ARG_MAP_PATTERN:-}
 	if [[ -z ${GRID_ARG_OUT+x} ]]; then
@@ -641,7 +641,7 @@ grid_configure() {
 		[[ $GRID_BIM_EXPLICIT == TRUE ]] || GRID_CSX_BIM_PREFIX=''
 		[[ $GRID_SNPINFO_EXPLICIT == TRUE ]] || GRID_CSX_SNPINFO="$GRID_CSX_REF_DIR/snpinfo_mult_1kg_hm3"
 		[[ -n $GRID_LDSCORE_DIR ]] || GRID_LDSCORE_DIR="$GRID_OUTPUT_ROOT/reference/ldscore"
-		[[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
+		[[ -n $GRID_PCA_FILE ]] || GRID_PCA_FILE="${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"
 		[[ -n $GRID_ANCESTRY_FILE ]] || GRID_ANCESTRY_FILE="$(dirname -- "$GRID_PCA_FILE")/ukb.ancestry.auto.tsv.gz"
 		[[ $GRID_JOBS =~ ^[1-9][0-9]*$ ]] || _grid_die "--jobs must be a positive integer"
 		[[ $GRID_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die "--threads must be a positive integer"
@@ -829,7 +829,7 @@ grid_pipeline() (
 	grid_configure "$@"
 	GRID_CHECK=FALSE
 	GRID_STAGE=all
-	GRID_SCORE_DIR=${GRID_SCORE_DIR:-/mnt/f/gen/ukb/pgs}
+	GRID_SCORE_DIR=${GRID_SCORE_DIR:-${DIR_GEN}/ukb/pgs}
 	GRID_DISCO_A=1,1,1,1
 	GRID_REGRESS_PCA=TRUE
 	GRID_CSX_MODELS=populations,auto,meta
@@ -913,7 +913,7 @@ grid_pipeline() (
 		# per-block CUDA policy when it starts subsequent chromosomes.
 		export GRID_CSX_GPU_MIN_BLOCK=${GRID_CSX_GPU_MIN_BLOCK:-2048}
 		export GRID_CSX_BLAS_THREADS=${GRID_CSX_BLAS_THREADS:-1}
-		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-/scratch/${DATE_SCRATCH:-2026-10-31}/sph-huangj/analysis/gu/cache}/csx-ld"}
+		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-/scratch/${DATE_SCRATCH:-2026-11-03}/sph-huangj/analysis/gu/cache}/csx-ld"}
 		export GRID_CSX_LD_CACHE_GIB=${GRID_CSX_LD_CACHE_GIB:-16}
 		[[ $GRID_CSX_GPU_MIN_BLOCK =~ ^[0-9]+$ ]] || _grid_die 'GRID_CSX_GPU_MIN_BLOCK must be a nonnegative integer'
 		[[ $GRID_CSX_BLAS_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die 'GRID_CSX_BLAS_THREADS must be a positive integer'
@@ -1133,7 +1133,7 @@ PY
 			check_file "$GRID_ARG_TREES_DIR/chr$c.variants.tsv.gz" "ARG_Needle_features_chr$c"
 		done
 		if ((fail)); then
-			record WARN ARG_build_command "bash /work/sph-huangj/scripts.HPC/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
+			record WARN ARG_build_command "bash ${SCRIPTS_ROOT}/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
 		fi
 	fi
 

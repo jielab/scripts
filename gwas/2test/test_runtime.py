@@ -78,7 +78,8 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
         os.mkfifo(raw)
         path, plan = self.plan("format.sh", "format", "--raw-file", raw, "--jobs", "3", "--tool-threads", "4")
         job = plan["jobs"][0]
-        self.assertEqual(job["resources"]["cores"], 40)
+        self.assertEqual(job["resources"]["cores"], 12)
+        self.assertEqual(job["resources"]["queue"], "33")
         self.assertEqual(job["env"]["GWAS_TOOL_THREADS"], "4")
         self.assertIn(str(raw), job["argv"])
         self.assertEqual(job["argv"][-2:], ["--foreground", "TRUE"])
@@ -94,8 +95,8 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
             env.pop(k)
         _, plan = self.plan("format.sh", "magma", env=env)
         settings = plan["jobs"][0]["env"]
-        self.assertEqual(settings["GWAS_DATA_ROOT"], "/data/sph-huangj")
-        self.assertEqual(settings["GWAS_FILES_ROOT"], "/data/sph-huangj/files")
+        self.assertEqual(settings["GWAS_DATA_ROOT"], "/work/sph-huangj/data")
+        self.assertEqual(settings["GWAS_FILES_ROOT"], "/work/sph-huangj/data/files")
         _, plan = self.plan("format.sh", "format", "--dir-data-root", str(self.work / "legacy"))
         self.assertEqual(plan["jobs"][0]["env"]["GWAS_FILES_ROOT"], str(self.work / "legacy/files"))
         self.assertEqual(plan["jobs"][0]["env"]["GWAS_SOFTWARE_ROOT"], str(self.work / "legacy/software"))

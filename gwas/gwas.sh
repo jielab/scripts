@@ -35,20 +35,21 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/gwas
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/gwas
 
     # Quantitative traits with explicitly selected covariates.
     ./gwas.sh regenie --grch 37 \
-        --pheno /mnt/f/gwas/self/cimt.phe \
+        --pheno ${DIR_GWAS}/self/cimt.phe \
         --pheno-name phe1,phe2 --type qt \
-        --continuous-covariate-file /mnt/f/gwas/self/cimt.cont.cov \
-        --categorical-covariate-file /mnt/f/gwas/self/cimt.cat.cov \
+        --continuous-covariate-file ${DIR_GWAS}/self/cimt.cont.cov \
+        --categorical-covariate-file ${DIR_GWAS}/self/cimt.cat.cov \
         --covariates age,PC1,PC2,PC3,PC4 \
         --categorical-covariates sex \
-        --dir-output /mnt/f/gwas/self/raw \
+        --dir-output ${DIR_GWAS}/self/raw \
         --threads 4 --jobs 1
 
-    # Requires /mnt/d/data/ukb/common/ukb.phe; phenotype preparation: ../ukb/phe.sh -h.
+    # Requires ${DIR_UKB}/common/ukb.phe; phenotype preparation: ../ukb/phe.sh -h.
     ./gwas.sh sparseGRM --grch 37 --sparse-grm TRUE --threads 4 --jobs 8
     ./gwas.sh acount --grch 37 --threads 4 --jobs 8
     ./gwas.sh regenie --grch 37 --pheno-name height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu --threads 4 --jobs 8

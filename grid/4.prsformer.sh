@@ -23,6 +23,7 @@ Scheduler: --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
 Resources: --hpc-config FILE --queue NAME --gpu-queue NAME --job-memory-gb N
 
 Examples:
+    source /work/sph-huangj/scripts/0f/0os.sh
   ./4.prsformer.sh --traits height,ldl,t2dm
   ./4.prsformer.sh prepare --traits height,ldl,t2dm
   ./4.prsformer.sh prsformer --traits height,ldl,t2dm --device cuda
@@ -37,9 +38,9 @@ PRSFORMER_WORKERS and --threads; resume requires the same effective batch.
 30 epochs is a maximum; validation early stopping remains enabled (patience 3).
 
 Default permanent inputs (outside the analysis output directory):
-  READ genotypes: /mnt/f/gen/ukb/37/hap
-  READ ancestry: /mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
-  READ SNP reference: /mnt/f/LD/csx/snpinfo_mult_1kg_hm3
+  READ genotypes: ${DIR_GEN}/ukb/37/hap
+  READ ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+  READ SNP reference: ${DIR_LD}/csx/snpinfo_mult_1kg_hm3
   READ upstream software: /mnt/f/software/PRSformer (PRSFORMER_UPSTREAM_DIR override)
   There is currently NO separate permanent F-drive model/genotype-cache output.
   Prepared data, checkpoints and models remain under --analysis-root.

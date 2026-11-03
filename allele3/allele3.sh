@@ -22,16 +22,16 @@ Modules:
   report           Assemble the results
 
 Options:
-  --out DIR              Output [/mnt/d/analysis/allele3]
-  --scan-dir DIR         Scan input [/mnt/f/annot/gnomad/allele3]
-  --archaic-root DIR     GU raw cohorts [/mnt/f/analysis/gu]
+  --out DIR              Output [${ANALYSIS_ROOT}/allele3]
+  --scan-dir DIR         Scan input [${DIR_ANNOT}/gnomad/allele3]
+  --archaic-root DIR     GU cohorts [${DIR_GEN}; 1kg/37/ibdmix, ukb/37/cohortNNN/ibdmix]
   --archaic-datasets LIST  Names/globs [1kg]; auto selects all complete cohorts
   --archaic-references S  Altai,Chagyr,Denisova,Denisova25,Vindija by default
   --archaic-chromosomes S  auto includes available X/Y separately; or autosomes,X,Y / X,Y
   --archaic-cache DIR    Per-cohort cache [SCAN-DIR-archaic]
   --stages LIST          Comma-separated stages; only requested stages run
-  --metadata TSV         Sample metadata [allele3.env: /mnt/f/gen/ancient/allele3/pca3d/metadata/sample_metadata.tsv]
-  --coordinates FILE    Shared PCA coordinates [allele3.env: /mnt/f/gen/ancient/allele3/pca3d/pca/all.sscore]
+  --metadata TSV         Sample metadata [allele3.env: ${DIR_GEN}/ancient/allele3/pca3d/metadata/sample_metadata.tsv]
+  --coordinates FILE    Shared PCA coordinates [allele3.env: ${DIR_GEN}/ancient/allele3/pca3d/pca/all.sscore]
   --preflight, --dry-run Check paths and dependencies without running analysis
   --screen-log-interval S  Progress interval in seconds [300]
   --verbose-screen       Show full output on screen (always saved in logs)
@@ -50,20 +50,21 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
-  ./allele3.sh [pipeline|primary|archaic|summary|spatial|windows|alleles|time|selection|candidates|genotypes|ld|report]
-  ./allele3.sh --out /mnt/d/analysis/allele3
+    source /work/sph-huangj/scripts/0f/0os.sh
+  ./allele3.sh pipeline
+  ./allele3.sh --out ${ANALYSIS_ROOT}/allele3
   ./allele3.sh --archaic-datasets 1kg
   ./allele3.sh --archaic-datasets '1kg,ukb00[1-9],ukb01[0-3]'
 
-  ./allele3.sh batch atlas --submit hpc --date-scratch 2026-11-02 \
-    --targets /scratch/2026-11-02/sph-huangj/analysis/allele3/final/herv_focus_20261028/candidates/targets.tsv \
-    --out /scratch/2026-11-02/sph-huangj/analysis/allele3/research/atlas \
-    --job-dir /scratch/2026-11-02/sph-huangj/analysis/allele3/jobs/atlas
+  ./allele3.sh batch atlas --submit hpc \
+    --targets ${ANALYSIS_ROOT}/allele3/final/herv_focus_20261028/candidates/targets.tsv \
+    --out ${ANALYSIS_ROOT}/allele3/research/atlas \
+    --job-dir ${ANALYSIS_ROOT}/allele3/jobs/atlas
 
   ./allele3.sh batch atlas --submit local --jobs-N 1 \
-    --targets /mnt/d/analysis/allele3/final/herv_focus_20261028/candidates/targets.tsv \
-    --out /mnt/d/analysis/allele3/research/atlas \
-    --job-dir /mnt/d/analysis/allele3/jobs/atlas
+    --targets ${ANALYSIS_ROOT}/allele3/final/herv_focus_20261028/candidates/targets.tsv \
+    --out ${ANALYSIS_ROOT}/allele3/research/atlas \
+    --job-dir ${ANALYSIS_ROOT}/allele3/jobs/atlas
 
   Atlas requires extracted alphagenome_variant_impact_score_snvs.tsv.gz
   and a matching .tbi or .csi under DIR_DATA/annot/allele3/alphagenome/hg38/.

@@ -145,6 +145,17 @@ gu_require_result_path() {
 # --dir-out names the result root itself; the postfix is appended to its final
 # component, before canonicalization. Cohort hashes remain provenance, not the
 # public batch directory name.
+# IBDmix products are siblings of pfile/imp/hap/vcf, not scratch analysis.
+gu_ibdmix_result_base() {
+    local target=${1:-1kg} build=${2:-37} prefix=${3:-} parent
+    case ${build,,} in 37|b37|grch37|hg19) build=37 ;; 38|b38|grch38|hg38) build=38 ;; *) echo 'Invalid IBDmix genome build' >&2; return 2 ;; esac
+    if [[ -n $prefix ]]; then
+        parent=$(dirname -- "${prefix%/}")
+        case ${parent##*/} in pfile|imp|hap|vcf|bfile|bed) gu_require_result_path "$(dirname -- "$parent")"; return ;; esac
+    fi
+    gu_require_result_path "${GU_REF_ROOT:?}/$target/$build"
+}
+
 gu_result_root() {
 	local target=${1:-1kg} directory=${2:-} postfix=${3:-}
 	[[ -z $postfix || $postfix =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || {
@@ -666,3 +677,17 @@ gu_check_build_cached() (
 	printf 'PASS\n' >>"$detail"
 	mv -f "$detail" "$cache/$key.pass"
 )
+
+# Includes publication dependencies: a late R failure used to discard job success.
+gu_check_publication() {
+    local interpreter=${GU_RESULTS_RSCRIPT:-$GU_ENV_PREFIX/bin/Rscript} helper
+    [[ -x $interpreter ]] || { echo "missing $interpreter (run gu/install.sh)" >&2; return 2; }
+    for helper in 0.common.py 0.common.R results.py results.R phyml.R ukb_prepare.py ibdmix.py ibdmix.sh; do
+        [[ -s $F/$helper ]] || { echo "missing $F/$helper" >&2; return 2; }
+    done
+    env -u R_HOME -u R_LIBS -u R_LIBS_USER -u R_LIBS_SITE "$interpreter" --vanilla -e '
+        packages <- c("data.table", "jsonlite", "digest", "DBI", "RSQLite", "R.utils")
+        missing <- packages[!vapply(packages, requireNamespace, logical(1), quietly=TRUE)]
+        if(length(missing)) stop("missing R packages: ", paste(missing, collapse=", "))
+    '
+}

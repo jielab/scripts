@@ -16,11 +16,16 @@ if a.worker:
     require_compute()
     from hpc_install import install
     from hpc_kunpeng_index import install as install_kunpeng
+    from native_checkpoint.install import install as install_checkpoint
+    from native_union.install import install as install_union
     install(cfg)
-    install_kunpeng(cfg)
+    install_checkpoint(cfg)
+    install_union(cfg)
+    if cfg.get("build_kunpeng", False):
+        install_kunpeng(cfg)
     print('SOFTWARE_INSTALLATION_VERIFIED')
 else:
-    command = ['bash', str(CODE_ROOT / 'install.sh'), '--worker']
+    command = ['bash', str(CODE_ROOT / 'install.sh'), '--software-only', '--worker']
     if a.config:
         command += ['--config', str(Path(a.config).resolve())]
     if a.root:

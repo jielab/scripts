@@ -27,34 +27,42 @@ class WrapupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             return subprocess.run([str(ROOT / script), *args], text=True, capture_output=True,
                                   env=dict(os.environ, GRID_PYTHON=sys.executable,
-                                           SCRIPT_LOG_DIR=tmp, SCRIPT_VERBOSE="1"), check=True).stdout
+                                           SCRIPT_LOG_DIR=tmp, SCRIPT_VERBOSE="1",
+                                           WORKFLOW_WORKER="1", submit="local", SUBMIT="local"), check=True).stdout
 
     def test_public_module_lists_and_default_benchmarks(self):
         text = self.shell("grid.sh", "--help")
         modules = text.split("Examples:")[0].lower()
-        for module in ("blocknet", "twins", "assess", "final"):
+        for module in ("prepare", "twins", "evaluate", "architecture", "final"):
             self.assertIn(module, modules)
-        for module in ("prsformer", "prsformer2", "workflow"):
+        for module in ("prsformer", "prsformer2", "blocknet"):
             self.assertNotIn(module, modules)
         text = self.shell("4.prsformer.sh", "--help")
         for module in ("prepare", "prsformer", "prsformer2", "all"):
             self.assertIn(module, text)
         text = self.shell("4.prsformer.sh", "--traits", "height,ldl,t2dm", "--dry-run")
-        first, second, third = (text.index(s) for s in
-                                ("[4.prsformer.sh prepare]", "PRSformer plan:", "PRSformer2 plan:"))
-        self.assertLess(first, second)
-        self.assertLess(second, third)
+        prepare = text.index("[shared inputs; no model training]")
+        plans = [json.loads(line) for line in text.splitlines() if line.startswith('{')]
+        self.assertEqual([plan["module"] for plan in plans], ["prsformer", "prsformer2"])
+        self.assertLess(prepare, text.index('{'))
+        self.assertTrue(all(plan["traits"] == "height,ldl,t2dm" for plan in plans))
 
     def test_named_phases_are_existing_pipeline_views(self):
-        for module, phase in (("blocknet", "fit_predictors"), ("twins", "build_support"),
-                              ("assess", "report"), ("abm", "report")):
+        for module, phase in (("twins", "twins"), ("assess", "evaluate"),
+                              ("abm", "evaluate"), ("architecture", "architecture")):
             with self.subTest(module=module):
                 text = self.shell("grid.sh", module, "--traits", "height", "--dry-run")
                 plan, _ = json.JSONDecoder().raw_decode(text[text.index('{'):])
                 self.assertEqual(plan["phases"][-1], phase)
+                self.assertFalse(plan["fits_regression"])
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            self.shell("grid.sh", "blocknet", "--traits", "height", "--dry-run")
+        self.assertIn("Block regression moved", caught.exception.stderr)
         text = self.shell("grid.sh", "--traits", "height", "--dry-run")
-        self.assertIn("paper_summary.py", text)
-        self.assertNotIn("PRSformer plan:", text)
+        plan = json.loads(text)
+        self.assertEqual(plan["phases"], ["prepare", "twins", "evaluate", "architecture", "final"])
+        self.assertFalse(plan["trains_prsformer"])
+        self.assertFalse(plan["trains_blocknet"])
 
     def test_prepare_and_final_dry_runs_have_no_side_effects(self):
         with tempfile.TemporaryDirectory() as tmp, patch("subprocess.run") as run, \

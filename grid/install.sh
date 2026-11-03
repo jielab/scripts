@@ -18,15 +18,17 @@ Modules:
 
 Main options:
     GRID_ENV_NAME  Conda environment [grid]
-    PRSFORMER_UPSTREAM_DIR  Source [/mnt/f/software/PRSformer]
+    PRSFORMER_UPSTREAM_DIR  Source [/mnt/d/software/PRSformer]
     --environment-file FILE  Explicit Conda recipe; HPC defaults to environment.hpc.yml
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
     --device cuda           Allocate a GPU and require actual GPU runtime checks
+    --check  Verify the installed environment without updating it
     --dry-run  Print commands without changes
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/grid
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/grid
     ./install.sh --dry-run
     ./install.sh
 
@@ -52,12 +54,14 @@ recipe=${GRID_ENV_RECIPE:-$ROOT/environment.yml}
 while (($#)); do
 	case $1 in
 		-h|--help|help) usage; exit 0 ;;
+		--check) export GRID_INSTALL_ENV_READY=1; shift ;;
 		--dry-run) DRY_RUN=TRUE; shift ;;
         --environment-file) recipe=${2:?--environment-file requires FILE}; shift 2 ;;
 		*) printf 'ERROR: unknown argument %s; see --help\n' "$1" >&2; exit 2 ;;
 	esac
 done
 
+unset R_HOME R_LIBS R_LIBS_USER R_LIBS_SITE R_ENVIRON_USER
 ENV_NAME=${GRID_ENV_NAME:-${ENV_NAME:-grid}}
 UPSTREAM=${PRSFORMER_UPSTREAM_DIR:-${GRID_PRSFORMER_UPSTREAM:-$DIR_SOFTWARE/PRSformer}}
 REVISION=7dea4e1bb27975885c937f2be82f9243bc82bda7
@@ -76,19 +80,7 @@ run() {
 	"$@"
 }
 
-# Check an existing checkout before changing the environment. Never reset it.
-if [[ -e $UPSTREAM ]]; then
-	if [[ $DRY_RUN == FALSE ]]; then
-		command -v git >/dev/null || { printf 'ERROR: git is required.\n' >&2; exit 2; }
-		[[ $(git -C "$UPSTREAM" rev-parse HEAD) == "$REVISION" ]] || {
-			printf 'ERROR: existing PRSformer source must be at %s.\n' "$REVISION" >&2; exit 2;
-		}
-		[[ -z $(git -C "$UPSTREAM" status --porcelain) ]] || {
-			printf 'ERROR: PRSformer checkout has local changes; inspect them first.\n' >&2; exit 2;
-		}
-	fi
-fi
-
+# Prepare the environment first: compute nodes may provide Git only through Conda.
 if [[ -n ${GRID_CONDA_ENV:-} ]]; then
     env_target=(-p "$GRID_CONDA_ENV")
     if [[ -d "$GRID_CONDA_ENV/conda-meta" ]]; then env_action=update; else env_action=create; fi
@@ -97,7 +89,26 @@ else
     if "$solver" env list | awk -v name="$ENV_NAME" '$1 == name {found=1} END {exit !found}'; then env_action=update; else env_action=create; fi
 fi
 [[ -s $recipe ]] || { echo "ERROR: Missing Conda recipe: $recipe" >&2; exit 2; }
-run "$solver" env "$env_action" "${env_target[@]}" -f "$recipe"
+# Online preparation may create the environment before an offline LSF worker.
+# Reuse is explicit and still runs all dependency/device checks below.
+if [[ ${GRID_INSTALL_ENV_READY:-0} == 1 ]]; then
+    [[ -n ${GRID_CONDA_ENV:-} && -d $GRID_CONDA_ENV/conda-meta ]] || {
+        echo 'ERROR: GRID_INSTALL_ENV_READY requires an existing GRID_CONDA_ENV' >&2; exit 2;
+    }
+else
+    run "$solver" env "$env_action" "${env_target[@]}" -f "$recipe"
+fi
+
+# Check the pinned source through the selected environment. Never reset a checkout.
+if [[ -e $UPSTREAM && $DRY_RUN == FALSE ]]; then
+    [[ $("$solver" run "${env_target[@]}" git -C "$UPSTREAM" rev-parse HEAD) == "$REVISION" ]] || {
+        printf 'ERROR: existing PRSformer source must be at %s.\n' "$REVISION" >&2; exit 2;
+    }
+    [[ -z $("$solver" run "${env_target[@]}" git -C "$UPSTREAM" status --porcelain) ]] || {
+        printf 'ERROR: PRSformer checkout has local changes; inspect them first.\n' >&2; exit 2;
+    }
+fi
+
 
 if [[ ! -e $UPSTREAM ]]; then
 	run mkdir -p -- "$(dirname -- "$UPSTREAM")"

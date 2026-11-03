@@ -1932,10 +1932,10 @@ prevalent_duration_scan <- function(dat, xs, bvar, covars, min_n = 80L) {
 }
 
 
-# Formal diagnosis-window associations. Incident cases in [lo, hi) are
-# compared with people known to remain disease-free and observed through hi;
-# later cases therefore serve as valid controls for earlier windows. Baseline-
-# prevalent duration bands use all non-prevalent participants as the reference.
+# Incident windows use interval-specific Cox models with risk sets at window start
+# and observed censoring within the window. Baseline-prevalent duration bands
+# use logistic models with non-prevalent participants as the reference.
+# These are distinct estimands from different participants' baseline assays.
 
 plot_risk_window_scan <- function(z, anchors = C1_DIRECTION_ANCHORS) {
 	if (!nrow(z) || !any(is.finite(z$beta))) return(blank_plot(
@@ -1959,8 +1959,9 @@ plot_risk_window_scan <- function(z, anchors = C1_DIRECTION_ANCHORS) {
 		scale_fill_manual(values = c(`Pre-baseline prevalent` = "#8C6BB1", `Post-baseline incident` = "#2C7FB8")) +
 		labs(
 			title = "Risk-set associations across recorded diagnosis time",
-			subtitle = "Incident controls remain observed and disease-free through each window; coefficients are adjusted log odds ratios per 1-SD biomarker",
-			x = "Years relative to baseline blood draw", y = "Adjusted beta (95% CI)", color = NULL, fill = NULL, size = "Cases"
+			subtitle = "Incident: interval-specific Cox log HR; prevalent: logistic log OR per 1-SD biomarker",
+			x = "Years relative to baseline blood draw", y = "Adjusted log HR / log OR (95% CI)", color = NULL, fill = NULL, size = "Cases",
+			caption = "Baseline assays from different participants; these curves are not within-person longitudinal trajectories. HR and OR magnitudes are not directly comparable."
 		) +
 		theme_5c(8) +
 		theme(legend.position = "bottom")

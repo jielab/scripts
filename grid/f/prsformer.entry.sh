@@ -10,7 +10,7 @@ export PYTHONDONTWRITEBYTECODE=1
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # The public Python entry normally owns logging; also support direct invocation.
-export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/logs}
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}/logs}
 source "$ROOT/../0f/console.sh"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
@@ -57,8 +57,8 @@ done
 PYTHON=${GRID_PYTHON:-python3}
 PYTHON_EXPLICIT=FALSE
 [[ -z ${GRID_PYTHON:-} ]] || PYTHON_EXPLICIT=TRUE
-CACHE_DIR=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/cache/abm
-OUT_ROOT=${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/abm
+CACHE_DIR=${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}/cache/abm
+OUT_ROOT=${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}/abm
 PRSFORMER_ROOT=
 PRS_CACHE_DIR=
 PRS_PUBLICATION_DIR=

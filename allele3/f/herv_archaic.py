@@ -84,7 +84,7 @@ def inspect_dataset(path, module="auto", chromosomes=AUTOSOMES, references=DEFAU
     if module != "auto":
         modules = [path/module] if (path/module).is_dir() else []
     if len(modules) != 1:
-        raise ValueError(f"{path.name}: expected one IBDmix module; found {[p.name for p in modules]}; select --archaic-module")
+        raise ValueError(f"Expected one IBDmix module at {path}/ibdmix or {path}/ibdmix-GPU; found {[str(p) for p in modules]}; select --archaic-module")
     source = modules[0]
     inputs, files, panels = [], [], []
     cohort, contract = None, None
@@ -155,15 +155,37 @@ def discover(root, datasets="auto", module="auto", chromosomes="auto", reference
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"GU source directory is missing: {root}")
-    names = sorted(p.name for p in root.iterdir() if p.is_dir() and
-                   (p.name == "1kg" or re.fullmatch(r"ukb\d+", p.name)))
+    # QiMing stores IBDmix next to its genotype build. Retain stable cohort
+    # labels (1kg, ukb013) for downstream tables and explicit dataset selectors.
+    sources = {}
+    for path in sorted(root.iterdir()):
+        if not path.is_dir() or not (path.name in {"1kg", "ukb"} or re.fullmatch(r"ukb\d+", path.name)):
+            continue
+        legacy = any((path / m).is_dir() for m in ("ibdmix", "ibdmix-GPU"))
+        build = path / "37"
+        fresh = any((build / m).is_dir() for m in ("ibdmix", "ibdmix-GPU"))
+        if legacy and fresh:
+            raise ValueError(f"Ambiguous GU results: {path}/ibdmix and {build}/ibdmix; select a single source layout")
+        candidate = path if legacy else build
+        if path.name in sources and sources[path.name] != candidate:
+            raise ValueError(f"Ambiguous GU cohort {path.name}: {sources[path.name]} and {candidate}")
+        sources[path.name] = candidate
+        if path.name == "ukb" and build.is_dir():
+            for cohort in sorted(build.glob("cohort*")):
+                if not cohort.is_dir() or not re.fullmatch(r"cohort\d+", cohort.name):
+                    continue
+                label = "ukb" + cohort.name[len("cohort"):]
+                if label in sources:
+                    raise ValueError(f"Ambiguous GU cohort {label}: {sources[label]} and {cohort}")
+                sources[label] = cohort
+    names = sorted(sources)
     auto = datasets == "auto"
     if not auto:
         requested = []
         for pattern in datasets.split(","):
             matches = [n for n in names if fnmatch.fnmatchcase(n, pattern.strip())]
             if not matches:
-                raise ValueError(f"No GU dataset matches {pattern!r} under {root}")
+                raise ValueError(f"No GU dataset matches {pattern!r} under {root}; expected {root}/1kg/37/ibdmix or {root}/ukb/37/cohortNNN/ibdmix")
             requested.extend(matches)
         names = sorted(set(requested))
     records = []
@@ -171,7 +193,7 @@ def discover(root, datasets="auto", module="auto", chromosomes="auto", reference
         for scope, selected in chromosome_groups(chromosomes):
             identifier = name if scope == "autosomes" else f"{name}.chr{scope}"
             try:
-                record = inspect_dataset(root/name, module, selected, references)
+                record = inspect_dataset(sources[name], module, selected, references)
                 record.update(dataset=identifier, cohort=name, chromosome_scope=scope)
                 records.append(record)
             except (OSError, ValueError, KeyError, tarfile.TarError, EOFError) as exc:

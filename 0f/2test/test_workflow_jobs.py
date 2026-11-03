@@ -136,8 +136,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(p.stdout.splitlines(), ["--analysis-root", "/result"])
 
     def test_path_table_mapping(self):
-        with patch.dict(os.environ, {"submit": "hpc", "DIR_WORK": "/work/me", "DIR_DATA": "/data/me", "DIR_SCRATCH": "/scratch/date/me", "ANALYSIS_ROOT": "/scratch/date/me/analysis"}):
-            self.assertEqual(relocate_defaults(["/mnt/f/gen/a", "/mnt/d/analysis/grid"]), ["/data/me/gen/a", "/scratch/date/me/analysis/grid"])
+        with patch.dict(os.environ, {"submit": "hpc", "DIR_WORK": "/work/me", "DIR_BIG": "/custom/me", "DIR_SCRATCH": "/scratch/date/me", "ANALYSIS_ROOT": "/scratch/date/me/analysis"}, clear=True):
+            self.assertEqual(relocate_defaults(["/mnt/f/gen/a", "/mnt/d/analysis/grid"]), ["/custom/me/gen/a", "/scratch/date/me/analysis/grid"])
             self.assertEqual(relocate_defaults("/custom/path"), "/custom/path")
 
     def test_scratch_date_relocates_inherited_defaults(self):

@@ -167,13 +167,13 @@ neg2NA <- function(dat1, neg_list) {
 
 
 drop_10pct <- function(dat1, vars, imp = FALSE, mis_rate = 0.1, rowmax = mis_rate, colmax = mis_rate, k = 10, seed = 1) {
-	mis <- colMeans(is.na(dat1[, vars]))
+	mis <- colMeans(is.na(dat1[, vars, drop = FALSE]))
 	Ydrop <- names(mis)[mis > mis_rate]
 	dat1 <- dat1 %>% dplyr::select( - all_of(Ydrop))
 	new_vars <- setdiff(vars, Ydrop)
-	if (imp && length(new_vars) > 0) {
+	if (imp && length(new_vars) > 0 && nrow(dat1) > 0) {
 		message("Performing KNN imputation...")
-		imp_res <- impute::impute.knn(as.matrix(dat1[, new_vars]), rowmax = rowmax, colmax = colmax, k = k, rng.seed = seed)
+		imp_res <- impute::impute.knn(as.matrix(dat1[, new_vars, drop = FALSE]), rowmax = rowmax, colmax = colmax, k = k, rng.seed = seed)
 		dat1[, new_vars] <- as.data.frame(imp_res$data)
 	}
 	message(paste("Dropped:", length(Ydrop), "vars. Remaining:", length(new_vars)))
@@ -204,10 +204,14 @@ clean_biom <- function(dat, eid_col = "eid", miss_col = 0.1, miss_row = 0.1, var
 	dat <- dat[, c(eid_col, keep_cols), drop = FALSE]
 	message("Cols kept after miss_col: ", length(keep_cols), " / ", length(missv))
 	bio_cols <- setdiff(names(dat), eid_col)
+	# With no measurements left there is no row missingness rate to compute.
+	# Preserve the original IDs; NA logical indices would fabricate NA-ID rows.
+	if (!length(bio_cols) || !nrow(dat)) return(dat)
 	keep_row <- rowMeans(is.na(dat[bio_cols])) <= miss_row
 	retained_rows <- which(keep_row)
 	dat <- dat[keep_row, , drop = FALSE]
 	message("Rows kept after miss_row: ", nrow(dat))
+	if (!nrow(dat)) return(dat)
 	bio_cols <- setdiff(names(dat), eid_col)
 	vv <- sapply(dat[bio_cols], var, na.rm = TRUE)
 	vdrop <- names(vv)[is.na(vv) | vv < var_thr]
@@ -865,7 +869,9 @@ get_icd_fast <- function(ver, dat.code = NA, dat.date = NA, fn,
 			hits_date <- vector("list", nrow(fn0))
 			for (i in seq_len(nrow(fn0))) {
 				if (isTRUE(verbose) && (i == 1 || i == nrow(fn0) || i %% 25 == 0)) message("  ", ver, " trait ", i, "/", nrow(fn0), ": ", fn0$trait[i])
-				hit_codes <- codes[grepl(fn0$pattern_clean[i], codes, perl = TRUE)]
+				# Match the same code-prefix policy as date-check; SRD codes are exact.
+				pattern <- paste0("^(?:", fn0$pattern_clean[i], ")", if (ver == "srd") "$" else "")
+				hit_codes <- codes[grepl(pattern, codes, perl = TRUE)]
 				if (length(hit_codes)) {
 					z <- long[data.table::data.table(code = hit_codes), on = "code", .(eid, slot, code, date), nomatch = 0L]
 					if (nrow(z)) {
@@ -931,7 +937,7 @@ get_icd_fast <- function(ver, dat.code = NA, dat.date = NA, fn,
 get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 	new_col_name <- paste0("fod_ref_", label.this)
 	if (new_col_name %in% names(dat.this)) return(dat.this)
-	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(paste0("D:/data/ukb/Rdata/fod.date0.rds"))
+	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(file.path(Sys.getenv("DIR_UKB", Sys.getenv("UKB_PHE", if (.Platform$OS.type == "windows") "D:/ukb" else "/mnt/d/ukb")), "Rdata/fod.date0.rds"))
 	if (!"eid" %in% names(dat.fod) || !"eid" %in% names(dat.this) || anyNA(dat.fod$eid) ||
 		anyNA(dat.this$eid) || anyDuplicated(dat.fod$eid) || anyDuplicated(dat.this$eid))
 		stop("FOD tables require unique non-missing eid values.", call. = FALSE)

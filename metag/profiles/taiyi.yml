@@ -1,7 +1,7 @@
 # Fallback if migration/quota is not ready. The supplied sheet lists two smp
 # nodes; job sharing and concurrency depend on actual scheduler policy.
 schema: 1
-root: /data/sph-huangj
+root: /work/sph-huangj/data
 setup_queue: ser
 prepare_queue: ser
 category_resources:

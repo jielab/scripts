@@ -618,9 +618,12 @@ def gu_result_r(*arguments):
 			Path(__file__).with_suffix(".R"),
 			Path(__file__).with_name("phyml.R"),
 			Path(__file__).parent / "results.R",
+			Path(__file__).parent / "results.py",
 		):
 			shutil.copy2(source, stage / source.name)
 		environment["GU_RESULTS_R"] = str(stage / "results.R")
+		environment["RESULTS_PY"] = str(stage / "results.py")
+		environment.setdefault("RESULTS_PYTHON", sys.executable)
 		environment["GU_PHYML_R"] = str(stage / "phyml.R")
 		paired_r = Path(sys.executable).with_name("Rscript")
 		rscript = environment.get("GU_RESULTS_RSCRIPT") or (
@@ -752,6 +755,7 @@ def gu_export_signature():
 				Path(__file__).with_suffix(".R"),
 				Path(__file__).parent / "results.py",
 				Path(__file__).parent / "results.R",
+			Path(__file__).parent / "results.py",
 			)
 		)
 	).hexdigest()

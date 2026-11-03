@@ -102,7 +102,7 @@ def path_identity(path, full=False):
 
 def normalize_resources(raw, plan):
     resource = dict(plan.get("resources", {})); resource.update(raw or {})
-    queue = text_value(resource.get("queue", "ser"), "queue")
+    queue = text_value(resource.get("queue", os.environ.get("HPC_CPU_QUEUE", "33")), "queue")
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*", queue): raise ValueError("Invalid queue")
     requested = integer(resource.get("cores", 4), "cores")
     cores = max(requested, 40) if queue == "short" else requested

@@ -1,33 +1,33 @@
 {
   "schema_version": 1,
-  "site": "TaiYi editable resource requests; verify current queue limits with bqueues",
+  "site": "QiMing resource examples; current queues and quotas must be available to this account",
   "defaults": {
-    "queue": "ser",
-    "cores": 16,
-    "memory_gib": 160,
+    "queue": "38",
+    "cores": 32,
+    "memory_gib": 256,
     "hours": 120,
     "gpus": 0,
     "memory_scope": "host"
   },
   "gpu": {
-    "queue": "gpu",
-    "cores": 20,
-    "memory_gib": 160,
+    "queue": "4v100-16-e5",
+    "cores": 8,
+    "memory_gib": 56,
     "hours": 120,
     "gpus": 1
   },
   "stages": {
     "prepare": {
-      "cores": 16,
-      "memory_gib": 160
+      "cores": 32,
+      "memory_gib": 256
     },
     "weights": {
       "cores": 32,
-      "memory_gib": 160
+      "memory_gib": 256
     },
     "score": {
       "cores": 32,
-      "memory_gib": 160
+      "memory_gib": 256
     },
     "targetfit": {
       "cores": 8,
@@ -35,12 +35,12 @@
       "hours": 24
     },
     "blockprepare": {
-      "cores": 16,
-      "memory_gib": 160
+      "cores": 32,
+      "memory_gib": 256
     },
     "blockridge": {
-      "cores": 16,
-      "memory_gib": 160
+      "cores": 32,
+      "memory_gib": 256
     },
     "blocknet": {
       "gpus": 1
@@ -52,8 +52,8 @@
       "gpus": 1
     },
     "twins": {
-      "cores": 16,
-      "memory_gib": 160
+      "cores": 32,
+      "memory_gib": 256
     },
     "evaluate": {
       "cores": 8,
@@ -71,8 +71,8 @@
       "hours": 24
     },
     "countprepare": {
-      "cores": 16,
-      "memory_gib": 160
+      "cores": 32,
+      "memory_gib": 256
     }
   }
 }

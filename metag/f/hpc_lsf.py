@@ -19,13 +19,13 @@ from hpc_common import PATH_KEYS, atomic_json, utcnow
 
 
 _DEFAULTS = {
-    "setup": ("ser", 8, 16, 24),
-    "prepare": ("ser", 8, 32, 72),
-    "build": ("smp", 32, 4096, 168),
-    "pilot": ("smp", 32, 4096, 168),
-    "classify": ("smp", 32, 4096, 168),
-    "convert": ("short", 40, None, 72),
-    "compare_summary": ("ser", 2, 16, 24),
+    "setup": (os.environ.get("HPC_CPU_QUEUE", "33"), 8, 16, 24),
+    "prepare": (os.environ.get("HPC_CPU_QUEUE", "33"), 8, 32, 72),
+    "build": (os.environ.get("HPC_HUGEMEM_QUEUE", "v3-6t"), 32, 4096, 168),
+    "pilot": (os.environ.get("HPC_HUGEMEM_QUEUE", "v3-6t"), 32, 4096, 168),
+    "classify": (os.environ.get("HPC_HUGEMEM_QUEUE", "v3-6t"), 32, 4096, 168),
+    "convert": (os.environ.get("HPC_CPU_QUEUE", "33"), 40, None, 72),
+    "compare_summary": (os.environ.get("HPC_CPU_QUEUE", "33"), 2, 16, 24),
 }
 _FALLBACK = {"setup": "prepare", "pilot": "classify"}
 _FIELDS = (
@@ -226,7 +226,7 @@ def doctor(cfg):
     if cfg.get("database_layout") == "partitioned":
         queues |= {str(value["queue"]) for value in cfg.get("category_resources", {}).values() if "queue" in value}
     else:
-        queues |= {_settings(cfg, "convert")[0]} | {str(cfg.get(f"{mode}_queue", "ser")) for mode in ("kunpeng_full", "kunpeng_memory")}
+        queues |= {_settings(cfg, "convert")[0]} | {str(cfg.get(f"{mode}_queue", os.environ.get("HPC_CPU_QUEUE", "33"))) for mode in ("kunpeng_full", "kunpeng_memory")}
     queues = sorted(queues)
     commands = [["lsid"], ["bsub", "-V"], ["bparams", "-a"]]
     commands += [["bqueues", "-l", queue] for queue in queues]

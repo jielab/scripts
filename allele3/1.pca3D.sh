@@ -19,7 +19,7 @@ Modules:
   trajectory / trajectory-plan  Analyze temporal structure, or audit inputs
 
 Options:
-  --out DIR              Output [/mnt/f/gen/ancient/allele3/pca3d/]
+  --out DIR              Output [${DIR_GEN}/ancient/allele3/pca3d/]
   --replace TRUE|FALSE   Recalculate or resume [TRUE; run only]
   --pgen-prefix PREFIX   Input PGEN/PVAR/PSAM prefix
   --metadata TSV         Sample metadata
@@ -44,8 +44,9 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
+    source /work/sph-huangj/scripts/0f/0os.sh
   ./1.pca3D.sh [render|run|plan|atlas|prepare-basis|project|project-plan|trajectory|trajectory-plan]
-  ./1.pca3D.sh --out /mnt/f/gen/ancient/allele3/pca3d/
+  ./1.pca3D.sh --out ${DIR_GEN}/ancient/allele3/pca3d/
 HELP
 }
 

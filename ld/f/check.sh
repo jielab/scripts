@@ -11,7 +11,7 @@ if (( $# )); then
     fi
 fi
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
-python3 - <<'PY'
+"$PYTHON" - <<'PY' 
 import os, sys
 from pathlib import Path
 if sys.version_info < (3, 11):

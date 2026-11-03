@@ -27,12 +27,23 @@ class ExecutionModes(unittest.TestCase):
         bsub.write_text("#!/bin/bash\necho 'test must not submit jobs' >&2\nexit 99\n")
         bsub.chmod(0o755)
         self.env["PATH"] = str(bindir) + os.pathsep + self.env["PATH"]
+        rscript = bindir / "Rscript"
+        rscript.write_text("#!/bin/bash\nexit 0\n")
+        rscript.chmod(0o755)
+        self.env["GU_RESULTS_RSCRIPT"] = str(rscript)
+        self.env["GU_REF_ROOT"] = str(self.root / "genotypes")
+
 
     def run_shell(self, entry, args, env=None):
         return subprocess.run(["bash", str(GU / entry), *map(str, args)],
                               env=env or self.env, text=True, capture_output=True, timeout=30)
 
     def ibdmix_command(self, mode, env=None):
+        selected = env or self.env
+        reference = Path(selected["GU_REF_ROOT"]) / "1kg/37/pfile"
+        reference.mkdir(parents=True, exist_ok=True)
+        for suffix in (".pgen", ".pvar", ".psam"):
+            (reference / ("chrX" + suffix)).write_text("fixture\n")
         out = self.root / mode / "cohort"
         result = self.run_shell("gu.sh", ["ibdmix", "--submit", mode, "--chr", "X",
                                "--target", "1kg", "--dir-out", out, "--run-cmd", "FALSE"], env)
@@ -61,7 +72,7 @@ class ExecutionModes(unittest.TestCase):
         conda = self.root / "custom-conda"
         conda_source = conda / "etc/profile.d/conda.sh"
         conda_source.parent.mkdir(parents=True)
-        conda_source.write_text('conda() { export CONDA_PREFIX="$GU_CONDA_BASE/envs/$2"; }\n')
+        conda_source.write_text('conda() { if [[ $2 == /* ]]; then export CONDA_PREFIX="$2"; else export CONDA_PREFIX="$GU_CONDA_BASE/envs/$2"; fi; }\n')
         env = {**self.env, "submit": "hpc", "SUBMIT": "hpc",
                "DIR_WORK": str(self.root / "work"), "DIR_DATA": str(self.root / "data"),
                "DIR_SCRATCH": str(self.root / "scratch"), "DIR_SOFTWARE": str(self.root / "software"),

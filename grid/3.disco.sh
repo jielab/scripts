@@ -21,30 +21,31 @@ Modules:
     prepare      Shared cohort/genotype inputs only; no predictor training
 
 Default permanent paths (outside the analysis output directory):
-    READ CSx scores: /mnt/f/gen/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
-    WRITE Disco scores: /mnt/f/gen/ukb/pgs/<trait>[/<suffix>]/2disco.scores.rds
-    WRITE coefficients: /mnt/f/gen/ukb/pgs/<trait>[/<suffix>]/2disco.coefficients.xlsx
-    READ PCA: /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
-    READ centers: /mnt/d/files/DiscoDivas/med.g1000.4pop.tsv
+    READ CSx scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
+    WRITE Disco scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/2disco.scores.rds
+    WRITE coefficients: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/2disco.coefficients.xlsx
+    READ PCA: ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    READ centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
     --dir-score changes the permanent destination; --dir-output-root alone does not.
 
 Main options:
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
     --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
     --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
-    --pca-file FILE               /mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --distance-pcs N              10; reference and target use the same PCs (>=5).
     --a-list A1,A2,A3,A4          Default 1,1,1,1, in AFR,EAS,EUR,SAS order.
     --regress-pca TRUE|FALSE      Default TRUE (official recommendation).
-    --dir-score DIR               /mnt/f/gen/ukb/pgs (input and permanent output).
-    --dir-output-root DIR             /mnt/d/analysis/grid (result namespace).
+    --dir-score DIR               ${DIR_GEN}/ukb/pgs (input and permanent output).
+    --dir-output-root DIR             ${ANALYSIS_ROOT}/grid (result namespace).
     --replace TRUE|FALSE          Default FALSE; reuse matching outputs.
     --check                       Check prerequisite files/packages; no computation.
     --dry-run TRUE                Same preflight/plan behavior.
     -h, --help  Show options and examples below
 
 Example:
-    cd /mnt/d/scripts/grid
+    source /work/sph-huangj/scripts/0f/0os.sh
+    cd /work/sph-huangj/scripts/grid
     ./1.pca.sh --check
     ./2.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 1
     ./3.disco.sh --traits height,ldl,t2dm --check

@@ -7,14 +7,12 @@ PS1=${PS1-}
 if [[ $submit == hpc ]]; then
     if [[ ${CONDA_PREFIX:-} != "$DIR_WORK/.conda/envs/py311" ]]; then
         set +u
-        source /share/apps/anaconda3/2020.7/etc/profile.d/conda.sh
+        source "${LD_CONDA_SH:-$OS_GU_CONDA/etc/profile.d/conda.sh}"
         conda activate "$DIR_WORK/.conda/envs/py311"
         set -u
     fi
-    if ! type module >/dev/null 2>&1; then source /etc/profile.d/modules.sh; fi
-    module load gcc/11.2.0
     export PYTHON=${LD_PYTHON:-$DIR_WORK/.conda/envs/py311/bin/python3}
-    export LD_ZSTD_PREFIX=${LD_ZSTD_PREFIX:-/share/apps/anaconda3/2020.7}
+    export LD_ZSTD_PREFIX=${LD_ZSTD_PREFIX:-$CONDA_PREFIX}
     export CXX="$HPC_SCRIPT_DIR/f/cxx.sh"
 else
     export PYTHON=${LD_PYTHON:-python3}
@@ -31,27 +29,17 @@ export GENOME_BUILD="$GRCH"
 export INPUT_FORMAT="${INPUT_FORMAT:-pgen}"
 # When switching builds in a shell that sourced this file before, retarget
 # only our canonical defaults. Custom paths remain explicit overrides.
-for old_build in 37 38; do
-    case "${OUT:-}" in /scratch/????-??-??/sph-huangj/analysis/ld/$old_build) unset OUT ;; esac
-    case "${LD_TMP_DIR:-}" in /scratch/????-??-??/sph-huangj/analysis/ld/$old_build/tmp) unset LD_TMP_DIR ;; esac
-    [[ "${OUT:-}" != "/data/sph-huangj/analysis/ld/$old_build" ]] || unset OUT
-    [[ "${PFILE_DIR:-}" != "/data/sph-huangj/gen/1kg/$old_build/pfile" ]] || unset PFILE_DIR
-    [[ "${PANEL:-}" != "/data/sph-huangj/gen/1kg/$old_build/samples.txt" ]] || unset PANEL
-    [[ "${LD_TMP_DIR:-}" != "/data/sph-huangj/analysis/ld/$old_build/tmp" ]] || unset LD_TMP_DIR
-    [[ "${LD_INPUT_MANIFEST:-}" != "$HPC_SCRIPT_DIR/f/input_sizes.$old_build.tsv" ]] || unset LD_INPUT_MANIFEST
-    [[ "${LD_INPUT_MANIFEST:-}" != "$HPC_SCRIPT_DIR/hpc/input_sizes.$old_build.tsv" ]] || unset LD_INPUT_MANIFEST
-done
 if [[ "$GRCH" == 38 ]]; then
     export REFERENCE_COUNT_POLICY=off
 else
     export REFERENCE_COUNT_POLICY="${REFERENCE_COUNT_POLICY:-warn}"
 fi
-export DATE_SCRATCH="${DATE_SCRATCH:-2026-10-31}"
+export DATE_SCRATCH="${DATE_SCRATCH:-2026-11-03}"
 export SCRATCH_ANALYSIS_ROOT="$ANALYSIS_ROOT"
-export OUT="${OUT:-$SCRATCH_ANALYSIS_ROOT/ld/$GRCH}"
-export PFILE_DIR="${PFILE_DIR:-$DIR_DATA/gen/1kg/$GRCH/pfile}"
-export PANEL="${PANEL:-$DIR_DATA/gen/1kg/$GRCH/samples.txt}"
-export LD_TMP_DIR="${LD_TMP_DIR:-$OUT/tmp}"
+_os_default OUT "$SCRATCH_ANALYSIS_ROOT/ld/$GRCH"
+_os_default PFILE_DIR "$DIR_GEN/1kg/$GRCH/pfile"
+_os_default PANEL "$DIR_GEN/1kg/$GRCH/samples.txt"
+_os_default LD_TMP_DIR "$OUT/tmp"
 export LD_RESUME_DIR="${LD_RESUME_DIR-}"
 export LD_STORAGE="${LD_STORAGE:-blocked-zstd}"
 export MAX_D_KB="${MAX_D_KB:-${PILOT_MAX_D_KB:-40000}}"
@@ -64,6 +52,8 @@ case "${LD_INPUT_MANIFEST:-}" in
     /work/sph-huangj/scripts/ld/f/input_sizes.*.tsv|/work/sph-huangj/scripts/ld/hpc/input_sizes.*.tsv)
         unset LD_INPUT_MANIFEST ;;
 esac
-export LD_QUEUE="${LD_QUEUE:-short}"
+export LD_QUEUE="${LD_QUEUE:-${HPC_CPU_QUEUE:-33}}"
 export LD_INPUT_MANIFEST="${LD_INPUT_MANIFEST:-$HPC_SCRIPT_DIR/f/input_sizes.$GRCH.tsv}"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+
+export AUTO_EXTEND_D=${AUTO_EXTEND_D:-TRUE}

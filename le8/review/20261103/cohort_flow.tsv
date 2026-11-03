@@ -1,0 +1,157 @@
+trait	layer	stage	metric	value	source	note
+cvd_afib	prot	provenance	prepared_source	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/C1_SCOPE_PREFLIGHT.json	host contract SHA256 matches input and evaluation contracts
+cvd_afib	prot	provenance	outer_roster_integrity	verified	/mnt/d/analysis/le8/logs/freeze/c1_outer_roster_seed2026.tsv	SHA256 matches frozen host contract; no IDs exported
+cvd_afib	prot	input	omics_file	/mnt/d/data/ukb/Rdata/prot.rds	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	pre-match input row count unavailable in contract
+cvd_afib	prot	prediction	ancestry_rule	no explicit ancestry filter	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	Python cohort_prepare has no ancestry filter; upstream ancestry composition not established
+cvd_afib	prot	prediction	missing_handling	build-fitted imputation	f/0.host.py	upstream preprocessing of supplied RDS not inferred; technical QC separate from association complete cases
+cvd_afib	prot	prediction_outcome	joined	41466	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	eligible	40764	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	prevalent	685	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	same_day	0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	invalid_followup	17	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	unknown_diagnosis	0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	other_baseline_disease	0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	diagnosis_after_censor	0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	incident	3114	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	prediction_outcome	outcome_type	survival	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	prot	frozen_roles	build_N	19525	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	frozen_roles	tune_model_N	3802	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	frozen_roles	tune_gate_N	3023	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	frozen_roles	calibration_fit_N	3143	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	frozen_roles	calibration_audit_N	3112	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	frozen_roles	test_N	8159	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/methods/glmnet/affcb41ef7a4b086_cpu/MODEL_FROZEN.json	
+cvd_afib	prot	development	N	32605	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	prot	development	technical_qc_pass	32605	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	prot	development	known_cases	1533	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	prot	development	known_controls	29404	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	prot	test_evaluation	original_N	8159	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	N	8159	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	known_N	7742	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	cases	393	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	controls	7349	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	horizon	10.0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	test_evaluation	master_QC_excluded_N	0	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	prot	association	N_omics	38576	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	prot	association	incident_events	3010	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	prot	association	prevalent_cases	664	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	prot	association	treatment_covariates	none recorded	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	prot	association	ancestry_rule	LE8_WHITE_ONLY defaults TRUE; ethnic.c White or 1	f/0.common.R	applies when ethnic.c exists; historical runtime override and ancestry exclusion count unavailable
+cvd_afib	prot	association	missing_handling	per-biomarker complete cases	f/0.common.R	cox_scan; N varies by biomarker and adjustment set
+cvd_afib	prot	unresolved	association_prediction_gap_attribution	unavailable	/mnt/d/analysis/le8/cvd_afib/prot/c1_correlate/_LOCAL_ONLY/inputs/cf9b95f2fa0c2c683d3b/host_contract.json	no matched sequential association exclusion audit; do not attribute entire gap to ancestry
+cvd_afib	met	provenance	prepared_source	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/C1_SCOPE_PREFLIGHT.json	host contract SHA256 matches input and evaluation contracts
+cvd_afib	met	provenance	outer_roster_integrity	verified	/mnt/d/analysis/le8/logs/freeze/c1_outer_roster_seed2026.tsv	SHA256 matches frozen host contract; no IDs exported
+cvd_afib	met	input	omics_file	/mnt/d/data/ukb/Rdata/met.rds	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	pre-match input row count unavailable in contract
+cvd_afib	met	prediction	ancestry_rule	no explicit ancestry filter	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	Python cohort_prepare has no ancestry filter; upstream ancestry composition not established
+cvd_afib	met	prediction	missing_handling	build-fitted imputation	f/0.host.py	upstream preprocessing of supplied RDS not inferred; technical QC separate from association complete cases
+cvd_afib	met	prediction_outcome	joined	487354	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	eligible	481183	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	prevalent	6171	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	same_day	2	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	invalid_followup	0	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	unknown_diagnosis	0	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	other_baseline_disease	0	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	diagnosis_after_censor	8	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	incident	35667	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	prediction_outcome	outcome_type	survival	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+cvd_afib	met	frozen_roles	build_N	229627	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	frozen_roles	tune_model_N	45613	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	frozen_roles	tune_gate_N	36670	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	frozen_roles	calibration_fit_N	36606	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	frozen_roles	calibration_audit_N	36468	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	frozen_roles	test_N	96199	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/methods/glmnet/54ece469f1a70f34_cpu/MODEL_FROZEN.json	
+cvd_afib	met	development	N	384984	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	met	development	technical_qc_pass	384984	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	met	development	known_cases	16870	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	met	development	known_controls	351649	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+cvd_afib	met	test_evaluation	original_N	96199	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	N	96199	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	known_N	92100	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	cases	4205	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	controls	87895	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	horizon	10.0	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	test_evaluation	master_QC_excluded_N	0	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+cvd_afib	met	association	N_omics	459254	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	met	association	incident_events	34537	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	met	association	prevalent_cases	5984	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	met	association	treatment_covariates	none recorded	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+cvd_afib	met	association	ancestry_rule	LE8_WHITE_ONLY defaults TRUE; ethnic.c White or 1	f/0.common.R	applies when ethnic.c exists; historical runtime override and ancestry exclusion count unavailable
+cvd_afib	met	association	missing_handling	per-biomarker complete cases	f/0.common.R	cox_scan; N varies by biomarker and adjustment set
+cvd_afib	met	unresolved	association_prediction_gap_attribution	unavailable	/mnt/d/analysis/le8/cvd_afib/met/c1_correlate/_LOCAL_ONLY/inputs/4e03695f73f6382d8153/host_contract.json	no matched sequential association exclusion audit; do not attribute entire gap to ancestry
+mi	prot	provenance	prepared_source	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b	/mnt/d/analysis/le8/mi/prot/c1_correlate/C1_SCOPE_PREFLIGHT.json	host contract SHA256 matches input and evaluation contracts
+mi	prot	provenance	outer_roster_integrity	verified	/mnt/d/analysis/le8/logs/freeze/c1_outer_roster_seed2026.tsv	SHA256 matches frozen host contract; no IDs exported
+mi	prot	input	omics_file	/mnt/d/data/ukb/Rdata/prot.rds	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	pre-match input row count unavailable in contract
+mi	prot	prediction	ancestry_rule	no explicit ancestry filter	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	Python cohort_prepare has no ancestry filter; upstream ancestry composition not established
+mi	prot	prediction	missing_handling	build-fitted imputation	f/0.host.py	upstream preprocessing of supplied RDS not inferred; technical QC separate from association complete cases
+mi	prot	prediction_outcome	joined	41466	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	eligible	40980	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	prevalent	469	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	same_day	0	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	invalid_followup	17	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	unknown_diagnosis	0	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	other_baseline_disease	0	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	diagnosis_after_censor	0	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	incident	1167	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	prediction_outcome	outcome_type	survival	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	prot	frozen_roles	build_N	19623	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	frozen_roles	tune_model_N	3826	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	frozen_roles	tune_gate_N	3041	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	frozen_roles	calibration_fit_N	3154	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	frozen_roles	calibration_audit_N	3123	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	frozen_roles	test_N	8213	/mnt/d/analysis/le8/mi/prot/c1_correlate/methods/glmnet/46832d369d0a31ce_cpu/MODEL_FROZEN.json	
+mi	prot	development	N	32767	/mnt/d/analysis/le8/mi/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	prot	development	technical_qc_pass	32767	/mnt/d/analysis/le8/mi/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	prot	development	known_cases	575	/mnt/d/analysis/le8/mi/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	prot	development	known_controls	30295	/mnt/d/analysis/le8/mi/prot/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	prot	test_evaluation	original_N	8213	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	N	8213	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	known_N	7720	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	cases	167	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	controls	7553	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	horizon	10.0	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	test_evaluation	master_QC_excluded_N	0	/mnt/d/analysis/le8/mi/prot/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	prot	association	N_omics	38576	/mnt/d/analysis/le8/mi/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	prot	association	incident_events	1089	/mnt/d/analysis/le8/mi/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	prot	association	prevalent_cases	450	/mnt/d/analysis/le8/mi/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	prot	association	treatment_covariates	none recorded	/mnt/d/analysis/le8/mi/prot/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	prot	association	ancestry_rule	LE8_WHITE_ONLY defaults TRUE; ethnic.c White or 1	f/0.common.R	applies when ethnic.c exists; historical runtime override and ancestry exclusion count unavailable
+mi	prot	association	missing_handling	per-biomarker complete cases	f/0.common.R	cox_scan; N varies by biomarker and adjustment set
+mi	prot	unresolved	association_prediction_gap_attribution	unavailable	/mnt/d/analysis/le8/mi/prot/c1_correlate/_LOCAL_ONLY/inputs/5b5615e672429ba14a7b/host_contract.json	no matched sequential association exclusion audit; do not attribute entire gap to ancestry
+mi	met	provenance	prepared_source	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173	/mnt/d/analysis/le8/mi/met/c1_correlate/C1_SCOPE_PREFLIGHT.json	host contract SHA256 matches input and evaluation contracts
+mi	met	provenance	outer_roster_integrity	verified	/mnt/d/analysis/le8/logs/freeze/c1_outer_roster_seed2026.tsv	SHA256 matches frozen host contract; no IDs exported
+mi	met	input	omics_file	/mnt/d/data/ukb/Rdata/met.rds	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	pre-match input row count unavailable in contract
+mi	met	prediction	ancestry_rule	no explicit ancestry filter	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	Python cohort_prepare has no ancestry filter; upstream ancestry composition not established
+mi	met	prediction	missing_handling	build-fitted imputation	f/0.host.py	upstream preprocessing of supplied RDS not inferred; technical QC separate from association complete cases
+mi	met	prediction_outcome	joined	487354	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	eligible	482166	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	prevalent	5188	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	same_day	0	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	invalid_followup	0	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	unknown_diagnosis	0	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	other_baseline_disease	0	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	diagnosis_after_censor	0	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	incident	12884	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	prediction_outcome	outcome_type	survival	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	joined is phenotype/omics matched input; incident is not fixed-horizon test cases
+mi	met	frozen_roles	build_N	230092	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	frozen_roles	tune_model_N	45709	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	frozen_roles	tune_gate_N	36722	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	frozen_roles	calibration_fit_N	36703	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	frozen_roles	calibration_audit_N	36548	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	frozen_roles	test_N	96392	/mnt/d/analysis/le8/mi/met/c1_correlate/methods/glmnet/36dd3020f9613df2_cpu/MODEL_FROZEN.json	
+mi	met	development	N	385774	/mnt/d/analysis/le8/mi/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	met	development	technical_qc_pass	385774	/mnt/d/analysis/le8/mi/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	met	development	known_cases	6495	/mnt/d/analysis/le8/mi/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	met	development	known_controls	360887	/mnt/d/analysis/le8/mi/met/c1_correlate/scope_support.tsv	known cases/controls use fixed horizon
+mi	met	test_evaluation	original_N	96392	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	N	96392	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	known_N	91770	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	cases	1625	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	controls	90145	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	horizon	10.0	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	test_evaluation	master_QC_excluded_N	0	/mnt/d/analysis/le8/mi/met/c1_correlate/evaluation/FINAL/performance.tsv	glmnet all_common subset; cases are fixed-horizon cases
+mi	met	association	N_omics	459254	/mnt/d/analysis/le8/mi/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	met	association	incident_events	12154	/mnt/d/analysis/le8/mi/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	met	association	prevalent_cases	4887	/mnt/d/analysis/le8/mi/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	met	association	treatment_covariates	none recorded	/mnt/d/analysis/le8/mi/met/c1_correlate/c1.cohort.csv	does not replace per-biomarker complete-case N
+mi	met	association	ancestry_rule	LE8_WHITE_ONLY defaults TRUE; ethnic.c White or 1	f/0.common.R	applies when ethnic.c exists; historical runtime override and ancestry exclusion count unavailable
+mi	met	association	missing_handling	per-biomarker complete cases	f/0.common.R	cox_scan; N varies by biomarker and adjustment set
+mi	met	unresolved	association_prediction_gap_attribution	unavailable	/mnt/d/analysis/le8/mi/met/c1_correlate/_LOCAL_ONLY/inputs/f8e59d95ed3eb78b5173/host_contract.json	no matched sequential association exclusion audit; do not attribute entire gap to ancestry

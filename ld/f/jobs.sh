@@ -5,19 +5,17 @@ write_only="${1:-0}"
 root="$OUT"
 read -r -a chroms <<< "$("$PYTHON" -c 'import os,sys; sys.path.insert(0,sys.argv[1]); from ld_pipeline import parse_chroms; print(*parse_chroms(os.environ["CHRS"]))' "$script_dir/f")"
 mkdir -p "$root"
-queue="${LD_QUEUE:-short}"
+queue="${LD_QUEUE:-${HPC_CPU_QUEUE:-33}}"
 slots=$((THREADS + 1))
-# The short queue requires at least 40 allocated cores, including merge jobs.
-if [[ "$queue" == short ]] && (( slots < 40 )); then slots=40; fi
 
 write_header() {
     printf '#!/bin/bash -l\n'
     printf '#BSUB -q %s\n#BSUB -n %s\n#BSUB -W 144:00\n' "$queue" "$slots"
-    printf '#BSUB -R "span[hosts=1] rusage[mem=%sGB]"\n' "$MEMORY_DEFAULT_GIB"
+    printf '#BSUB -R "span[hosts=1] rusage[mem=%sGB/host]"\n' "$MEMORY_DEFAULT_GIB"
     printf '#BSUB -J ld%s.%s\n' "$GRCH" "${task_label:-merge}"
     printf '#BSUB -o "%s/%s.%%J.LOG"\n#BSUB -e "%s/%s.%%J.ERR"\n' "$root" "${task_label:-merge}" "$root" "${task_label:-merge}"
     printf 'set -euo pipefail\ncd %q\n' "$script_dir"
-    for name in DATE_SCRATCH GRCH INPUT_FORMAT PFILE_DIR VCF_DIR PANEL PLINK2 THREADS MEMORY_MB D_GRID_KB MAX_D_KB STABLE_CONFIRMATIONS REFERENCE_COUNT_POLICY REFERENCE_MAX_REL_DEVIATION COINCIDENT_POLICY LD_STORAGE MIN_FREE_GB LD_TARGETS; do
+    for name in DIR_DAT DIR_BIG DIR_TMP DIR_DATA DIR_SCRATCH DIR_GEN ANALYSIS_ROOT DATE_SCRATCH GRCH INPUT_FORMAT PFILE_DIR VCF_DIR PANEL PLINK2 THREADS MEMORY_MB D_GRID_KB MAX_D_KB AUTO_EXTEND_D STABLE_CONFIRMATIONS REFERENCE_COUNT_POLICY REFERENCE_MAX_REL_DEVIATION COINCIDENT_POLICY LD_STORAGE MIN_FREE_GB LD_TARGETS; do
         if [[ -v "$name" ]]; then printf 'export %s=%q\n' "$name" "${!name}"; fi
     done
     printf 'export PARALLEL_CHROMS=1\nexport LD_RESUME_DIR=\n'

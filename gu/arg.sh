@@ -28,7 +28,7 @@ Modules:
     build / check  Build and validate ARG outputs
 
 Main options:
-    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; pass the original date to resume
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-11-03]; pass the original date to resume
     --dir-gen DIR  Reference genotype root [$GU_REF_ROOT/1kg/GRCH]
     --method NAME --format NAME  Inference/output mode [needle / native]
     --threads N --jobs N  Resources [8 / 1]

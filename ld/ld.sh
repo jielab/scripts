@@ -14,18 +14,20 @@ Modules:
     --check-env  Print Python version, paths and selected chromosomes; do not compute
 
 Main options:
-    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-10-31]; retain the same date to resume
+    --date-scratch YYYY-MM-DD  Scratch analysis date [2026-11-03]; retain the same date to resume
     --grch 37|38  Coordinate build [38]; also accepts grch=38 or GRCH=38 environment
+    --dir-out DIR --dir-gen DIR --sample-panel FILE  Override output, PFILE directory and panel
     INPUT_FORMAT=pgen|vcf  Input format [pgen]
     OUT=DIR  Analysis output [/scratch/DATE/sph-huangj/analysis/ld/38]
-    PFILE_DIR=DIR  chrN.pgen + chrN.pvar[.zst] + chrN.psam [/data/sph-huangj/gen/1kg/38/pfile]
+    PFILE_DIR=DIR  chrN.pgen + chrN.pvar[.zst] + chrN.psam [/work/sph-huangj/data/gen/1kg/38/pfile]
     VCF_DIR=DIR  Only used with INPUT_FORMAT=vcf
-    PANEL=FILE  Sample panel [/data/sph-huangj/gen/1kg/38/samples.txt]; all four-population samples
+    PANEL=FILE  Sample panel [/work/sph-huangj/data/gen/1kg/38/samples.txt]; all four-population samples
     PLINK2=FILE  PLINK2 executable [/work/sph-huangj/software/bin/plink2]
     THREADS=N  PLINK2 threads [4]
     MEMORY_MB=N  PLINK2 memory [8192 MB]
     D_GRID_KB=LIST  Base D grid [250,500,1000,2000,5000,10000 kb]
-    MAX_D_KB=N  Extend unfinished chromosomes' grid up to N kb [40000 kb]
+    MAX_D_KB=N  Initial D budget [40000 kb]; unstable chromosomes extend automatically
+    AUTO_EXTEND_D=TRUE|FALSE  Double D up to observed chromosome span if needed [TRUE]
     REFERENCE_COUNT_POLICY=MODE  off for GRCh38; warn/error allowed for original GRCh37 cohort
     REFERENCE_MAX_REL_DEVIATION=N  Count comparison threshold [0.10; not a statistical test]
     CHRS=LIST  Target autosomes [1-22]; --chr takes priority
@@ -36,17 +38,20 @@ Main options:
     OUT/ld.runtime.env  Optional analysis-specific launch defaults; explicit environment wins
     OUT/rebuild_v2/logs/  Run status/STOP, partition errors and native PLINK logs
     MIN_FREE_GB=N  Filesystem/group-quota reserve, decimal GB [100]
-    LD_QUEUE=short|spec  Submission queue [short]
+    LD_QUEUE=NAME  Submission queue [HPC_CPU_QUEUE, normally 33]
     -h, --help  Show options and examples below beside this script
 
 Usage examples:
     cd /work/sph-huangj/scripts/ld
 
     # Fresh GRCh38: all autosomes plus automatic dependent merge.
-    LD_QUEUE=short ./ld.sh --grch 38 --chr 1-22
+    ./ld.sh --grch 38 --chr 1-22
 
     # Alternative queue only; do not submit both copies.
-    LD_QUEUE=spec ./ld.sh --grch 38 --chr 1-22
+    LD_QUEUE=38 ./ld.sh --grch 38 --chr 1-22
+
+    # Fresh QiMing run; inputs and new outputs follow 0f/0os.sh.
+    ./ld.sh --grch 38 --chr 1-22 --date-scratch 2026-11-03
 
     # Inspect paths without submitting or computing.
     ./ld.sh --check-env --grch 38 --chr 1-22
@@ -54,9 +59,9 @@ Usage examples:
     # Write command files only; no submission.
     ./ld.sh --grch 38 --chr 1-22 --write-cmd
 
-    # Default output: /scratch/2026-10-31/sph-huangj/analysis/ld/38
+    # Default output: /scratch/2026-11-03/sph-huangj/analysis/ld/38
     # Each chromosome uses chrN/ and compressed temporary files in chrN/tmp/.
-    # Inputs: /data/sph-huangj/gen/1kg/38/pfile (never removed).
+    # Inputs: /work/sph-huangj/data/gen/1kg/38/pfile (never removed).
     # Use --date-scratch YYYY-MM-DD only to select a different scratch date.
     # Merge waits for done("ld38.step1.chr*") and requires chr1-22 completion.
     # Empty bjobs is not proof of success: check completion records and logs.
@@ -74,6 +79,14 @@ WRITE_ONLY=0
 while (( $# )); do
     case "$1" in
         -h|--help) usage; exit 0 ;;
+        --dir-out|--dir-gen|--sample-panel)
+            [[ $# -ge 2 && -n $2 && $2 != --* ]] || { echo "[LD] $1 requires a path" >&2; exit 2; }
+            case $1 in
+                --dir-out) export OUT=$2 ;;
+                --dir-gen) export PFILE_DIR=$2 ;;
+                --sample-panel) export PANEL=$2 ;;
+            esac
+            shift ;;
         --check-env) CHECK_ENV=1 ;;
         --write-cmd) WRITE_ONLY=1 ;;
         --execute) EXECUTE=1 ;;
@@ -137,7 +150,14 @@ fi
 export GRCH="$GENOME_BUILD"
 source "$SCRIPT_DIR/f/env.sh"
 if [[ -f "$OUT/ld.runtime.env" ]]; then
+    # Source defaults, then restore explicitly resolved caller settings.
+    declare -A ld_saved=()
+    for ld_key in OUT PFILE_DIR PANEL VCF_DIR D_GRID_KB MAX_D_KB AUTO_EXTEND_D STABLE_CONFIRMATIONS LD_TMP_DIR; do
+        [[ ! -v $ld_key ]] || ld_saved[$ld_key]=${!ld_key}
+    done
     source "$OUT/ld.runtime.env"
+    for ld_key in "${!ld_saved[@]}"; do export "$ld_key=${ld_saved[$ld_key]}"; done
+    unset ld_saved ld_key
 fi
 export D_GRID_KB="${D_GRID_KB:-250,500,1000,2000,5000,10000}"
 export MAX_D_KB="${MAX_D_KB:-${PILOT_MAX_D_KB:-40000}}"

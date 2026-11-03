@@ -1,0 +1,94 @@
+启明代码与环境交接记录 — 2026-11-03
+
+当前权威代码：
+  /work/sph-huangj/scripts
+  /work/sph-huangj/scripts/0LOCAL
+本地本次审阅副本：/mnt/d/qiming-audit-20261103
+按用户最新要求，停止追加分析测试，数据到齐后再验收。未使用真实研究数据启动分析。
+本次创建的 GPU 检查任务 4382523 和收尾检查任务 4382629 已停止；没有遗留计算任务。
+LE8 最后一轮 PyTorch 和 DANDELION 安装均已退出 0。
+
+统一路径（唯一主配置：scripts/0f/0os.sh）：
+                  local                         启明
+DIR_DAT           /mnt/d                        /work/sph-huangj/data
+DIR_BIG           /mnt/f                        /work/sph-huangj/data
+DIR_TMP           /mnt/f                        /scratch/2026-11-03/sph-huangj
+DIR_UKB           /mnt/d/ukb                    /work/sph-huangj/data/ukb
+DIR_FILES         /mnt/d/files                  /work/sph-huangj/data/files
+DIR_GEN           /mnt/f/gen                    /work/sph-huangj/data/gen
+DIR_ANNOT         /mnt/f/annot                  /work/sph-huangj/data/annot
+DIR_GWAS          /mnt/f/gwas                   /work/sph-huangj/data/gwas
+DIR_LD            /mnt/f/LD                     /work/sph-huangj/data/LD
+DIR_ANALYSIS      /mnt/f/analysis               /scratch/2026-11-03/sph-huangj/analysis
+DIR_METAG         /mnt/f/metag                  /scratch/2026-11-03/sph-huangj/metag
+代码和软件仍位于 local /mnt/d/{scripts,software}、启明 /work/sph-huangj/{scripts,software}。
+--dir-dat、--dir-big、--dir-tmp 可覆盖三个根；分类目录继续由这些根派生。
+scripts/0LOCAL 的项目 Shell 入口通过 scripts/0f/local_paths.sh 共用根定义；scripts/0LOCAL/0f 是指向 ../0f 的链接。
+
+主要修复：
+1. GU IBDmix 默认结果在基因型所在 build 目录：
+   .../gen/1kg/37/ibdmix、.../gen/ukb/37/ibdmix；分组为 .../gen/ukb/37/cohort013/ibdmix 等。
+   allele3 的 GU 输入发现同步支持此布局，默认从 DIR_GEN 查找，保留 1kg、ukb013 等数据集标签。
+2. 太乙 GU 日志显示计算完成后导出结果缺少 Rscript；已补齐 GU R 依赖并将导出检查提前。
+   使用 R 实际生成 XLSX 的小样本测试已通过，前导零样本 ID 得到保留。
+   GU prepare 二进制原来链接旧 Conda 目录，已在启明重新编译；24 项原生 IBDmix 合成数据测试通过。
+   GU 普通批处理保存代码快照，避免运行期间修改 live scripts 导致 helper 丢失。
+   Conda 激活/安装明确使用 GU_ENV_PREFIX，不依赖同名旧环境。
+3. LD 仍要求边界完全一致；MAX_D_KB=40000 作为初始搜索预算，不再作为硬停止点。
+   未稳定的染色体继续扩大 D，直到满足稳定性要求或覆盖该染色体完整观测跨度。
+   新增 5 项距离扩展测试通过；保留严格边界检查，不以块数相同替代边界一致。
+4. METAG 默认 legacy_library_dir / legacy_metadata_dir 为 null，从头构建，不依赖太乙 analysis。
+5. CPU 默认 33，中内存 38，大内存 1t81c / v3-6t，GPU 默认 4v100-16-e5；根配置集中于 0os.sh。
+6. scripts 与 scripts/0LOCAL 的生产代码已去掉旧 D:/data/ukb 输入路径，改为 D:/ukb / DIR_UKB。
+   scripts/0LOCAL 的 CHNS、NHANES、EMS120 默认原始数据分别为 DIR_DAT/chns、DIR_DAT/nhanes、DIR_DAT/ems120。
+   旧运行审阅记录和回退备份保留历史路径，不作为新分析的输入配置。
+
+已安装/已做的检查（不代表真实数据分析已验收）：
+- bcftools / samtools / HTSlib：启明重建 1.25，公开工具在 software/bin。
+- allele3：Python 科学依赖与 RepeatMasker/RMBlast 等包在 allele3-evolution；修复检查器环境查找路径。
+- GRID：CPU installer --check 已通过；GPU 前向/反向检查因排队，按用户要求停止，留待下一轮。
+- GU：软件检查、R 导出、24 项原生测试已通过；Threads 0.2.1 和 SINGER 0.1.9 安装成功。
+- GWAS：软件检查通过，SAIGE 1.3.1 可加载。
+- LD：软件/编译器检查和 5 项自适应 D 测试通过。
+- LE8：原有 9 项合成测试通过；Torch 2.12.0+cu126、DANDELION 0.1.0 已安装到 LE8 环境。
+  最后一次包更新后的完整检查、GPU 检查尚未运行。
+- METAG：software-only 安装/检查通过，入口测试通过；未构建真实参考数据库。
+- 主项目 28 个顶层 --help 曾通过；最新路径修改仅做静态检查，后续分析测试按用户要求延期。
+
+目录清理：
+- /work/sph-huangj/install-logs：没有运行环境依赖它；安装结束后可以删除。
+  包含安装日志和修改前代码备份，建议保留到数据到齐验收后。删除会失去这些排障/回退记录。
+- /work/sph-huangj/apps：不要整目录删除。包含 SAIGE 与 localcolabfold/colabfold-conda、localcolabfold/conda。
+  登录默认 python3 也来自 apps/SAIGE/.pixi/envs/default/bin/python3。
+  ~/.bashrc 的 PATH 仍引用 apps/SAIGE/.pixi/envs/default/bin；~/.Renviron 的 R_LIBS_USER 仍指向 apps/SAIGE/libs。
+  主项目现在采用独立 Conda 环境并隔离旧 R 库，但尚未迁移/验证整个 ColabFold 安装。
+
+本地需要用户执行的移动命令（本次未执行移动）：
+  mkdir -p /mnt/f/analysis
+  mv -vn -- /mnt/d/analysis/* /mnt/f/analysis/
+  mv -vn -- /mnt/d/data小/chns /mnt/d/
+  mv -vn -- /mnt/d/data小/nhanes /mnt/d/
+  mv -vn -- /mnt/d/data小/ems120 /mnt/d/
+-v 输出移动记录；-n 不覆盖已有目标。本次检查 F:/analysis 为空；D:/analysis 存在旧项目输出。
+D:/ukb 已到位；F:/annot、gen、gwas、LD、metag 已处于预期根，不需要移动。
+D:/data小 内未被当前代码引用的其他目录无需为了本次 UKB 修改而移动。
+本次检查时 /mnt/d/scripts 和 /mnt/d/scripts/0LOCAL 不存在，旧代码在 /mnt/d/scripts.bak；没有改写该备份。
+请从启明复制最新 scripts 目录到本地，包含 0LOCAL 子目录；复制时保留 scripts/0LOCAL/0f 的相对链接。
+
+下一轮验收：
+1. 确认上传完成后运行（只查目录/关键文件，不读大数据）：
+   bash /work/sph-huangj/scripts/0f/check_paths.sh --project all
+   缺文件会逐条打印完整 missing expected/path。清单只覆盖默认关键输入，模块还会检查实际选中的样本/性状。
+2. 重新运行各项目 install.sh 的软件检查；GRID、LE8 在已分配 V100 上做 GPU 实机检查。
+3. 分项目运行最小染色体/最小数据子集，再启动完整分析；不依赖旧 analysis 输出。
+4. 仍需注意 scratch 的日期目录清理规则：提供的手册注明最多保留 8 天。
+   长周期 METAG/大 LD 运行需确认本账号 scratch 配额和清理时点；不能把尚在运行当作自动免清理。
+
+数据传输尚未完成，未验收的主要输入曾包括：
+/work/sph-huangj/data/gen/1kg/38/pfile/chr1.pgen 等 PGEN/PVAR/PSAM 文件
+/work/sph-huangj/data/gen/1kg/38/samples.txt
+/work/sph-huangj/data/files/DiscoDivas/med.g1000.4pop.tsv
+/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3
+/work/sph-huangj/data/annot/gnomad/sites
+/work/sph-huangj/data/ukb/common/ukb.phe
+具体是否已到位，以之后 check_paths.sh 的实时结果为准。

@@ -205,7 +205,7 @@ def preparation_options(args, config=None):
             if isinstance(value, str):
                 setattr(options, key, relocate(value, root))
         options.train_fraction, options.validation_fraction = .4, .1
-        options.pheno_file = os.environ.get("GRID_PHE_FILE", relocate("/mnt/d/data/ukb/Rdata/phe.rds", root))
+        options.pheno_file = os.environ.get("GRID_PHE_FILE", relocate("/mnt/d/ukb/Rdata/phe.rds", root))
         options.dir_gen = os.environ.get("GRID_TARGET_DIR", relocate("/mnt/f/gen/ukb/37/typ", root))
         options.ancestry_file = os.environ.get("GRID_ANCESTRY_FILE", options.ancestry_file)
         options.snp_list = os.environ.get("GRID_CSX_SNPINFO", options.snp_list)

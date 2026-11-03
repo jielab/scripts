@@ -26,7 +26,7 @@ Main options:
 Example:
     ./f/c3.coloc_GPU.sh \
       --qtl-manifest c3_coloc/qtl_cad_manifest.tsv \
-      --cad-gwas /mnt/d/data/gwas/main/common/cvd_cad/gwas/cvd_cad.gz \
+      --cad-gwas ${DIR_GWAS}/main/common/cvd_cad/gwas/cvd_cad.gz \
       --outdir c3_coloc \
       --outcome-type cc
 
