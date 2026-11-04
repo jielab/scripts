@@ -31,7 +31,7 @@ Example:
 HELP
 }
 
-ANALYSIS_ROOT=/mnt/f/analysis/pfi
+ANALYSIS_ROOT=/mnt/d/analysis/pfi
 RAW_ROOT=/mnt/f/pfi
 PFI_PYTHON_BIN=python
 PFI_DOWNLOAD_TOOL=aria2

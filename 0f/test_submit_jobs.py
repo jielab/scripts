@@ -70,6 +70,16 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 runner.wait_lsf(['123'])
 
+    def test_hpc_more_than_eight_lanes(self):
+        paths = [self.script(str(i), 'true') for i in range(22)]
+        replies = [subprocess.CompletedProcess([], 0, f'Job <{n}> is submitted', '') for n in range(101, 123)]
+        with patch.object(runner, 'bsub_process', side_effect=replies) as fake:
+            self.assertEqual(len(runner.run(paths, 'hpc', 12)), 22)
+        self.assertEqual(fake.call_args_list[11].args[0], ['bsub'])
+        self.assertEqual(fake.call_args_list[12].args[0], ['bsub', '-w', 'ended(101)'])
+        with self.assertRaises(ValueError):
+            runner.run(paths, 'local', 12)
+
 
 if __name__ == '__main__':
     unittest.main()

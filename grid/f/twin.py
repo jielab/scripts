@@ -758,7 +758,7 @@ def run(args):
     require_comparators=getattr(args,'require_comparators',False) or route_cfg.publication_mode
     if args.analysis_root and require_comparators:
         command=[sys.executable,str(ROOT/'f/check_comparators.py'),'--analysis-root',args.analysis_root,
-                 '--prsformer-upstream',os.getenv('GRID_PRSFORMER_UPSTREAM','/mnt/f/software/PRSformer'),
+                 '--prsformer-upstream',os.getenv('GRID_PRSFORMER_UPSTREAM','/mnt/d/software/PRSformer'),
                  '--traits',args.traits,'--strict']
         receipt=subprocess.run(command,capture_output=True,text=True)
         if receipt.returncode:

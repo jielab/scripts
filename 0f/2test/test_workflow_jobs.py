@@ -88,7 +88,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("#BSUB -M 64GB", cmd)
         self.assertIn("rusage[mem=64GB/host]", cmd)
         self.assertIn("#BSUB -W 120:00", cmd)
-        self.assertIn('num=1:mode=exclusive_process', cmd)
+        self.assertIn('num=1/host:mode=exclusive_process:j_exclusive=yes', cmd)
+
+    def test_task_memory_reservation_is_explicit(self):
+        job = Job("parallel", ["true"], resources={"cores": 8, "memory_gib": 160, "memory_scope": "task"})
+        plan = write_plan([job], self.root)
+        cmd = (plan.parent / "commands/parallel.cmd").read_text()
+        self.assertIn("#BSUB -M 160GB", cmd)
+        self.assertIn("rusage[mem=20480MB/task]", cmd)
+        job.resources['cores'] = 39
+        plan = write_plan([job], self.root)
+        cmd = (plan.parent / "commands/parallel.cmd").read_text()
+        self.assertIn("rusage[mem=4202MB/task]", cmd)
 
     def test_resource_and_label_injection_rejected(self):
         for r in ({"queue": "ser\n#BSUB -q hacked"}, {"cores": 1.5}, {"memory_gib": float('nan')}, {"gpus": -1}):
@@ -140,7 +151,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(relocate_defaults(["/mnt/f/gen/a", "/mnt/d/analysis/grid"]), ["/custom/me/gen/a", "/scratch/date/me/analysis/grid"])
             self.assertEqual(relocate_defaults("/custom/path"), "/custom/path")
 
-    def test_scratch_date_relocates_inherited_defaults(self):
+    def test_scratch_date_preserves_explicit_legacy_paths(self):
         env = {**os.environ, "submit": "hpc", "DATE_SCRATCH": "2026-10-31",
                "DIR_SCRATCH": "/scratch/2026-10-31/sph-huangj",
                "GRID_OUTPUT_ROOT": "/scratch/2026-10-31/sph-huangj/analysis/grid",
@@ -148,8 +159,8 @@ class WorkflowTests(unittest.TestCase):
         code = 'source "$1"; workflow_init grid --date-scratch 2026-11-02; printf "%s\\n" "$DIR_SCRATCH" "$GRID_OUTPUT_ROOT" "$SCRIPT_LOG_DIR"'
         p = subprocess.run(["bash", "-c", code, "bash", str(SHARED/"workflow_env.sh")],
                            env=env, capture_output=True, text=True, check=True)
-        self.assertEqual(p.stdout.splitlines(), ["/scratch/2026-11-02/sph-huangj",
-            "/scratch/2026-11-02/sph-huangj/analysis/grid", "/my/custom/logs"])
+        self.assertEqual(p.stdout.splitlines(), ["/scratch/2026-10-31/sph-huangj",
+            "/scratch/2026-10-31/sph-huangj/analysis/grid", "/my/custom/logs"])
 
     def test_scratch_date_preserves_custom_directory(self):
         env = {**os.environ, "submit": "hpc", "DATE_SCRATCH": "2026-10-31", "DIR_SCRATCH": "/my/project/scratch"}

@@ -1,0 +1,15 @@
+# Only when the measured sum of all five hashes exceeds the 1792 GiB budget.
+# Config files overlay hpc.yml directly; this file does not inherit another profile.
+# Keep existing library paths and build threads unchanged to reuse their hashes.
+schema: 1
+classify_queue: '${HPC_HUGEMEM_QUEUE}'
+classify_cores: 32
+classify_threads: 30
+classify_workers: 1
+classify_memory_gib: 5120
+classify_hours: 120
+classify_concurrency: 2
+sample_batch_size: 1
+memory_accounting: conservative
+output_dir: "{metag_state}/split_casper"
+output_format: directory

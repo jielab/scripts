@@ -11,7 +11,7 @@ food_map_default <- file.path(foodcode_dir, "chns_foodcode_map.tsv")
 pexam_public_default <- file.path(raw_dir, "individual", "pexampub12.sav")
 nutrient_map_default <- file.path(foodcode_dir, "chns_foodcode_nutrients.tsv")
 
-outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "analysis", "maha"))
+outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_DAT", if (.Platform$OS.type == "windows") "D:/" else "/mnt/d"), "analysis", "maha"))
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 setwd(outdir)
 

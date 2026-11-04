@@ -145,15 +145,11 @@ gu_require_result_path() {
 # --dir-out names the result root itself; the postfix is appended to its final
 # component, before canonicalization. Cohort hashes remain provenance, not the
 # public batch directory name.
-# IBDmix products are siblings of pfile/imp/hap/vcf, not scratch analysis.
+# New IBDmix results follow the persistent analysis root; input paths are read-only.
 gu_ibdmix_result_base() {
-    local target=${1:-1kg} build=${2:-37} prefix=${3:-} parent
+    local target=${1:-1kg} build=${2:-37}
     case ${build,,} in 37|b37|grch37|hg19) build=37 ;; 38|b38|grch38|hg38) build=38 ;; *) echo 'Invalid IBDmix genome build' >&2; return 2 ;; esac
-    if [[ -n $prefix ]]; then
-        parent=$(dirname -- "${prefix%/}")
-        case ${parent##*/} in pfile|imp|hap|vcf|bfile|bed) gu_require_result_path "$(dirname -- "$parent")"; return ;; esac
-    fi
-    gu_require_result_path "${GU_REF_ROOT:?}/$target/$build"
+    gu_require_result_path "${GU_ANALYSIS_BASE:?runtime configuration required}/$target/$build"
 }
 
 gu_result_root() {

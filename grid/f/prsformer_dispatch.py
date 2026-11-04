@@ -46,7 +46,7 @@ def main(argv=None):
         if not path.is_file():
             atomic_json(path, config)
     if module == "prsformer2" and "--upstream-dir" not in forwarded:
-        forwarded += ["--upstream-dir", os.environ.get("PRSFORMER_UPSTREAM_DIR", relocate("/mnt/f/software/PRSformer"))]
+        forwarded += ["--upstream-dir", os.environ.get("PRSFORMER_UPSTREAM_DIR", relocate("/mnt/d/software/PRSformer"))]
     cache = Path(block["prsformer_cache"])
     if "--check" not in forwarded and not all((cache / name).is_file() for name in
             ("prepare.json", "data.tsv.gz", "variants.tsv.gz")):

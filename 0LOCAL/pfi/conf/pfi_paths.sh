@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PFI_ROOT="${PFI_ROOT:-$SCRIPT_DIR}"
 
 # Main roots.
-ANALYSIS_ROOT="${ANALYSIS_ROOT:-/mnt/f/analysis/pfi}"
+ANALYSIS_ROOT="${ANALYSIS_ROOT:-/mnt/d/analysis/pfi}"
 RAW_ROOT="${RAW_ROOT:-/mnt/f/pfi}"
 DAT_DIR="${DAT_DIR:-$ANALYSIS_ROOT/dat}"
 WORK_DIR="${WORK_DIR:-$ANALYSIS_ROOT/work}"

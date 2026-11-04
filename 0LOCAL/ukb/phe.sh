@@ -58,7 +58,7 @@ Example:
     ./phe.sh --start-step data_qc --end-step phe4gwas
 
     # Optional ADuLT phenotype: requires complete population CIP (trait sex age cip source).
-    ADULT_ENABLE=TRUE ADULT_TRAITS=cvd_cad ADULT_CIP_FILE=/mnt/d/ukb/common/adu_cip.tsv \
+    ADULT_ENABLE=TRUE ADULT_TRAITS=cvd_cad ADULT_CIP_FILE=/mnt/f/ukb/common/adu_cip.tsv \
       ./phe.sh --steps phe4gwas
 
     ./phe.sh --start-step data_qc --end-step phe4gwas
@@ -232,7 +232,7 @@ script_dir=${script_dir:-$SCRIPTS_LOCAL_ROOT}
 gen_dir=${gen_dir:-/mnt/f/gen/ukb/37}
 project_name="$(basename "$this_dir")"
 task_name="$(basename "${BASH_SOURCE[0]}" .sh)"
-outdir=${outdir:-${ANALYSIS_ROOT:-/mnt/f/analysis}/$project_name/$task_name}
+outdir=${outdir:-${ANALYSIS_ROOT:-/mnt/d/analysis}/$project_name/$task_name}
 
 if [[ "$MODULE" == date-check ]]; then
 	[[ "$Y" =~ ^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$ ]] || { echo 'ERROR: date-check requires --Y NAME[,NAME...] from common/*.lst (no empty entries)' >&2; exit 2; }

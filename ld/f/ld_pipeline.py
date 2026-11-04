@@ -149,12 +149,12 @@ def sha(path):
     return digest.hexdigest()
 
 def relocated_output_stamp(record):
-    """Resolve verified output receipts after the /data-to-scratch migration."""
+    """Resolve legacy data/analysis receipts under the configured analysis root."""
     path = Path(record['path'])
     previous = Path('/work/sph-huangj/data/analysis/ld')
     if path.is_relative_to(previous):
         base = Path(os.environ.get('SCRATCH_ANALYSIS_ROOT',
-                    f"/scratch/{os.environ.get('DATE_SCRATCH', '2026-11-03')}/sph-huangj/analysis")) / 'ld'
+                    os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis"))) / 'ld'
         path = base / path.relative_to(previous)
     return dict(record, path=str(path.resolve()))
 
@@ -252,7 +252,7 @@ class Pipeline:
         if self.input_format not in ('vcf', 'pgen'):
             raise Stop('INPUT_FORMAT must be vcf or pgen')
         self.pfile_dir = Path(os.environ.get('PFILE_DIR', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/pfile')).expanduser().resolve()
-        self.out = Path(os.environ.get('OUT', f'/scratch/{os.environ.get("DATE_SCRATCH", "2026-11-03")}/sph-huangj/analysis/ld/{self.genome_build}')).expanduser().resolve()
+        self.out = Path(os.environ.get('OUT', str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "ld" / self.genome_build))).expanduser().resolve()
         self.work = self.out / 'rebuild_v2'
         self.tmp_parent = Path(os.environ.get('LD_TMP_DIR', str(self.out / 'tmp'))).expanduser().resolve()
         self.resume_dir = (Path(os.environ['LD_RESUME_DIR']).expanduser().resolve()

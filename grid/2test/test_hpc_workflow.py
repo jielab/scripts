@@ -115,13 +115,24 @@ class PlanningTests(unittest.TestCase):
 
     def test_explicit_gpu_and_cpu_requests(self):
         gpu = self.build("grid", "twins", options=["--traits", "height", "--device", "cuda"])[0]
-        self.assertEqual(gpu.resources["queue"], "4v100-16-e5")
+        self.assertEqual(gpu.resources["queue"], os.environ.get("HPC_GPU_QUEUE", "4a100-40"))
         self.assertEqual(gpu.resources["gpus"], 1)
         cpu = self.build("csx", "blocknet", options=["--traits", "height", "--device", "cpu"])[-1]
         self.assertEqual(cpu.resources["gpus"], 0)
         self.assertEqual(cpu.argv[cpu.argv.index("--device")+1], "cpu")
         with self.assertRaisesRegex(ValueError, "requires --gpu-count"):
             self.build("grid", "twins", options=["--device", "cuda", "--gpu-count", "0"])
+
+    def test_hpc_count_auto_requests_gpu_but_cpu_override_is_preserved(self):
+        for stage in ("prepare", "twins"):
+            extra = ["--input-manifest", "/tmp/{trait}.json"] if stage == "prepare" else []
+            automatic = self.build("grid", stage, options=["--traits", "height"], extra=extra)[0]
+            self.assertEqual(automatic.resources["gpus"], 1)
+            self.assertEqual(automatic.resources["memory_gib"], 160)
+            self.assertEqual(automatic.argv[automatic.argv.index("--device")+1], "cuda")
+            cpu = self.build("grid", stage, options=["--traits", "height", "--device", "cpu"], extra=extra)[0]
+            self.assertEqual(cpu.resources["gpus"], 0)
+            self.assertEqual(cpu.argv[cpu.argv.index("--device")+1], "cpu")
 
     def test_eight_threads_and_cuda_radius_do_not_force_gpu_reports(self):
         jobs = self.build("grid", options=["--traits", "height", "--device", "cuda", "--threads", "8"],

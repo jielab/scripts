@@ -23,7 +23,7 @@ Modules:
 
 Main options:
     --dir-input DIR   Input [/mnt/d/viome/raw]
-    --dir-output DIR  Results [/mnt/f/analysis/nextstrain]
+    --dir-output DIR  Results [/mnt/d/analysis/nextstrain]
     --conda-env NAME  Environment [nextstrain]
     --min-length N  Minimum sequence length [11000]
     --view TRUE|FALSE  Open results viewer [FALSE]
@@ -32,7 +32,7 @@ Main options:
 Example:
     cd /mnt/d/scripts/0LOCAL/nextstrain
 
-    ./nstrain.sh --input-dir /mnt/d/viome/raw --output-dir /mnt/f/analysis/nextstrain --conda-env nextstrain --view TRUE
+    ./nstrain.sh --input-dir /mnt/d/viome/raw --output-dir /mnt/d/analysis/nextstrain --conda-env nextstrain --view TRUE
 
     ./nstrain.sh --min-length 12000 --view TRUE
     ./nstrain.sh  # Default workflow

@@ -131,13 +131,13 @@ def load_config(config_path=None, root_override=None):
     root = Path(root_value).expanduser().absolute()
     cfg["root"] = str(root)
     for key in PATH_KEYS:
-        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", str(Path(os.environ.get("DIR_TMP", "/scratch/2026-11-03/sph-huangj")) / "analysis"))
+        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", str(Path(os.environ.get("DIR_DAT", "/work/sph-huangj")) / "analysis"))
         text = str(cfg[key]).replace("{scratch_analysis}", scratch).replace("{scratch_root}", str(Path(scratch).parent))
         for token, variable, fallback in (
             ("{metag_reference_raw}", "METAG_REFERENCE_RAW", str(root / "annot/metag/raw")),
             ("{metag_reads_raw}", "METAG_READS_RAW", str(root / "metag/raw")),
-            ("{metag_state}", "METAG_STATE_ROOT", str(root / "analysis/metag_parallel")),
-            ("{metag_tools}", "METAG_TOOLS_DIR", str(root / "tools/metag_parallel")),
+            ("{metag_state}", "METAG_STATE_ROOT", str(root / "analysis/metag_parallel") if root_override else str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "metag")),
+            ("{metag_tools}", "METAG_TOOLS_DIR", str(root / "tools/metag_parallel") if root_override else str(Path(os.environ.get("DIR_SOFTWARE", "/work/sph-huangj/software")) / "metag_parallel")),
         ):
             text = text.replace(token, os.environ.get(variable, fallback) if not root_override else fallback)
         value = Path(text).expanduser()

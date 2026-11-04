@@ -577,7 +577,7 @@ def prepared_tables(args, traits, covariates):
 
 
 def raw_tables(args, traits, covariates):
-	path = required(option(args, "pheno_file", "/mnt/d/ukb/Rdata/all.rds"))
+	path = required(option(args, "pheno_file", "/mnt/f/ukb/Rdata/all.rds"))
 	data = filter_ids(read_phenotypes(path, traits, args, covariates), args)
 	definitions = data.attrs["phenotype_definitions"]
 	for column in covariates:

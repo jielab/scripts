@@ -1,0 +1,51 @@
+# No patient data, GPU, or third-party R packages are needed for this test.
+# Run from any directory: Rscript /path/to/scripts/ems120/tests/test_runtime.R
+test_file <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[[1]])
+project_dir <- dirname(dirname(normalizePath(test_file, winslash = "/", mustWork = TRUE)))
+source(file.path(project_dir, "f", "runtime.R"))
+
+run_runtime_tests <- function() {
+	vars <- c("submit", "SUBMIT", "DIR_DAT", "DIR_WORK", "DIR_TMP", "DIR_FILES", "ANALYSIS_ROOT", "EMS120_SCRIPT_DIR", "EMS120_SHARED_DIR", "EMS120_DATA_DIR", "EMS120_ANALYSIS_DIR", "EMS120_FILES_DIR")
+	previous <- Sys.getenv(vars, unset = NA_character_)
+	on.exit({
+		Sys.unsetenv(vars)
+		keep <- !is.na(previous)
+		if (any(keep)) do.call(Sys.setenv, as.list(previous[keep]))
+	}, add = TRUE)
+	root <- tempfile("ems120-runtime-test-")
+	dir.create(root)
+	root <- normalizePath(root, winslash = "/", mustWork = TRUE)
+	on.exit(unlink(root, recursive = TRUE), add = TRUE)
+	Sys.unsetenv(vars)
+	Sys.setenv(submit = "hpc", DIR_WORK = file.path(root, "work"), DIR_DAT = file.path(root, "data"), DIR_TMP = file.path(root, "scratch"), EMS120_SCRIPT_DIR = project_dir)
+	cfg <- ems120_init_paths(file.path(project_dir, "f", "ems120.R"))
+	stopifnot(identical(cfg$analysis, file.path(root, "work", "analysis", "ems120")))
+	stopifnot(identical(cfg$data, file.path(root, "data", "ems120")))
+	# These inputs need not exist: planning path resolution must not open data.
+	stopifnot(!dir.exists(cfg$data), !dir.exists(cfg$analysis))
+	Sys.setenv(submit = "local", ANALYSIS_ROOT = file.path(root, "local_analysis"))
+	cfg <- ems120_init_paths(file.path(project_dir, "f", "ems120.R"))
+	stopifnot(identical(cfg$analysis, file.path(root, "local_analysis", "ems120")))
+	Sys.setenv(EMS120_ANALYSIS_DIR = file.path(root, "explicit analysis"), EMS120_DATA_DIR = file.path(root, "explicit data"), EMS120_FILES_DIR = file.path(root, "assets"))
+	cfg <- ems120_init_paths(file.path(project_dir, "f", "ems120.R"))
+	stopifnot(identical(cfg$analysis, file.path(root, "explicit analysis")))
+	stopifnot(identical(cfg$data, file.path(root, "explicit data")))
+	stopifnot(identical(cfg$files, file.path(root, "assets")))
+	cat("PASS: HPC/local path selection and explicit path overrides\n")
+
+	cache <- file.path(root, "cache", "complete.rds")
+	ems120_save_rds_atomic(list(version = 1L), cache)
+	stopifnot(identical(readRDS(cache), list(version = 1L)))
+	ems120_save_rds_atomic(list(version = 2L), cache)
+	stopifnot(identical(readRDS(cache), list(version = 2L)))
+	failed <- try(ems120_save_rds_atomic(list(version = 3L), cache, compress = "invalid-compression"), silent = TRUE)
+	stopifnot(inherits(failed, "try-error"))
+	stopifnot(identical(readRDS(cache), list(version = 2L)))
+	stopifnot(identical(list.files(dirname(cache), all.files = TRUE, no.. = TRUE), "complete.rds"))
+	cat("PASS: successful RDS replacement and failed serialization preserve a complete cache\n")
+
+	missing <- try(ems120_require_packages("ems120_nonexistent_test_package_7b5489"), silent = TRUE)
+	stopifnot(inherits(missing, "try-error"), grepl("Missing R packages", as.character(missing), fixed = TRUE))
+	cat("PASS: missing dependencies fail explicitly without installation\n")
+}
+run_runtime_tests()

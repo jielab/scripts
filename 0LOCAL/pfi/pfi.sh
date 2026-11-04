@@ -27,7 +27,7 @@ Modules:
     compute / analysis / audit  Index, analysis and validation
 
 Main options:
-    --dir-analysis-root DIR  Results [/mnt/f/analysis/pfi]
+    --dir-analysis-root DIR  Results [/mnt/d/analysis/pfi]
     --dir-raw-root DIR       Raw data [/mnt/f/pfi]
     --journal-rank FILE  Real journal rank data
     --pred-sample-rows N Prediction sample size [1000000]; 0 for all
@@ -39,7 +39,7 @@ Example:
 
     ./pfi.sh all --journal-rank /mnt/d/scripts/0LOCAL/pfi/journal_rank_real.csv
 
-    # Fill the review XLSX; save /mnt/f/analysis/pfi/dat/paper_score_review_1000_scored.csv before continuing.
+    # Fill the review XLSX; save /mnt/d/analysis/pfi/dat/paper_score_review_1000_scored.csv before continuing.
     ./pfi.sh prepare-training
     ./pfi.sh train
     ./pfi.sh predict --pred-sample-rows 0
@@ -77,7 +77,7 @@ esac
 command_name=$1
 shift
 
-analysis_root=/mnt/f/analysis/pfi
+analysis_root=/mnt/d/analysis/pfi
 raw_root=/mnt/f/pfi
 python_bin=python
 rscript_bin=Rscript

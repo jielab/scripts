@@ -1,11 +1,11 @@
 # QiMing example, based on the supplied 2026.1 cluster sheet.
 # Roots come from 0f/0os.sh; all preparation and analysis starts fresh.
 # No TaiYi analysis output or legacy cache is required.
-# Scratch expires after 8 days; copy results needed longer to persistent storage.
+# Raw reads use data/metag/raw; generated state/results use analysis/metag.
 
 schema: 1
-# Explicit user deployment choice; scratch expires after 8 days.
-allow_scratch: true
+# Persistent storage is the default. Custom scratch profiles must opt in.
+allow_scratch: false
 root: "{dir_data}"
 reference_raw: "{metag_reference_raw}"
 metadata_dir: "{metag_state}/metadata"

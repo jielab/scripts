@@ -2,7 +2,7 @@ pacman::p_load(readxl, tidyverse, data.table, survival)
 # UKB fields: touchscreen, 24-hour recall, nutrients, and Oxford WebQ.
 
 dir0 <- ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d")
-indir <- file.path(Sys.getenv("DIR_DAT", dir0), "ukb")
+indir <- Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb")
 invisible(lapply(c("phenotype.R", "association.R", "plotting.R"), \(f) source(file.path(dir0, "scripts", "0f", f))))
 
 

@@ -41,7 +41,7 @@ Default permanent inputs (outside the analysis output directory):
   READ genotypes: ${DIR_GEN}/ukb/37/hap
   READ ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
   READ SNP reference: ${DIR_LD}/csx/snpinfo_mult_1kg_hm3
-  READ upstream software: /mnt/f/software/PRSformer (PRSFORMER_UPSTREAM_DIR override)
+  READ upstream software: /mnt/d/software/PRSformer (PRSFORMER_UPSTREAM_DIR override)
   There is currently NO separate permanent F-drive model/genotype-cache output.
   Prepared data, checkpoints and models remain under --analysis-root.
   KEEP_GENOTYPES retains them there; it does not copy them to F:.

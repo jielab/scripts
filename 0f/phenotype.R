@@ -937,7 +937,7 @@ get_icd_fast <- function(ver, dat.code = NA, dat.date = NA, fn,
 get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 	new_col_name <- paste0("fod_ref_", label.this)
 	if (new_col_name %in% names(dat.this)) return(dat.this)
-	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(file.path(Sys.getenv("DIR_UKB", Sys.getenv("UKB_PHE", if (.Platform$OS.type == "windows") "D:/ukb" else "/mnt/d/ukb")), "Rdata/fod.date0.rds"))
+	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(file.path(Sys.getenv("DIR_UKB", Sys.getenv("UKB_PHE", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb")), "Rdata/fod.date0.rds"))
 	if (!"eid" %in% names(dat.fod) || !"eid" %in% names(dat.this) || anyNA(dat.fod$eid) ||
 		anyNA(dat.this$eid) || anyDuplicated(dat.fod$eid) || anyDuplicated(dat.this$eid))
 		stop("FOD tables require unique non-missing eid values.", call. = FALSE)

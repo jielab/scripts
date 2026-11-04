@@ -219,6 +219,12 @@ class HPC(unittest.TestCase):
         cmd = hpc.bsub_args(plan, 'worker', 'gu.test', None)
         self.assertEqual(cmd[cmd.index('-n') + 1], '65')
 
+    def test_qiming_budget_counts_the_supervisor_slot(self):
+        with self.assertRaisesRegex(ValueError, "121 cores"):
+            self.make_plan("ibdmix", "--queue", "1t81c", "--threads", "120", "--memory-gb", "768")
+        plan = self.make_plan("ibdmix", "--queue", "1t81c", "--threads", "119", "--memory-gb", "768")
+        self.assertEqual(plan["slots"], 120)
+
     def test_flat_manifest_includes_helpers_excludes_other_projects(self):
         (self.root / 'f').mkdir()
         helper = self.root / 'f/results.py'
@@ -235,11 +241,56 @@ class HPC(unittest.TestCase):
         plan = self.make_plan()
         cmd = hpc.bsub_args(plan, "worker", "gu.unique.a", "ended(123)", 80, 10)
         self.assertEqual(cmd[cmd.index("-M") + 1], "32GB")
+        self.assertIn("rusage[mem=32768MB/host]", cmd[cmd.index("-R") + 1])
         self.assertEqual(cmd[cmd.index("-J") + 1], "gu.unique.a[1-80]%10")
         self.assertEqual(cmd[cmd.index("-w") + 1], "ended(123)")
         plan["rusage_memory_mode"] = "per-slot"
         cmd = hpc.bsub_args(plan, "worker", "x", None)
-        self.assertIn("rusage[mem=6554]", cmd[cmd.index("-R") + 1])
+        self.assertIn("rusage[mem=6554MB/task]", cmd[cmd.index("-R") + 1])
+        plan["rusage_memory_mode"] = "per-job"
+        cmd = hpc.bsub_args(plan, "worker", "x", None)
+        self.assertIn("rusage[mem=32768MB/job]", cmd[cmd.index("-R") + 1])
+
+    def test_gpu_backend_and_resource_request_are_paired(self):
+        plan = self.make_plan("ibdmix", "--GPU", "TRUE", "--queue", "4a100-40")
+        self.assertTrue(plan["gpu"])
+        for task in plan["tasks"]:
+            command = task["command"]
+            self.assertEqual(command[command.index("--GPU") + 1], "TRUE")
+        worker = hpc.bsub_args(plan, "worker", "gpu", "done(100)")
+        self.assertEqual(worker[worker.index("-q") + 1], "4a100-40")
+        self.assertIn("num=1/host:mode=exclusive_process:j_exclusive=yes", worker)
+        for stage in ("prepare", "merge"):
+            command = hpc.bsub_args(plan, stage, "cpu", None)
+            self.assertNotIn("-gpu", command)
+            self.assertEqual(command[command.index("-q") + 1], plan["cpu_queue"])
+        self.assertEqual(hpc.runtime_environment(plan)["IBDMIX_BACKEND"], "cuda")
+
+    def test_phyml_timeout_policy_is_frozen_in_plan(self):
+        loci = self.base / "leads.jma.cojo"
+        loci.write_text("Chr SNP bp\n1 rs1 1\n")
+        plan = self.make_plan("phyml", "--loci", str(loci), "--phyml-timeout-seconds", "86400", "--phyml-retry-timeouts")
+        env = hpc.runtime_environment(plan)
+        self.assertEqual(env["PHYML_TREE_TIMEOUT"], "86400")
+        self.assertEqual(env["PHYML_RETRY_TIMEOUTS"], "TRUE")
+
+    def test_saved_plan_freezes_super_roots_and_shared_helpers(self):
+        shared = self.root.parent / "0f"
+        shared.mkdir()
+        os_config = shared / "0os.sh"
+        os_config.write_text("# original path policy\n")
+        overrides = {"DIR_DAT":"/work/custom small", "DIR_BIG":"/work/custom-big", "DIR_TMP":"/scratch/custom",
+                     "DIR_ANNOT":"/work/custom-annotation", "GU_SOFT":"/work/custom-software"}
+        with patch.dict(os.environ, overrides):
+            plan = self.make_plan()
+        self.assertTrue(overrides.items() <= plan["resolved_environment"].items())
+        self.assertIn(str(os_config), plan["source_sha256"])
+        text = (self.run / "jobs" / "worker.cmd").read_text()
+        self.assertIn("export DIR_DAT='/work/custom small'", text)
+        self.assertLess(text.index("export DIR_TMP="), text.index("source "))
+        os_config.write_text("# changed path policy\n")
+        with self.assertRaisesRegex(ValueError, "Code changed"):
+            hpc.verify_plan_files(plan)
 
     def test_archive_and_materialized_not_double_counted(self):
         plan = self.make_plan()

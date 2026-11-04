@@ -25,7 +25,7 @@ Modules:
 
 Main options:
     --jobs N  Parallel workers [4]
-    --dir-output DIR  Results [/mnt/f/analysis/maha]
+    --dir-output DIR  Results [/mnt/d/analysis/maha]
     --steps CSV  Select internal stages
     --rscript FILE  R interpreter
     --replace-steps CSV  Explicitly replace selected stages

@@ -40,8 +40,8 @@ def parser():
     p.add_argument("--cores", type=int, default=int(os.getenv("N_CORES", "8")))
     p.add_argument("--memory-limit-gb", type=float, default=float(os.getenv("LE8_MEMORY_LIMIT_GB", "32")))
     p.add_argument("--queue", default=os.getenv("LE8_QUEUE", "33"))
-    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", "4v100-16-e5"))
-    p.add_argument("--gpu-memory-limit-gb", type=float, default=float(os.getenv("HPC_GPU_MEMORY_GIB", "56")))
+    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", os.getenv("HPC_GPU_QUEUE", "4a100-40")))
+    p.add_argument("--gpu-memory-limit-gb", type=float, default=float(os.getenv("HPC_GPU_MEMORY_GIB", "160")))
     p.add_argument("--gpu-cores", type=int, default=int(os.getenv("LE8_GPU_CORES", "20")))
     p.add_argument("--hours", type=float, default=float(os.getenv("LE8_HOURS", "72")))
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
@@ -112,7 +112,7 @@ def build_jobs(a, extra=()):
         raise ValueError("Invalid trait list")
     if not layers or not set(layers) <= {"prot", "met"}:
         raise ValueError("Invalid biomarker layers")
-    if a.cores < 1 or a.gpu_cores < 1 or a.memory_limit_gb <= 0 or a.hours <= 0:
+    if a.cores < 1 or a.gpu_cores < 1 or a.memory_limit_gb <= 0 or a.gpu_memory_limit_gb <= 0 or a.hours <= 0:
         raise ValueError("Resource requests must be positive")
     if not float(a.memory_limit_gb).is_integer():
         raise ValueError("LE8 --memory-limit-gb uses whole GiB, matching the native R launcher")
@@ -178,7 +178,8 @@ def build_jobs(a, extra=()):
                 for stage in ("prepare", "association", "models", "evaluation"):
                     deps = [add(f"{scope}.c1.{stage}", "c1_correlate", deps, trait, layer,
                         ["--c1-stage", stage, *(["--replace-models", "FALSE"] if stage == "evaluation" else [])],
-                        gpu=stage == "models" and "abm_deep" in methods and a.device == "cuda")]
+                        gpu=stage == "models" and "abm_deep" in methods and
+                            (a.device == "cuda" or (a.device == "auto" and os.getenv("submit") == "hpc")))]
             if "c1_reliability" in modules or ("c1_correlate" in modules and "glmnet" in methods):
                 deps = [add(f"{scope}.c1.reliability", "c1_reliability", deps, trait, layer)]
             for module in ("c2_cause", "c3_coloc", "c4_connect", "c5_cellulation", "pgs_focus"):
@@ -186,10 +187,16 @@ def build_jobs(a, extra=()):
                     continue
                 stages = ("c4_connect", "c4_panel_validation", "c4_explain") if module == "c4_connect" else (module,)
                 for stage in stages:
+                    # Explicit C3 switch wins. Otherwise an explicit CPU device
+                    # must override a site default that enables GPU colocalization.
                     coloc_gpu = (a.run_gpu_coloc == "TRUE" if a.run_gpu_coloc is not None else
-                                 (a.device == "cuda" or os.getenv("RUN_GPU_COLOC") == "TRUE"))
+                                 (a.device != "cpu" and
+                                  (a.device == "cuda" or os.getenv("RUN_GPU_COLOC") == "TRUE")))
+                    eigh_gpu = (a.eigh_backend == "cuda" or
+                                (a.eigh_backend == "auto" and a.device != "cpu" and
+                                 (a.device == "cuda" or os.getenv("submit") == "hpc")))
                     gpu = ((module == "c3_coloc" and coloc_gpu)
-                           or (module == "c2_cause" and a.eigh_backend == "cuda"))
+                           or (module == "c2_cause" and eigh_gpu))
                     deps = [add(f"{scope}.{stage}", module, deps, trait, layer,
                         stage_env={"LE8_C4_STAGE": stage} if module == "c4_connect" else None, gpu=gpu)]
             terminals.extend(deps)

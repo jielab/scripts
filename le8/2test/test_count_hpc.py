@@ -216,7 +216,7 @@ class WorkflowTests(unittest.TestCase):
     def test_all_modules_dag_and_mock_lsf_dependencies(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"submit": "hpc", "RUN_GPU_COLOC": "FALSE"}):
             a, extra = hpc_workflow.parse_cli(["c1_correlate,c2_cause,c3_coloc,c4_connect,c5_cellulation,pgs_focus,final",
-                "--Y", "toy,other", "--biom", "prot,met", "--analysis-root", td])
+                "--Y", "toy,other", "--biom", "prot,met", "--analysis-root", td, "--eigh-backend", "cpu"])
             jobs = hpc_workflow.build_jobs(a)
             by_key = {j.key: j for j in jobs}
             self.assertIn("toy.prot.c1.prepare", by_key)
@@ -283,6 +283,39 @@ class WorkflowTests(unittest.TestCase):
                 job = hpc_workflow.build_jobs(args, extra)[0]
                 self.assertEqual(job.resources["gpus"], expected)
                 self.assertEqual(job.env["RUN_GPU_COLOC"], "TRUE" if expected else "FALSE")
+
+    def test_cpu_device_overrides_site_coloc_default_and_deep_auto_is_scheduled(self):
+        with patch.dict(os.environ, {"submit": "hpc", "RUN_GPU_COLOC": "TRUE"}):
+            args, extra = hpc_workflow.parse_cli(["c3_coloc", "--Y", "toy", "--biom", "prot", "--device", "cpu"])
+            job = hpc_workflow.build_jobs(args, extra)[0]
+            self.assertEqual(job.resources["gpus"], 0)
+            self.assertEqual(job.env["RUN_GPU_COLOC"], "FALSE")
+            args, extra = hpc_workflow.parse_cli(["c1_correlate", "--Y", "toy", "--biom", "prot", "--methods", "abm_deep"])
+            jobs = hpc_workflow.build_jobs(args, extra)
+            self.assertEqual([j.key for j in jobs if j.resources["gpus"]], ["toy.prot.c1.models"])
+
+    def test_native_hpc_runtime_auto_coloc_generates_matching_gpu_plan(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = {k:v for k,v in os.environ.items() if k not in {"RUN_GPU_COLOC", "WORKFLOW_WORKER"}}
+            run = subprocess.run(["bash", str(ROOT / "le8.sh"), "c3_coloc", "--submit", "hpc",
+                "--plan-only", "--Y", "toy", "--biom", "prot", "--analysis-root", td],
+                env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout+run.stderr)
+            plans = list(Path(td).glob("logs/workflows/*/plan.json"))
+            self.assertEqual(len(plans), 1)
+            job = json.loads(plans[0].read_text())["jobs"][0]
+            self.assertEqual(job["resources"]["gpus"], 1)
+            self.assertEqual(job["env"]["RUN_GPU_COLOC"], "TRUE")
+
+    def test_eigh_auto_on_hpc_and_explicit_cpu_choices(self):
+        with patch.dict(os.environ, {"submit": "hpc", "MRLINK2_EIGH_BACKEND": "auto"}):
+            for options, expected in (([], 1), (["--device", "cpu"], 0),
+                                      (["--eigh-backend", "cpu"], 0),
+                                      (["--device", "cpu", "--eigh-backend", "cuda"], 1)):
+                args, extra = hpc_workflow.parse_cli(["c2_cause", "--Y", "toy", "--biom", "prot", *options])
+                job = hpc_workflow.build_jobs(args, extra)[0]
+                self.assertEqual(job.resources["gpus"], expected)
+                self.assertEqual(job.env["MRLINK2_EIGH_BACKEND"], "cuda" if expected else "cpu")
 
 
 if __name__ == "__main__":

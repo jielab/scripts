@@ -329,7 +329,7 @@ def run(args):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gu-dataset", required=True, help="Dataset directory, e.g. /mnt/f/analysis/gu/1kg")
+    p.add_argument("--gu-dataset", required=True, help="Dataset directory, e.g. /mnt/d/analysis/gu/1kg")
     p.add_argument("--module", default="ibdmix", choices=("ibdmix", "ibdmix-GPU"))
     p.add_argument("--targets", required=True, help="Existing candidates/targets.tsv or alleles/site_catalog.tsv.gz")
     p.add_argument("--target-build", choices=("37", "38"), default="38")

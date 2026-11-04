@@ -18,7 +18,7 @@ Main options:
     --grch 37|38  Coordinate build [38]; also accepts grch=38 or GRCH=38 environment
     --dir-out DIR --dir-gen DIR --sample-panel FILE  Override output, PFILE directory and panel
     INPUT_FORMAT=pgen|vcf  Input format [pgen]
-    OUT=DIR  Analysis output [/scratch/DATE/sph-huangj/analysis/ld/38]
+    OUT=DIR  Analysis output [/work/sph-huangj/analysis/ld/38]
     PFILE_DIR=DIR  chrN.pgen + chrN.pvar[.zst] + chrN.psam [/work/sph-huangj/data/gen/1kg/38/pfile]
     VCF_DIR=DIR  Only used with INPUT_FORMAT=vcf
     PANEL=FILE  Sample panel [/work/sph-huangj/data/gen/1kg/38/samples.txt]; all four-population samples
@@ -39,6 +39,8 @@ Main options:
     OUT/rebuild_v2/logs/  Run status/STOP, partition errors and native PLINK logs
     MIN_FREE_GB=N  Filesystem/group-quota reserve, decimal GB [100]
     LD_QUEUE=NAME  Submission queue [HPC_CPU_QUEUE, normally 33]
+    LD_MEMORY_GIB=N  Total job RAM GiB [MEMORY_DEFAULT_GIB, normally 160]
+    LD_WALLTIME=HHH:MM  Job time limit [HPC_WALLTIME, normally 120:00]
     -h, --help  Show options and examples below beside this script
 
 Usage examples:
@@ -59,7 +61,7 @@ Usage examples:
     # Write command files only; no submission.
     ./ld.sh --grch 38 --chr 1-22 --write-cmd
 
-    # Default output: /scratch/2026-11-03/sph-huangj/analysis/ld/38
+    # Default output: /work/sph-huangj/analysis/ld/38
     # Each chromosome uses chrN/ and compressed temporary files in chrN/tmp/.
     # Inputs: /work/sph-huangj/data/gen/1kg/38/pfile (never removed).
     # Use --date-scratch YYYY-MM-DD only to select a different scratch date.

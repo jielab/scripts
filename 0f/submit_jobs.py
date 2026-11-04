@@ -94,8 +94,11 @@ def wait_lsf(ids):
 def run(paths, mode=None, jobs=None, wait=False, merge=None):
     mode = mode or os.environ.get('submit', 'local')
     jobs = int(jobs or os.environ.get('jobs_N', '8'))
-    if mode not in {'local', 'hpc'} or not 1 <= jobs <= 8:
-        raise ValueError('submit=local|hpc and jobs_N=1..8 required')
+    if mode not in {'local', 'hpc'}:
+        raise ValueError('submit must be local or hpc')
+    limit = 10000 if mode == 'hpc' else 8
+    if not 1 <= jobs <= limit:
+        raise ValueError(f'jobs_N must be 1..{limit} for {mode}')
     paths = [Path(p).resolve() for p in paths]
     if not paths or any(not p.is_file() for p in paths):
         raise ValueError('Every command file must exist')

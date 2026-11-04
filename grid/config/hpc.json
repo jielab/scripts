@@ -10,9 +10,9 @@
     "memory_scope": "host"
   },
   "gpu": {
-    "queue": "4v100-16-e5",
+    "queue": "4a100-40",
     "cores": 8,
-    "memory_gib": 56,
+    "memory_gib": 160,
     "hours": 120,
     "gpus": 1
   },
@@ -53,7 +53,8 @@
     },
     "twins": {
       "cores": 32,
-      "memory_gib": 256
+      "memory_gib": 256,
+      "gpus": 1
     },
     "evaluate": {
       "cores": 8,
@@ -72,7 +73,8 @@
     },
     "countprepare": {
       "cores": 32,
-      "memory_gib": 256
+      "memory_gib": 256,
+      "gpus": 1
     }
   }
 }

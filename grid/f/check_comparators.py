@@ -47,7 +47,7 @@ def receipt_checks(root, run, up, e):
 def main():
     a=argparse.ArgumentParser()
     a.add_argument('--analysis-root',default='/mnt/d/analysis/grid')
-    a.add_argument('--prsformer-upstream',default='/mnt/f/software/PRSformer')
+    a.add_argument('--prsformer-upstream',default='/mnt/d/software/PRSformer')
     a.add_argument('--strict',action='store_true')
     a.add_argument('--traits',default='height,ldl,t2dm')
     x=a.parse_args();root=Path(x.analysis_root);up=Path(x.prsformer_upstream)

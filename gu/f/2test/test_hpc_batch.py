@@ -26,11 +26,11 @@ class BatchTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_default_result_locations_follow_input_genotypes(self):
-        with patch.dict(os.environ, {'GU_REF_ROOT': '/work/sph-huangj/data/gen'}):
-            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb'])), '/work/sph-huangj/data/gen/ukb/37')
-            self.assertEqual(str(batch.result_base(['ibdmix','--dir-target','/mnt/f/gen/1kg/37/pfile/chr'])), '/mnt/f/gen/1kg/37')
-            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb','--postfix','013'])), '/work/sph-huangj/data/gen/ukb/37/cohort')
+    def test_default_result_locations_follow_analysis_root(self):
+        with patch.dict(os.environ, {'GU_REF_ROOT': '/work/sph-huangj/data/gen', 'GU_ANALYSIS_BASE': '/work/sph-huangj/analysis/gu'}):
+            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb'])), '/work/sph-huangj/analysis/gu/ukb/37')
+            self.assertEqual(str(batch.result_base(['ibdmix','--dir-target','/mnt/f/gen/1kg/37/pfile/chr'])), '/work/sph-huangj/analysis/gu/1kg/37')
+            self.assertEqual(str(batch.result_base(['ibdmix','--target','ukb','--postfix','013'])), '/work/sph-huangj/analysis/gu/ukb/37/cohort')
 
     def test_missing_rscript_fails_before_submission(self):
         with patch.dict(os.environ, {'GU_RESULTS_RSCRIPT':str(self.root/'missing/Rscript')}):
@@ -99,6 +99,24 @@ class BatchTests(unittest.TestCase):
         self.run_main(self.args, fake)
         self.assertEqual(fake.call_count, 3)
         self.assertTrue(all(call.args == (['bsub'],) for call in fake.call_args_list))
+
+    def test_explicit_gpu_plan_requests_one_gpu_without_probing_login_node(self):
+        with patch.dict(os.environ, {'submit':'hpc', 'GU_GPU_QUEUE':'4a100-40', 'GU_GPU_MEMORY_GIB':'160'}), patch.object(batch.subprocess, 'run') as fake:
+            self.run_main(self.args + ['--GPU', 'TRUE', '--run-cmd', 'FALSE'], fake)
+            fake.assert_not_called()
+        text = next(self.root.glob('ukb.jobs/*/*.cmd')).read_text()
+        self.assertIn('#BSUB -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"', text)
+        self.assertIn('#BSUB -q 4a100-40', text)
+        self.assertIn('#BSUB -n 16', text)
+        self.assertIn('#BSUB -M 160GB', text)
+        self.assertIn('--GPU TRUE', text)
+
+    def test_explicit_cpu_overrides_site_gpu_default(self):
+        with patch.dict(os.environ, {'submit':'hpc', 'GU_IBDMIX_GPU_DEFAULT':'TRUE'}), patch.object(batch.subprocess, 'run') as fake:
+            self.run_main(self.args + ['--GPU', 'FALSE', '--run-cmd', 'FALSE'], fake)
+        text = next(self.root.glob('ukb.jobs/*/*.cmd')).read_text()
+        self.assertNotIn('#BSUB -gpu', text)
+        self.assertIn('--GPU FALSE', text)
 
     def test_submission_failure_stops_and_records(self):
         from unittest.mock import Mock

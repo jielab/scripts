@@ -1,6 +1,6 @@
 # 🚩 MAHA_publication
 dir0 <- ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d")
-outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "analysis", "maha"))
+outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_DAT", if (.Platform$OS.type == "windows") "D:/" else "/mnt/d"), "analysis", "maha"))
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 .this_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 .this_file <- if (length(.this_arg)) sub("^--file=", "", .this_arg[[1]]) else file.path(dir0, "scripts/0LOCAL", "maha", "f", "MAHA_publication.R")

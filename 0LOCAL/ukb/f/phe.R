@@ -1,13 +1,13 @@
 pacman::p_load(tidyverse, data.table, survival)
 
 dir0 <- Sys.getenv("DIR0", unset = ifelse(Sys.info()[["sysname"]] == "Windows", "D:/", "/mnt/d"))
-indir <- Sys.getenv("PHEDIR", unset = file.path(Sys.getenv("DIR_DAT", dir0), "ukb"))
-outdir <- Sys.getenv("UKB_OUT", unset = paste0(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "/analysis/ukb/phe"))
+indir <- Sys.getenv("PHEDIR", unset = Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"))
+outdir <- Sys.getenv("UKB_OUT", unset = paste0(Sys.getenv("DIR_DAT", if (.Platform$OS.type == "windows") "D:/" else "/mnt/d"), "/analysis/ukb/phe"))
 script_dir <- Sys.getenv("SCRIPT_DIR", unset = file.path(dir0, "scripts/0LOCAL"))
 gen_dir <- Sys.getenv("GEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37" else "/mnt/f/gen/ukb/37")
 pgs_dir <- Sys.getenv("PGS_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/pgs" else "/mnt/f/gen/ukb/pgs")
 map_tile_cache <- normalizePath(
-	file.path(Sys.getenv("DIR_DAT", dir0), "ukb", "map", "maha", "rosm.cache"),
+	file.path(Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"), "map", "maha", "rosm.cache"),
 	winslash = "/", mustWork = FALSE
 )
 invisible(lapply(c("phenotype.R", "association.R", "plotting.R", "prediction.R"), \(f) source(file.path(script_dir, "0f", f))))

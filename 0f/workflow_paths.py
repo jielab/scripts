@@ -32,9 +32,10 @@ def relocate_defaults(value):
     t=resolved_table()
     mappings=[('/mnt/d/scripts',t['SCRIPTS_ROOT']),('/mnt/d/analysis',t['ANALYSIS_ROOT']),
               ('/mnt/f/analysis',t['ANALYSIS_ROOT']),('/mnt/d/software',t['DIR_SOFTWARE']),
+              ('/mnt/f/software',t['DIR_SOFTWARE']),
               ('/mnt/d/data/ukb',t['DIR_UKB']),('/mnt/d/ukb',t['DIR_UKB']),
               ('/mnt/d/files',t['DIR_FILES'])]
-    mappings += [('/mnt/f/'+cat,t[key]) for cat,key in [('annot','DIR_ANNOT'),('gen','DIR_GEN'),('gwas','DIR_GWAS'),('LD','DIR_LD'),('metag','DIR_METAG')]]
+    mappings += [('/mnt/f/'+cat,t[key]) for cat,key in [('annot','DIR_ANNOT'),('gen','DIR_GEN'),('gwas','DIR_GWAS'),('LD','DIR_LD'),('metag','DIR_METAG'),('ukb','DIR_UKB')]]
     mappings += [('/mnt/f',t['DIR_BIG']),('/mnt/d',t['DIR_DAT'])]
     for old,new in mappings:
         if value==old or value.startswith(old+'/'): return new.rstrip('/')+value[len(old):]

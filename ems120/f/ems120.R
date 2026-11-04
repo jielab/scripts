@@ -1,14 +1,28 @@
 # EMS120 analysis and figure pipeline.
+ems120_main_file <- {
+	frames <- Filter(Negate(is.null), lapply(sys.frames(), function(frame) frame$ofile))
+	arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+	if (nzchar(Sys.getenv("EMS120_SCRIPT_DIR", unset = ""))) {
+		file.path(Sys.getenv("EMS120_SCRIPT_DIR"), "f", "ems120.R")
+	} else if (length(frames)) {
+		tail(frames, 1)[[1]]
+	} else if (length(arg)) {
+		sub("^--file=", "", arg[[1]])
+	} else {
+		stop("Cannot locate ems120.R. Run ems120.sh or set EMS120_SCRIPT_DIR.", call. = FALSE)
+	}
+}
+ems120_main_file <- normalizePath(ems120_main_file, winslash = "/", mustWork = TRUE)
+source(file.path(dirname(ems120_main_file), "runtime.R"))
+ems120_paths <- ems120_init_paths(ems120_main_file)
+
 ems120_prime_conda_ssl <- function() {
 	sys <- Sys.info()[["sysname"]]
 	if (identical(sys, "Windows")) return(invisible(FALSE))
 	py <- Sys.getenv("RETICULATE_PYTHON", unset = "")
 	candidates <- c(
 		if (nzchar(py)) normalizePath(file.path(dirname(py), ".."), winslash = "/", mustWork = FALSE) else "",
-		file.path(Sys.getenv("HOME"), "anaconda3", "envs", "ai"),
-		file.path(Sys.getenv("HOME"), "miniconda3", "envs", "ai"),
-		"/home/huangj/anaconda3/envs/ai",
-		"/home/jiehuang001/anaconda3/envs/ai"
+		Sys.getenv("CONDA_PREFIX", unset = "")
 	)
 	candidates <- unique(candidates[nzchar(candidates)])
 	env_prefix <- candidates[dir.exists(candidates)][1]
@@ -59,11 +73,16 @@ ems120_maybe_exit_after <- function(step) {
 	invisible(FALSE)
 }
 
-pacman::p_load(readxl, writexl, data.table, tidyverse, scales, RColorBrewer, reticulate, lubridate, patchwork, zoo, broom, forcats, circlize, jpeg, png, grid)
+ems120_require_packages(c("readxl", "writexl", "data.table", "tidyverse", "scales", "RColorBrewer", "reticulate", "lubridate", "patchwork", "zoo", "broom", "forcats", "circlize", "jpeg", "png", "grid"), attach = TRUE)
+ems120_require_packages(c("lattice", "cowplot"))
 
-dir0 <- if (Sys.info()[["sysname"]] == "Windows") "D:" else "/mnt/d"
-dir.analysis <- Sys.getenv("EMS120_ANALYSIS_DIR", unset = file.path(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "analysis", "ems120"))
-script.dir <- Sys.getenv("EMS120_SCRIPT_DIR", unset = file.path(dir0, "scripts/0LOCAL", "ems120"))
+dir.analysis <- ems120_paths$analysis
+script.dir <- ems120_paths$script
+shared.dir <- ems120_paths$shared
+dir.files <- ems120_paths$files
+
+ems120_cores <- suppressWarnings(as.integer(Sys.getenv("EMS120_CORES", unset = Sys.getenv("WORKFLOW_CORES", unset = ""))))
+if (!is.na(ems120_cores) && ems120_cores > 0L) data.table::setDTthreads(ems120_cores)
 
 dir.cache <- file.path(dir.analysis, "dat");
 dir.create(dir.cache, showWarnings = FALSE, recursive = TRUE)
@@ -71,7 +90,11 @@ file.dat.phone.rds <- file.path(dir.cache, "dat.ml_phone.rds")
 file.dat.geo.rds <- file.path(dir.cache, "dat.ml_geo.rds")
 file.dat.rds <- file.path(dir.cache, "dat.list.rds")
 
-invisible(lapply(c("phenotype.R", "plotting.R"), function(f) { ff <- file.path(dir0, "scripts", "0f", f); if (file.exists(ff)) source(ff) }))
+for (f in c("phenotype.R", "plotting.R")) {
+	ff <- file.path(shared.dir, f)
+	if (!file.exists(ff)) stop("Missing shared EMS120 helper: ", ff, ". Set EMS120_SHARED_DIR to scripts/0f.", call. = FALSE)
+	source(ff)
+}
 
 
 # 🚩 ems120.f
@@ -696,7 +719,7 @@ make_ml_design_figures <- function() {
 ml_python_ready <- FALSE
 ensure_ml_python <- function() {
 	if (isTRUE(ml_python_ready)) return(invisible(TRUE))
-	source(file.path(dir0, "scripts", "0f", "configure_ml.R"))
+	ems120_configure_python()
 	py_file <- file.path(script.dir, "f", "ems120.py")
 	if (!file.exists(py_file)) stop("Missing Python helper file: ", py_file, call. = FALSE)
 	# source_python() is called inside this function, so its default envir would be
@@ -738,7 +761,7 @@ reg.finalizer(.ems120_cleanup, function(e) {
 
 
 # 🚩 Constants and phenotype mapping
-dir.dat <- file.path(Sys.getenv("DIR_DAT", dir0), "ems120")
+dir.dat <- ems120_paths$data
 years <- 2013:2024
 yrs_trend <- 2017:2024
 phone.grp.use <- c("low", "high")
@@ -1011,7 +1034,7 @@ if (file.exists(file.dat0.rds)) {
 		missing_vars <- setdiff(vars, names(dat)); if (length(missing_vars)) { cat(sprintf("-> Warning: %d missing vars: %s\n", year, paste(missing_vars, collapse = ", "))); for (v in missing_vars) dat[[v]] <- NA }
 		dat0.list[[key]] <- dat %>% dplyr::select(all_of(vars)) %>% mutate(!!vars.basic.ems[1] := clean_phone_value(.data[[vars.basic.ems[1]]]), phone = ifelse(is.na(.data[[vars.basic.ems[1]]]), NA_character_, substring(.data[[vars.basic.ems[1]]], 4, 11)), !!vars.dxs[2] := suppressWarnings(as.numeric(gsub("岁", "", .data[[vars.dxs[2]]])))) %>% mutate(ID = row_number(), .before = 1)
 	}
-	saveRDS(dat0.list, file.dat0.rds)
+	ems120_save_rds_atomic(dat0.list, file.dat0.rds)
 }
 dat0.list <- lapply(dat0.list, normalize_ems120_year_types)
 file.train2019 <- file.path(dir.cache, "2019.train_dx.xlsx")
@@ -1067,7 +1090,7 @@ if (!phone.ready) {
 		dat.phone.list[[key]] <- dat %>% mutate(phone.sco0 = as.numeric(res0[, "score"]), phone.sco1 = as.numeric(unlist(res_phone$sco1)), phone.sco2 = as.numeric(unlist(res_phone$sco2)), phone.sco3 = as.numeric(unlist(res_phone$sco3)), phone.sco0.reason = as.character(res0[, "reason"]), phone.sco1.reason = as.character(unlist(res_phone$reason1)), phone.sco2.reason = as.character(unlist(res_phone$reason2)), phone.sco3.reason = as.character(unlist(res_phone$reason3))) %>% apply_phone_luck_use()
 		print_phone_score_bins(dat.phone.list[[key]], key, phone.required[1:4])
 	}
-	saveRDS(dat.phone.list, file.dat.phone.rds)
+	ems120_save_rds_atomic(dat.phone.list, file.dat.phone.rds)
 }
 dat.phone.list <- lapply(dat.phone.list, normalize_ems120_year_types)
 phone_score_vars <- c("phone.sco0", "phone.sco1", "phone.sco2", "phone.sco3")
@@ -1104,7 +1127,7 @@ if (!geo.ready) {
 	geo_xia_results <- purrr::imap(dat.geo.list[as.character(years)], function(d, y) merge_xia_geo_year(d, y, dir.geo.xia, vars.basic.ems = vars.basic.ems))
 	dat.geo.list <- purrr::map(geo_xia_results, "data") %>% lapply(apply_phone_luck_use)
 	geo_xia_merge_log <- purrr::map_dfr(geo_xia_results, "log")
-	saveRDS(dat.geo.list, file.dat.geo.rds)
+	ems120_save_rds_atomic(dat.geo.list, file.dat.geo.rds)
 	data.table::fwrite(geo_xia_merge_log, file.geo.log, sep = "\t", na = "")
 } else {
 	file.geo.log <- "geo_xia_merge.log"
@@ -1151,7 +1174,7 @@ if (run_dx_cv) {
 		})
 		names(dx_cv_tables) <- names(dx_cv_files)
 		dx_cv_info <- list(status = "cached_oof", summary = file.path(dir_dx_cv, "cv_summary.csv"), dir = dir_dx_cv, tables = dx_cv_tables, generated_at = Sys.time())
-		saveRDS(dx_cv_info, file.dx.cv.rds)
+		ems120_save_rds_atomic(dx_cv_info, file.dx.cv.rds)
 		cat("Reused stratified 5-fold OOF validation:", dir_dx_cv, "\n")
 	} else {
 		ensure_ml_python()
@@ -1170,7 +1193,7 @@ if (run_dx_cv) {
 		})
 		names(dx_cv_tables) <- names(dx_cv_files)
 		dx_cv_info <- c(dx_cv_run, list(tables = dx_cv_tables, generated_at = Sys.time()))
-		saveRDS(dx_cv_info, file.dx.cv.rds)
+		ems120_save_rds_atomic(dx_cv_info, file.dx.cv.rds)
 	}
 	cat("MacBERT CV status:", as.character(dx_cv_info$status), "; summary:", as.character(dx_cv_info$summary), "; directory:", as.character(dx_cv_info$dir), "\n")
 } else {
@@ -1233,7 +1256,7 @@ if (!final.ready) {
 			apply_phone_luck_use() %>% apply_dx_type_use()
 		writexl::write_xlsx(dat1.list[[key]], file.year.xlsx)
 	}
-	saveRDS(dat1.list, file.dat.rds)
+	ems120_save_rds_atomic(dat1.list, file.dat.rds)
 }
 dat1.list <- lapply(dat1.list, function(d) apply_dx_type_use(apply_phone_luck_use(normalize_ems120_year_types(d))))
 write_dat_summary_log(dat1.list, file.dat.rds)
@@ -2154,38 +2177,10 @@ fig2d_config_file <- NA_character_
 fig2d_render_mode <- if (isTRUE(draw_3D_map)) geo.map.use else NA_character_
 py_quote <- function(x) paste0("r'", gsub("'", "\\\\'", gsub("\\\\", "/", x)), "'")
 check_fig2d_python <- function() {
-	pick_python <- function(paths) {
-		paths <- paths[nzchar(paths) & file.exists(paths)]
-		if (length(paths)) normalizePath(paths[1], winslash = "/", mustWork = TRUE) else NA_character_
-	}
 	if (!reticulate::py_available(initialize = FALSE)) {
-		py_ai <- switch(
-			Sys.info()[["sysname"]],
-			Windows = pick_python(c(
-				Sys.getenv("RETICULATE_PYTHON", ""),
-				file.path(Sys.getenv("USERPROFILE"), "anaconda3", "envs", "ai", "python.exe"),
-				file.path(Sys.getenv("USERPROFILE"), "miniconda3", "envs", "ai", "python.exe"),
-				"C:/ProgramData/anaconda3/envs/ai/python.exe",
-				"C:/ProgramData/miniconda3/envs/ai/python.exe",
-				"D:/anaconda3/envs/ai/python.exe",
-				"D:/miniconda3/envs/ai/python.exe"
-			)),
-			Linux = pick_python(c(
-				Sys.getenv("RETICULATE_PYTHON", ""),
-				file.path(Sys.getenv("HOME"), "anaconda3", "envs", "ai", "bin", "python"),
-				file.path(Sys.getenv("HOME"), "miniconda3", "envs", "ai", "bin", "python"),
-				"/home/huangj/anaconda3/envs/ai/bin/python",
-				"/home/jiehuang001/anaconda3/envs/ai/bin/python"
-			)),
-			Darwin = pick_python(c(
-				Sys.getenv("RETICULATE_PYTHON", ""),
-				file.path(Sys.getenv("HOME"), "anaconda3", "envs", "ai", "bin", "python"),
-				file.path(Sys.getenv("HOME"), "miniconda3", "envs", "ai", "bin", "python")
-			)),
-			NA_character_
-		)
-		if (is.na(py_ai) || !nzchar(py_ai)) {
-			stop("geo.map.use requires Fig2d rendering, but conda env 'ai' Python could not be found. Activate conda env 'ai' or set RETICULATE_PYTHON.", call. = FALSE)
+		py_ai <- Sys.getenv("RETICULATE_PYTHON", unset = "")
+		if (!nzchar(py_ai) || !file.exists(py_ai)) {
+			stop("Fig2d needs the selected environment's Python. Run ems120.sh or set RETICULATE_PYTHON before starting R.", call. = FALSE)
 		}
 		reticulate::use_python(py_ai, required = TRUE)
 	}
@@ -2207,32 +2202,10 @@ check_fig2d_python <- function() {
 }
 
 find_fig2_kepler_python <- function() {
-	py_launcher_python <- function(version = "-3.12") {
-		py_launcher <- unname(Sys.which("py"))
-		if (is.na(py_launcher) || !nzchar(py_launcher)) return(character())
-		out <- suppressWarnings(system2(py_launcher, c(version, "-c", shQuote("import sys; print(sys.executable)")), stdout = TRUE, stderr = FALSE))
-		status <- attr(out, "status")
-		if (is.null(status)) status <- 0L
-		if (identical(status, 0L)) out[nzchar(out)] else character()
-	}
-	candidates <- c(
-		Sys.getenv("FIG2D_PYTHON", ""),
-		Sys.getenv("RETICULATE_PYTHON", ""),
-		py_launcher_python("-3.12"),
-		file.path(Sys.getenv("LOCALAPPDATA", unset = ""), "Programs", "Python", "Python312", "python.exe"),
-		file.path(Sys.getenv("LOCALAPPDATA", unset = ""), "Programs", "Python", "Python314", "python.exe"),
-		file.path(Sys.getenv("USERPROFILE", unset = ""), "anaconda3", "envs", "ai", "python.exe"),
-		file.path(Sys.getenv("USERPROFILE", unset = ""), "miniconda3", "envs", "ai", "python.exe"),
-		"C:/ProgramData/anaconda3/envs/ai/python.exe",
-		"C:/ProgramData/miniconda3/envs/ai/python.exe",
-		"D:/anaconda3/envs/ai/python.exe",
-		"D:/miniconda3/envs/ai/python.exe",
-		file.path(Sys.getenv("HOME", unset = ""), "anaconda3", "envs", "ai", "bin", "python"),
-		file.path(Sys.getenv("HOME", unset = ""), "miniconda3", "envs", "ai", "bin", "python"),
-		"/home/huangj/anaconda3/envs/ai/bin/python",
-		"/home/jiehuang001/anaconda3/envs/ai/bin/python",
-		unname(Sys.which(c("python3.12", "python3", "python")))
-	)
+	# Preserve an explicit rendering interpreter; otherwise use the same Conda
+	# environment selected for R/reticulate, never an unrelated system Python.
+	candidates <- Sys.getenv("FIG2D_PYTHON", unset = "")
+	if (!nzchar(candidates)) candidates <- Sys.getenv("RETICULATE_PYTHON", unset = "")
 	candidates <- unique(normalizePath(candidates[nzchar(candidates) & file.exists(candidates)], winslash = "/", mustWork = FALSE))
 	failures <- character()
 	for (py in candidates) {
@@ -2250,7 +2223,7 @@ find_fig2_kepler_python <- function() {
 }
 
 write_fig2d_keplergl_files <- function(dat, data_file, py_file, config_file, html_file, width = 1600L, height = 900L) {
-	if (!requireNamespace("jsonlite", quietly = TRUE)) pacman::p_load(jsonlite)
+	ems120_require_packages("jsonlite")
 	data_id <- "house"
 	empty_object <- structure(list(), names = character(0))
 	color_range <- list(
@@ -2377,9 +2350,7 @@ write_fig2_satellite_canvas <- function(dat, file, width = 1600L, height = 900L,
 	show_note = TRUE,
 	tile_pad = 1L,
 	map_alpha = 1, bar_height_scale = 1.05, bar_width_scale = 1.70) {
-	if (!requireNamespace("jsonlite", quietly = TRUE)) pacman::p_load(jsonlite)
-	if (!requireNamespace("base64enc", quietly = TRUE)) pacman::p_load(base64enc)
-	if (!requireNamespace("jpeg", quietly = TRUE)) pacman::p_load(jpeg)
+	ems120_require_packages(c("jsonlite", "base64enc", "jpeg"))
 	html_escape <- function(x) {
 		x <- gsub("&", "&amp;", x, fixed = TRUE)
 		x <- gsub("<", "&lt;", x, fixed = TRUE)
@@ -2623,8 +2594,7 @@ write_fig2d_canvas_fallback <- function(dat, file, width = 1600L, height = 900L,
 }
 write_fig2d_deckgl_html <- function(dat, file, width = 1600L, height = 900L,
 	tile_cache_dir = NULL, mosaic_stem = "Fig2c", tile_pad = 1L) {
-	if (!requireNamespace("jsonlite", quietly = TRUE)) pacman::p_load(jsonlite)
-	if (!requireNamespace("base64enc", quietly = TRUE)) pacman::p_load(base64enc)
+	ems120_require_packages(c("jsonlite", "base64enc"))
 	html_escape <- function(x) {
 		x <- gsub("&", "&amp;", x, fixed = TRUE)
 		x <- gsub("<", "&lt;", x, fixed = TRUE)
@@ -2790,8 +2760,7 @@ write_fig2d_deckgl_html <- function(dat, file, width = 1600L, height = 900L,
 }
 write_fig2d_deckgl_hex_html <- function(dat, file, width = 1600L, height = 900L,
 	tile_cache_dir = NULL, mosaic_stem = "Fig2d", tile_pad = 1L) {
-	if (!requireNamespace("jsonlite", quietly = TRUE)) pacman::p_load(jsonlite)
-	if (!requireNamespace("base64enc", quietly = TRUE)) pacman::p_load(base64enc)
+	ems120_require_packages(c("jsonlite", "base64enc"))
 	html_escape <- function(x) {
 		x <- gsub("&", "&amp;", x, fixed = TRUE)
 		x <- gsub("<", "&lt;", x, fixed = TRUE)
@@ -3066,7 +3035,7 @@ render_fig2_html_png <- function(html_file, png_file, width, height, wait_ms = 5
 		paste0("--screenshot=", png_file2),
 		fig2_file_url(html_file, chrome)
 	)
-	out <- suppressWarnings(system2(chrome, args, stdout = TRUE, stderr = TRUE))
+	out <- suppressWarnings(system2(chrome, shQuote(args), stdout = TRUE, stderr = TRUE))
 	if (!file.exists(png_file) || is.na(file.info(png_file)$size) || file.info(png_file)$size < 50000) {
 		stop("Chrome did not create a usable Fig2c PNG: ", paste(out, collapse = " | "), call. = FALSE)
 	}
@@ -3075,7 +3044,7 @@ render_fig2_html_png <- function(html_file, png_file, width, height, wait_ms = 5
 render_fig2_satellite_png <- function(dat, png_file, width, height,
 	tile_cache_dir, mosaic_stem = "Fig2c", show_legend = TRUE, show_note = TRUE,
 	map_alpha = 0.30, bar_height_scale = 1.05, bar_width_scale = 1.70) {
-	if (!requireNamespace("jpeg", quietly = TRUE)) pacman::p_load(jpeg)
+	ems120_require_packages("jpeg")
 	z <- 10L
 	tile_size <- 256L
 	world <- tile_size * 2 ^ z
@@ -3185,7 +3154,7 @@ make_fig2c_panel <- function(img = NULL) {
 		)
 }
 make_fig2c_image_panel <- function(png_file) {
-	if (!requireNamespace("png", quietly = TRUE)) pacman::p_load(png)
+	ems120_require_packages("png")
 	img <- png::readPNG(png_file, native = FALSE)
 	make_fig2c_panel(img)
 }
@@ -4264,14 +4233,14 @@ fig4d_smooth_circ <- function(x, k = 3L) {
 	})
 }
 
-yin_path_candidates <- c(file.path(dir0, "files", "YinYang.png"), "YinYang.png", file.path(dir0, "files", "YinYang_clean.png"), "YinYang_clean.png")
+yin_path_candidates <- c(file.path(dir.files, "YinYang.png"), "YinYang.png", file.path(dir.files, "YinYang_clean.png"), "YinYang_clean.png")
 yin_path <- yin_path_candidates[file.exists(yin_path_candidates)][1]
 yin_img <- NULL
 yin_center_radius <- 0.315
 if (!is.na(yin_path) && length(yin_path) == 1 && file.exists(yin_path)) {
 	yin_img <- read_center_image(yin_path, circle_alpha = TRUE)
 } else {
-	warning("YinYang image not found. Put YinYang_clean.png in the working directory or D:/files/.")
+	warning("YinYang image not found. Put YinYang_clean.png in the working directory or EMS120_FILES_DIR: ", dir.files)
 }
 
 fig4D_circle_dat <- fig_hourly_all %>%
@@ -5521,9 +5490,9 @@ writexl::write_xlsx(list(
 figS9c_dxs <- dxs.vip
 figS9c_years <- 2018:2023
 figS9_yin_path_candidates <- c(
-	file.path(dir0, "files", "YinYang.png"),
+	file.path(dir.files, "YinYang.png"),
 	"YinYang.png",
-	file.path(dir0, "files", "YinYang_clean.png"),
+	file.path(dir.files, "YinYang_clean.png"),
 	"YinYang_clean.png"
 )
 figS9_yin_path <- figS9_yin_path_candidates[file.exists(figS9_yin_path_candidates)][1]
@@ -5532,7 +5501,7 @@ figS9_yin_center_radius <- 0.315
 if (!is.na(figS9_yin_path)) {
 	figS9_yin_img <- read_center_image(figS9_yin_path, circle_alpha = TRUE)
 } else {
-	warning("YinYang image not found. Put YinYang_clean.png in the working directory or D:/files/.")
+	warning("YinYang image not found. Put YinYang_clean.png in the working directory or EMS120_FILES_DIR: ", dir.files)
 }
 figS9c_smooth_circ <- function(x, k = 3L) {
 	x <- as.numeric(x)

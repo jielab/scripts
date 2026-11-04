@@ -334,7 +334,7 @@ ukb_rebuild_phewas <- function(code_file,date_file,roster_file,output_dir,
 }
 
 ukb_phewas_roster_cli <- function(args) {
-  opt <- list("dir-in"=Sys.getenv("BMONTH_INDIR","/mnt/d/ukb"),
+  opt <- list("dir-in"=Sys.getenv("BMONTH_INDIR","/mnt/f/ukb"),
               "dir-out"="",replace=FALSE)
   if(any(args %in% c("-h","--help"))) {
     cat("Usage: phewas.R roster --dir-in DIR --dir-out DIR [--replace]\n",
@@ -349,7 +349,7 @@ ukb_phewas_roster_cli <- function(args) {
     opt[[substring(args[i],3)]] <- args[i+1L];i<-i+2L
   }
   if(!nzchar(opt[["dir-out"]]))opt[["dir-out"]]<-file.path(
-    Sys.getenv("BMONTH_OUTDIR","/mnt/f/analysis/bmonth"),"phewas")
+    Sys.getenv("BMONTH_OUTDIR","/mnt/d/analysis/bmonth"),"phewas")
   script <- sub("^--file=","",commandArgs(FALSE)[grepl("^--file=",commandArgs(FALSE))])[1]
   fdir <- dirname(normalizePath(script,mustWork=TRUE))
   if(!requireNamespace("data.table",quietly=TRUE))stop("Install data.table")

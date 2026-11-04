@@ -34,7 +34,7 @@ Main options:
     --primary ukb|ckb|decode|scot  Initial report selection [ukb]
     --dir-gwas-root DIR    GWAS input [/mnt/f/gwas/prot]
     --protein-bed FILE Protein intervals [/mnt/f/gwas/prot/pheno.bed]
-    --dir-out DIR  Results [/mnt/f/analysis/phole]
+    --dir-out DIR  Results [/mnt/d/analysis/phole]
     --train-frac N  Training fraction [0.80]
     --device auto|cpu|cuda  auto prefers available CUDA
     -h, --help  Show options and examples below
@@ -42,11 +42,11 @@ Main options:
 Example:
     cd /mnt/d/scripts/0LOCAL/phole
 
-    ./phole.sh cross-check --dir-out /mnt/f/analysis/phole
-    # Results: /mnt/f/analysis/phole/cross-check/cross-check.html
+    ./phole.sh cross-check --dir-out /mnt/d/analysis/phole
+    # Results: /mnt/d/analysis/phole/cross-check/cross-check.html
 
     ./phole.sh all --gwas-root /mnt/f/gwas/prot --protein-bed /mnt/f/gwas/prot/pheno.bed \
-      --out /mnt/f/analysis/phole --train-frac 0.80 --device auto
+      --out /mnt/d/analysis/phole --train-frac 0.80 --device auto
 
     --device auto|cpu|cuda: auto prefers available CUDA; explicit cuda requires a working GPU.
 
@@ -358,7 +358,7 @@ awk -v x="$protein_alpha" 'BEGIN{exit !(x+0>0 && x+0<1)}' || {
 
 [[ -z "$gwas_root" ]] && gwas_root="/mnt/f/gwas/prot"
 [[ -z "$protein_bed" ]] && protein_bed="/mnt/f/gwas/prot/pheno.bed"
-[[ -z "$out" ]] && out="/mnt/f/analysis/phole"
+[[ -z "$out" ]] && out="/mnt/d/analysis/phole"
 
 log() { echo "[$(date '+%F %T')] $*" >&2; }
 need_file() { [[ -s "$1" ]] || {

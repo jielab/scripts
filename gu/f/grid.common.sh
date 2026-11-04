@@ -913,7 +913,7 @@ grid_pipeline() (
 		# per-block CUDA policy when it starts subsequent chromosomes.
 		export GRID_CSX_GPU_MIN_BLOCK=${GRID_CSX_GPU_MIN_BLOCK:-2048}
 		export GRID_CSX_BLAS_THREADS=${GRID_CSX_BLAS_THREADS:-1}
-		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-/scratch/${DATE_SCRATCH:-2026-11-03}/sph-huangj/analysis/gu/cache}/csx-ld"}
+		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-${ANALYSIS_ROOT:-/work/sph-huangj/analysis}/gu/cache}/csx-ld"}
 		export GRID_CSX_LD_CACHE_GIB=${GRID_CSX_LD_CACHE_GIB:-16}
 		[[ $GRID_CSX_GPU_MIN_BLOCK =~ ^[0-9]+$ ]] || _grid_die 'GRID_CSX_GPU_MIN_BLOCK must be a nonnegative integer'
 		[[ $GRID_CSX_BLAS_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die 'GRID_CSX_BLAS_THREADS must be a positive integer'

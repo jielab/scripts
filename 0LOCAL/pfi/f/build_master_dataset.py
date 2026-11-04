@@ -353,7 +353,7 @@ def main():
 	ap.add_argument("--pubmed_glob", required=True)
 	ap.add_argument("--pmc_glob", required=True)
 	ap.add_argument("--out", required=True)
-	ap.add_argument("--work_dir", default="/mnt/f/analysis/pfi/work/parquet/06_build")
+	ap.add_argument("--work_dir", default="/mnt/d/analysis/pfi/work/parquet/06_build")
 	ap.add_argument("--temp_dir", default=None)
 	ap.add_argument("--jobs", type=int, default=2)
 	ap.add_argument("--threads", type=int, default=4)

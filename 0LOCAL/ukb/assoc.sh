@@ -81,7 +81,7 @@ while (($#)); do
 done
 set -- "${filtered_args[@]}"
 phedir=${phedir:-$DIR_UKB}
-outdir=${outdir:-${ANALYSIS_ROOT:-/mnt/f/analysis}/ukb/assoc}
+outdir=${outdir:-${ANALYSIS_ROOT:-/mnt/d/analysis}/ukb/assoc}
 script_dir=${script_dir:-$SCRIPTS_LOCAL_ROOT}
 assoc_R=${assoc_R:-$this_dir/f/assoc.R}
 path_args=(--data-root "$dir0" --phenotype-dir "$phedir" --output-dir "$outdir" --script-dir "$script_dir" --r-script "$assoc_R")

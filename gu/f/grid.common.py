@@ -38,7 +38,7 @@ write_result_workbook = _result_io.write_workbook
 def cache_directory(path):
 	path = Path(path).resolve()
 	key = hashlib.sha256(str(path).encode()).hexdigest()[:16]
-	return Path(os.environ.get("GRID_CACHE_ROOT", "/scratch/" + os.environ.get("DATE_SCRATCH", "2026-10-31") + "/sph-huangj/analysis/gu/cache")) / "tables" / key / path.name
+	return Path(os.environ.get("GRID_CACHE_ROOT", str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "gu/cache"))) / "tables" / key / path.name
 
 
 # 🚩 prepare-sumstats: prepare_sumstats

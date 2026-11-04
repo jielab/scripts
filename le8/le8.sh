@@ -54,13 +54,17 @@ Modules:
     Default: c1_correlate -> C2 -> C3 -> C4 -> C5
 
 Main options:
-    --submit local|hpc   Local DAG execution or LSF submission (auto detected)
+    --submit local|hpc   Local DAG execution or LSF submission (default hpc)
     --jobs-N N          Concurrent local jobs / maximum active LSF submissions
     --wait TRUE|FALSE   Wait for submitted HPC jobs [FALSE]
     --plan-only         Write .cmd DAG without analysis/submission
     --plan-dir DIR      Persistent plans/logs [ANALYSIS_ROOT/le8/logs/workflows]
     --resume-plan FILE  Continue submission/waiting for the same plan (no failed-job retry)
-    --queue NAME --gpu-queue NAME --hours N  LSF resources [ser,gpu,72]
+    --queue NAME --gpu-queue NAME --hours N  LSF resources [33,4a100-40,72]
+    --gpu-cores N       CPU slots for GPU stages [20, at least --cores]
+    --gpu-memory-limit-gb N  GPU-node host RAM cap in GiB [160; not GPU VRAM]
+    --eigh-backend auto|cpu|cuda  C2 eigendecomposition [auto; HPC requests GPU]
+    --run-gpu-coloc TRUE|FALSE   Explicit C3 GPU choice, overriding --device
     --Y CSV, --trait CSV  Outcomes [cvd_cad,ra]
     --biom CSV            Omic layers [prot,met]
     --dir-analysis-root DIR   Results [${ANALYSIS_ROOT}/le8]
@@ -76,6 +80,8 @@ Main options:
                           Historical sensitivities: abm_case_preserving,abm_profile,
                           abm_prevalent,abm_legacy,molecular_deviation,abm_deep
     --device NAME         [auto], cpu or cuda; independent of scientific method
+                          HPC auto schedules C2 eigh, C3 and selected abm_deep on a GPU.
+                          Primary abm_count/glmnet/LightGBM remain CPU methods.
     --config FILE         C1 parameter file [config/c1_methods.json]
     --history-config FILE Historical-case assumptions [config/c1_history.json]
     --association MODE    [run], auto or skip the association analysis
@@ -200,7 +206,7 @@ le8_main() {
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
-	export UKB_PHE=${UKB_PHE:-${DIR_UKB:-${DIR_DAT:-/mnt/d}/ukb}}
+	export UKB_PHE=${UKB_PHE:-${DIR_UKB:-${DIR_DATA:-/mnt/f}/ukb}}
 	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-${DIR_DATA:-/mnt/f}/gen/ukb/37/typ/ukb_rel.dat}
 	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}
 	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}

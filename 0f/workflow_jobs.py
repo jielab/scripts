@@ -159,16 +159,23 @@ def write_plan(jobs, out_dir, *, mode="hpc", name="workflow", common_env=None):
     for j in ordered:
         r = j["resources"]
         minutes = math.ceil(r["hours"] * 60)
-        mem = math.ceil(r["memory_gib"] / r["cores"] if r["memory_scope"] == "task" else r["memory_gib"])
-        suffix = "/host" if r["memory_scope"] == "host" else ""
+        if r["memory_scope"] == "task":
+            # Round per-slot MiB, not GiB: 160 GiB / 39 slots must not
+            # become 5 GiB/slot (195 GiB) on a 192 GiB node.
+            mem = math.ceil(r["memory_gib"] * 1024 / r["cores"])
+            reservation = f"{mem}MB/task"
+        else:
+            mem = math.ceil(r["memory_gib"])
+            suffix = "/host" if r["memory_scope"] == "host" else ""
+            reservation = f"{mem}GB{suffix}"
         lines = ["#!/usr/bin/env bash", f"#BSUB -J {name}.{j['key']}", f"#BSUB -q {r['queue']}",
                  f"#BSUB -n {r['cores']}", f"#BSUB -W {minutes//60}:{minutes%60:02d}",
                  f"#BSUB -M {math.ceil(r['memory_gib'])}GB",
-                 f'#BSUB -R "span[hosts=1] rusage[mem={mem}GB{suffix}]"',
+                 f'#BSUB -R "span[hosts=1] rusage[mem={reservation}]"',
                  f"#BSUB -o {shlex.quote(str(root / 'logs' / (j['key'] + '.%J.out')))}",
                  f"#BSUB -e {shlex.quote(str(root / 'logs' / (j['key'] + '.%J.err')))}"]
         if r["gpus"]:
-            gpu = f"num={r['gpus']}:mode=exclusive_process"
+            gpu = f"num={r['gpus']}/host:mode=exclusive_process:j_exclusive=yes"
             if r.get("gpu_model"):
                 gpu += f":gmodel={r['gpu_model']}"
             lines.append(f'#BSUB -gpu "{gpu}"')

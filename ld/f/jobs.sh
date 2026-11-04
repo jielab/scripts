@@ -7,15 +7,40 @@ read -r -a chroms <<< "$("$PYTHON" -c 'import os,sys; sys.path.insert(0,sys.argv
 mkdir -p "$root"
 queue="${LD_QUEUE:-${HPC_CPU_QUEUE:-33}}"
 slots=$((THREADS + 1))
+[[ $LD_MEMORY_GIB =~ ^[1-9][0-9]*$ && $LD_WALLTIME =~ ^[1-9][0-9]*:[0-5][0-9]$ ]] || {
+    echo 'LD_MEMORY_GIB must be positive integer GiB; LD_WALLTIME must be HHH:MM.' >&2; exit 2;
+}
+(( MEMORY_MB <= LD_MEMORY_GIB * 1024 )) || {
+    echo 'PLINK MEMORY_MB exceeds the total LD_MEMORY_GIB allocation.' >&2; exit 2;
+}
+if [[ $submit == hpc ]]; then
+    queue=$("$PYTHON" - "$script_dir/../0f" "$queue" "$slots" "$LD_MEMORY_GIB" "$LD_WALLTIME" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from qiming_resources import cpu_queue
+hours, minutes = map(int, sys.argv[5].split(':'))
+try:
+    print(cpu_queue(sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), hours + minutes / 60))
+except ValueError as exc:
+    raise SystemExit(str(exc))
+PY
+    )
+fi
 
 write_header() {
+    local header_slots=$slots header_memory=$LD_MEMORY_GIB header_wall=$LD_WALLTIME
+    # Merge reads the completed BED/JSON outputs; it does not compute LD.
+    if [[ ${task_label:-merge} == merge ]]; then
+        header_slots=1; header_memory=4; header_wall=1:00
+    fi
     printf '#!/bin/bash -l\n'
-    printf '#BSUB -q %s\n#BSUB -n %s\n#BSUB -W 144:00\n' "$queue" "$slots"
-    printf '#BSUB -R "span[hosts=1] rusage[mem=%sGB/host]"\n' "$MEMORY_DEFAULT_GIB"
+    printf '#BSUB -q %s\n#BSUB -n %s\n#BSUB -W %s\n' "$queue" "$header_slots" "$header_wall"
+    printf '#BSUB -M %sGB\n' "$header_memory"
+    printf '#BSUB -R "span[hosts=1] rusage[mem=%sGB/host]"\n' "$header_memory"
     printf '#BSUB -J ld%s.%s\n' "$GRCH" "${task_label:-merge}"
     printf '#BSUB -o "%s/%s.%%J.LOG"\n#BSUB -e "%s/%s.%%J.ERR"\n' "$root" "${task_label:-merge}" "$root" "${task_label:-merge}"
     printf 'set -euo pipefail\ncd %q\n' "$script_dir"
-    for name in DIR_DAT DIR_BIG DIR_TMP DIR_DATA DIR_SCRATCH DIR_GEN ANALYSIS_ROOT DATE_SCRATCH GRCH INPUT_FORMAT PFILE_DIR VCF_DIR PANEL PLINK2 THREADS MEMORY_MB D_GRID_KB MAX_D_KB AUTO_EXTEND_D STABLE_CONFIRMATIONS REFERENCE_COUNT_POLICY REFERENCE_MAX_REL_DEVIATION COINCIDENT_POLICY LD_STORAGE MIN_FREE_GB LD_TARGETS; do
+    for name in DIR_WORK DIR_DAT DIR_BIG DIR_TMP DIR_DATA DIR_SCRATCH DIR_GEN DIR_SOFTWARE ANALYSIS_ROOT DATE_SCRATCH GRCH INPUT_FORMAT PFILE_DIR VCF_DIR PANEL PLINK2 THREADS MEMORY_MB LD_MEMORY_GIB LD_WALLTIME LD_PYTHON LD_CONDA_SH LD_INPUT_MANIFEST D_GRID_KB MAX_D_KB AUTO_EXTEND_D STABLE_CONFIRMATIONS REFERENCE_COUNT_POLICY REFERENCE_MAX_REL_DEVIATION COINCIDENT_POLICY LD_STORAGE MIN_FREE_GB LD_TARGETS; do
         if [[ -v "$name" ]]; then printf 'export %s=%q\n' "$name" "${!name}"; fi
     done
     printf 'export PARALLEL_CHROMS=1\nexport LD_RESUME_DIR=\n'

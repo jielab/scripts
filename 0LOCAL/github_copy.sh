@@ -44,7 +44,7 @@ import time
 import zipfile
 from xml.etree import ElementTree as ET
 
-SOURCE = Path(os.environ.get('GITHUB_COPY_SOURCE_ROOT', '/mnt/f/analysis'))
+SOURCE = Path(os.environ.get('GITHUB_COPY_SOURCE_ROOT', '/mnt/d/analysis'))
 DEST = Path(os.environ.get('GITHUB_COPY_DEST_ROOT', '/mnt/d/github/analysis'))
 MANIFEST_SUFFIX = '.files.lst'
 CHECK_NAMES = ('size', 'type', 'id')
@@ -1022,7 +1022,7 @@ def main():
     PROJECT[,PROJECT...]  Select sharing results, then rebuild selected destination projects
 
 Main options:
-    --dir DIR  Source root [GITHUB_COPY_SOURCE_ROOT or /mnt/f/analysis]
+    --dir DIR  Source root [GITHUB_COPY_SOURCE_ROOT or /mnt/d/analysis]
     --dat LIST  Project folders, comma-separated; positional names also accepted
     --folder LIST  Only these subfolders within each project, comma-separated
     --check LIST  Checks to enable, comma-separated [size,type,id]
@@ -1039,10 +1039,10 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    ./github_copy.sh --dir /mnt/f/analysis --dat grid --folder abm,csx,disco,final
+    ./github_copy.sh --dir /mnt/d/analysis --dat grid --folder abm,csx,disco,final
     ./github_copy.sh --dat allele3 --dry-run
     ./github_copy.sh --dat allele3 --check size,type --dry-run
-    ./github_copy.sh --dir /mnt/f/analysis/ --dat gu,ld
+    ./github_copy.sh --dir /mnt/d/analysis/ --dat gu,ld
     ./github_copy.sh --dat allele3""")
 		return
 	parser = argparse.ArgumentParser(prog='github_copy.sh', add_help=False, allow_abbrev=False)

@@ -183,10 +183,10 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                 roots = plan["provenance"]["roots"]
                 self.assertEqual(roots["data"], "/work/sph-huangj/data")
                 self.assertEqual(roots["work"], "/work/sph-huangj")
-                self.assertEqual(roots["analysis"], f"/scratch/{date}/sph-huangj/analysis/allele3")
+                self.assertEqual(roots["analysis"], "/work/sph-huangj/analysis/allele3")
                 self.assertEqual(windows["source"], "/work/sph-huangj/data/annot/allele3/allofus/hg38_allofus.txt.gz")
                 for job in plan["jobs"]:
-                    self.assertEqual(job["env"]["DIR_SCRATCH"], f"/scratch/{date}/sph-huangj")
+                    self.assertEqual(job["env"]["DIR_SCRATCH"], "/work/sph-huangj")
                     self.assertEqual(job["env"]["ALLELE_VCF_DIR"], "/work/sph-huangj/data/annot/gnomad/sites")
                     self.assertEqual(job["env"]["ALLELE_ARCHAIC_ROOT"], "/work/sph-huangj/data/gen")
                     self.assertEqual(job["argv"][0], "/work/sph-huangj/.conda/envs/allele3-evolution/bin/python")
@@ -227,6 +227,25 @@ class BatchWorkflowsIntegration(unittest.TestCase):
         self.assertEqual(json.loads(state.read_text())["bsub_n"], 4)
         self.assertEqual({k:r["job_id"] for k,r in first["jobs"].items()},
                          {k:r["job_id"] for k,r in second["jobs"].items()})
+
+    def test_saved_worker_preserves_super_roots_and_category_override_in_fresh_shell(self):
+        source = self.path / "source.gz"
+        os.mkfifo(source)
+        jobs = self.path / "jobs"
+        roots = {"DIR_DAT":str(self.path / "small data"), "DIR_BIG":str(self.path / "big data"),
+                 "DIR_TMP":str(self.path / "temporary"), "DIR_ANNOT":str(self.path / "special annotation")}
+        self.run_ok(["bash", ENTRY, "batch", "allofus", "--submit", "hpc", "--write-cmd",
+            "--source", source, "--chromosomes", "1", "--window-bp", "250000000",
+            "--dir-dat", roots["DIR_DAT"], "--dir-big", roots["DIR_BIG"], "--dir-tmp", roots["DIR_TMP"],
+            "--out", self.path / "out", "--job-dir", jobs], {**self.shell_env(), "DIR_ANNOT":roots["DIR_ANNOT"]})
+        plan = json.loads((jobs / "plan.json").read_text())
+        environment = plan["jobs"][0]["env"]
+        for key, value in roots.items():
+            self.assertEqual(environment[key], value)
+        script = 'source "$1"\nprintf "%s\\n" "$DIR_DAT" "$DIR_BIG" "$DIR_TMP" "$DIR_ANNOT" "$DIR_FILES"'
+        result = self.run_ok(["bash", "-c", script, "fresh-worker", actual_os_config()],
+            {**environment, "submit":"hpc", "SUBMIT":"hpc", "PATH":os.environ["PATH"], "HOME":os.environ["HOME"]})
+        self.assertEqual(result.stdout.strip().splitlines(), [*roots.values(), roots["DIR_DAT"] + "/files"])
 
     def test_local_small_allofus_pipeline_queries_extra_alts_na_indels_and_reuses_outputs(self):
         if shutil.which("bsub", path=self.env.get("PATH")):

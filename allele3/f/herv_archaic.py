@@ -548,7 +548,7 @@ def run(args):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gu-root", default="/mnt/f/analysis/gu")
+    p.add_argument("--gu-root", default="/mnt/d/analysis/gu")
     p.add_argument("--datasets", default="auto")
     p.add_argument("--references", default=",".join(DEFAULT_REFERENCES), help="Comma-separated tested references; historical .2013 references require explicit selection")
     p.add_argument("--module", choices=("auto", "ibdmix", "ibdmix-GPU"), default="auto")

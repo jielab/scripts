@@ -20,7 +20,13 @@ export PHE_F=${PHE_F:-$LE8_ROOT/../0f/phenotype.sh}
 export CIS_INDEX_FUNCTIONS=${CIS_INDEX_FUNCTIONS:-$LE8_ROOT/../gwas/f/format.f.sh}
 export CIS_INDEX_DATA_ROOT=${CIS_INDEX_DATA_ROOT:-$DIR_GWAS}
 export LE8_MEMORY_LIMIT_GB=${LE8_MEMORY_LIMIT_GB:-$MEMORY_DEFAULT_GIB}
-export RUN_GPU_COLOC=${RUN_GPU_COLOC:-FALSE}
+# C3 already has an explicit CUDA implementation. On HPC, auto scheduling
+# requests a GPU before execution; local remains CPU unless explicitly enabled.
+if [[ $submit == hpc ]]; then
+    export RUN_GPU_COLOC=${RUN_GPU_COLOC:-TRUE}
+else
+    export RUN_GPU_COLOC=${RUN_GPU_COLOC:-FALSE}
+fi
 export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-$LE8_ANALYSIS_ROOT/logs/runs}
 if [[ $submit == hpc ]]; then
     # Login profiles may export a TaiYi/SAIGE library; keep this runtime isolated.

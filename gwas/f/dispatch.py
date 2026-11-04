@@ -15,6 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / "0f"))
 import workflow_jobs as workflow
+from qiming_resources import cpu_queue
 
 
 def option(argv, name, default=None):
@@ -94,7 +95,7 @@ def build(entry, argv):
                           integer(os.environ.get("GWAS_EAF_THREADS", "2"), "GWAS_EAF_THREADS"),
                           integer(os.environ.get("GWAS_CLEAN_COMP_THREADS", "1"), "GWAS_CLEAN_COMP_THREADS"))
     required_cores = count * per_process
-    queue = os.environ.get("GWAS_QUEUE", os.environ.get("HPC_CPU_QUEUE", "33"))
+    queue = os.environ.get("GWAS_QUEUE", "auto" if mode == "hpc" else os.environ.get("HPC_CPU_QUEUE", "33"))
     cores = integer(os.environ.get("GWAS_CORES", str(max(40 if mode == "hpc" and queue == "short" else 1, required_cores))), "--cores")
     if cores < required_cores or (mode == "hpc" and queue == "short" and cores < 40):
         raise ValueError(f"--cores must cover {required_cores} concurrent worker threads; short requires >=40")
@@ -111,8 +112,13 @@ def build(entry, argv):
     memory = float(os.environ.get("GWAS_MEMORY_GIB", str(max(minimum_memory, int(os.environ.get("MEMORY_DEFAULT_GIB", "160" if mode == "hpc" else "32"))))))
     if memory < minimum_memory:
         raise ValueError(f"--memory-gb must be at least {minimum_memory} for the requested PLINK workers; reduce --jobs/--memory")
+    hours = float(os.environ.get("GWAS_HOURS", "120"))
+    if mode == "hpc":
+        queue = cpu_queue(queue, cores, memory, hours)
+    elif queue == "auto":
+        queue = os.environ.get("HPC_CPU_QUEUE", "33")
     resources = workflow.resources(dict(queue=queue, cores=cores, memory_gib=memory,
-                                       hours=float(os.environ.get("GWAS_HOURS", "120")),
+                                       hours=hours,
                                        memory_scope=os.environ.get("GWAS_MEMORY_SCOPE", "site_host")))
     if os.environ.get("GWAS_RUNTIME_ENV") and not Path(os.environ["GWAS_RUNTIME_ENV"]).is_file():
         raise ValueError("--runtime-env must be a readable file on the shared filesystem")

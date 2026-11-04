@@ -69,7 +69,7 @@ def publish(run, cache, traits):
 
 def main(argv=None):
     p = benchmark_parser("prsformer2", "Train or resume independent PRSformer2 traits sequentially, with separate prediction calibration.")
-    p.add_argument("--upstream-dir", default="/mnt/f/software/PRSformer")
+    p.add_argument("--upstream-dir", default="/mnt/d/software/PRSformer")
     p.add_argument("--check", action="store_true", help="Validate inputs and model runtime")
     args = p.parse_args(argv)
     config = benchmark_config(args)

@@ -30,6 +30,18 @@ spec.loader.exec_module(subject)
 
 class IntegrationTests(unittest.TestCase):
 
+    def test_gpu_locks_follow_visible_physical_device_not_remapped_ordinal(self):
+        source = (ROOT / "f/ibdmix.sh").read_text()
+        function = source[source.index("run_ibdmix_caller() ("):source.index("\nrun_population() {")]
+        script = function + '\nlog(){ :; }; ibdmix_bin=readlink; IBDMIX_BACKEND=cuda; run_ibdmix_caller /proc/self/fd/8\n'
+        def lock(visible, ordinal):
+            env = {**os.environ, "CUDA_VISIBLE_DEVICES":visible, "IBDMIX_GPU_DEVICE":str(ordinal)}
+            result = subprocess.run(["bash", "-c", script], env=env, check=True, text=True, capture_output=True)
+            return result.stdout.strip()
+        self.assertNotEqual(lock("0", 0), lock("1", 0))
+        self.assertEqual(lock("0,1", 1), lock("1", 0))
+        self.assertEqual(lock("GPU-fixture-A,GPU-fixture-B", 1), lock("GPU-fixture-B", 0))
+
     def test_axt_explicit_root_accepts_nested_and_flat_layout(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

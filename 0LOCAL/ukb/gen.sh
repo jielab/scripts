@@ -41,11 +41,11 @@ Example:
     ./gen.sh liftGen --dir-in /mnt/f/gen/ukb/37/imp --dir-out /mnt/f/gen/ukb/38/imp \
       --chain-file /mnt/d/files/liftOver/hg19ToHg38.over.chain.gz
     ./gen.sh pgs --input /mnt/f/gwas/bmi.ref --label bmi \
-      --pgs-pfile-dir /mnt/f/gen/ukb/38/imp --dir-out /mnt/f/analysis/ukb/pgs/bmi
+      --pgs-pfile-dir /mnt/f/gen/ukb/38/imp --dir-out /mnt/d/analysis/ukb/pgs/bmi
 
     # Independent SNP extraction from typed data; BED coordinates must match its build.
     ./gen.sh snp --dir-gen /mnt/f/gen/ukb/37 --data typ --snp-file /mnt/d/files/Wang_MY.bed \
-      --snp-file-type bed --dir-out /mnt/f/analysis/ukb --label Wang
+      --snp-file-type bed --dir-out /mnt/d/analysis/ukb --label Wang
 
     默认在前台执行。只有显式 --background 才将 pgs/snp/apoe 提交到 bsub。
 
@@ -410,7 +410,7 @@ run_pgs() {
 	: "${label:?ERROR: pgs requires --label LABEL}"
 	pgs_input=$(to_wsl_path "$pgs_input")
 	pgs_pfile_dir=$(to_wsl_path "${pgs_pfile_dir:-/mnt/f/gen/ukb/38/imp}")
-	dir_out=$(to_wsl_path "${dir_out:-${ANALYSIS_ROOT:-/mnt/f/analysis}/pgs/$label}")
+	dir_out=$(to_wsl_path "${dir_out:-${ANALYSIS_ROOT:-/mnt/d/analysis}/pgs/$label}")
 	pgs_threads=${pgs_threads:-1}
 	[[ -s "$pgs_input" ]] || {
 		echo "ERROR: PGS score input is missing/empty: $pgs_input" >&2

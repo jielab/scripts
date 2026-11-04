@@ -1,5 +1,5 @@
 # 🚩 Imports, paths, and shared inputs
-import os, json, time, re, math, gc, shutil
+import os, json, time, re, math, gc, shutil, tempfile, uuid
 from pathlib import Path
 from collections import Counter, defaultdict
 from contextlib import nullcontext
@@ -32,21 +32,40 @@ from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+def _positive_int(value, name):
+	try:
+		result = int(value)
+	except (TypeError, ValueError):
+		raise ValueError(f"{name} must be a positive integer") from None
+	if result < 1 or str(value).strip() != str(result):
+		raise ValueError(f"{name} must be a positive integer")
+	return result
+
+
+CPU_CORES = _positive_int(os.environ.get("EMS120_CORES", os.environ.get("WORKFLOW_CORES", "1")), "EMS120_CORES")
+REQUIRE_GPU = os.environ.get("EMS120_REQUIRE_GPU", "1").lower() not in {"0", "false", "no"}
+PHONE_GPU = os.environ.get("EMS120_PHONE_GPU", "required").lower()
+if PHONE_GPU not in {"required", "auto", "off"}:
+	raise ValueError("EMS120_PHONE_GPU must be required, auto, or off")
+if REQUIRE_GPU and not torch.cuda.is_available():
+	raise RuntimeError("EMS120 requires an allocated CUDA GPU; CUDA is unavailable in the selected Python runtime.")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+torch.set_num_threads(CPU_CORES)
 
 
 # 🚩 Paths and shared inputs
-DIR0 = Path("D:/" if os.name == "nt" else "/mnt/d")
+_LOCAL = os.environ.get("submit", os.environ.get("SUBMIT", "hpc")).lower() == "local" or os.name == "nt"
+_LOCAL_BIG = "F:/" if os.name == "nt" else "/mnt/f"
+_WORK_ROOT = Path(os.environ.get("DIR_WORK", "/mnt/d" if _LOCAL else "/work/sph-huangj"))
+_BIG_ROOT = Path(os.environ.get("DIR_BIG", _LOCAL_BIG if _LOCAL else str(_WORK_ROOT / "data")))
 ANALYSIS_DIR = Path(
 	os.environ.get(
 		"EMS120_ANALYSIS_DIR",
-		"F:/analysis/ems120" if os.name == "nt" else "/mnt/f/analysis/ems120",
+		str(Path(os.environ.get("ANALYSIS_ROOT", str(_BIG_ROOT / "analysis"))) / "ems120")
+		if _LOCAL else str(Path(os.environ.get("PERSISTENT_ANALYSIS_ROOT", str(_WORK_ROOT / "analysis"))) / "ems120"),
 	)
-)
-
-
-def path0(*parts):
-	return DIR0.joinpath(*parts).as_posix()
+).expanduser()
+MODEL_DIR = Path(os.environ.get("EMS120_MODEL_DIR", str(ANALYSIS_DIR / "ml"))).expanduser()
 
 
 def display_path(path):
@@ -67,8 +86,8 @@ def display_path(path):
 	return text
 
 
-BASE_MODEL_DIR = Path("F:/AI_model/hfl" if os.name == "nt" else "/mnt/f/AI_model/hfl").as_posix()
-OUTPUT_MODEL_DIR = ANALYSIS_DIR.joinpath("ml", "hfl").as_posix()
+BASE_MODEL_DIR = Path(os.environ.get("EMS120_BASE_MODEL_DIR", str(_BIG_ROOT / "AI_model" / "hfl"))).expanduser().as_posix()
+OUTPUT_MODEL_DIR = MODEL_DIR.joinpath("hfl").as_posix()
 TRAIN_FILE = ANALYSIS_DIR.joinpath("dat", "2019.train_dx.xlsx").as_posix()
 
 TRAINED_MODEL_FILE = Path(OUTPUT_MODEL_DIR, "model.safetensors").as_posix()
@@ -98,10 +117,10 @@ DX_TEXT_COLS = [
 LABEL_COL = "疾病类型"
 GEO_TEXT_COL = "地址"
 GEO_LABEL_COL = "地址类型"
-GEO_OUTPUT_MODEL_DIR = ANALYSIS_DIR.joinpath("ml", "hfl_geo").as_posix()
+GEO_OUTPUT_MODEL_DIR = MODEL_DIR.joinpath("hfl_geo").as_posix()
 GEO_TRAINED_MODEL_FILE = Path(GEO_OUTPUT_MODEL_DIR, "model.safetensors").as_posix()
 GEO_LABELS_FILE = Path(GEO_OUTPUT_MODEL_DIR, "labels.json").as_posix()
-PHONE_OUTPUT_MODEL_DIR = ANALYSIS_DIR.joinpath("ml", "phone_sco3").as_posix()
+PHONE_OUTPUT_MODEL_DIR = MODEL_DIR.joinpath("phone_sco3").as_posix()
 PHONE_SCO3_MODEL_FILE = Path(PHONE_OUTPUT_MODEL_DIR, "phone_sco3_best_model.pkl").as_posix()
 PHONE_SCO3_FEATURE_FILE = Path(PHONE_OUTPUT_MODEL_DIR, "phone_sco3_feature_names.pkl").as_posix()
 PHONE_SCO3_REPORT_FILE = Path(PHONE_OUTPUT_MODEL_DIR, "phone_sco3_model_report.csv").as_posix()
@@ -117,6 +136,9 @@ GEO_TOKENIZER = None
 GEO_MODEL = None
 GEO_LABEL2ID = None
 GEO_ID2LABEL = None
+_PHONE_CACHE = None
+_PHONE_CACHE_KEY = None
+_XGBOOST_GPU_CHECKED = False
 
 
 # 🚩 Logging
@@ -127,6 +149,67 @@ def ems_log(msg):
 def gpu_mem():
 	if torch is not None and torch.cuda.is_available():
 		ems_log(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+
+def _atomic_write(path, writer):
+	"""Publish a complete cache file after its writer has closed it."""
+	path = Path(path)
+	path.parent.mkdir(parents=True, exist_ok=True)
+	fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+	os.close(fd)
+	try:
+		writer(temporary)
+		with open(temporary, "rb") as handle:
+			os.fsync(handle.fileno())
+		os.replace(temporary, path)
+	finally:
+		if os.path.exists(temporary):
+			os.unlink(temporary)
+
+
+def _atomic_json(path, value):
+	_atomic_write(path, lambda temporary: Path(temporary).write_text(
+		json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"))
+
+
+def _publish_transformer(model, tokenizer, directory, metadata):
+	"""Stage the complete model bundle before replacing its public directory.
+
+	The EMS120 worker holds the model-directory lock for this whole operation.
+	If publication fails, an existing valid bundle is restored.
+	"""
+	target = Path(directory)
+	target.parent.mkdir(parents=True, exist_ok=True)
+	stage = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=target.parent))
+	backup = target.with_name(f".{target.name}.previous-{uuid.uuid4().hex}")
+	try:
+		model.save_pretrained(stage.as_posix())
+		tokenizer.save_pretrained(stage.as_posix())
+		for name, value in metadata.items():
+			_atomic_json(stage / name, value)
+		if target.exists():
+			os.replace(target, backup)
+		try:
+			os.replace(stage, target)
+		except BaseException:
+			if backup.exists() and not target.exists():
+				os.replace(backup, target)
+			raise
+		if backup.exists():
+			shutil.rmtree(backup)
+	finally:
+		if stage.exists():
+			shutil.rmtree(stage)
+
+
+def _transformer_files_ready(directory):
+	return all((Path(directory) / name).is_file() and (Path(directory) / name).stat().st_size > 0
+		for name in ("model.safetensors", "config.json", "tokenizer_config.json"))
+
+
+def _batch_size(kind, default):
+	name = f"EMS120_{kind}_BATCH_SIZE"
+	return _positive_int(os.environ.get(name, str(int(default))), name)
 
 
 # 🚩 Text preparation and transparent keyword comparator
@@ -758,7 +841,7 @@ def refresh_dx_cv_derived_outputs():
 	manifest["folds"] = DX_CV_FOLDS
 	manifest["bootstrap_replicates"] = DX_CV_BOOTSTRAP_N
 	manifest["derived_outputs_refreshed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-	manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+	_atomic_json(manifest_path, manifest)
 	ems_log("Refreshed CV bootstrap CIs and confidence calibration from existing OOF predictions")
 	return {
 		"status": "refreshed",
@@ -786,6 +869,8 @@ def run_dx_stratified_cv(force=False):
 		return {"status": "cached", "summary": DX_CV_SUMMARY, "dir": DX_CV_DIR}
 
 	Path(DX_CV_DIR).mkdir(parents=True, exist_ok=True)
+	# A manifest is the completion marker, never leave an old one over a partial rerun.
+	Path(DX_CV_MANIFEST).unlink(missing_ok=True)
 	df = _validate_training_df(pd.read_excel(TRAIN_FILE), require_cv=True).reset_index(drop=True)
 	labels = df[LABEL_COL].astype(str).tolist()
 	label_order = sorted(pd.Series(labels, dtype="string").unique().tolist())
@@ -948,13 +1033,13 @@ def run_dx_stratified_cv(force=False):
 		"training_file": display_path(TRAIN_FILE),
 		"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
 	}
-	Path(DX_CV_MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+	_atomic_json(DX_CV_MANIFEST, manifest)
 	ems_log(f"MacBERT CV finished; summary written to {display_path(DX_CV_SUMMARY)}")
 	return {"status": "completed", "summary": DX_CV_SUMMARY, "dir": DX_CV_DIR}
 
 
 def _dx_model_is_current():
-	if not os.path.exists(TRAINED_MODEL_FILE) or not os.path.exists(MODEL_META_FILE):
+	if not _transformer_files_ready(OUTPUT_MODEL_DIR) or not os.path.exists(MODEL_META_FILE):
 		return False
 	try:
 		meta = json.loads(Path(MODEL_META_FILE).read_text(encoding="utf-8"))
@@ -1002,18 +1087,10 @@ def train_dx_model():
 		report_to=[],
 	)
 	Trainer(model=MODEL, args=args, train_dataset=DxDataset(enc, y)).train()
-	MODEL.save_pretrained(OUTPUT_MODEL_DIR)
-	TOKENIZER.save_pretrained(OUTPUT_MODEL_DIR)
-	Path(KEYWORD_MODEL_FILE).write_text(json.dumps(KEYWORD_MODEL, ensure_ascii=False, indent=2), encoding="utf-8")
-	Path(LABELS_FILE).write_text(
-		json.dumps(
-			{"label2id": LABEL2ID, "id2label": {str(k): v for k, v in ID2LABEL.items()}}, ensure_ascii=False, indent=2
-		),
-		encoding="utf-8",
-	)
-	Path(MODEL_META_FILE).write_text(
-		json.dumps(
-			{
+	_publish_transformer(MODEL, TOKENIZER, OUTPUT_MODEL_DIR, {
+		"keyword_model.json": KEYWORD_MODEL,
+		"labels.json": {"label2id": LABEL2ID, "id2label": {str(k): v for k, v in ID2LABEL.items()}},
+		"model_meta.json": {
 				"dx_model_version": DX_MODEL_VERSION,
 				"keyword_model_version": KEYWORD_MODEL_VERSION,
 				"training_n": int(len(df)),
@@ -1021,12 +1098,8 @@ def train_dx_model():
 				"base_model_dir": display_path(BASE_MODEL_DIR),
 				"training_file": display_path(TRAIN_FILE),
 				"trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-			},
-			ensure_ascii=False,
-			indent=2,
-		),
-		encoding="utf-8",
-	)
+		},
+	})
 	ems_log(f"final MacBERT disease model saved: {display_path(OUTPUT_MODEL_DIR)}")
 
 
@@ -1056,7 +1129,7 @@ def load_model_once():
 		ems_log("keyword model absent/outdated; rebuilding from expert-reviewed workbook")
 		df = _validate_training_df(pd.read_excel(TRAIN_FILE), require_cv=False)
 		KEYWORD_MODEL = learn_keyword_model(df)
-		Path(KEYWORD_MODEL_FILE).write_text(json.dumps(KEYWORD_MODEL, ensure_ascii=False, indent=2), encoding="utf-8")
+		_atomic_json(KEYWORD_MODEL_FILE, KEYWORD_MODEL)
 
 	if os.path.exists(LABELS_FILE):
 		obj = json.loads(Path(LABELS_FILE).read_text(encoding="utf-8"))
@@ -1064,14 +1137,7 @@ def load_model_once():
 		ID2LABEL = {int(k): v for k, v in obj["id2label"].items()}
 	else:
 		LABEL2ID, ID2LABEL = _build_label_maps_from_trainfile()
-		Path(LABELS_FILE).write_text(
-			json.dumps(
-				{"label2id": LABEL2ID, "id2label": {str(k): v for k, v in ID2LABEL.items()}},
-				ensure_ascii=False,
-				indent=2,
-			),
-			encoding="utf-8",
-		)
+		_atomic_json(LABELS_FILE, {"label2id": LABEL2ID, "id2label": {str(k): v for k, v in ID2LABEL.items()}})
 	gpu_mem()
 
 
@@ -1203,19 +1269,84 @@ def make_reason(s):
 	return "; ".join(reasons)
 
 
+def _xgboost_is_cuda(model):
+	config = json.loads(model.get_booster().save_config())
+	return str(config.get("learner", {}).get("generic_param", {}).get("device", "")).startswith("cuda")
+
+
+def check_phone_gpu():
+	"""Verify the XGBoost runtime on the worker using synthetic, nonpatient data.
+
+	Torch seeing CUDA does not establish that XGBoost has CUDA support. Some
+	XGBoost builds silently fall back to CPU; inspect the trained booster too.
+	The returned device is local to CUDA_VISIBLE_DEVICES, never a physical ID.
+	"""
+	global _XGBOOST_GPU_CHECKED
+	if PHONE_GPU == "off":
+		return False
+	if _XGBOOST_GPU_CHECKED:
+		return True
+	try:
+		import xgboost
+		version = re.match(r"(\d+)\.(\d+)", xgboost.__version__)
+		if version is None or int(version.group(1)) < 2:
+			raise RuntimeError("XGBoost >= 2.0 is required for device=cuda")
+		if not torch.cuda.is_available():
+			raise RuntimeError("CUDA is unavailable in the selected Python runtime")
+		build = xgboost.build_info()
+		if not build.get("USE_CUDA"):
+			raise RuntimeError("This XGBoost build has no CUDA support")
+		probe = xgboost.XGBRegressor(
+			n_estimators=1, max_depth=1, n_jobs=CPU_CORES,
+			tree_method="hist", device="cuda", verbosity=0,
+		)
+		probe.fit(np.asarray([[0.0], [1.0], [2.0], [3.0]], dtype=np.float32),
+			np.asarray([0.0, 1.0, 2.0, 3.0], dtype=np.float32))
+		if not _xgboost_is_cuda(probe):
+			raise RuntimeError("XGBoost fell back to CPU despite device=cuda")
+		_XGBOOST_GPU_CHECKED = True
+		ems_log("Phone XGBoost CUDA smoke test passed on the allocated visible GPU")
+		return True
+	except Exception as exc:
+		if PHONE_GPU == "required":
+			raise RuntimeError(f"Phone GPU policy is required, but the XGBoost CUDA check failed: {exc}") from exc
+		ems_log(f"Phone GPU policy=auto: XGBoost CUDA unavailable; CPU candidates remain enabled: {exc}")
+		return False
+
+
+def _bound_phone_model(model):
+	"""Honor allocated CPUs and retarget a cached XGBoost without retraining it."""
+	params = model.get_params(deep=True)
+	updates = {name: CPU_CORES for name in params if name == "n_jobs" or name.endswith("__n_jobs")}
+	if type(model).__module__.split(".")[0] == "xgboost":
+		if check_phone_gpu():
+			updates.update(device="cuda")
+		else:
+			# device was introduced in 2.0. Old local CPU caches can still be used.
+			import xgboost
+			if int(xgboost.__version__.split(".")[0]) >= 2:
+				updates.update(device="cpu")
+			else:
+				updates.update(predictor="cpu_predictor")
+	if updates:
+		model.set_params(**updates)
+	return model
+
+
 def _candidate_models(random_state=12010):
+	use_xgboost_gpu = check_phone_gpu()
 	models = {
 		"elastic_net": Pipeline(
 			[
 				("scale", StandardScaler()),
-				("model", ElasticNetCV(l1_ratio=[0.1, 0.5, 0.9], cv=5, random_state=random_state, max_iter=20000)),
+				("model", ElasticNetCV(l1_ratio=[0.1, 0.5, 0.9], cv=5, random_state=random_state, max_iter=20000, n_jobs=CPU_CORES)),
 			]
 		),
 		"random_forest": RandomForestRegressor(
 			n_estimators=500,
 			min_samples_leaf=5,
 			random_state=random_state,
-			n_jobs=-1,
+			n_jobs=CPU_CORES,
 		),
 	}
 	try:
@@ -1226,11 +1357,11 @@ def _candidate_models(random_state=12010):
 			learning_rate=0.03,
 			num_leaves=31,
 			random_state=random_state,
-			n_jobs=-1,
+			n_jobs=CPU_CORES,
 			verbose=-1,
 		)
-	except Exception:
-		pass
+	except Exception as exc:
+		ems_log(f"Optional LightGBM CPU comparator unavailable: {exc}")
 	try:
 		from xgboost import XGBRegressor
 
@@ -1242,10 +1373,14 @@ def _candidate_models(random_state=12010):
 			colsample_bytree=0.9,
 			objective="reg:squarederror",
 			random_state=random_state,
-			n_jobs=-1,
+			n_jobs=CPU_CORES,
+			**({"tree_method": "hist", "device": "cuda"} if use_xgboost_gpu else {}),
 		)
-	except Exception:
-		pass
+	except Exception as exc:
+		if PHONE_GPU == "required":
+			raise RuntimeError("Required XGBoost GPU candidate could not be created") from exc
+		ems_log(f"Optional XGBoost comparator unavailable: {exc}")
+	ems_log(f"Phone candidate selection: GPU policy={PHONE_GPU}; CPU comparisons use at most {CPU_CORES} cores")
 	return models
 
 
@@ -1270,11 +1405,15 @@ def train_phone_sco3_ml(train_file, model_file, feature_file, report_file=None, 
 	best_name, best_model, best_rmse = None, None, float("inf")
 	for name, model in _candidate_models().items():
 		try:
-			scores = cross_val_score(model, X, y, cv=cv, scoring="neg_mean_squared_error", n_jobs=1)
+			scores = cross_val_score(model, X, y, cv=cv, scoring="neg_mean_squared_error", n_jobs=1, error_score="raise")
 			rmse_scores = np.sqrt(-scores)
+			if not np.all(np.isfinite(rmse_scores)):
+				raise ValueError("nonfinite cross-validation scores")
 			rmse = float(rmse_scores.mean())
 			rows.append({"model": name, "cv_rmse": rmse, "cv_rmse_sd": float(rmse_scores.std()), "error": ""})
 		except Exception as e:
+			if name == "xgboost" and PHONE_GPU == "required":
+				raise RuntimeError("Required phone XGBoost CUDA candidate failed during cross-validation") from e
 			rows.append({"model": name, "cv_rmse": np.inf, "cv_rmse_sd": np.nan, "error": str(e)})
 			ems_log(f"phone sco3 candidate skipped ({name}): {e}")
 			continue
@@ -1285,27 +1424,50 @@ def train_phone_sco3_ml(train_file, model_file, feature_file, report_file=None, 
 		raise ValueError("no phone sco3 candidate model could be trained")
 
 	best_model.fit(X, y)
+	if best_name == "xgboost" and PHONE_GPU == "required" and not _xgboost_is_cuda(best_model):
+		raise RuntimeError("Selected phone XGBoost model unexpectedly trained on CPU")
 	pred = np.clip(best_model.predict(X), 0, 10)
 	train_rmse = float(np.sqrt(mean_squared_error(y, pred)))
 
 	model_path = Path(model_file)
 	model_path.parent.mkdir(parents=True, exist_ok=True)
-	joblib.dump(best_model, model_file)
-	joblib.dump(feature_names, feature_file)
+	# Leave this marker after interruption so a half-published pair is never reused.
+	incomplete = Path(str(model_file) + ".incomplete")
+	_atomic_json(incomplete, {"started": time.strftime("%Y-%m-%d %H:%M:%S")})
+	_atomic_write(model_file, lambda path: joblib.dump(best_model, path))
+	_atomic_write(feature_file, lambda path: joblib.dump(feature_names, path))
 	report = pd.DataFrame(rows).sort_values("cv_rmse")
 	report["selected"] = report["model"] == best_name
 	report["train_rmse_selected"] = train_rmse
 	if report_file:
-		report.to_csv(report_file, index=False, encoding="utf-8-sig")
+		_atomic_write(report_file, lambda path: report.to_csv(path, index=False, encoding="utf-8-sig"))
+	incomplete.unlink()
+	ems_log(f"Selected phone model: {best_name}; selection remains based on 5-fold CV RMSE")
 	return {"best_model": best_name, "cv_rmse": best_rmse, "train_rmse": train_rmse, "n": len(X)}
 
 
+def _load_phone_model(model_file, feature_file):
+	global _PHONE_CACHE, _PHONE_CACHE_KEY
+	if Path(str(model_file) + ".incomplete").exists():
+		raise RuntimeError("Phone model publication was interrupted; rerun ml_phone to rebuild the model pair")
+	key = tuple((str(Path(path).resolve()), Path(path).stat().st_mtime_ns, Path(path).stat().st_size)
+		for path in (model_file, feature_file))
+	if _PHONE_CACHE_KEY != key:
+		model = _bound_phone_model(joblib.load(model_file))
+		feature_names = joblib.load(feature_file)
+		_PHONE_CACHE = (model, feature_names)
+		_PHONE_CACHE_KEY = key
+		ems_log(f"Loaded phone model {type(model).__name__}; CPU models retain their validated inference algorithm")
+	return _PHONE_CACHE
+
+
 def predict_phone_sco3_ml(phone_numbers, model_file, feature_file):
-	model = joblib.load(model_file)
-	feature_names = joblib.load(feature_file)
+	model, feature_names = _load_phone_model(model_file, feature_file)
 	feat = make_phone_features(phone_numbers)
 	X = feat[feature_names]
 	pred = np.clip(model.predict(X), 0, 10)
+	if type(model).__module__.split(".")[0] == "xgboost" and PHONE_GPU == "required" and not _xgboost_is_cuda(model):
+		raise RuntimeError("Cached phone XGBoost model unexpectedly fell back to CPU")
 	reasons = [make_reason(s) for s in phone_numbers]
 	return pred.astype(float).tolist(), reasons
 
@@ -1542,37 +1704,36 @@ def score_phone_sco2(p: str):
 
 
 def ensure_phone_sco3_model():
-	if os.path.exists(PHONE_SCO3_MODEL_FILE) and os.path.exists(PHONE_SCO3_FEATURE_FILE):
+	if (os.path.exists(PHONE_SCO3_MODEL_FILE) and os.path.exists(PHONE_SCO3_FEATURE_FILE)
+		and not Path(PHONE_SCO3_MODEL_FILE + ".incomplete").exists()):
 		try:
-			joblib.load(PHONE_SCO3_MODEL_FILE)
-			joblib.load(PHONE_SCO3_FEATURE_FILE)
+			_load_phone_model(PHONE_SCO3_MODEL_FILE, PHONE_SCO3_FEATURE_FILE)
 			return True
 		except ModuleNotFoundError as e:
-			ems_log(f"existing phone sco3 model requires missing module {e.name}; retraining")
+			raise RuntimeError(f"Cached phone model requires missing module {e.name}; install its compatible version in the selected environment") from e
+		except RuntimeError:
+			raise
 		except Exception as e:
 			ems_log(f"existing phone sco3 model cannot be loaded; retraining: {e}")
-	try:
-		info = train_phone_sco3_ml(
-			TRAIN_FILE,
-			PHONE_SCO3_MODEL_FILE,
-			PHONE_SCO3_FEATURE_FILE,
-			PHONE_SCO3_REPORT_FILE,
-		)
-		ems_log(f"phone sco3 model trained: {info}")
-		return True
-	except Exception as e:
-		ems_log(f"phone sco3 training skipped: {e}")
-		return False
+	info = train_phone_sco3_ml(
+		TRAIN_FILE,
+		PHONE_SCO3_MODEL_FILE,
+		PHONE_SCO3_FEATURE_FILE,
+		PHONE_SCO3_REPORT_FILE,
+	)
+	ems_log(f"phone sco3 model trained: {info}")
+	return True
 
 
 def predict_phone_sco3(phone_tails, batch_size=2048):
+	batch_size = _batch_size("PHONE", batch_size)
 	scores = [float("nan")] * len(phone_tails)
 	reasons = [""] * len(phone_tails)
 	idx = [i for i, p in enumerate(phone_tails) if _is_digit8(p)]
 	if not idx:
 		return scores, reasons
-	if not ensure_phone_sco3_model():
-		return scores, reasons
+	# Training/runtime failures must reach R; do not publish an all-NaN cache.
+	ensure_phone_sco3_model()
 	for s in range(0, len(idx), batch_size):
 		batch_idx = idx[s : s + batch_size]
 		batch_phones = [phone_tails[i] for i in batch_idx]
@@ -1634,6 +1795,7 @@ def _build_geo_label_maps_from_trainfile():
 
 def train_geo_model():
 	global GEO_TOKENIZER, GEO_MODEL, GEO_LABEL2ID, GEO_ID2LABEL
+	_require_transformers()
 	torch.set_grad_enabled(True)
 
 	ems_log(f"geo trained model file {display_path(GEO_TRAINED_MODEL_FILE)} not found")
@@ -1679,15 +1841,9 @@ def train_geo_model():
 	Trainer(model=GEO_MODEL, args=args, train_dataset=DxDataset(enc, y)).train()
 
 	ems_log("Saving geo trained model...")
-	GEO_MODEL.save_pretrained(GEO_OUTPUT_MODEL_DIR)
-	GEO_TOKENIZER.save_pretrained(GEO_OUTPUT_MODEL_DIR)
-
-	with open(GEO_LABELS_FILE, "w", encoding="utf-8") as f:
-		json.dump(
-			{"label2id": GEO_LABEL2ID, "id2label": {str(k): v for k, v in GEO_ID2LABEL.items()}},
-			f,
-			ensure_ascii=False,
-		)
+	_publish_transformer(GEO_MODEL, GEO_TOKENIZER, GEO_OUTPUT_MODEL_DIR, {
+		"labels.json": {"label2id": GEO_LABEL2ID, "id2label": {str(k): v for k, v in GEO_ID2LABEL.items()}},
+	})
 
 	ems_log(f"geo trained model saved: {display_path(GEO_TRAINED_MODEL_FILE)}")
 	ems_log("geo training finished")
@@ -1695,10 +1851,11 @@ def train_geo_model():
 
 def load_geo_model_once():
 	global GEO_TOKENIZER, GEO_MODEL, GEO_LABEL2ID, GEO_ID2LABEL
+	_require_transformers()
 	if GEO_MODEL is not None:
 		return
 
-	if not os.path.exists(GEO_TRAINED_MODEL_FILE):
+	if not _transformer_files_ready(GEO_OUTPUT_MODEL_DIR):
 		train_geo_model()
 	else:
 		ems_log(f"geo trained model file {display_path(GEO_TRAINED_MODEL_FILE)} found")
@@ -1723,19 +1880,14 @@ def load_geo_model_once():
 	else:
 		ems_log(f"geo label file {display_path(GEO_LABELS_FILE)} not found; rebuilding from {display_path(TRAIN_FILE)}")
 		GEO_LABEL2ID, GEO_ID2LABEL = _build_geo_label_maps_from_trainfile()
-		with open(GEO_LABELS_FILE, "w", encoding="utf-8") as f:
-			json.dump(
-				{"label2id": GEO_LABEL2ID, "id2label": {str(k): v for k, v in GEO_ID2LABEL.items()}},
-				f,
-				ensure_ascii=False,
-			)
+		_atomic_json(GEO_LABELS_FILE, {"label2id": GEO_LABEL2ID, "id2label": {str(k): v for k, v in GEO_ID2LABEL.items()}})
 		ems_log("geo label file recreated")
 
 	gpu_mem()
 
 
 def ml_geo(df, batch_size=512):
-	batch_size = int(batch_size)
+	batch_size = _batch_size("GEO", batch_size)
 	load_geo_model_once()
 
 	if GEO_TEXT_COL not in df.columns:
@@ -1794,7 +1946,7 @@ def release_geo_model():
 
 # 🚩 DX model helpers
 def ml_dx(df, data_name=None, batch_size=512):
-	batch_size = int(batch_size)
+	batch_size = _batch_size("DX", batch_size)
 	load_model_once()
 	if data_name is None:
 		data_name = f"rows={len(df)}"

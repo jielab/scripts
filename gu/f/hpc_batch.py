@@ -21,6 +21,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / '0f'))
 import submit_jobs
+from qiming_resources import cpu_queue
 
 
 def expand(value):
@@ -148,13 +149,9 @@ def result_base(args):
     if explicit:
         return Path(explicit).expanduser().resolve()
     target, build = get(args, '--target', '1kg'), get(args, '--grch', '37')
-    prefix = get(args, '--dir-target')
-    base = Path(os.environ.get('GU_REF_ROOT', '/work/sph-huangj/data/gen')) / target / build
-    if prefix:
-        parent = Path(prefix).expanduser().resolve().parent
-        if parent.name in ('pfile', 'imp', 'hap', 'vcf', 'bfile', 'bed'):
-            base = parent.parent
-    # Keep every cohort inside the input's build directory (never 37013/).
+    analysis = Path(os.environ.get('GU_ANALYSIS_BASE', str(Path(os.environ.get('ANALYSIS_ROOT', '/work/sph-huangj/analysis')) / 'gu')))
+    base = analysis / target / build
+    # Cohorts share the analysis build directory without writing beside inputs.
     if get(args, '--postfix'):
         base = base / 'cohort'
     return base.resolve()
@@ -214,26 +211,36 @@ def worker_environment():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument('--queue', default=os.environ.get('GU_QUEUE', os.environ.get('HPC_CPU_QUEUE', '33')))
-    parser.add_argument('--slots', type=int, default=40)
-    parser.add_argument('--walltime', default='144:00')
+    parser.add_argument('--queue')
+    parser.add_argument('--slots', type=int)
+    parser.add_argument('--walltime', default=os.environ.get('HPC_WALLTIME', '120:00'))
     opts, args = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
     if not args or args[0] != 'ibdmix':
         raise ValueError('Only ordinary ibdmix requests are accepted')
+    mode = os.environ.get('submit', 'hpc')
+    gpu = get(args, '--GPU', os.environ.get('GU_IBDMIX_GPU_DEFAULT', 'FALSE')).upper()
+    if gpu not in {'TRUE', 'FALSE'}:
+        raise ValueError('--GPU requires TRUE or FALSE')
+    use_gpu = gpu == 'TRUE'
+    opts.queue = opts.queue or (os.environ.get('GU_GPU_QUEUE', os.environ.get('HPC_GPU_QUEUE', '4a100-40'))
+                               if use_gpu else os.environ.get('GU_QUEUE', os.environ.get('HPC_CPU_QUEUE', '33')))
+    opts.slots = opts.slots if opts.slots is not None else (16 if use_gpu else 40)
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', opts.queue) or opts.slots < 1:
         raise ValueError('Invalid queue or slots')
-    if not re.fullmatch(r'\d+:\d{2}', opts.walltime):
+    if not re.fullmatch(r'\d+:[0-5]\d', opts.walltime):
         raise ValueError('--walltime must be HOURS:MINUTES')
-    mode = os.environ.get('submit', 'hpc')
-    if mode == 'hpc' and get(args, '--GPU', 'FALSE').upper() != 'FALSE':
-        raise ValueError('HPC batch submission is CPU-only; use --GPU FALSE')
     run = get(args, '--run-cmd', 'TRUE').upper()
     if run not in {'TRUE', 'FALSE'}:
         raise ValueError('--run-cmd must be TRUE or FALSE')
-    memory = get(args, '--memory-cap', os.environ.get('MEMORY_DEFAULT_GIB', '160') + 'G').upper()
+    memory_default = (os.environ.get('GU_GPU_MEMORY_GIB', os.environ.get('HPC_GPU_MEMORY_GIB', '160'))
+                      if use_gpu and mode == 'hpc' else os.environ.get('MEMORY_DEFAULT_GIB', '160'))
+    memory = get(args, '--memory-cap', memory_default + 'G').upper()
     m = re.fullmatch(r'([1-9]\d*)G', memory)
     if not m:
         raise ValueError('HPC --memory-cap must be a positive integer in G, e.g. 32G')
+    if mode == 'hpc' and not use_gpu:
+        hours, minutes = map(int, opts.walltime.split(':'))
+        opts.queue = cpu_queue(opts.queue, opts.slots, int(m[1]), hours + minutes / 60)
     jobs = int(get(args, '--jobs', '1'))
     if jobs < 1 or jobs > opts.slots:
         raise ValueError('--jobs must be between 1 and --slots')
@@ -263,7 +270,7 @@ def main(argv=None):
             environment[key] = str(frozen.parent) + value[len(str(ROOT.parent)):]
     environment['GU_CODE_ROOT'] = str(frozen.parent)
     for post, cmd in pairs:
-        for flag, value in [('--dir-out', str(base)), ('--GPU', get(args, '--GPU', 'FALSE').upper()),
+        for flag, value in [('--dir-out', str(base)), ('--GPU', gpu),
                             ('--run-cmd', 'TRUE'), ('--foreground', 'TRUE'),
                             ('--resource-guard', 'scheduler' if mode == 'hpc' else get(args, '--resource-guard', 'auto')), ('--memory-cap', memory),
                             ('--jobs', str(jobs))]:
@@ -276,6 +283,7 @@ def main(argv=None):
             f'#BSUB -W {opts.walltime}', f'#BSUB -J {name}',
             f'#BSUB -M {m[1]}GB',
             f'#BSUB -R "span[hosts=1] rusage[mem={m[1]}GB/host]"',
+            *(['#BSUB -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"'] if use_gpu and mode == 'hpc' else []),
             f'#BSUB -o "{directory}/{name}.%J.out"',
             f'#BSUB -e "{directory}/{name}.%J.err"',
             'set -euo pipefail',

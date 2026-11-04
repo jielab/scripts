@@ -1,0 +1,15 @@
+# For CASPER-sized FASTQs: one complete sample per array element.
+# This overlay changes query scheduling/output only, never the reference hashes.
+# Uses an isolated output root because directory output differs from default tar.
+schema: 1
+classify_queue: 2t50c
+classify_cores: 32
+classify_threads: 30
+classify_workers: 1
+classify_memory_gib: 1792
+classify_hours: 120
+classify_concurrency: 2
+sample_batch_size: 1
+memory_accounting: conservative
+output_dir: "{metag_state}/split_casper"
+output_format: directory

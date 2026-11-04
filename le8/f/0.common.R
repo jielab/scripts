@@ -1502,12 +1502,12 @@ SEED <- as.integer(Sys.getenv("SEED", unset = "2026"))
 set.seed(SEED)
 
 indir <- find_first_existing(c(
-	Sys.getenv("UKB_PHE", unset = ""), Sys.getenv("DIR_UKB", unset = ""), file.path(Sys.getenv("DIR_DAT", dir0), "ukb"),
-	"/mnt/d/ukb", "D:/ukb"
-), file.path(Sys.getenv("DIR_DAT", dir0), "ukb"))
+	Sys.getenv("UKB_PHE", unset = ""), Sys.getenv("DIR_UKB", unset = ""), Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"),
+	"/mnt/f/ukb", "F:/ukb"
+), Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"))
 common_dir <- find_first_existing(c(
 	Sys.getenv("UKB_COMMON", unset = ""), file.path(indir, "common"),
-	"/mnt/d/ukb/common", "D:/ukb/common"
+	"/mnt/f/ukb/common", "F:/ukb/common"
 ), file.path(indir, "common"))
 analysis_root <- Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(dir0, "analysis/le8"))
 out.base <- file.path(analysis_root, Y)
@@ -1541,7 +1541,7 @@ prot_bed_file <- find_first_existing(
 )
 met_list_file <- find_first_existing(c(
 	Sys.getenv("LE8_MET_LIST", unset = ""), file.path(common_dir, "met.lst"),
-	"D:/ukb/common/met.lst"
+	"F:/ukb/common/met.lst"
 ), file.path(common_dir, "met.lst"))
 ukb_bgen_dir <- Sys.getenv("UKB_BGEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37/imp" else "/mnt/f/gen/ukb/37/imp")
 
@@ -2967,7 +2967,7 @@ LE8_BASELINE_VERSION <- "2026-09-21.baseline-med-source-v3"
 le8_attach_baseline_medication <- function(x) {
 	# Raw i0 responses retain -7 (none of the above), which phe.R may have
 	# converted to NA. Never infer a negative response from that processed NA.
-	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", "/mnt/d/ukb"))
+	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", "/mnt/f/ukb"))
 	path <- Sys.getenv("LE8_BASELINE_MED_FILE", file.path(root, "rap/vip.tab.gz"))
 	if (!file.exists(path)) return(x)
 	explicit <- nzchar(Sys.getenv("LE8_BASELINE_MED_FILE", ""))

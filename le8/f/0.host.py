@@ -28,7 +28,7 @@ def cohort_parser():
 	p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
 	p.add_argument("--Y", dest="trait", default="cvd_cad")
 	p.add_argument("--biom", choices=["prot", "met"], default="prot")
-	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", "/mnt/d/ukb"))
+	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", "/mnt/f/ukb"))
 	for name in [
 		"phe-file",
 		"omics-file",

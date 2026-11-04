@@ -953,6 +953,11 @@ HELP
 		echo "ERROR: --GPU is supported by ibdmix; use the documented dedicated backend for other methods" >&2; return 2
 	fi
 	if [[ $METHOD == ibdmix ]]; then
+		if (( ! GPU_SET )); then
+			GPU_INPUT=$(gu_bool "${GU_IBDMIX_GPU_DEFAULT:-FALSE}") || {
+				echo 'ERROR: GU_IBDMIX_GPU_DEFAULT requires TRUE or FALSE' >&2; return 2;
+			}
+		fi
 		IBDMIX_BACKEND=cpu; GPU_METHOD=''; OUTPUT_MODULE=ibdmix
 		if [[ $GPU_INPUT == TRUE ]]; then
 			IBDMIX_BACKEND=cuda; GPU_METHOD=ibdmix

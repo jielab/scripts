@@ -113,6 +113,21 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
     def test_invalid_combination_rejected_before_submission(self):
         self.call("gwas.sh", "regenie,acount", "--submit", "hpc", "--plan-only", success=False)
 
+    def test_default_eight_workers_use_larger_queue(self):
+        _, plan = self.plan("gwas.sh", "regenie")
+        r = plan['jobs'][0]['resources']
+        self.assertEqual(r['cores'], 32)
+        self.assertEqual(r['memory_gib'], 192)
+        self.assertEqual(r['queue'], '38')
+        result = self.call("gwas.sh", "regenie", "--submit", "hpc", "--plan-only", "--queue", "33", success=False)
+        self.assertIn('single-node budget', result.stderr)
+
+    def test_auto_queue_covers_large_worker_core_count(self):
+        _, plan = self.plan("gwas.sh", "regenie", "--jobs", "12", "--threads", "8")
+        r = plan['jobs'][0]['resources']
+        self.assertEqual(r['cores'], 96)
+        self.assertEqual(r['queue'], '1t81c')
+
     def test_magma_combination_preserves_execution_default(self):
         from unittest.mock import patch
         with patch.dict(os.environ, {**self.env, "submit": "hpc"}, clear=True):

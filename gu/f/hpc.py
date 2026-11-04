@@ -30,6 +30,8 @@ from typing import Iterator
 
 VERSION = "gu-2026-lsf-v1"
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT.parent / "0f"))
+from qiming_resources import cpu_queue
 SOURCE_SUFFIXES = {".sh", ".py", ".R", ".cc", ".cu", ".h", ".yml", ".env"}
 LIVE_STATES = {"PEND", "RUN", "WAIT", "PSUSP", "USUSP", "SSUSP", "UNKWN"}
 
@@ -114,7 +116,7 @@ def persistent_path(value: str) -> Path:
 def code_manifest() -> dict[str, str]:
     result = {}
     # Parent helpers are part of the downloadable package and execution contract.
-    for base in [ROOT / "f"]:
+    for base in [ROOT / "f", ROOT.parent / "0f"]:
         if base.is_dir():
             for path in sorted(base.rglob("*")):
                 if path.is_file() and path.suffix in SOURCE_SUFFIXES and not any(x in path.parts for x in ("__pycache__", ".git")):
@@ -224,13 +226,25 @@ def snapshot_file(source: str | None, run: Path, name: str) -> str | None:
     return str(dest)
 
 
+def resolved_runtime_environment() -> dict[str, str]:
+    """Keep super-roots/runtime paths when saved plans are submitted later."""
+    prefixes = ("DIR_", "OS_", "_OS_DEFAULT_")
+    exact = {"ANALYSIS_ROOT", "SCRATCH_ANALYSIS_ROOT", "PERSISTENT_ANALYSIS_ROOT", "SHARED_PYTHON",
+             "GU_DATA_ROOT", "GU_REF_ROOT", "GU_ANNOT_ROOT", "GU_ANALYSIS_BASE", "GU_SOFT",
+             "GU_CONDA_BASE", "GU_ENV_PREFIX", "GU_ENV_NAME", "GU_CONDA_EXE", "GU_FILES_ROOT",
+             "GU_COJO_CHAIN", "GU_LIFTOVER", "GU_RESULTS_RSCRIPT", "CHECK_GRCH_SNP_LIST",
+             "IBDMIX_GPU_BIN", "IBDMIX_MASK_ROOT", "IBDMIX_REFERENCE_FASTA", "IBDMIX_AXT_DIR",
+             "IBDMIX_RUNTIME", "IBDMIX_PREPARE_BIN", "PHYML_TREE_SEED"}
+    return {key:value for key,value in os.environ.items() if key in exact or key.startswith(prefixes)}
+
+
 def common_gu(plan: dict, output: str, selection: str | None = None) -> list[str]:
     args = ["bash", str(ROOT / "gu.sh"), plan["method"], "--grch", plan["grch"],
             "--target", plan["target"], "--dir-target", plan["dir_target"],
             "--dir-out", output, "--foreground", "TRUE", "--run-cmd", "TRUE",
             "--jobs", "1", "--auto-final", "FALSE", "--memory-cap", f"{plan['memory_gb']}G"]
     if plan["method"] == "ibdmix":
-        args += ["--GPU", "FALSE", "--replace-ibdmix", "FALSE"]
+        args += ["--GPU", "TRUE" if plan.get("gpu", False) else "FALSE", "--replace-ibdmix", "FALSE"]
     if selection:
         args += ["--keep", selection]
     if plan["keep_males"]:
@@ -247,25 +261,26 @@ def common_gu(plan: dict, output: str, selection: str | None = None) -> list[str
 def plan_run(args) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", args.target):
         die("Target must be a plain dataset name.")
-    if args.method == "ibdmix":
-        parent = Path(args.dir_target).expanduser().resolve().parent
-        if parent.name in {"pfile", "imp", "hap", "vcf", "bfile", "bed"}:
-            genotype_root = parent.parent
-        else:
-            genotype_root = Path(os.environ.get("GU_REF_ROOT", os.environ.get("DIR_GEN", "/work/sph-huangj/data/gen"))) / args.target / args.grch
-        default_run = genotype_root / "ibdmix"
-    else:
-        default_run = Path(os.environ.get("SCRATCH_ANALYSIS_ROOT", "/scratch/2026-11-03/sph-huangj/analysis")) / "gu" / args.target / args.method
+    analysis = Path(os.environ.get("GU_ANALYSIS_BASE", str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "gu")))
+    default_run = analysis / args.target / args.grch / args.method if args.method == "ibdmix" else analysis / args.target / args.method
     run = persistent_path(args.run_dir or str(default_run))
     if run.exists() and any(run.iterdir()):
         die(f"Plan directory is not empty: {run}. Use a new run name or submit the existing plan.")
     chromosomes = chroms(args.chr)
+    gpu = (args.GPU or (os.getenv("GU_IBDMIX_GPU_DEFAULT", "FALSE") if args.method == "ibdmix" else "FALSE")) == "TRUE"
+    if gpu and args.method != "ibdmix":
+        die("hpc plan --GPU TRUE is implemented for ibdmix only; other methods need their dedicated backend.")
+    args.queue = args.queue or (os.getenv("GU_GPU_QUEUE", os.getenv("HPC_GPU_QUEUE", "4a100-40"))
+                               if gpu else os.getenv("GU_QUEUE", "33"))
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.queue):
         die("Queue must be a plain LSF queue name.")
     if not re.fullmatch(r"\d+:[0-5]\d", args.walltime):
         die("Walltime must be HHH:MM.")
     if args.memory_gb < 4:
         die("Use at least 4 GiB per scientific worker.")
+    if not gpu:
+        hours, minutes = map(int, args.walltime.split(':'))
+        args.queue = cpu_queue(args.queue, args.threads + 1, args.memory_gb, hours + minutes / 60)
     if args.method in {"trace", "arg", "arg-trace"} and (args.psam or args.keep_males):
         die("ARG/TRACE plans use a fixed complete cohort, not IBDmix sample batches; X is handled by its dedicated ARG contract.")
     if args.method == "phyml" and not args.loci:
@@ -293,11 +308,15 @@ def plan_run(args) -> None:
     plan = {"version": VERSION, "created": now(), "run_dir": str(run),
             "date_scratch": os.environ.get("DATE_SCRATCH", "2026-11-03"),
             "source_root": str(ROOT), "source_sha256": code, "environment": env_file,
+            "resolved_environment": resolved_runtime_environment(),
             "environment_sha256": sha(Path(env_file)), "method": args.method,
             "grch": args.grch, "target": args.target, "dir_target": str(Path(args.dir_target).resolve()),
             "dir_gen": str(Path(args.dir_gen).resolve()) if args.dir_gen else None,
             "arg_dir": str(Path(args.arg_dir).resolve()) if args.arg_dir else None,
-            "arg_method": args.arg_method, "queue": args.queue,
+            "arg_method": args.arg_method, "queue": args.queue, "gpu": gpu,
+            "cpu_queue": os.getenv("HPC_CPU_QUEUE", "33"),
+            "phyml_timeout_seconds": args.phyml_timeout_seconds,
+            "phyml_retry_timeouts": args.phyml_retry_timeouts,
             "dir_map": str(Path(args.dir_map or f"/work/sph-huangj/data/gen/hm3/{args.grch}/gmap").resolve()),
             "threads": args.threads, "slots": args.threads + 1,
             "memory_gb": args.memory_gb, "walltime": args.walltime,
@@ -403,6 +422,9 @@ def render_jobs(plan: dict) -> None:
         text += '[[ -n "${LSB_JOBID:-}" ]] || { echo "Submit through gu-hpc.sh submit; do not execute on the login node" >&2; exit 2; }\n'
         if plan.get("date_scratch"):
             text += "export DATE_SCRATCH=" + shlex.quote(plan["date_scratch"]) + "\n"
+        text += "export submit=hpc SUBMIT=hpc WORKFLOW_WORKER=1\n"
+        for key, value in sorted(plan.get("resolved_environment", {}).items()):
+            text += "export " + key + "=" + shlex.quote(value) + "\n"
         text += "export GU_WORKER_CODE_ROOT=" + shlex.quote(str(ROOT)) + "\n"
         text += "source " + shlex.quote(plan["environment"]) + "\n"
         text += "export GU_RESOURCE_GUARD=scheduler ARG_RESOURCE_GUARD=scheduler\n"
@@ -450,7 +472,7 @@ def runtime_environment(plan: dict) -> dict[str, str]:
     env = dict(os.environ)
     if plan.get("date_scratch"):
         env["DATE_SCRATCH"] = plan["date_scratch"]
-        env["SCRATCH_ANALYSIS_ROOT"] = f"/scratch/{plan['date_scratch']}/sph-huangj/analysis"
+        env.setdefault("SCRATCH_ANALYSIS_ROOT", env.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis"))
     # A request must not inherit a previous gu.sh invocation's resolved roots,
     # sample selectors, output overrides, or GPU routing.
     for key in ("GU_CMD_WORKER", "GU_UKB_DIRECT", "GU_UKB_PGEN_PREPARED", "GU_FILTERED_TARGET",
@@ -464,11 +486,14 @@ def runtime_environment(plan: dict) -> dict[str, str]:
                 "IBDMIX_JOB_OF_CHR": "1", "IBDMIX_JOB_IN_CHR": "1",
                 "PHYML_TREE_CPUS": str(plan["threads"]), "TRACE_JOB_EXTRACT": str(plan["threads"]),
                 "TRACE_JOB_INFER": str(plan["threads"]), "TRACE_JOB_SUMMARIZE": str(plan["threads"]),
-                "IBDMIX_BACKEND": "cpu", "TRACE_BACKEND": "cpu", "PHYML_BACKEND": "cpu",
+                "IBDMIX_BACKEND": "cuda" if plan.get("gpu", False) else "cpu", "TRACE_BACKEND": "cpu", "PHYML_BACKEND": "cpu",
                 "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
                 "NUMEXPR_NUM_THREADS": "1", "GU_AUTO_FINAL": "0", "GU_KEEP_SCRATCH": "1"})
     if plan.get("archaic_path"):
         env["GU_ARCHAIC_ROOT"] = plan["archaic_path"]
+    if plan["method"] == "phyml":
+        env["PHYML_TREE_TIMEOUT"] = str(plan.get("phyml_timeout_seconds", 7200))
+        env["PHYML_RETRY_TIMEOUTS"] = "TRUE" if plan.get("phyml_retry_timeouts", False) else "FALSE"
     return env
 
 
@@ -490,6 +515,10 @@ def prepare(plan: dict) -> None:
         native = Path(env.get("IBDMIX_RUNTIME", str(Path(env.get("GU_SOFT", "")) / "ibdmix"))) / "build" / "src" / "ibdmix"
         if not os.access(native, os.X_OK):
             die(f"Native IBDmix executable is missing: {native}; install before submission.")
+        if plan.get("gpu", False):
+            cuda = Path(env.get("IBDMIX_GPU_BIN", str(Path(env.get("GU_SOFT", "")) / "ibdmix-gpu" / "ibdmix-gpu")))
+            if not os.access(cuda, os.X_OK):
+                die(f"CUDA IBDmix executable is missing: {cuda}; build on an allocated GPU node before submission.")
         refs = re.split(r"[,\s]+", plan["archaic_gen"].strip())
         mask = env.get("IBDMIX_MASK_ROOT", str(Path(plan["archaic_path"]).parent / "mask"))
         cmd = ["python3", str(ROOT / "f" / "ibdmix.py"), "check-masks", "--root", mask,
@@ -800,13 +829,17 @@ def bsub_args(plan: dict, stage: str, name: str, dependency: str | None, count: 
         slots = max(40, slots)
     memory = (4 if stage in {"prepare", "merge"} else plan["memory_gb"]) * 1024
     reservation = math.ceil(memory / slots) if plan["rusage_memory_mode"] == "per-slot" else memory
-    reservation = str(reservation) + ("/host" if plan["rusage_memory_mode"] == "host" else "")
+    reservation = str(reservation) + {"host": "MB/host", "per-slot": "MB/task", "per-job": "MB/job"}[plan["rusage_memory_mode"]]
     job_name = name + (f"[1-{count}]%{cap}" if count else "")
-    args = ["bsub", "-q", plan["queue"], "-n", str(slots), "-R", f"span[hosts=1] rusage[mem={reservation}]",
+    use_gpu = plan.get("gpu", False) and stage == "worker"
+    queue = plan.get("cpu_queue", plan["queue"]) if plan.get("gpu", False) and not use_gpu else plan["queue"]
+    args = ["bsub", "-q", queue, "-n", str(slots), "-R", f"span[hosts=1] rusage[mem={reservation}]",
             "-M", str(memory // 1024) + "GB",
             "-W", plan["walltime"], "-J", job_name,
             "-o", str(run / "logs" / (name + ".%J.%I.out")),
             "-e", str(run / "logs" / (name + ".%J.%I.err"))]
+    if use_gpu:
+        args += ["-gpu", "num=1/host:mode=exclusive_process:j_exclusive=yes"]
     if dependency:
         args += ["-w", dependency]
     return args
@@ -944,14 +977,20 @@ def parser():
     q.add_argument("method", choices=["ibdmix", "trace", "phyml", "arg", "arg-trace"])
     q.add_argument("--run-dir", help="Override plan output; IBDmix defaults beside input genotypes in BUILD/ibdmix")
     q.add_argument("--env-file", required=True)
-    q.add_argument("--queue", default=os.getenv("GU_QUEUE", "33"))
+    q.add_argument("--queue", help="Default: GU_QUEUE, or GU_GPU_QUEUE for --GPU TRUE")
+    q.add_argument("--GPU", choices=["TRUE", "FALSE"],
+                   help="IBDmix CUDA caller only; validate against CPU on the same cohort before production")
     q.add_argument("--threads", type=positive, default=4)
     q.add_argument("--memory-gb", type=positive, default=32)
-    q.add_argument("--walltime", default="168:00")
+    q.add_argument("--walltime", default=os.getenv("HPC_WALLTIME", "120:00"))
+    q.add_argument("--phyml-timeout-seconds", type=positive, default=7200,
+                   help="Per-tree wall clock budget; independent of the LSF walltime")
+    q.add_argument("--phyml-retry-timeouts", action="store_true",
+                   help="Retry recorded PhyML timeouts; complete compatible trees are still reused")
     q.add_argument("--max-running", type=positive, default=64)
     q.add_argument("--array-size", type=positive, default=500)
     q.add_argument("--rusage-memory-mode", choices=["per-job", "per-slot", "host"], default="host",
-                   help="How this cluster interprets rusage[mem]; per-job is conservative if uncertain (can over-reserve on per-slot sites)")
+                   help="Explicit host/job/task reservation; default host for single-node jobs")
     q.add_argument("--grch", choices=["37", "38"], default="37")
     q.add_argument("--chr", default="1-22,X")
     q.add_argument("--target", default="1kg")

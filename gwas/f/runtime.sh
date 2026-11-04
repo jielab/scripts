@@ -93,10 +93,11 @@ gwas_runtime_usage() {
     cat <<'HELP'
 
 Local/HPC execution (all three entry points):
-    --submit auto|local|hpc       Auto detects LSF; HPC runs on a compute node
+    --submit auto|local|hpc       Default hpc; explicit auto detects LSF
     --plan-only                  Write .cmd/plan.json without scanning data or running
     --run-cmd TRUE|FALSE          Execute or only prepare (format/gwas)
-    --queue NAME --cores N        LSF queue/CPU allocation [33 / derived from workers]
+    --queue NAME|auto --cores N   LSF queue/CPU allocation [auto / derived from workers]
+                                 QiMing auto fits summed RAM and cores on one node
     --memory-gb N --hours N       Total job RAM GiB / walltime hours [derived / 120]
     --tool-threads N --tool-memory-mb N  format PLINK/GCTA threads and PLINK RAM MiB [2/8192]
     --runtime-env FILE            Optional compute-node environment setup script

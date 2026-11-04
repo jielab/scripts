@@ -1113,7 +1113,7 @@ def parser():
 	p.add_argument("--out-root", default = "/mnt/d/analysis/grid/abm")
 	p.add_argument("--prsformer-root", default = None)
 	p.add_argument("--publish-only", action="store_true", help="Publish ABM models, predictions and confidence diagnostics; cross-method performance is evaluated by grid.sh final")
-	p.add_argument("--pheno-file", default = "/mnt/d/ukb/Rdata/all.rds")
+	p.add_argument("--pheno-file", default = "/mnt/f/ukb/Rdata/all.rds")
 	p.add_argument("--score-dir", default = "/mnt/f/gen/ukb/pgs")
 	p.add_argument("--pca-file", default = "/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz")
 	p.add_argument("--ancestry-file", default = "/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz")

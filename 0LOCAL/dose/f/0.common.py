@@ -15,7 +15,7 @@ def drive():
 
 
 def output_dir():
-    return Path(os.getenv("DOSE_OUTDIR", os.getenv("DOSE_PROJECT", str(Path(os.getenv("DIR_TMP", "F:/" if os.name == "nt" else "/mnt/f")) / "analysis/dose"))))
+    return Path(os.getenv("DOSE_OUTDIR", os.getenv("DOSE_PROJECT", str(Path(os.getenv("DIR_DAT", str(drive()))) / "analysis/dose"))))
 
 
 def mri_atlas_dir():
@@ -28,7 +28,7 @@ def mri_atlas_dir():
 
 
 def ukb_dir():
-    return Path(os.getenv("DOSE_UKB", str(Path(os.getenv("DIR_DAT", str(drive()))) / "ukb")))
+    return Path(os.getenv("DOSE_UKB", os.getenv("DIR_UKB", "F:/ukb" if os.name == "nt" else "/mnt/f/ukb")))
 
 
 def files_dir():

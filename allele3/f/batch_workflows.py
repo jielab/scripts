@@ -68,7 +68,10 @@ def worker_python(argv, mode):
 
 
 def worker_env(python, resource):
-    prefixes=('ALLELE_','PCA3D_','HERV_')
+    # A saved .cmd may be submitted from another shell. Freeze the full shared
+    # path table, including the super-roots and the markers used by 0os.sh,
+    # instead of relying on bsub's ambient environment inheritance.
+    prefixes=('ALLELE_','PCA3D_','HERV_','DIR_','OS_','_OS_DEFAULT_')
     exact={'DIR_WORK','DIR_DATA','DIR_SCRATCH','DIR_SOFTWARE','DATE_SCRATCH',
            'SHARED_PYTHON','ANALYSIS_ROOT','SCRATCH_ANALYSIS_ROOT','OS_FILES_ROOT',
            'OS_GU_CONDA','SCRIPTS_ROOT','ALLELE_OS_CONFIG','jobs_N'}

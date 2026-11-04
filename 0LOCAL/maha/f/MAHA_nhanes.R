@@ -1,6 +1,6 @@
 dir0 <- ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d")
 raw_dir <- file.path(Sys.getenv("DIR_DAT", dir0), "nhanes", "raw")
-maha_outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "analysis", "maha"))
+maha_outdir <- Sys.getenv("MAHA_OUTDIR", unset = file.path(Sys.getenv("DIR_DAT", if (.Platform$OS.type == "windows") "D:/" else "/mnt/d"), "analysis", "maha"))
 .this_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 .this_file <- if (length(.this_arg)) sub("^--file=", "", .this_arg[[1]]) else file.path(dir0, "scripts/0LOCAL", "maha", "f", "MAHA_nhanes.R")
 .this_dir <- dirname(normalizePath(.this_file, winslash = "/", mustWork = FALSE))

@@ -609,10 +609,20 @@ PYQC
 # parallel. Keep the lock outside result roots so separate runs share it too.
 run_ibdmix_caller() (
 	if [[ ${IBDMIX_BACKEND:-cpu} == cuda ]]; then
-		local device=${IBDMIX_GPU_DEVICE:-0}
+		local device=${IBDMIX_GPU_DEVICE:-0} physical lock_id
+		local -a visible=()
 		[[ $device =~ ^[0-9]+$ ]] || { echo 'ERROR: IBDMIX_GPU_DEVICE must be a non-negative ordinal' >&2; return 2; }
+		physical=$device
+		if [[ -n ${CUDA_VISIBLE_DEVICES:-} ]]; then
+			IFS=, read -r -a visible <<<"$CUDA_VISIBLE_DEVICES"
+			physical=${visible[$((10#$device))]:-}
+			[[ -n $physical ]] || { echo 'ERROR: requested GPU ordinal is outside CUDA_VISIBLE_DEVICES' >&2; return 2; }
+		fi
+		# LSF remaps each allocated card to logical device 0. Lock its visible
+		# physical ID/UUID, so two jobs on different cards do not serialize.
+		lock_id=${physical//[^a-zA-Z0-9_.-]/_}
 		mkdir -p /tmp/gu-locks
-		exec 8>"/tmp/gu-locks/ibdmix-gpu-${UID}-${device}.lock"
+		exec 8>"/tmp/gu-locks/ibdmix-gpu-${UID}-${lock_id}.lock"
 		if ! flock -n 8; then
 			log "GPU WAIT device=$device"
 			flock 8 || return $?

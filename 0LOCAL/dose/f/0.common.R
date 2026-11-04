@@ -9,9 +9,9 @@ dose_runtime_dir <- function() Sys.getenv("DOSE_RUNTIME_DIR", file.path(path.exp
 if (dir.exists(file.path(dose_runtime_dir(), "R-library")))
     .libPaths(unique(c(file.path(dose_runtime_dir(), "R-library"), .libPaths())))
 dose_drive <- function() if (.Platform$OS.type == "windows") "D:" else "/mnt/d"
-dose_output_dir <- function() Sys.getenv("DOSE_OUTDIR", Sys.getenv("DOSE_PROJECT", file.path(Sys.getenv("DIR_TMP", if (.Platform$OS.type == "windows") "F:/" else "/mnt/f"), "analysis/dose")))
+dose_output_dir <- function() Sys.getenv("DOSE_OUTDIR", Sys.getenv("DOSE_PROJECT", file.path(Sys.getenv("DIR_DAT", if (.Platform$OS.type == "windows") "D:/" else "/mnt/d"), "analysis/dose")))
 dose_script_dir <- function() Sys.getenv("DOSE_SCRIPT_DIR", file.path(dose_drive(), "scripts/0LOCAL/dose/f"))
-dose_ukb_dir <- function() Sys.getenv("DOSE_UKB", file.path(Sys.getenv("DIR_DAT", dose_drive()), "ukb"))
+dose_ukb_dir <- function() Sys.getenv("DOSE_UKB", Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"))
 dose_files_dir <- function() Sys.getenv("DOSE_FILES_DIR", file.path(dose_drive(), "files/diet"))
 # Study-specific dictionaries never fall back to the generic UKB lists.
 dose_definition_file <- function(name) {
