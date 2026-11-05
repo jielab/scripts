@@ -174,6 +174,25 @@ class TransparentCountTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_hpc_runtime_preserves_conda_native_libraries(self):
+        with tempfile.TemporaryDirectory() as td:
+            prefix = Path(td) / "le8-env"
+            (prefix / "bin").mkdir(parents=True)
+            (prefix / "lib").mkdir()
+            (prefix / "lib/libstdc++.so.6").touch()
+            env = dict(os.environ, submit="hpc", WORKFLOW_WORKER="0", LE8_ROOT=str(ROOT),
+                       PYTHON_BIN=str(prefix / "bin/python3"), LE8_RSCRIPT=str(prefix / "bin/Rscript"),
+                       DIR_WORK=td, ANALYSIS_ROOT=td, MEMORY_DEFAULT_GIB="16", LD_LIBRARY_PATH="/site/lib")
+            result = subprocess.run(["bash", "-c", 'source "$1"; printf "%s" "$LD_LIBRARY_PATH"',
+                                     "le8-runtime-test", str(ROOT / "f/runtime_env.sh")],
+                                    env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, str(prefix / "bin/../lib") + ":/site/lib")
+            with patch.dict(os.environ, {"submit":"hpc", "LD_LIBRARY_PATH":result.stdout}):
+                args, extra = hpc_workflow.parse_cli(["c1_correlate", "--Y","toy","--biom","prot"])
+                job = hpc_workflow.build_jobs(args,extra)[0]
+            self.assertEqual(job.env["LD_LIBRARY_PATH"], result.stdout)
+
     def test_lsf_phase_requires_allocation_and_respects_budget(self):
         spec = importlib.util.spec_from_file_location("le8_test_resources", ROOT / "f/0.resources.py")
         resources = importlib.util.module_from_spec(spec)
@@ -213,30 +232,35 @@ class WorkflowTests(unittest.TestCase):
             run = subprocess.run(command, env=env, capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
 
-    def test_all_modules_dag_and_mock_lsf_dependencies(self):
+    def test_one_job_per_scope_and_mock_lsf_submission(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"submit": "hpc", "RUN_GPU_COLOC": "FALSE"}):
             a, extra = hpc_workflow.parse_cli(["c1_correlate,c2_cause,c3_coloc,c4_connect,c5_cellulation,pgs_focus,final",
-                "--Y", "toy,other", "--biom", "prot,met", "--analysis-root", td, "--eigh-backend", "cpu"])
+                "--Y", "toy,other", "--biom", "prot,met", "--analysis-root", td, "--eigh-backend", "cpu",
+                "--methods", "glmnet,lightgbm,abm_count"])
             jobs = hpc_workflow.build_jobs(a)
             by_key = {j.key: j for j in jobs}
-            self.assertIn("toy.prot.c1.prepare", by_key)
-            self.assertIn("other.met.c4_explain", by_key)
-            self.assertIn("other.met.c5_cellulation", by_key)
-            self.assertIn("toy.prot.pgs_focus", by_key)
-            self.assertEqual(by_key["toy.prot.c1.models"].depends, ["toy.prot.c1.association"])
-            self.assertFalse(by_key["other.met.c1.prepare"].depends)
+            self.assertEqual(set(by_key), {"toy.prot", "toy.met", "other.prot", "other.met"})
+            self.assertTrue(all(not j.depends for j in jobs))
             self.assertFalse(any(j.resources["gpus"] for j in jobs))
             spec = importlib.util.spec_from_file_location("le8_plan_test_common", ROOT / "f/0.common.py")
             common = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(common)
-            # Validate the ACTUAL worker parsers as well as scheduler records.
-            # Scientific method flags must never be passed to C2/C3/Final.
             for job in jobs:
-                if job.argv[0] == "bash":
-                    parsed = common.pipeline_parse(job.argv[2:])
-                    self.assertEqual(parsed[2], [job.argv[2]])
-                    if job.argv[2] != "c1_correlate":
-                        self.assertNotIn("--methods", job.argv)
+                steps = json.loads(job.argv[job.argv.index("--steps-json") + 1])
+                self.assertEqual([s["key"].removeprefix(job.key + ".") for s in steps],
+                    ["c1.prepare", "c1.association", "c1.models", "c1.evaluation", "c1.reliability",
+                     "c2_cause", "c3_coloc", "c4_connect", "c4_panel_validation", "c4_explain",
+                     "c5_cellulation", "pgs_focus", "c1.summary", "final"])
+                for step in steps:
+                    argv = step["argv"]
+                    if argv[0] == "bash":
+                        parsed = common.pipeline_parse(argv[2:])
+                        self.assertEqual(parsed[2], [argv[2]])
+                        if not step["aggregate"]:
+                            self.assertEqual(argv[argv.index("--Y")+1], job.key.rsplit(".", 1)[0])
+                            self.assertEqual(argv[argv.index("--biom")+1], job.key.rsplit(".", 1)[1])
+                        if argv[2] != "c1_correlate":
+                            self.assertNotIn("--methods", argv)
             path = workflow_jobs.write_plan(jobs, Path(td) / "plans", mode="hpc", name="le8test")
             submitted = []
 
@@ -248,20 +272,24 @@ class WorkflowTests(unittest.TestCase):
                 submitted.append((argv, text))
                 return subprocess.CompletedProcess(argv, 0, f"Job <{1000 + len(submitted)}> is submitted", "")
 
-            with patch.object(workflow_jobs.subprocess, "run", side_effect=bsub):
+            with patch.object(workflow_jobs, "_submit_bsub", side_effect=bsub):
                 result = workflow_jobs.run_plan(path, submit="hpc", jobs=128, wait=False)
                 workflow_jobs.run_plan(path, submit="hpc", jobs=128, wait=False)
             self.assertEqual(len(submitted), len(jobs))  # resume does not duplicate jobs
             self.assertEqual(result["status"], "SUBMITTED")
-            self.assertTrue(any("-w" in call[0] for call in submitted))
+            self.assertFalse(any("-w" in call[0] for call in submitted))
+            self.assertEqual({p.name for p in path.parent.glob("commands/*.cmd")},
+                             {key + ".cmd" for key in by_key})
             a.device = "cuda"
             gpu_jobs = [j for j in hpc_workflow.build_jobs(a) if j.resources["gpus"]]
             self.assertEqual(len(gpu_jobs), 4)
-            self.assertTrue(all(j.key.endswith("c3_coloc") for j in gpu_jobs))
+            self.assertEqual({j.key for j in gpu_jobs}, set(by_key))
             self.assertTrue(all(j.resources["cores"] >= 20 for j in gpu_jobs))
             a.fit_joint = True
             fitted_jobs = hpc_workflow.build_jobs(a)
-            self.assertEqual([j.key for j in fitted_jobs if "--fit-joint" in j.argv], ["aggregate.final"])
+            for job in fitted_jobs:
+                steps = json.loads(job.argv[job.argv.index("--steps-json")+1])
+                self.assertEqual([s["key"] for s in steps if "--fit-joint" in s["argv"]], [job.key + ".final"])
 
     def test_default_modules_preserve_unknown_option_values(self):
         a, extra = hpc_workflow.parse_cli(["--ukb-phe", "/some/input", "--prepared-source", "/some/prepared",
@@ -269,7 +297,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(a.modules, hpc_workflow.DEFAULT)
         self.assertEqual(extra, ["--ukb-phe", "/some/input", "--prepared-source", "/some/prepared"])
         jobs = hpc_workflow.build_jobs(a, extra)
-        self.assertTrue(all("/some/prepared" in job.argv for job in jobs if ".c1." in job.key))
+        for job in jobs:
+            steps = json.loads(job.argv[job.argv.index("--steps-json")+1])
+            self.assertTrue(all("/some/prepared" in s["argv"] for s in steps if s["key"].endswith(".c1.prepare")))
 
     def test_explicit_coloc_switch_and_gpu_allocation_agree(self):
         for switch, device, inherited, expected in (
@@ -292,7 +322,10 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(job.env["RUN_GPU_COLOC"], "FALSE")
             args, extra = hpc_workflow.parse_cli(["c1_correlate", "--Y", "toy", "--biom", "prot", "--methods", "abm_deep"])
             jobs = hpc_workflow.build_jobs(args, extra)
-            self.assertEqual([j.key for j in jobs if j.resources["gpus"]], ["toy.prot.c1.models"])
+            self.assertEqual([j.key for j in jobs if j.resources["gpus"]], ["toy.prot"])
+            steps = json.loads(jobs[0].argv[jobs[0].argv.index("--steps-json")+1])
+            models = next(s for s in steps if s["key"].endswith(".c1.models"))
+            self.assertEqual(models["argv"][-2:], ["--device", "cuda"])
 
     def test_native_hpc_runtime_auto_coloc_generates_matching_gpu_plan(self):
         with tempfile.TemporaryDirectory() as td:

@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags (also supported by the install dispatcher):
+#   --submit hpc --queue 33 --cores 40 --memory-limit-gb 160 --hours 24 --plan-only
+# New CPU plans auto-round slots. A scope needing a GPU uses --gpu-queue for its one job.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -12,11 +26,16 @@ fi
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 LE8_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+le8_gpu_queue_override=${LE8_GPU_QUEUE:-}
+if [[ -n ${_OS_DEFAULT_LE8_GPU_QUEUE:-} && $le8_gpu_queue_override == "$_OS_DEFAULT_LE8_GPU_QUEUE" ]]; then
+    le8_gpu_queue_override=""
+fi
 source "$LE8_ROOT/../0f/workflow_env.sh"
 workflow_init le8 "$@"
 set -- "${WORKFLOW_ARGS[@]}"
 source "$LE8_ROOT/f/runtime_env.sh"
-# Public runs always produce inspectable .cmd stages. Planning uses only Python
+unset le8_gpu_queue_override
+# Public runs produce one inspectable .cmd per trait/biom. Planning uses only Python
 # stdlib; no R, cohort preparation or fitting can execute on an HPC login node.
 if [[ ${WORKFLOW_WORKER:-0} != 1 ]]; then
     le8_plan=TRUE
@@ -28,13 +47,13 @@ if [[ ${WORKFLOW_WORKER:-0} != 1 ]]; then
         exec "${LE8_PLANNER_PYTHON:-python3}" "$LE8_ROOT/f/hpc_workflow.py" "$@"
     fi
     if [[ $submit == hpc && ${1:-} =~ ^(abm|deviation|evidence|viewer)$ && -z ${LSB_JOBID:-} ]]; then
-        echo 'Standalone utilities on HPC require an allocated LSF job. Use the module DAG for scheduled analysis.' >&2
+        echo 'Standalone utilities on HPC require an allocated LSF job. Use the scope workflow for scheduled analysis.' >&2
         exit 2
     fi
 fi
 # One logger covers the public dispatcher and all of its children.
 export SCRIPT_FOREGROUND=1
-export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-/tmp/le8-logs/runs}
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${DIR_RUNTIME_TMP}/le8-logs/runs}
 if [[ $# == 0 && ${SCRIPT_CONSOLE_ACTIVE:-0} != 1 && ${SCRIPT_VERBOSE:-0} != 1 ]]; then
 	exec python3 "$LE8_ROOT/../0f/console_run.py" --script "$LE8_ROOT/le8.sh" --
 fi
@@ -54,14 +73,14 @@ Modules:
     Default: c1_correlate -> C2 -> C3 -> C4 -> C5
 
 Main options:
-    --submit local|hpc   Local DAG execution or LSF submission (default hpc)
+    --submit local|hpc   One sequential job per trait/biom (default hpc)
     --jobs-N N          Concurrent local jobs / maximum active LSF submissions
     --wait TRUE|FALSE   Wait for submitted HPC jobs [FALSE]
-    --plan-only         Write .cmd DAG without analysis/submission
+    --plan-only         Write <trait>.<biom>.cmd without analysis/submission
     --plan-dir DIR      Persistent plans/logs [ANALYSIS_ROOT/le8/logs/workflows]
     --resume-plan FILE  Continue submission/waiting for the same plan (no failed-job retry)
-    --queue NAME --gpu-queue NAME --hours N  LSF resources [33,4a100-40,72]
-    --gpu-cores N       CPU slots for GPU stages [20, at least --cores]
+    --queue NAME --gpu-queue NAME --hours N  LSF resources [33,2v100-32-sc,72]
+    --gpu-cores N       CPU slots when any stage needs GPU [20, at least --cores]
     --gpu-memory-limit-gb N  GPU-node host RAM cap in GiB [160; not GPU VRAM]
     --eigh-backend auto|cpu|cuda  C2 eigendecomposition [auto; HPC requests GPU]
     --run-gpu-coloc TRUE|FALSE   Explicit C3 GPU choice, overriding --device
@@ -76,17 +95,17 @@ Main options:
     --replace-models TRUE|FALSE       Override C1 risk-model replacement
     --replace-evaluation TRUE|FALSE   Override common evaluation replacement
     --replace-reliability TRUE|FALSE  Override P0/P1/P2 evaluation replacement
-    --methods CSV         glmnet,lightgbm,abm_count
+    --methods CSV         glmnet,lightgbm,abm_count,abm_deep
                           Historical sensitivities: abm_case_preserving,abm_profile,
-                          abm_prevalent,abm_legacy,molecular_deviation,abm_deep
+                          abm_prevalent,abm_legacy,molecular_deviation
     --device NAME         [auto], cpu or cuda; independent of scientific method
-                          HPC auto schedules C2 eigh, C3 and selected abm_deep on a GPU.
+                          If C2 eigh, C3 or abm_deep needs GPU, the scope job reserves it.
                           Primary abm_count/glmnet/LightGBM remain CPU methods.
     --config FILE         C1 parameter file [config/c1_methods.json]
     --history-config FILE Historical-case assumptions [config/c1_history.json]
     --association MODE    [run], auto or skip the association analysis
     --pgs TRUE|FALSE      Enable PGS association [FALSE]; ABM does not require it
-    --min-cases-with-biom N  Minimum development cases with omics [50]
+    --min-cases-with-biom N  Minimum development cases for prediction only [50]
     --skip-abm            Run only the conventional C1 prediction methods
     --prepared-source DIR Reuse a prepared cohort for C1 fitting
     --preflight / --dry-run  Check inputs / print commands
@@ -106,11 +125,11 @@ Deployment and results:
     Compare full population and the same selected people, including complements.
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
-    cd /work/sph-huangj/scripts/le8
+    source "${SCRIPTS_ROOT}/0f/0os.sh"
+    cd ${SCRIPTS_ROOT}/le8
     ./le8.sh --Y cvd_cad --biom prot,met --preflight
     ./le8.sh --Y cvd_cad --biom prot,met
-    ./le8.sh c1_correlate --Y ra,sle2,ad,epilepsy,mi,cvd_afib,cvd_abaneu,cvd_htn,copd,asthma,masld,amr --biom prot,met --replace TRUE
+    ./le8.sh c1_correlate --Y ad,amr,asthma,copd,cvd_afib,cvd_cad,cvd_htn,epilepsy,masld,mi,ra,sle2 --biom prot,met
     ./le8.sh final --Y cvd_cad --biom prot,met
     ./le8.sh shiny --Y cvd_cad --biom prot,met --no-reindex
 
@@ -206,12 +225,12 @@ le8_main() {
 	local -a extra=() args=()
 	# Analysis input paths and principal scientific/resource settings.
 	# These are inherited by 0.engine.sh; explicit native CLI options override them.
-	export UKB_PHE=${UKB_PHE:-${DIR_UKB:-${DIR_DATA:-/mnt/f}/ukb}}
-	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-${DIR_DATA:-/mnt/f}/gen/ukb/37/typ/ukb_rel.dat}
-	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}
-	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}
-	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/met}
-	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-${DIR_DATA:-/mnt/f}/gen/1kg}
+	export UKB_PHE=${UKB_PHE:-${DIR_UKB:?Initialize paths with 0f/0os.sh}}
+	export LE8_UKB_REL_FILE=${LE8_UKB_REL_FILE:-${DIR_DATA:-${DIR_BIG}}/gen/ukb/37/typ/ukb_rel.dat}
+	export LE8_GWAS_DIR=${LE8_GWAS_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/main}
+	export LE8_PQTL_IV_DIR=${LE8_PQTL_IV_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/prot}
+	export LE8_MQTL_IV_DIR=${LE8_MQTL_IV_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/met}
+	export LE8_REFGEN_ROOT=${LE8_REFGEN_ROOT:-${DIR_DATA:-${DIR_BIG}}/gen/1kg}
 	export LE8_GRCH=${LE8_GRCH:-auto}
 	# Pool capacity coordinates concurrent runs; each phase requests only its own budget.
 	export LE8_TOTAL_CORES=${LE8_TOTAL_CORES:-16}
@@ -223,8 +242,8 @@ le8_main() {
 	export C4_FOCUS_BUDGETS=${C4_FOCUS_BUDGETS:-5,10,50}
 	export C4_MODULE_BOOT=${C4_MODULE_BOOT:-100} C4_MODULE_STABILITY=${C4_MODULE_STABILITY:-0.70}
 	# Author-published CIGMA inference remains labelled as external evidence.
-	if [[ -z ${C5_CIGMA_RESULTS:-} && -s $DIR_DATA/annot/cigma/chen2026/cigma.results.csv ]]; then
-		export C5_CIGMA_RESULTS=$DIR_DATA/annot/cigma/chen2026/cigma.results.csv
+	if [[ -z ${C5_CIGMA_RESULTS:-} && -s $DIR_ANNOT/le8/cigma/chen2026/cigma.results.csv ]]; then
+		export C5_CIGMA_RESULTS=$DIR_ANNOT/le8/cigma/chen2026/cigma.results.csv
 	fi
 	if [[ $# -gt 0 && $1 != -* ]]; then
 		modules=$1
@@ -332,7 +351,13 @@ le8_main() {
 		return 2
 	}
 	export PYTHON_BIN=$python_bin LE8_ANALYSIS_ROOT=$analysis_root DIRSCRIPT=$LE8_ROOT LE8_FDIR=$LE8_ROOT/f
-	if [[ ",$modules," == *,c3_coloc,* && $RUN_GPU_COLOC == TRUE && $dry_run != TRUE ]]; then
+	local coloc_has_gwas=FALSE coloc_trait coloc_file
+	IFS=',' read -r -a coloc_traits <<<"$trait_csv"
+	for coloc_trait in "${coloc_traits[@]}"; do
+		coloc_file=${Y_GWAS:-$LE8_GWAS_DIR/common/$coloc_trait/gwas/$coloc_trait.gz}
+		[[ ! -s $coloc_file ]] || coloc_has_gwas=TRUE
+	done
+	if [[ ",$modules," == *,c3_coloc,* && $RUN_GPU_COLOC == TRUE && $dry_run != TRUE && $coloc_has_gwas == TRUE ]]; then
 		le8_coloc_cuda_preflight "$r_bin" "$python_bin" || return 2
 	fi
 	args=("$modules" --Y "$trait_csv" --biom "$biom_csv" --analysis-root "$analysis_root"

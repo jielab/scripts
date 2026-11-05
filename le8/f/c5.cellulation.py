@@ -10,6 +10,13 @@ Commands: annotate, import-cellage, import-cigma, inspect-table, cigma,
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # Shared PNG byte limit; PDF/SVG export settings are preserved.
 import sys as _png_sys
 from pathlib import Path as _PngPath
@@ -443,12 +450,16 @@ def valid_kinship(d, label):
     return x
 
 
+class InsufficientCigmaSupport(ValueError):
+    """One donor/cell-type analysis is not identifiable at its sample size."""
+
+
 def read_inputs(row, base):
     if row.get("ctnu_definition") != "variance_of_pseudobulk_mean":
         raise ValueError("ctnu_definition must be variance_of_pseudobulk_mean (SEM squared, not SD or cell variance)")
     paths = {k:(base/row[k]).resolve() for k in ["ctp","ctnu","P","K"]}
     y = matrix(paths["ctp"]); donors, cells = y.index, list(y.columns)
-    if len(y) < 20 or len(cells) < 2: raise ValueError("Need >=20 donors and >=2 cell types; this is not a power guarantee")
+    if len(y) < 20 or len(cells) < 2: raise InsufficientCigmaSupport("Need >=20 donors and >=2 cell types; this is not a power guarantee")
     if row.get("cell_types") and set(row["cell_types"].split(";")) != set(cells):
         raise ValueError("Manifest cell_types does not match CTP")
     nu = aligned(paths["ctnu"],donors,cells); prop = aligned(paths["P"],donors,cells)
@@ -475,10 +486,11 @@ def read_inputs(row, base):
         if np.allclose(args["Kt"],args["K"]): raise ValueError("K and Kt are identical; separate variance components unidentified")
     # Conservative safeguard for the native donor-jackknife Wald denominator.
     npar=2+3*len(cells)+q+len(args.get("random_covars",{}))+(len(cells)+1 if "Kt" in args else 0)
-    if len(y)<=npar+2: raise ValueError(f"Insufficient donors for CIGMA parameter count: N={len(y)}, parameters~{npar}")
+    if len(y)<=npar+2: raise InsufficientCigmaSupport(f"Insufficient donors for CIGMA parameter count: N={len(y)}, parameters~{npar}")
     if row.get("n"):
         paths["n"]=(base/row["n"]).resolve(); n=aligned(paths["n"],donors,cells).to_numpy(float)
-        if ((n<2)|(n!=np.floor(n))).any(): raise ValueError("Need >=2 cells per represented donor/cell pair to estimate SEM squared")
+        if (n!=np.floor(n)).any(): raise ValueError("Cell counts must be integers")
+        if (n<2).any(): raise InsufficientCigmaSupport("Need >=2 cells per represented donor/cell pair to estimate SEM squared")
     return args,cells,paths
 
 
@@ -593,6 +605,9 @@ def run(manifest,outdir,validate_only=False,seed=2026,allow_untested=False,_fit_
                     finite=all(np.isfinite(x["specific_p"]) for x in results if x["gene"]==base["gene"] and x["tissue"]==base["tissue"])
                     status.append(dict(**base,status="ok" if finite else "numerically_incomplete",message="; ".join(str(w.message) for w in caught)))
                 else: status.append(dict(**base,status="validated",message="Input validation only; no fit performed"))
+            except InsufficientCigmaSupport as exc:
+                status.append(dict(**base,status="skipped_insufficient_support",message=str(exc)))
+                print(f"[LE8] SKIP C5/CIGMA {base['gene']}/{base['tissue']}: {exc}; continue other genes", flush=True)
             except Exception as exc:
                 status.append(dict(**base,status="failed",message=f"{type(exc).__name__}: {exc}"))
     except Exception as exc:
@@ -871,7 +886,7 @@ def kinship_from_dosage(dosage,min_maf=.05,max_missing=.02):
 
 # ---------------- LE8 integration; original public interfaces and output names retained ----------------
 def default_cell_atlas():
-    return Path(os.getenv("C5_CELL_ATLAS","F:/annot/cellage/atlas.csv" if os.name=="nt" else "/mnt/f/annot/cellage/atlas.csv"))
+    return Path(os.getenv("C5_CELL_ATLAS", configured_path('DIR_ANNOT', 'le8/cellage/atlas.csv')))
 
 
 def import_cellage(repo,output):

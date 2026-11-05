@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # The PNG helper is independent of model fitting and result caches.
 .png_common_source <- if (sys.nframe() > 0L) tail(Filter(Negate(is.null), lapply(sys.frames(), function(frame) frame$ofile)), 1)[[1]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE)[1])
 source(file.path(dirname(dirname(dirname(normalizePath(.png_common_source)))), "0f", "png_output.R"), local = TRUE)
@@ -882,6 +899,12 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 			reusable <- all(required[[m]] %in% names(x)) && present(files)
 			if (m == "c4_explain") reusable <- reusable && all(c("metrics", "contrasts", "bootstrap", "provenance") %in% names(x$tables))
 			complete <- reusable && present(files) && figures_ok
+			if (m == "c4_explain" && identical(meta$status, "unavailable_upstream_panels") &&
+				present(file.path(d, c("c4.focus.roles.csv.gz", "c4.focus.panel_members.csv")))) {
+				# A previous explicit unavailable result is valid until its frozen
+				# inputs arrive; then resume only this dependent reconstruction.
+				reusable <- FALSE; complete <- FALSE
+			}
 			if (m == "c4_connect") {
 				shared <- d
 				shared_ready <- present(file.path(shared, c(
@@ -925,13 +948,23 @@ le8_completed_results <- function(root, traits, layers, modules, validate_settin
 				!all(c("paired_associations", "time_heterogeneity", "paired_status") %in% names(x$review))
 			if (missing_c1_review) { reusable <- FALSE; complete <- FALSE }
 			if (validate_settings && (!settings_match || !identical(meta$code_signature,le8_code_fingerprint()))) { reusable <- FALSE; complete <- FALSE }
-			status <- if (complete) "completed" else if (reusable) "cached" else "incomplete"
+			partial_genetics <- m %in% c("c2_cause","c3_coloc") &&
+				identical(meta$status, "completed_with_unavailable_genetics") && reusable &&
+				is.data.frame(x$subanalysis_status) && nrow(x$subanalysis_status) > 0 &&
+				all(c("analysis","status","detail") %in% names(x$subanalysis_status)) &&
+				!failed_status(x$subanalysis_status$status) &&
+				present(file.path(d,paste0(substr(m,1,2),".subanalysis_status.csv")))
+			if (identical(meta$status,"completed_with_unavailable_genetics") && !partial_genetics) {
+				reusable <- FALSE; complete <- FALSE
+			}
+			status <- if (partial_genetics) "completed_with_unavailable_genetics" else if (complete) "completed" else if (reusable) "cached" else "incomplete"
 			detail <- if (complete) "Saved estimates and original scope retained; no refitting or relabelling" else if (reusable)
 				"Numerical results complete; regenerate presentation without refitting" else "Missing result fields or numerical exports; stage resume required"
 			if (!validate_settings && complete) detail <- "Core objects, numerical exports and figure manifest validated; no refitting"
 			if (length(failed_components)) detail <- paste("Failed subanalyses:", paste(failed_components, collapse = ", "))
 			if (stale_c1) detail <- "C1 association method version or prevalent fit audit is stale; recompute associations with the current method"
 			if (missing_c1_review) detail <- "C1 review additions incomplete; resume from saved association/PGS scans"
+			if (partial_genetics) detail <- "Independent analyses retained; genetic analyses unavailable. Recheck inputs on the next invocation."
 		}
 		rows[[length(rows) + 1L]] <- data.frame(trait = y, layer = b, module = m, status, generated, version, detail, stringsAsFactors = FALSE)
 	}
@@ -954,7 +987,7 @@ if (sys.nframe() == 0L && length(commandArgs(TRUE)) && commandArgs(TRUE)[1] %in%
 			else if (z$status[i] == "cached") cat(key, "|reuse-results\n", sep = "")
 		}
 	}
-	if (audit && (!nrow(z) || any(z$status != "completed"))) {
+	if (audit && (!nrow(z) || any(!z$status %in% c("completed","completed_with_unavailable_genetics")))) {
 		print(z)
 		stop("Result validation failed; incomplete outputs must not be marked DONE. See ", args[6])
 	}
@@ -1098,6 +1131,8 @@ le8_proxy_map <- function(d, features, components, covars, adjustment = "basic_a
 le8_fit_budget_model <- function(train, test, clinical, features, tvar, evar,
 			solver = "cox", seed = 2026) {
 	if (!solver %in% c("cox", "ridge")) stop("solver must be cox or ridge")
+	if (!nrow(train) || sum(train[[evar]] == 1, na.rm=TRUE) < 1)
+		return(list(status="skipped_insufficient_training_events"))
 	vars <- unique(c(clinical, features)) ; xx <- le8_prepare_prediction_matrix(train, test, vars)
 	if (!ncol(xx$train)) return(list(status = "no usable predictors"))
 	orig <- colnames(xx$train) ; safe <- paste0("x", seq_len(ncol(xx$train)))
@@ -1481,7 +1516,7 @@ inormal2 <- function(x) {
 
 
 # 🚩 Paths and global settings
-if (!exists("dir0")) dir0 <- Sys.getenv("DIR_WORK", unset = ifelse(Sys.info()[["sysname"]] == "Windows", "D:", "/mnt/d"))
+if (!exists("dir0")) dir0 <- Sys.getenv("DIR_WORK", unset = ifelse(Sys.info()[["sysname"]] == "Windows", os_path("DIR_DAT"), os_path("DIR_DAT")))
 PHE_F_R <- Sys.getenv("PHE_F", unset = file.path(dir0, "scripts/0f/phenotype.sh"))
 find_first_existing <- function(paths, default = paths[[1]]) {
 	paths <- unique(paths[!is.na(paths) & nzchar(paths)])
@@ -1501,23 +1536,17 @@ if (!is.finite(N_CORES)) N_CORES <- 1L
 SEED <- as.integer(Sys.getenv("SEED", unset = "2026"))
 set.seed(SEED)
 
-indir <- find_first_existing(c(
-	Sys.getenv("UKB_PHE", unset = ""), Sys.getenv("DIR_UKB", unset = ""), Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"),
-	"/mnt/f/ukb", "F:/ukb"
-), Sys.getenv("DIR_UKB", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb"))
-common_dir <- find_first_existing(c(
-	Sys.getenv("UKB_COMMON", unset = ""), file.path(indir, "common"),
-	"/mnt/f/ukb/common", "F:/ukb/common"
-), file.path(indir, "common"))
+indir <- Sys.getenv("UKB_PHE", os_path("DIR_UKB"))
+common_dir <- Sys.getenv("UKB_COMMON", file.path(indir, "common"))
 analysis_root <- Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(dir0, "analysis/le8"))
 out.base <- file.path(analysis_root, Y)
 out.prot <- file.path(out.base, "prot")
 out.met <- file.path(out.base, "met")
 invisible(lapply(c(out.base, out.prot, out.met), dir.create, recursive = TRUE, showWarnings = FALSE))
 
-dir.Y <- Sys.getenv("LE8_GWAS_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/main"))
-dir.X <- Sys.getenv("LE8_PQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/prot"))
-dir.met.gwas <- Sys.getenv("LE8_MQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/met"))
+dir.Y <- Sys.getenv("LE8_GWAS_DIR", unset = file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")), "gwas/main"))
+dir.X <- Sys.getenv("LE8_PQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")), "gwas/prot"))
+dir.met.gwas <- Sys.getenv("LE8_MQTL_IV_DIR", unset = file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")), "gwas/met"))
 gwas_trait_dir <- function(project_dir, trait, category = "common") file.path(project_dir, category, trait)
 gwas_clean_dir <- function(project_dir, trait, category = "common") file.path(gwas_trait_dir(project_dir, trait, category), "gwas")
 gwas_clean_file <- function(project_dir, trait, suffix = ".gz") file.path(gwas_clean_dir(project_dir, trait), paste0(trait, suffix))
@@ -1535,15 +1564,14 @@ prot_bed_file <- find_first_existing(
 	c(
 		Sys.getenv("LE8_PROT_BED", unset = ""),
 		file.path(dir.X, "ppp_3k.b38.bed"),
-		file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas/prot/pheno.bed")
+		file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")), "gwas/prot/pheno.bed")
 	),
 	file.path(dir.X, "ppp_3k.b38.bed")
 )
 met_list_file <- find_first_existing(c(
-	Sys.getenv("LE8_MET_LIST", unset = ""), file.path(common_dir, "met.lst"),
-	"F:/ukb/common/met.lst"
+	Sys.getenv("LE8_MET_LIST", unset = ""), file.path(common_dir, "met.lst")
 ), file.path(common_dir, "met.lst"))
-ukb_bgen_dir <- Sys.getenv("UKB_BGEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37/imp" else "/mnt/f/gen/ukb/37/imp")
+ukb_bgen_dir <- Sys.getenv("UKB_BGEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") file.path(os_path("DIR_GEN"), "ukb/37/imp") else file.path(os_path("DIR_GEN"), "ukb/37/imp"))
 
 # Source existing project helpers when present. The new code does not require association.R,
 # but uses the user's existing t2e() definition from phenotype.R when available.
@@ -1685,7 +1713,7 @@ le8_stage_fingerprint <- function() {
 	code <- list.files(Sys.getenv("LE8_FDIR",file.path(Sys.getenv("DIRSCRIPT"),"f")),pattern="[.](R|py|sh)$",full.names=TRUE)
 	env <- Sys.getenv(); env <- env[grepl("^(C[1-5]_|PGS_|RUN_|MRLINK2_EIGH_BACKEND|LE8_(GWAS|PQTL|MQTL|LD|GROUP|GRCH|REFGEN|ENDPOINT|BASELINE|OUTER|Y_DATE|VARS_ADJ|VARIANT|REFERENCE|EVIDENCE)|FINAL_CONNECTION|DATE_FOLLOW_END)",names(env))]
 	files <- unique(c(file.path(get0("indir",ifnotfound=""),"Rdata",c("all.rds","prot.rds","met.rds")),
-		file.path(Sys.getenv("DIR_DATA", "/mnt/f"),"gwas",c("prot","met"),"pgs",c("prot.pgs.gz","met.pgs.gz")),
+		file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")),"gwas",c("prot","met"),"pgs",c("prot.pgs.gz","met.pgs.gz")),
 		unname(env[file.exists(env)]),get0(".le8_stage_source_files",ifnotfound=character()),file.path(get0("indir",ifnotfound=""),"rap/vip.tab.gz")))
 	for (mf in env[grepl("MANIFEST$",names(env)) & file.exists(env)]) {
 		m <- tryCatch(data.table::fread(mf,showProgress=FALSE),error=function(e) NULL)
@@ -1967,33 +1995,63 @@ filter_analysis_cohort <- function(dat) {
 	}
 	dat
 }
+le8_empty_association <- function(features = character(), reason = "association unavailable") {
+	n <- length(features)
+	tibble(term = as.character(features), estimate = rep(NA_real_, n), beta = rep(NA_real_, n),
+		std.error = rep(NA_real_, n), conf.low = rep(NA_real_, n), conf.high = rep(NA_real_, n),
+		statistic = rep(NA_real_, n), p.value = rep(NA_real_, n), FDR = rep(NA_real_, n),
+		N_total = rep(NA_integer_, n), N_event = rep(NA_integer_, n), status = rep(reason, n))
+}
+
+le8_read_c1_optional <- function(outdir, layer, features = NULL) {
+	path <- file.path(le8_job_dir(outdir, "c1_correlate"), "c1.res.rds")
+	if (file.exists(path)) {
+		obj <- readRDS(path) # Corrupt or mismatched results remain errors.
+		le8_check_options(obj)
+		return(obj)
+	}
+	if (is.null(features)) features <- setdiff(names(if (layer %in% c("protein", "prot")) read_prot() else read_met()), "eid")
+	message("[LE8] SKIP observational C1 overlay: missing ", path, "; continue independent analyses")
+	a <- le8_empty_association(features, "unavailable_upstream_association")
+	list(association = a, prevalent = a, status = "unavailable_upstream_association")
+}
+
+le8_empty_mr <- function() {
+	tibble(exposure = character(), analysis = character(), pval = numeric(), FDR_all = numeric(),
+		FDR_analysis = numeric(), b = numeric(), se = numeric(), n_IV = integer(),
+		instrument_snps = character(), instrument_positions = character())
+}
+
 cox_scan <- function(dat, xs, covars, outcome = Y, scale_x = TRUE, min_n = 500, min_event = 20,
 			time_var = paste0(outcome, ".t2e"), event_var = paste0(outcome, ".Yt2e")) {
 	tvar <- time_var ; evar <- event_var
 	xs <- intersect(xs, names(dat)) ; covars <- intersect(covars, names(dat))
+	if (!length(xs)) return(le8_empty_association())
 	bind_rows(parallel_map(xs, function(x) {
 		need <- unique(c(tvar, evar, x, covars)) ; d <- dat[, need, drop = FALSE]
 		d <- d[stats::complete.cases(d), , drop = FALSE]
 		ne <- sum(d[[evar]] == 1, na.rm = TRUE)
 		empty <- tibble(
 			term = x, estimate = NA_real_, beta = NA_real_, std.error = NA_real_, conf.low = NA_real_,
-			conf.high = NA_real_, statistic = NA_real_, p.value = NA_real_, N_total = nrow(d), N_event = ne
+			conf.high = NA_real_, statistic = NA_real_, p.value = NA_real_, N_total = nrow(d), N_event = ne,
+			status = "skipped_insufficient_sample_or_events"
 		)
 		if (nrow(d) < min_n || ne < min_event || length(unique(d[[evar]])) < 2) return(empty)
 		d[[x]] <- suppressWarnings(as.numeric(d[[x]])) ; sx <- sd(d[[x]], na.rm = TRUE)
-		if (!is.finite(sx) || sx == 0) return(empty)
+		if (!is.finite(sx) || sx == 0) { empty$status <- "skipped_constant_feature"; return(empty) }
 		if (scale_x) d[[x]] <- as.numeric(scale(d[[x]]))
 		fit <- tryCatch(coxph(as.formula(paste0(
 			"Surv(", bt(tvar), ",", bt(evar), ") ~ ",
 			paste(bt(c(x, covars)), collapse = " + ")
 		)), d, ties = "efron"), error = function(e) NULL)
-		if (is.null(fit)) return(empty)
+		if (is.null(fit)) { empty$status <- "unavailable_fit"; return(empty) }
 		sm <- coef(summary(fit)) ; if (!x %in% rownames(sm)) return(empty)
 		b <- sm[x, "coef"] ; se <- sm[x, "se(coef)"]
 		tibble(
 			term = x, estimate = exp(b), beta = b, std.error = se, conf.low = exp(b - 1.96 * se),
 			conf.high = exp(b + 1.96 * se), statistic = b / se,
-			p.value = 2 * pnorm(abs(b / se), lower.tail = FALSE), N_total = nrow(d), N_event = ne
+			p.value = 2 * pnorm(abs(b / se), lower.tail = FALSE), N_total = nrow(d), N_event = ne,
+			status = if (is.finite(b) && is.finite(se) && se > 0) "ok" else "unavailable_fit"
 		)
 	})) |>
 		mutate(FDR = p.adjust(p.value, "BH")) |>
@@ -2005,6 +2063,7 @@ cox_scan_delayed_entry <- function(dat, xs, covars, outcome = Y, scale_x = TRUE,
 			entry_var = ".attained_entry", exit_var = ".attained_exit",
 			event_var = paste0(outcome, ".Yt2e")) {
 	xs <- intersect(xs, names(dat)) ; covars <- intersect(covars, names(dat))
+	if (!length(xs)) return(le8_empty_association())
 	bind_rows(parallel_map(xs, function(x) {
 		need <- unique(c(entry_var, exit_var, event_var, x, covars)) ; d <- dat[, need, drop = FALSE]
 		d <- d[stats::complete.cases(d), , drop = FALSE]
@@ -2940,7 +2999,7 @@ le8_check_final_request <- function(obj) {
 
 # Cache paths stay stable across disposable execution workspaces.
 le8_cache_root <- function() {
-	project <- Sys.getenv('LE8_PUBLISHED_ROOT', Sys.getenv('LE8_ANALYSIS_ROOT', '/mnt/d/analysis/le8'))
+	project <- Sys.getenv('LE8_PUBLISHED_ROOT', Sys.getenv('LE8_ANALYSIS_ROOT', file.path(os_path("ANALYSIS_ROOT"), "le8")))
 	file.path(Sys.getenv('LE8_CACHE_ROOT', unset = file.path(Sys.getenv('TMPDIR', '/tmp'), 'le8-cache')), substr(digest::digest(project, algo = 'sha256', serialize = FALSE), 1, 12))
 }
 le8_cache_dir <- function(stage, layer, ...) {
@@ -2967,7 +3026,7 @@ LE8_BASELINE_VERSION <- "2026-09-21.baseline-med-source-v3"
 le8_attach_baseline_medication <- function(x) {
 	# Raw i0 responses retain -7 (none of the above), which phe.R may have
 	# converted to NA. Never infer a negative response from that processed NA.
-	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", "/mnt/f/ukb"))
+	root <- get0("indir", ifnotfound = Sys.getenv("UKB_PHE", os_path("DIR_UKB")))
 	path <- Sys.getenv("LE8_BASELINE_MED_FILE", file.path(root, "rap/vip.tab.gz"))
 	if (!file.exists(path)) return(x)
 	explicit <- nzchar(Sys.getenv("LE8_BASELINE_MED_FILE", ""))
@@ -3239,8 +3298,8 @@ le8_mock_network <- function(edges, title, values = NULL) {
 		theme(plot.title = element_text(face = 'bold'))
 }
 # Public annotation dictionaries and atlas polygons live outside the script tree.
-le8_go_dir <- function() Sys.getenv("LE8_GO_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/annot/le8/go" else "/mnt/f/annot/le8/go")
-le8_ggseg_dir <- function() Sys.getenv("LE8_GGSEG_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/annot/le8/ggseg" else "/mnt/f/annot/le8/ggseg")
+le8_go_dir <- function() Sys.getenv("LE8_GO_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") file.path(os_path("DIR_ANNOT"), "le8/go") else file.path(os_path("DIR_ANNOT"), "le8/go"))
+le8_ggseg_dir <- function() Sys.getenv("LE8_GGSEG_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") file.path(os_path("DIR_ANNOT"), "le8/ggseg") else file.path(os_path("DIR_ANNOT"), "le8/ggseg"))
 
 le8_mock_enrich <- function(a, enrich, outdir, enrich_prev = tibble()) {
 	rawdir <- le8_job_dir(outdir, 'c1_correlate') ; genes <- a$term[a$p.value < .05 / nrow(a) & is.finite(a$p.value)]

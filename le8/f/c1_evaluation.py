@@ -2,6 +2,14 @@
 """C1 common model evaluation, selector inference and P0/P1/P2 reliability."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 # Common held-out model evaluation
 import math
@@ -814,6 +822,9 @@ def locate_method(scope: Path, method: str) -> Path | None:
     contracts = sorted(eval_root.glob("*/evaluation_contract.json"),
                        key=lambda p: (p.stat().st_mtime_ns, str(p)), reverse=True) if eval_root.is_dir() else []
     if (scope / "C1_FINAL_INDEX.json").is_file():
+        latest = json_read(scope / "C1_FINAL_INDEX.json")
+        if method in latest.get("unavailable_methods", {}) or method in latest.get("failed_methods", {}):
+            return None
         contracts.insert(0, scope / "C1_FINAL_INDEX.json")
     for contract_path in contracts:
         try:
@@ -1580,7 +1591,7 @@ def _evaluate_scope(scope, bootstrap, seed, coverages, primary_coverage, risk_bi
 
 def parser():
     p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
-    p.add_argument("--analysis-root","--dir-analysis-root",type=Path,default=Path(os.getenv("LE8_ANALYSIS_ROOT","/mnt/d/analysis/le8")))
+    p.add_argument("--analysis-root","--dir-analysis-root",type=Path,default=Path(os.getenv("LE8_ANALYSIS_ROOT",configured_path('ANALYSIS_ROOT', 'le8'))))
     p.add_argument("--traits","--Y",dest="traits",default="all",help="CSV trait names or 'all' to scan analysis-root")
     p.add_argument("--layer","--biom",dest="layer",default="prot",help="CSV prot,met")
     p.add_argument("--bootstrap",type=int,default=1000)

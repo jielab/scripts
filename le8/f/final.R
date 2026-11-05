@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # Final reports and optional joint validation. Basic prediction belongs to C1.
 # Each mode runs in a separate process and reads the same external analysis tree.
 .final_mode <- Sys.getenv("LE8_FINAL_MODE", unset = if (Sys.getenv("LE8_JOB") == "final_prediction") "pipeline" else "report")
@@ -716,7 +733,7 @@ if (.final_mode == "joint") {
 			distinct()
 		write.csv(universe, file.path(root, "c5.cell_assay_universe.csv"), row.names = FALSE)
 		write.csv(p, file.path(root, "c5.cell_panels.csv"), row.names = FALSE)
-		atlas <- Sys.getenv("C5_CELL_ATLAS", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/annot/cellage/atlas.csv" else "/mnt/f/annot/cellage/atlas.csv")
+		atlas <- Sys.getenv("C5_CELL_ATLAS", unset = file.path(os_path("DIR_ANNOT"), "le8/cellage/atlas.csv"))
 		code <- file.path(fdir, "c5.cellulation.py")
 		status <- system2(Sys.getenv("PYTHON_BIN", "python3"), vapply(c(
 			code, "--annotate", "--universe", file.path(
@@ -3589,7 +3606,7 @@ if (.final_mode == "joint") {
 
 	traits <- Sys.getenv("Y", unset = "cvd_cad")
 	layers <- strsplit(Sys.getenv("BIOM", unset = "prot,met"), ",", fixed = TRUE)[[1]]
-	for (layer in layers) publication_run(traits, layer, Sys.getenv("LE8_ANALYSIS_ROOT", unset = "/mnt/d/analysis/le8"))
-	le8_layer_figure_correspondence(file.path(Sys.getenv("LE8_ANALYSIS_ROOT", unset = "/mnt/d/analysis/le8"), traits))
-	pgs_publication_joint(traits, Sys.getenv("LE8_ANALYSIS_ROOT", unset = "/mnt/d/analysis/le8"), layers)
+	for (layer in layers) publication_run(traits, layer, Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(os_path("ANALYSIS_ROOT"), "le8")))
+	le8_layer_figure_correspondence(file.path(Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(os_path("ANALYSIS_ROOT"), "le8")), traits))
+	pgs_publication_joint(traits, Sys.getenv("LE8_ANALYSIS_ROOT", unset = file.path(os_path("ANALYSIS_ROOT"), "le8")), layers)
 }

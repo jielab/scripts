@@ -27,6 +27,7 @@ dependencies:
   - rpy2=3.6.7
   - r-base>=4.3
   - r-data.table # cran:data.table
+  - r-pacman # cran:pacman
   - r-dplyr
   - r-tidyr
   - r-purrr

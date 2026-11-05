@@ -6,6 +6,14 @@ test truth is opened by the common evaluator. Old ABM directories are read-only
 historical results; new results live under c1_correlate/methods and evaluation.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import sys
 sys.dont_write_bytecode = True
 
@@ -37,7 +45,7 @@ from analysis_layout import normalize_cohort_request
 from c1_protocol import (VERSION as REGISTRY_VERSION, get_method, load_method_plan,
                         parse_methods, build_abm_config, resolve_device, scientific_fingerprint, INPUT_CONTRACT_VERSION,
                         MODEL_CONTRACT_VERSION, LEGACY_MODEL_CONTRACT_VERSION)
-from c1_models import (InsufficientDevelopmentSupport, context, fit_glmnet,
+from c1_models import (InsufficientDevelopmentSupport, check_development_support, context, fit_glmnet,
                                fit_lightgbm, fit_twin, fit_prevalent, fit_deep)
 
 HERE = Path(__file__).resolve().parent
@@ -88,10 +96,10 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     p.add_argument("--Y", default="cvd_cad,ra")
     p.add_argument("--stage", choices=["all", "prepare", "association", "models", "evaluation"], default="all",
-                   help="Restartable DAG boundary; evaluation refuses to fit missing models")
+                   help="Restartable internal stage; evaluation refuses to fit missing models")
     p.add_argument("--biom", default="prot,met")
     p.add_argument("--analysis-root", "--dir-analysis-root", type=Path,
-        default=Path(os.getenv("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8")))
+        default=Path(os.getenv("LE8_ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT', 'le8'))))
     p.add_argument("--methods", help="Comma-separated method IDs; defaults to the methods in --config")
     p.add_argument("--config", type=Path, default=ROOT/"config/c1_methods.json",
                    help="Scientific method-plan JSON; a legacy flat ABM JSON is also accepted")
@@ -109,7 +117,7 @@ def parser():
     p.add_argument("--bootstrap", type=int, default=1000)
     p.add_argument("--min-cases-with-biom", "--min_cases_with_biom", type=int,
                    default=int(os.getenv("C1_MIN_CASES_WITH_BIOM", "50")),
-                   help="Minimum known incident cases with omics in the development cohort [50]")
+                   help="Minimum known development cases for prediction only; association remains independent [50]")
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--cores", type=int, default=8)
     p.add_argument("--replace", choices=["TRUE", "FALSE"], default="FALSE")
@@ -161,7 +169,7 @@ def public_plan(args, plan, base):
         layers=args.biom.split(","), methods=methods, association=args.association, pgs=args.pgs,
         min_cases_with_biom=args.min_cases_with_biom,
         replace_stages={stage:replace_stage(args,stage) for stage in ("association","models","evaluation","reliability")},
-        execution_order="trait, then layer: sample support -> association -> methods -> evaluation; finish each scope before the next",
+        execution_order="trait, then layer: association -> per-method support -> methods -> evaluation; finish each scope before the next",
         common_evaluation="same test people, outcome horizon, build censoring model and paired family draws",
         test_provenance="previously_inspected_or_unverified_exploratory",
         proposed_outputs="<analysis-root>/<Y>/<biom>/c1_correlate/{methods,evaluation/FINAL,reliability/FINAL}")
@@ -199,7 +207,7 @@ def native_association(args):
     if args.ukb_phe: cmd += ["--ukb-phe", args.ukb_phe]
     cmd += ["--memory-limit-gb", str(int(float(os.getenv("LE8_MEMORY_LIMIT_GB", "32"))))]
     env = os.environ.copy()
-    env.pop("C1_MIN_CASES_WITH_BIOM", None)  # Scope admission must not invalidate R model caches.
+    env.pop("C1_MIN_CASES_WITH_BIOM", None)  # Prediction admission must not invalidate R association caches.
     env["LE8_C1_STAGE"] = "c1_correlate" # only association; prediction handled below
     env["C1_PGS_MODE"] = {"TRUE": "run", "FALSE": "skip"}[args.pgs]
     for key, var in (("end_date", "DATE_FOLLOW_END"), ("diagnosis_col", "LE8_Y_DATE"),
@@ -561,9 +569,10 @@ def final_index(scope, destination, run_receipt):
     unavailable = run_receipt.get("unavailable_methods", {})
     abm.json_write(scope/"C1_FINAL_INDEX.json", dict(version=VERSION,
         evaluation=str(destination) if destination is not None else None,
-        methods=run_receipt["methods"], unavailable_methods=unavailable, baseline_commit=BASELINE_COMMIT, source_commit=runtime_source_commit(),
+        methods=run_receipt["methods"], unavailable_methods=unavailable,
+        failed_methods=run_receipt.get("failed_methods", {}), baseline_commit=BASELINE_COMMIT, source_commit=runtime_source_commit(),
         reliability=run_receipt.get("reliability"),
-        status=PARTIAL_COMPLETION if unavailable else
+        status="failed_methods" if run_receipt.get("failed_methods") else PARTIAL_COMPLETION if unavailable else
             "completed_with_unavailable_reliability" if run_receipt.get("reliability",{}).get("status","completed_primary_P1_vs_P0") != "completed_primary_P1_vs_P0" else "completed",
         reliability_status=run_receipt.get("reliability",{}).get("status"),
         supplementary_historical_results="existing c1_abm and c1_abm_GPU directories retained read-only"))
@@ -624,7 +633,7 @@ def evaluate_all(args, c, predictions, source, scope, run_receipt):
     truth = abm.read_npz(source/"test_truth_LOCAL_ONLY.npz")
     tables = evaluate_methods(predictions, truth, c.km, bootstrap=args.bootstrap, seed=args.seed,
         grouping_unit=c.cfg.grouping_unit, primary_coverage=c.cfg.primary_coverage)
-    unavailable = run_receipt.get("unavailable_methods", {})
+    unavailable = {**run_receipt.get("unavailable_methods", {}), **run_receipt.get("failed_methods", {})}
     if unavailable:
         rows = [dict(model=name, component="model_fit", status=item["status"], reason=item["reason"])
                 for name, item in unavailable.items()]
@@ -666,11 +675,10 @@ def run_scope(args, plan, base):
         cfg = build_abm_config("abm_case_preserving", base, trait=args.Y, layer=args.biom,
             seed=args.seed, cores=args.cores, parallel_workers=min(4,args.cores), bootstrap=args.bootstrap,
             grouping_unit=grouping, always_include_indices=clinical, final_multiroute_release="")
-        try:
-            count_only = all(get_method(name).engine == "twin_count" for name in plan["methods"])
-            c = context(d, x, cfg, required_roles={"build"} if count_only else None)
-        except InsufficientDevelopmentSupport as error:
-            return record_insufficient_support(args, plan, cfg, source, scope, error)
+        # Shared preprocessing is outcome-blind apart from build-only censoring.
+        # Each method checks its OWN required roles below; a missing calibration
+        # class must not exclude a build-only count model or an association scan.
+        c = context(d, x, cfg, required_roles=set())
         source_fingerprint = {name:sha_file(source/name) for name in
             ("development_LOCAL_ONLY.npz", "test_X_LOCAL_ONLY.npz", "host_contract.json")}
         if history is not None: source_fingerprint["history"] = sha_file(source/"prevalent_source_LOCAL_ONLY.joblib")
@@ -679,96 +687,118 @@ def run_scope(args, plan, base):
         history_config = json.loads(args.history_config.read_text()) if args.history_config else None
         for name in plan["methods"]:
             args._c1_stage = name
-            spec = get_method(name)
-            method_cfg = build_abm_config(name if spec.engine in {"twin","twin_count","prevalent_transfer","torch_transformer"}
-                else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
-                trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores,
-                parallel_workers=min(4,args.cores), bootstrap=args.bootstrap, grouping_unit=grouping,
-                always_include_indices=clinical, final_multiroute_release="")
-            # Clinical roles, censoring horizon and assay QC are a study contract,
-            # not parameters that may quietly differ between comparison arms.
-            for field in ("horizon","feature_missing","sample_missing"):
-                if getattr(method_cfg,field) != getattr(cfg,field):
-                    raise ValueError(f"{name}: {field} differs from common evaluation/input contract; use a separate study run")
-            device = resolve_device(name,args.device)
-            method_context = copy.copy(c)
-            method_context.cfg = method_cfg
-            method_context.common_support = None
-            method_context.common_geometry = None
-            extra = {}
-            if spec.uses_prevalent: extra["history_config"] = history_config
-            if name == "abm_deep": extra["deep_config"] = json.loads(args.deep_config.read_text())
-            if name == "molecular_deviation":
-                host = load_module("le8_unified_host", HERE/"0.host.py")
-                config_path = Path(args.deviation_config) if args.deviation_config else ROOT/f"config/deviation_{args.biom}.json"
-                extra["deviation_config"] = json.loads(config_path.read_text())
-                for label, path in {"pgs_source":host.pgs_path(args), "pgs_mapping":args.pgs_mapping,
-                                    "deviation_input":source/"deviation_LOCAL_ONLY.joblib"}.items():
-                    if path:
-                        path = Path(path)
-                        extra[label] = {"path":str(path), "sha256":sha_file(path) if path.is_file() else "missing"}
-            signature = scientific_fingerprint(name, {**asdict(method_cfg), **extra}, source_fingerprint)
-            target = scope/"methods"/name/(signature[:16]+"_"+device["actual"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            stored_signature = signature
-            if not replace_stage(args,"models"):
-                method_context.history_config_bytes = args.history_config.read_bytes() if args.history_config else None
-                target, stored_signature = reusable_method(scope, name, signature, target,
-                    method_cfg=method_cfg, context=method_context, extra=extra, source=source_fingerprint)
-            unavailable = unavailable_result(target, stored_signature) if not replace_stage(args,"models") else None
-            if unavailable:
-                print(f"[LE8 C1] Reuse unavailable status for {name}", flush=True)
-            elif not replace_stage(args,"models") and completion(target,stored_signature):
-                print(f"[LE8] DONE C1 REUSE MODEL {name}: verified frozen model and projections", flush=True)
-            else:
-                if getattr(args, "stage", "all") == "evaluation":
-                    raise RuntimeError(f"Evaluation requires a verified frozen {name} model; run models first")
-                print(f"[LE8] START C1 REFIT MODEL method={name} Y={args.Y} biom={args.biom}; device={device['actual']}; all shared test outcomes withheld",flush=True)
-                with tempfile.TemporaryDirectory(prefix=".fit-",dir=target.parent) as temp:
-                    stage = Path(temp)/"result"
-                    if spec.engine != "deviation": stage.mkdir()
-                    if name == "abm_count":
-                        from c1_count import fit_count
-                        fit_count(method_context, stage)
-                    elif name == "glmnet": fit_glmnet(method_context,stage,args.r_bin)
-                    elif name == "lightgbm": fit_lightgbm(method_context,stage)
-                    elif spec.engine == "twin":
+            try:
+                spec = get_method(name)
+                method_cfg = build_abm_config(name if spec.engine in {"twin","twin_count","prevalent_transfer","torch_transformer"}
+                    else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
+                    trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores,
+                    parallel_workers=min(4,args.cores), bootstrap=args.bootstrap, grouping_unit=grouping,
+                    always_include_indices=clinical, final_multiroute_release="")
+                # Clinical roles, censoring horizon and assay QC are a study contract,
+                # not parameters that may quietly differ between comparison arms.
+                for field in ("horizon","feature_missing","sample_missing"):
+                    if getattr(method_cfg,field) != getattr(cfg,field):
+                        raise ValueError(f"{name}: {field} differs from common evaluation/input contract; use a separate study run")
+                device = resolve_device(name,args.device)
+                method_context = copy.copy(c)
+                method_context.cfg = method_cfg
+                method_context.common_support = None
+                method_context.common_geometry = None
+                try:
+                    check_method_support(method_context, spec.engine, args.min_cases_with_biom)
+                except InsufficientDevelopmentSupport as error:
+                    # Keep support-only decisions apart from frozen fitted models.
+                    # Recompute the counts on every run, including older exclusion logs.
+                    support_key = hashlib.sha256(json.dumps(dict(source=source_fingerprint,
+                        parameters=asdict(method_cfg), minimum=args.min_cases_with_biom),
+                        sort_keys=True, default=str).encode()).hexdigest()
+                    target = scope/"prediction_status"/name/support_key[:20]
+                    target.mkdir(parents=True, exist_ok=True)
+                    unavailable = mark_unavailable(target, support_key, name, error)
+                    receipt.setdefault("unavailable_methods", {})[name] = dict(path=str(target),
+                        signature=support_key, status=unavailable["status"], reason=str(error))
+                    print(f"[LE8] SKIP C1 method={name} Y={args.Y} biom={args.biom}: {error}", flush=True)
+                    continue
+                extra = {}
+                if spec.uses_prevalent: extra["history_config"] = history_config
+                if name == "abm_deep": extra["deep_config"] = json.loads(args.deep_config.read_text())
+                if name == "molecular_deviation":
+                    host = load_module("le8_unified_host", HERE/"0.host.py")
+                    config_path = Path(args.deviation_config) if args.deviation_config else ROOT/f"config/deviation_{args.biom}.json"
+                    extra["deviation_config"] = json.loads(config_path.read_text())
+                    for label, path in {"pgs_source":host.pgs_path(args), "pgs_mapping":args.pgs_mapping,
+                                        "deviation_input":source/"deviation_LOCAL_ONLY.joblib"}.items():
+                        if path:
+                            path = Path(path)
+                            extra[label] = {"path":str(path), "sha256":sha_file(path) if path.is_file() else "missing"}
+                signature = scientific_fingerprint(name, {**asdict(method_cfg), **extra}, source_fingerprint)
+                target = scope/"methods"/name/(signature[:16]+"_"+device["actual"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                stored_signature = signature
+                if not replace_stage(args,"models"):
+                    method_context.history_config_bytes = args.history_config.read_bytes() if args.history_config else None
+                    target, stored_signature = reusable_method(scope, name, signature, target,
+                        method_cfg=method_cfg, context=method_context, extra=extra, source=source_fingerprint)
+                unavailable = unavailable_result(target, stored_signature) if not replace_stage(args,"models") else None
+                if unavailable and unavailable["status"] == INSUFFICIENT_SUPPORT:
+                    # Admission may have changed; counts above are authoritative.
+                    unavailable = None
+                if unavailable:
+                    print(f"[LE8 C1] Reuse unavailable status for {name}", flush=True)
+                elif not replace_stage(args,"models") and completion(target,stored_signature):
+                    print(f"[LE8] DONE C1 REUSE MODEL {name}: verified frozen model and projections", flush=True)
+                else:
+                    if getattr(args, "stage", "all") == "evaluation":
+                        raise RuntimeError(f"Evaluation requires a verified frozen {name} model; run models first")
+                    print(f"[LE8] START C1 REFIT MODEL method={name} Y={args.Y} biom={args.biom}; device={device['actual']}; all shared test outcomes withheld",flush=True)
+                    with tempfile.TemporaryDirectory(prefix=".fit-",dir=target.parent) as temp:
+                        stage = Path(temp)/"result"
+                        if spec.engine != "deviation": stage.mkdir()
                         try:
-                            fit_twin(method_context,method_cfg,stage,name)
-                        except InsufficientDevelopmentSupport as error:
+                            if name == "abm_count":
+                                from c1_count import fit_count
+                                fit_count(method_context, stage)
+                            elif name == "glmnet": fit_glmnet(method_context,stage,args.r_bin)
+                            elif name == "lightgbm": fit_lightgbm(method_context,stage)
+                            elif spec.engine == "twin":
+                                fit_twin(method_context,method_cfg,stage,name)
+                            elif name == "abm_prevalent": fit_prevalent(method_context,history,stage,history_config)
+                            elif name == "abm_deep":
+                                resources = load_module("le8_c1_resources",HERE/"0.resources.py")
+                                with resources.gpu_lease() if device["actual"]=="cuda" else nullcontext():
+                                    fit_deep(method_context,stage,extra["deep_config"],device["actual"])
+                            elif name == "molecular_deviation":
+                                fit_deviation(args, source, stage, grouping, contract)
+                            else: raise AssertionError(name)
+                        except (InsufficientDevelopmentSupport, abm.InsufficientReferenceSupport) as error:
+                            stage.mkdir(exist_ok=True)
                             unavailable = mark_unavailable(stage, signature, name, error)
-                        except abm.InsufficientReferenceSupport as error:
-                            if name != "abm_legacy":
-                                raise
-                            unavailable = mark_unavailable(stage, signature, name, error)
-                    elif name == "abm_prevalent": fit_prevalent(method_context,history,stage,history_config)
-                    elif name == "abm_deep":
-                        resources = load_module("le8_c1_resources",HERE/"0.resources.py")
-                        with resources.gpu_lease() if device["actual"]=="cuda" else nullcontext():
-                            fit_deep(method_context,stage,extra["deep_config"],device["actual"])
-                    elif name == "molecular_deviation":
-                        fit_deviation(args, source, stage, grouping, contract)
-                    else: raise AssertionError(name)
-                    if unavailable is None:
-                        mark_complete(stage,signature,{"method":name,"device":device,"parameters":asdict(method_cfg),
-                            "extra":extra,"source":source_fingerprint,"model_contract_version":MODEL_CONTRACT_VERSION})
-                    publish(stage,target)
-            if unavailable:
-                receipt.setdefault("unavailable_methods", {})[name] = dict(path=str(target),
-                    signature=signature, status=unavailable["status"], reason=unavailable["reason"])
-                print(f"[LE8] SKIP C1 method={name} Y={args.Y} biom={args.biom}: {unavailable['reason']}", flush=True)
-                continue
-            receipt["methods"][name] = dict(path=str(target),signature=signature,device=device)
-            if spec.engine != "deviation":
-                predictions[name] = abm.load_model(target/"test_predictions_LOCAL_ONLY.joblib")
-            if name == "abm_prevalent":
-                predictions["abm_prevalent_control"] = abm.load_model(target/"nohistory_control/test_predictions_LOCAL_ONLY.joblib")
-                receipt["methods"]["abm_prevalent_control"] = dict(path=str(target/"nohistory_control"),
-                    signature=signature,device=device,automatic_matched_ablation=True)
+                        if unavailable is None:
+                            mark_complete(stage,signature,{"method":name,"device":device,"parameters":asdict(method_cfg),
+                                "extra":extra,"source":source_fingerprint,"model_contract_version":MODEL_CONTRACT_VERSION})
+                        publish(stage,target)
+                if unavailable:
+                    receipt.setdefault("unavailable_methods", {})[name] = dict(path=str(target),
+                        signature=signature, status=unavailable["status"], reason=unavailable["reason"])
+                    print(f"[LE8] SKIP C1 method={name} Y={args.Y} biom={args.biom}: {unavailable['reason']}", flush=True)
+                    continue
+                receipt["methods"][name] = dict(path=str(target),signature=signature,device=device)
+                if spec.engine != "deviation":
+                    predictions[name] = abm.load_model(target/"test_predictions_LOCAL_ONLY.joblib")
+                if name == "abm_prevalent":
+                    predictions["abm_prevalent_control"] = abm.load_model(target/"nohistory_control/test_predictions_LOCAL_ONLY.joblib")
+                    receipt["methods"]["abm_prevalent_control"] = dict(path=str(target/"nohistory_control"),
+                        signature=signature,device=device,automatic_matched_ablation=True)
+            except Exception as error:
+                receipt.setdefault("failed_methods", {})[name] = dict(status="failed", reason=str(error))
+                print(f"[LE8] ERROR C1 method={name} Y={args.Y} biom={args.biom}: {error}; continue other methods", flush=True)
+                traceback.print_exc()
         if getattr(args, "stage", "all") == "models":
             abm.json_write(scope/"C1_MODELS_FROZEN.json", dict(version=VERSION, **receipt,
                 test_outcomes_used=False, status="models_frozen"))
-            return {}
+            # Standalone reliability must use this run's available models only.
+            final_index(scope, None, receipt)
+            return {"failed_methods": receipt.get("failed_methods", {})}
         if predictions:
             # Freeze the new reliability heads before either evaluator opens test truth.
             if "glmnet" in predictions and getattr(args, "stage", "all") == "all":
@@ -781,7 +811,7 @@ def run_scope(args, plan, base):
                 print(f"[LE8 C1] FINAL reliability: {receipt['reliability']['status']}", flush=True)
             args._c1_stage = "evaluation"
             result = evaluate_all(args,c,predictions,source,scope,receipt)
-        elif receipt.get("unavailable_methods"):
+        elif receipt.get("unavailable_methods") or receipt.get("failed_methods"):
             final_index(scope, None, receipt)
             result = {}
         else:
@@ -793,118 +823,58 @@ def run_scope(args, plan, base):
         if receipt.get("reliability",{}).get("status","completed_primary_P1_vs_P0") != "completed_primary_P1_vs_P0":
             result = dict(result,scope_status=PARTIAL_RELIABILITY,
                 reliability_status=receipt["reliability"]["status"])
+        if receipt.get("failed_methods"):
+            result = dict(result, failed_methods=receipt["failed_methods"])
         return result
 
 
-def scope_support_preflight(args, plan, base):
-    """Reject unsupported whole scopes before associations/PGS; never open test truth."""
-    scope = args.analysis_root / args.Y / args.biom / "c1_correlate"
-    args._c1_stage = "scope_support_preflight"
-    configs = []
-    for name in plan["methods"]:
-        spec = get_method(name)
-        configs.append(build_abm_config(name if spec.engine in {"twin", "twin_count", "prevalent_transfer", "torch_transformer"}
-            else "abm_case_preserving", base, overrides=plan["overrides"].get(name, {}),
-            trait=args.Y, layer=args.biom, seed=args.seed, cores=args.cores, final_multiroute_release=""))
-    cfg = configs[0]
-    if any((c.horizon, c.feature_missing, c.sample_missing) !=
-           (cfg.horizon, cfg.feature_missing, cfg.sample_missing) for c in configs):
-        raise ValueError("Methods must share the horizon and input QC contract")
-    minimum = max(c.min_events for c in configs)
-    required = ({"build"} if all(get_method(name).engine == "twin_count" for name in plan["methods"])
-                else {"build", "tune_model", "calibration_fit"})
-    if any(get_method(name).engine == "twin" for name in plan["methods"]):
+def check_method_support(c, engine, min_cases_with_biom):
+    """Apply prediction admission without imposing it on any other analysis."""
+    if engine == "deviation":
+        return
+    required = {"build"} if engine == "twin_count" else {"build", "tune_model", "calibration_fit"}
+    if engine in {"twin", "torch_transformer"}:
         required.add("tune_gate")
-    if "glmnet" in plan["methods"]:
-        required.add("calibration_audit")
-    criteria = dict(version=1, horizon=cfg.horizon, feature_missing=cfg.feature_missing,
-        sample_missing=cfg.sample_missing, technical_qc_scope=cfg.technical_qc_scope,
-        minimum_per_class=minimum, required_roles=sorted(required), min_cases_with_biom=args.min_cases_with_biom)
-    log = args.analysis_root / "logs/exclusions" / f"{args.Y}.{args.biom}.json"
-    if log.is_file() and not args.prepared_source:
-        saved = json.loads(log.read_text())
-        if saved.get("criteria") == criteria and saved.get("status") == INSUFFICIENT_SCOPE_SUPPORT:
-            args.include_prevalent = "abm_prevalent" in plan["methods"]
-            host = load_module("le8_unified_host", HERE / "0.host.py")
-            h = host.host_config(args)
-            extra_files = {"objective_file": args.objective_file} if "molecular_deviation" in plan["methods"] else {}
-            _, request = input_source_signature(h, extra_files)
-            if normalize_cohort_request(saved.get("input_request", {})) == normalize_cohort_request(json.loads(json.dumps(request, default=str))):
-                print(f"[LE8] SKIP C1 ENTIRE SCOPE Y={args.Y} biom={args.biom}: verified exclusion log; "
-                      f"{saved['reason']}; no association/PGS/model fitting; continue", flush=True)
-                return saved
+    audit = check_development_support(c.parts, c.y, c.w, c.qc, c.cfg, required_roles=required)
+    # Include all development roles, but never held-out test outcomes.
+    d = c.development
+    qc = c.qc[:len(d["eid"])]
+    cases = int(np.sum(qc & (np.asarray(d["event"]) == 1) & (np.asarray(d["time"]) <= c.cfg.horizon)))
+    audit.append(dict(role="all_development_with_biom", known_cases=cases,
+        known_controls=int(np.sum(qc & (np.asarray(d["time"]) > c.cfg.horizon))),
+        minimum_per_class=min_cases_with_biom, required=True, sufficient=cases >= min_cases_with_biom))
+    if cases < min_cases_with_biom:
+        raise InsufficientDevelopmentSupport(audit, c.cfg)
+
+
+def scope_support_preflight(args, plan, base):
+    """Prepare inputs and record counts; never exclude a trait/layer or association."""
+    scope = args.analysis_root / args.Y / args.biom / "c1_correlate"
     scope.mkdir(parents=True, exist_ok=True)
     source, contract, extra = prepare(args, plan, scope)
     args._prepared_inputs = (source, contract, extra)
+    cfg = build_abm_config("abm_case_preserving", base, trait=args.Y, layer=args.biom,
+                          seed=args.seed, cores=args.cores, final_multiroute_release="")
     with np.load(source / "development_LOCAL_ONLY.npz", allow_pickle=False) as data:
         roles = data["role"].astype(str)
         time, event = np.asarray(data["time"], float), data["event"]
-        if set(roles) != set(abm.ROLES) or time.shape != roles.shape or event.shape != roles.shape:
+        if not set(roles) <= set(abm.ROLES) or time.shape != roles.shape or event.shape != roles.shape:
             raise ValueError("Invalid development roles or outcome lengths")
         if not np.isfinite(time).all() or (time <= 0).any() or not np.isin(event, [0, 1]).all():
             raise ValueError("Invalid development survival outcomes")
-
-        def audit(qc, phase):
-            rows = []
-            for role in abm.ROLES:
-                ix = (roles == role) & qc
-                cases = int(np.sum(ix & (event == 1) & (time <= cfg.horizon)))
-                controls = int(np.sum(ix & (time > cfg.horizon)))
-                min_class = max(minimum, 20) if role == "calibration_audit" else minimum
-                min_total = 100 if role == "calibration_audit" else 2 * min_class
-                rows.append(dict(role=role, N=int(np.sum(roles == role)), technical_qc_pass=int(ix.sum()),
-                    known_cases=cases, known_controls=controls, unknown_after_qc=int(ix.sum()) - cases - controls,
-                    minimum_per_class=min_class, minimum_known_total=min_total, required=role in required,
-                    sufficient=min(cases, controls) >= min_class and cases + controls >= min_total,
-                    phase=phase))
-            total_cases = int(np.sum(qc & (event == 1) & (time <= cfg.horizon)))
-            rows.append(dict(role="all_development_with_biom", N=len(roles), technical_qc_pass=int(qc.sum()),
-                known_cases=total_cases, known_controls=int(np.sum(qc & (time > cfg.horizon))),
-                minimum_per_class=args.min_cases_with_biom, minimum_known_total=0,
-                required=True, sufficient=total_cases >= args.min_cases_with_biom, phase=phase))
-            return rows
-
-        # Counts before QC are an upper bound: a failing scope needs no wide X load.
-        rows = audit(np.ones(len(roles), bool), "before_technical_qc_upper_bound")
-        if all(row["sufficient"] for row in rows if row["required"]):
-            names = list(map(str, data["feature_names"]))
-            clinical = contract.get("clinical_feature_names")
-            if not clinical or not set(clinical) <= set(names):
-                raise ValueError("Explicit matching clinical feature schema is required")
-            cfg = replace(cfg, always_include_indices=tuple(names.index(v) for v in clinical))
-            X = data["X"]
-            prep = abm.NumericPrep().fit(X[roles == "build"], cfg)
-            rows = audit(prep.technical_qc(X), "after_technical_qc")
-    failures = [row for row in rows if row["required"] and not row["sufficient"]]
-    receipt = dict(status=INSUFFICIENT_SCOPE_SUPPORT if failures else "supported", trait=args.Y, layer=args.biom,
-        horizon=cfg.horizon, requested_methods=plan["methods"], development_support=rows,
-        checked_before_association=True, test_truth_read=False,
-        calibration_audit_used_for="support_counts_only", existing_outputs_preserved=True,
-        prepared_source=str(source), criteria=criteria)
+        rows = [dict(role=role, N=int(np.sum(roles == role)),
+                     known_cases=int(np.sum((roles == role) & (event == 1) & (time <= cfg.horizon))),
+                     known_controls=int(np.sum((roles == role) & (time > cfg.horizon))),
+                     phase="before_technical_qc_counts_only") for role in abm.ROLES]
+    receipt = dict(status="prepared", trait=args.Y, layer=args.biom,
+        development_support=rows, prepared_source=str(source), test_truth_read=False,
+        admission="per_method_after_technical_qc", association="independent", pgs="independent")
     pd.DataFrame(rows).to_csv(scope / "scope_support.tsv", sep="\t", index=False)
-    if failures:
-        reason = "; ".join(
-            f"{row['role']}: cases={row['known_cases']}, minimum cases={row['minimum_per_class']}"
-            if row["role"] == "all_development_with_biom" else
-            f"{row['role']}: cases={row['known_cases']}, controls={row['known_controls']}, "
-            f"minimum={row['minimum_per_class']}/class, known N>={row['minimum_known_total']}" for row in failures)
-        receipt.update(reason=reason, association="skipped", pgs="skipped", prediction="skipped", evaluation="skipped")
-        marker = source / "INPUTS_COMPLETE.json"
-        if marker.is_file():
-            request = json.loads(marker.read_text()).get("request", {})
-            request = {k: v for k, v in request.items() if k not in {"version", "preparation_code"}}
-            request.setdefault("input_contract_version", INPUT_CONTRACT_VERSION)
-            receipt["input_request"] = request
-        log.parent.mkdir(parents=True, exist_ok=True)
-        abm.json_write(log, receipt)
-        index = scope / "C1_FINAL_INDEX.json"
-        previous = json.loads(index.read_text()) if index.is_file() else {}
-        previous.update(status=INSUFFICIENT_SCOPE_SUPPORT, scope_preflight=str(scope / "C1_SCOPE_PREFLIGHT.json"),
-                        reason=reason, existing_outputs_preserved=True)
-        abm.json_write(index, previous)
-        print(f"[LE8] SKIP C1 ENTIRE SCOPE Y={args.Y} biom={args.biom}: {reason}; "
-              "association/PGS/models/evaluation skipped; continue to next trait/layer", flush=True)
     abm.json_write(scope / "C1_SCOPE_PREFLIGHT.json", receipt)
+    # Supersede historical whole-scope exclusions; they are no longer admission rules.
+    log = args.analysis_root / "logs/exclusions" / f"{args.Y}.{args.biom}.json"
+    if log.is_file():
+        abm.json_write(log, dict(receipt, status="superseded_by_per_analysis_support"))
     return receipt
 
 
@@ -938,21 +908,23 @@ def main(argv=None):
             # Complete and publish one trait/layer before starting the next.
             # The native engine still validates/reuses its existing results;
             # run_scope independently reuses verified inputs, models and evaluation.
-            print(f"[LE8] START C1 Y={trait} biom={layer}: sample support -> association -> methods -> evaluation", flush=True)
+            print(f"[LE8] START C1 Y={trait} biom={layer}: association -> per-method support -> methods -> evaluation", flush=True)
             stage = "scope_support_preflight"
             try:
-                with threadpool_limits(args.cores): support = scope_support_preflight(scoped, plan, base)
-                if support["status"] == INSUFFICIENT_SCOPE_SUPPORT:
-                    skipped.append(f"{trait}/{layer}")
+                # Association does not depend on prediction preparation or role counts.
+                if args.stage in {"all", "association"}:
+                    try:
+                        native_association(scoped)
+                    except Exception as error:
+                        failed.append(f"{trait}/{layer}/association")
+                        print(f"[LE8] ERROR C1 association {trait}/{layer}: {error}; continue prediction", flush=True)
+                        traceback.print_exc()
+                if args.stage == "association":
                     continue
+                with threadpool_limits(args.cores):
+                    scope_support_preflight(scoped, plan, base)
                 if args.stage == "prepare":
                     print(f"[LE8] DONE C1 prepare Y={trait} biom={layer}; no test truth read", flush=True)
-                    continue
-                stage = "association"
-                scoped._c1_stage = stage
-                if args.stage in {"all", "association"}:
-                    native_association(scoped)
-                if args.stage == "association":
                     continue
                 stage = "methods/evaluation"
                 with threadpool_limits(args.cores): result = run_scope(scoped,plan,base)
@@ -965,6 +937,10 @@ def main(argv=None):
                 print(f"[LE8] SKIP C1 Y={trait} biom={layer} ERROR stage={stage}: "
                       f"{type(error).__name__}: {error}; continue to next trait/layer; saved results retained", flush=True)
                 traceback.print_exc()
+                continue
+            if result and result.get("failed_methods"):
+                failed.extend(f"{trait}/{layer}/{name}" for name in result["failed_methods"])
+                print(f"[LE8] PARTIAL C1 Y={trait} biom={layer}: failed methods recorded; available results retained", flush=True)
                 continue
             if result and result.get("scope_status") == INSUFFICIENT_SUPPORT:
                 skipped.append(f"{trait}/{layer}")
@@ -983,7 +959,7 @@ def main(argv=None):
             print(f"[LE8] DONE C1 Y={trait} biom={layer}: unified C1 completed", flush=True)
     if skipped:
         print(f"[LE8] PARTIAL C1 SUMMARY: insufficient sample support for {len(skipped)} scope(s): "
-              f"{', '.join(skipped)}. Early scope skips include association/PGS; "
+              f"{', '.join(skipped)}. Association/PGS use independent support checks; "
               "see C1_SCOPE_PREFLIGHT.json and C1_FINAL_INDEX.json. Existing results retained.", flush=True)
     if partial:
         print("[LE8] PARTIAL C1 SUMMARY: unavailable methods or primary reliability: " + "; ".join(partial), flush=True)

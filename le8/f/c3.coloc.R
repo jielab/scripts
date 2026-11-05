@@ -948,11 +948,40 @@ run_c3_layer <- function(layer = c("protein", "metabolite")) {
 	if (!is.finite(C3_MR_FDR) || C3_MR_FDR <= 0 || C3_MR_FDR >= 1 || !is.finite(MAX_FEATURES) || MAX_FEATURES <
 		0 || !is.finite(MAX_LOCI_PER_FEATURE) || MAX_LOCI_PER_FEATURE < 0)
 		stop("Invalid C3 MR FDR / feature / locus limits", call. = FALSE)
+	ygfile <- get_y_gwas_file(Y, FALSE)
+	base <- if (layer == "protein") dir.X else dir.met.gwas
+	if (is.na(ygfile) || !dir.exists(base)) {
+		reason <- paste(c(if (is.na(ygfile)) "disease GWAS missing",
+			if (!dir.exists(base)) paste0("QTL project missing: ", base)), collapse="; ")
+		message("[LE8] SKIP C3 GWAS/QTL-dependent analyses: ", reason)
+		status <- tibble(analysis=c("coloc_ABF", "coloc_SuSiE", "GPU_coloc"),
+			status="unavailable_genetic_inputs", detail=reason)
+		res <- tibble(feature=character(), locus=character(), status=character(),
+			PP.H4=numeric(), tier=character())
+		variants <- tibble(feature=character(), locus=character(), SNP=character(), SNP.PP.H4=numeric())
+		write_raw_csv(status, "c3.subanalysis_status.csv", rawdir)
+		write_raw_csv(res, "c3.coloc_summary.csv", rawdir)
+		write_raw_csv(variants, "c3.variant_posteriors.csv", rawdir)
+		write_raw_csv(tibble(status="unavailable_genetic_inputs", detail=reason), "c3.credible_set_audit.csv", rawdir)
+		lists <- list(Causal_Tier1=character(), Causal_Tier2plus=character(), Causal_any=character())
+		saveRDS(lists, file.path(rawdir,paste0("c3.causal_",layer,"_lists.rds")))
+		out <- list(meta=module_meta(layer, extra=list(code_version=C3_CODE_VERSION,
+			status="completed_with_unavailable_genetics")), summary=res, variants=variants,
+			regional=tibble(), causal_lists=lists, subanalysis_status=status,
+			GPU_coloc=list(results=tibble(), status=status[status$analysis=="GPU_coloc",]))
+		saveRDS(out, cache, compress="xz")
+		write_xlsx2(list(availability=status, coloc_summary=res), "c3.out.xlsx")
+		finalize_outputs("c3_coloc", outdir)
+		return(out)
+	}
 	c2f <- file.path(le8_job_dir(outdir, "c2_cause"), "c2.res.rds")
-	if (!file.exists(c2f))
-		stop("C3 requires completed C2 MR results; run C2 first.", call. = FALSE)
-	c2 <- readRDS(c2f)
-	mr <- c2$MR %||% tibble()
+	if (!file.exists(c2f)) {
+		message("[LE8] SKIP C3 MR-selected loci: C2 unavailable; continue prespecified anchors/locus plan")
+		write_raw_csv(tibble(analysis="MR_selected_loci", status="unavailable_upstream_MR"), "c3.selection_status.csv", rawdir)
+	}
+	c2 <- if (file.exists(c2f)) readRDS(c2f) else list(MR=le8_empty_mr())
+	mr <- c2$MR %||% le8_empty_mr()
+	if (!nrow(mr)) mr <- le8_empty_mr()
 	selected_mr <- c3_select_mr(mr, layer, C3_MR_FDR, MAX_FEATURES)
 	anchors <- if (layer=="protein") le8_csv_env("C3_ANCHORS","PCSK9,LPA,GDF15,NTPROBNP,MMP12,TGFB1,COL6A3") else le8_csv_env("C3_MET_ANCHORS","")
 	anchor_coords <- layer_annotation(layer,anchors)

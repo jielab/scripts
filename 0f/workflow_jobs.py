@@ -143,6 +143,12 @@ def write_plan(jobs, out_dir, *, mode="hpc", name="workflow", common_env=None):
         raise ValueError("Invalid mode or plan name")
     shared = {k:v for k,v in os.environ.items() if k.startswith(('DIR_', 'HPC_', '_OS_DEFAULT_')) or k in ('ANALYSIS_ROOT', 'DATE_SCRATCH')}
     ordered = normalized(jobs, {**shared, **(common_env or {})})
+    if mode == "hpc":
+        from qiming_resources import cpu_slots
+        for job in ordered:
+            r = job["resources"]
+            if not r["gpus"]:
+                r["queue"], r["cores"] = cpu_slots(r["queue"], r["cores"], r["memory_gib"], r["hours"])
     root = Path(out_dir).expanduser().resolve()
     text(root, "plan directory")
     fingerprint = hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()
@@ -341,10 +347,49 @@ def _wait_hpc(path, receipts, poll=5.0):
     return {"status": "DONE", "jobs": list(receipts), "plan": str(path)}
 
 
+def _submit_bsub(argv, *, stdin, timeout, env):
+    """Keep LSF's own capacity wait alive without starting another submission."""
+    with subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, env=env) as process:
+        seen_capacity_retries = 0
+        try:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout)
+                    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired as exc:
+                    stderr = exc.stderr or ""
+                    if isinstance(stderr, bytes):
+                        stderr = stderr.decode(errors="replace")
+                    # communicate() preserves cumulative output after a timeout.
+                    # LSF reports these messages while waiting for submission
+                    # quota; fresh messages confirm the same client is alive.
+                    retries = len(re.findall(
+                        r"(?:Pending job(?: slots)?|Active job) threshold reached\. "
+                        r"Retrying in \d+ seconds\.\.\.", stderr))
+                    if retries <= seen_capacity_retries:
+                        raise
+                    seen_capacity_retries = retries
+                    print("[WAITING] LSF submission threshold reached; waiting for capacity in the existing bsub process", flush=True)
+        except BaseException:
+            process.kill()
+            process.communicate()
+            raise
+
+
 def _run_hpc(path, plan, jobs, wait, resume):
+    # Busy LSF controllers may take longer than one minute to acknowledge bsub.
+    # A timeout still leaves an uncertain receipt; never retry it automatically.
+    submit_timeout = positive(os.getenv("WORKFLOW_BSUB_TIMEOUT_SECONDS", "300"),
+                              "WORKFLOW_BSUB_TIMEOUT_SECONDS")
     journal = path.parent / "submission.json"
     previous = json.loads(journal.read_text()) if resume and journal.is_file() else {"jobs": {}}
-    receipts = previous["jobs"]
+    saved = previous["jobs"]
+    if set(saved) - {j["key"] for j in plan["jobs"]}:
+        raise RuntimeError("Submission journal contains jobs outside this plan")
+    # atomic_json sorts object keys. Restore submission order from the DAG so
+    # resumed concurrency lanes wait on the latest submissions, not key order.
+    receipts = {j["key"]: saved[j["key"]] for j in plan["jobs"] if j["key"] in saved}
     if not resume and journal.exists():
         raise RuntimeError("This plan has already been submitted; resume it or create a new plan")
     if any(r.get("status") == "submitting" for r in receipts.values()):
@@ -367,8 +412,19 @@ def _run_hpc(path, plan, jobs, wait, resume):
         atomic_json(journal, dict(plan=str(path), jobs=receipts))
         try:
             with (path.parent / "commands" / f"{key}.cmd").open() as handle:
-                p = subprocess.run(argv, stdin=handle, capture_output=True, text=True,
-                                   timeout=60, env={**os.environ, "LC_ALL": "C"})
+                p = _submit_bsub(argv, stdin=handle, timeout=submit_timeout,
+                                 env={**os.environ, "LC_ALL": "C"})
+        except subprocess.TimeoutExpired as exc:
+            def partial_output(value):
+                return value.decode(errors="replace") if isinstance(value, bytes) else (value or "")
+            receipts[key].update(timeout_seconds=submit_timeout,
+                                 stdout=partial_output(exc.stdout), stderr=partial_output(exc.stderr))
+            atomic_json(journal, dict(plan=str(path), jobs=receipts))
+            raise RuntimeError(
+                f"LSF submission acknowledgement timed out for {key} after {submit_timeout:g}s; "
+                f"acceptance is unknown. Inspect bjobs and {journal} before resuming; "
+                "no duplicate was submitted. WORKFLOW_BSUB_TIMEOUT_SECONDS controls the wait."
+            ) from exc
         except BaseException:
             # Keep the unknown submission receipt; never retry blindly.
             raise

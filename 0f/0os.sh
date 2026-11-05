@@ -52,7 +52,7 @@ fi
 _os_default DIR_DATA "$DIR_BIG"
 _os_default DIR_SCRATCH "$DIR_TMP"
 # DIR_TMP/DIR_SCRATCH remain optional legacy aliases; no dated scratch is needed.
-# Persistent inputs follow the large-data root in both modes.
+# Most persistent inputs follow the large-data root; local UKB phenotypes use DIR_DAT/phe.
 _os_default DIR_ANNOT "$DIR_DATA/annot"
 _os_default DIR_GEN "$DIR_DATA/gen"
 _os_default DIR_GWAS "$DIR_DATA/gwas"
@@ -60,7 +60,44 @@ _os_default DIR_LD "$DIR_DATA/LD"
 _os_default DIR_METAG "$DIR_DATA/metag"
 _os_default DIR_SOFTWARE "$DIR_DAT/software"
 _os_default DIR_FILES "$DIR_DAT/files"
-_os_default DIR_UKB "$DIR_DATA/ukb"
+if [[ $submit == local ]]; then
+    _os_default DIR_UKB "$DIR_DAT/phe/ukb"
+else
+    _os_default DIR_UKB "$DIR_WORK/phe/ukb"
+fi
+# Historical local phenotype root. Keep migration policy in the path table.
+os_resolve_ukb_path() {
+    local requested=${1%/}
+    if [[ $submit == local && $requested == /mnt/f/ukb && ! -d $requested && -d $DIR_UKB ]]; then
+        printf 'UKB path migrated: %s -> %s (DIR_UKB from 0f/0os.sh)\n' "$1" "$DIR_UKB" >&2
+        printf '%s\n' "$DIR_UKB"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+# Additional resource roots shared by Shell, Python, and R.
+_os_default DIR_HOME "$HOME"
+_os_default DIR_RUNTIME_TMP /tmp
+_os_default DIR_WINDOWS_DRIVE /mnt/c
+_os_default DIR_WINDOWS "$DIR_WINDOWS_DRIVE/Windows"
+_os_default DIR_WINDOWS_PROGRAMDATA "$DIR_WINDOWS_DRIVE/ProgramData"
+_os_default DIR_WINDOWS_PROGRAMFILES "$DIR_WINDOWS_DRIVE/Program Files"
+_os_default DIR_WINDOWS_PROGRAMFILES_X86 "$DIR_WINDOWS_DRIVE/Program Files (x86)"
+_os_default DIR_WINDOWS_USERS "$DIR_WINDOWS_DRIVE/Users"
+_os_default OS_RSCRIPT_WINDOWS "$DIR_SOFTWARE/win/R-4.5.1/bin/Rscript.exe"
+_os_default OS_RTOOLS_WINDOWS "$DIR_SOFTWARE/win/rtools45"
+# Adapters query this list; root names are defined only in this table.
+OS_PATH_KEYS=(SCRIPTS_ROOT DIR_WORK DIR_DAT DIR_BIG DIR_DATA DIR_TMP DIR_SCRATCH
+    DIR_SOFTWARE DIR_FILES DIR_UKB DIR_ANNOT DIR_GEN DIR_GWAS DIR_LD DIR_METAG
+    DIR_RUNTIME_TMP DIR_HOME DIR_WINDOWS_DRIVE DIR_WINDOWS DIR_WINDOWS_PROGRAMDATA
+    DIR_WINDOWS_PROGRAMFILES DIR_WINDOWS_PROGRAMFILES_X86 DIR_WINDOWS_USERS
+    OS_RSCRIPT_WINDOWS OS_RTOOLS_WINDOWS ANALYSIS_ROOT)
+if [[ $submit == hpc ]]; then
+    for _os_desktop_name in DIR_WINDOWS_DRIVE DIR_WINDOWS DIR_WINDOWS_PROGRAMDATA DIR_WINDOWS_PROGRAMFILES DIR_WINDOWS_PROGRAMFILES_X86 DIR_WINDOWS_USERS OS_RSCRIPT_WINDOWS OS_RTOOLS_WINDOWS; do
+        export -n "$_os_desktop_name" "_OS_DEFAULT_$_os_desktop_name"
+    done
+    unset _os_desktop_name
+fi
 _os_default OS_FILES_ROOT "$DIR_FILES"
 _os_default OS_SNP_LIST "$DIR_UKB/common/snp.lst"
 _os_default OS_AXT_ROOT "$DIR_ANNOT/axt/37"

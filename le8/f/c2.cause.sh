@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -20,12 +29,12 @@ index_cis_main() (
 	set -euo pipefail
 	export LC_ALL=C
 
-	DATA_ROOT="${CIS_INDEX_DATA_ROOT:-${DIR_DATA:-/mnt/f}/gwas}"
+	DATA_ROOT="${CIS_INDEX_DATA_ROOT:-${DIR_DATA:-${DIR_BIG}}/gwas}"
 	PROJECTS="${CIS_INDEX_PROJECTS:-main,prot,met}"
 	JOBS="${CIS_INDEX_JOBS:-6}"
 	THREADS="${CIS_INDEX_THREADS:-2}"
 	SORT_MEMORY="${CIS_INDEX_SORT_MEMORY:-512M}"
-	TMP_DIR="${CIS_INDEX_TMP_DIR:-${TMPDIR:-/tmp}}"
+	TMP_DIR="${CIS_INDEX_TMP_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}}"
 	INDEX_F="${CIS_INDEX_FUNCTIONS:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../gwas/f" && pwd)/format.f.sh}"
 	REPLACE=FALSE
 	DRY_RUN=FALSE
@@ -41,7 +50,7 @@ Main options:
     --jobs N --threads N  Concurrent files / bgzip threads [6 / 2]
     --sort-memory SIZE   Sort memory per file [512M]
     --dir-tmp DIR        Temporary directory [/tmp]
-    --index-f FILE       Index helper [/mnt/d/scripts/gwas/f/format.f.sh]
+    --index-f FILE       Index helper [${SCRIPTS_ROOT}/gwas/f/format.f.sh]
     --replace TRUE|FALSE Rebuild valid indexes [FALSE]
     --dry-run            List targets without changes
     -h, --help           Show options and examples below
@@ -165,7 +174,7 @@ EOF
 		exit 1
 	}
 
-	# shellcheck source=/mnt/d/scripts/gwas/f/format.f.sh
+	# shellcheck source=${SCRIPTS_ROOT}/gwas/f/format.f.sh
 	source "$INDEX_F" --index
 
 	log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2; }
@@ -194,7 +203,7 @@ EOF
 		log "DONE BGZF+index: $file"
 	}
 
-	target_list=$(mktemp "${TMPDIR:-/tmp}/index_cis.targets.XXXXXX")
+	target_list=$(mktemp "${TMPDIR:-$DIR_RUNTIME_TMP}/index_cis.targets.XXXXXX")
 	trap 'rm -f -- "$target_list"' EXIT
 
 	IFS=',' read -r -a project_array <<<"$PROJECTS"
@@ -251,7 +260,7 @@ Modules:
 
 Main options:
     --jobs FILE --cad-gwas FILE  Job table and outcome GWAS (required)
-    --dir-reference-pfile DIR    Genotypes [/mnt/f/gen/1kg/GRCH/pfile; GRCH: LE8_GRCH or 37]
+    --dir-reference-pfile DIR    Genotypes [${DIR_GEN}/1kg/GRCH/pfile; GRCH: LE8_GRCH or 37]
     --reference-pop NAME         Reference population [EUR]
     --dir-reference-id DIR --reference-samples FILE  Optional sample selection
     --mrlink2 FILE               Runner [f/c2.mr_link2.py]
@@ -264,10 +273,10 @@ Example:
     ./f/c2.cause.sh mr-link2 \
       --jobs c2_cause/link2/c2.link2.jobs.tsv \
       --cad-gwas ${DIR_GWAS}/main/common/cvd_cad/gwas/cvd_cad.gz \
-      --reference-pfile-dir /mnt/f/gen/1kg/38/pfile \
+      --reference-pfile-dir ${DIR_GEN}/1kg/38/pfile \
       --reference-pop EUR \
-      --reference-id-dir /mnt/f/gen/1kg/38/id \
-      --reference-samples /mnt/f/gen/1kg/38/samples.txt \
+      --reference-id-dir ${DIR_GEN}/1kg/38/id \
+      --reference-samples ${DIR_GEN}/1kg/38/samples.txt \
       --mrlink2 f/c2.mr_link2.py \
       --outdir c2_cause/link2
 
@@ -307,8 +316,8 @@ if [[ -n "${CONDA_SH:-}" ]]; then
 	trap cleanup_conda EXIT
 fi
 
-	if [[ -d ${DIR_SOFTWARE:-/mnt/d/software}/bin ]]; then
-		export PATH="${DIR_SOFTWARE:-/mnt/d/software}/bin:${PATH}"
+	if [[ -d ${DIR_SOFTWARE:-${DIR_SOFTWARE}}/bin ]]; then
+		export PATH="${DIR_SOFTWARE:-${DIR_SOFTWARE}}/bin:${PATH}"
 	fi
 
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -317,7 +326,7 @@ fi
 	jobs=""
 	cad_gwas=""
 	ref_bed="${MRLINK2_REF_BED:-}"
-	ref_pfile_dir="${MRLINK2_REF_PFILE_DIR:-${DIR_DATA:-/mnt/f}/gen/1kg/${LE8_GRCH:-37}/pfile}"
+	ref_pfile_dir="${MRLINK2_REF_PFILE_DIR:-${DIR_DATA:-${DIR_BIG}}/gen/1kg/${LE8_GRCH:-37}/pfile}"
 	ref_pfile_pop="${MRLINK2_REF_POP:-EUR}"
 	ref_samples="${MRLINK2_REF_SAMPLES:-}"
 	ref_id_dir="${MRLINK2_REF_ID_DIR:-}"
@@ -432,7 +441,7 @@ fi
 		echo "Missing shared phenotype functions: $phe_f" >&2
 		exit 1
 	}
-	# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
+	# shellcheck source=${SCRIPTS_ROOT}/0f/phenotype.sh
 	source "$phe_f"
 	declare -F match_GRCH >/dev/null 2>&1 || {
 		echo "match_GRCH is missing from $phe_f" >&2

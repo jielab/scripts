@@ -262,9 +262,7 @@ focus_contrasts <- function(metrics, boot, budgets) {
 }
 
 focus_plot <- function(metrics, contrasts, proxy, pillars, rd) {
-	if (!nrow(metrics))
-		return(invisible(NULL))
-	a <- metrics |>
+	a <- if (!nrow(metrics)) blank_plot("a. Disease risk validation", "Insufficient sample/events; see fit_diagnostics") else metrics |>
 		filter(stratum == "All", landmark == 0, budget > 0) |>
 		ggplot(aes(budget, AUC, color = paradigm)) +
 		geom_line() +
@@ -600,8 +598,8 @@ run_c4_panel_validation <- function(layer) {
 	yang$.le8_proxy_half <- halves[nrow(train)+seq_len(nrow(yang))]
 	rm(dat, yin)
 	invisible(gc())
-	if (nrow(train) < 1000 || nrow(test) < 100)
-		stop("Insufficient omic participants")
+	# Small disease samples can still support phenotype-proxy learning and
+	# reconstruction. Apply risk-fit requirements separately for each design.
 	if (length(setdiff(clinical, names(train))))
 		stop("Clinical covariates missing")
 	missing_domains <- setdiff(requested_components, names(train))
@@ -743,7 +741,10 @@ run_c4_panel_validation <- function(layer) {
 				deployed_fidelity[[ds$name]] <- c4_deployed_concept_fidelity(cz,train,test,components,ds$name,B,SEED+612)
 			}
 			if (!is.null(ds$forbidden)) c4_assert_replacement(c(background,risk_features),ds$forbidden)
-			obj <- le8_fit_budget_model(risk_train, risk_test, background, risk_features, tvar, evar, solver = solver, seed = SEED+27)
+			proxy[[length(proxy) + 1L]] <- focus_proxy_accuracy(train, test, ds$features, components, basic, ds$name)
+			obj <- if (nrow(risk_train) < 1000 || nrow(risk_test) < 100)
+				list(status="skipped_insufficient_training_or_validation_N") else
+				le8_fit_budget_model(risk_train, risk_test, background, risk_features, tvar, evar, solver = solver, seed = SEED+27)
 			if (!is.null(ds$forbidden) && obj$status=="ok") c4_assert_replacement(obj$coefficient$variable,ds$forbidden)
 			if (isTRUE(ds$concept) && obj$status=="ok") obj$N_selected <- length(ds$features)
 			diagnostics[[length(diagnostics) + 1L]] <- tibble(
@@ -754,9 +755,11 @@ run_c4_panel_validation <- function(layer) {
 				molecular_lp_sd_test=obj$molecular_lp_sd_test %||% NA_real_, background=paste(background,collapse=";"), replaced_domains=paste(ds$replaced,collapse=";"), retained_domains=paste(ds$retained,collapse=";"), disease_PRS=if(length(prs_columns)) paste(prs_columns,collapse=";") else "unavailable: no declared disease PRS"
 			)
 			members[[length(members) + 1L]] <- tibble(model = ds$name, feature = if (length(ds$features))
-				ds$features else NA_character_, budget = ds$budget, status = obj$status)
-			if (obj$status != "ok")
+				ds$features else NA_character_, budget = ds$budget, status = "ok", prediction_status = obj$status)
+			if (obj$status != "ok") {
+				message("[LE8] SKIP C4 risk model ", ds$name, ": ", obj$status, "; retain frozen panel/proxy reconstruction")
 				next
+			}
 			if (isTRUE(ds$concept)) {
 				contribution <- as.data.frame(obj$contributions); contribution$lp_center <- -obj$lp_center
 				stopifnot(max(abs(rowSums(contribution)-obj$lp))<1e-8)
@@ -773,7 +776,6 @@ run_c4_panel_validation <- function(layer) {
 				mutate(model = ds$name, lp_center = obj$lp_center)
 			# Common reconstruction training cohort isolates panel selection from the effect of fitting
 			# reconstruction coefficients in a different population.
-			proxy[[length(proxy) + 1L]] <- focus_proxy_accuracy(train, test, ds$features, components, basic, ds$name)
 			for (g in names(stratum)) for (L in c(0, 2, 5)) {
 				ii <- stratum[[g]]
 				ii <- ii[test[[tvar]][ii] > L]
@@ -806,8 +808,11 @@ run_c4_panel_validation <- function(layer) {
 			}
 		}
 		met <- bind_rows(metrics)
+		if (!nrow(met)) met <- tibble(model=character(), budget=numeric(), paradigm=character(),
+			stratum=character(), landmark=numeric(), horizon=numeric(), AUC=numeric(), AUC_lo=numeric(), AUC_hi=numeric())
 		bo <- bind_rows(boot)
 		pr <- bind_rows(proxy)
+		if (!nrow(pr)) pr <- tibble(component=character(), model=character(), delta_R2=numeric())
 		contrasts <- focus_contrasts(met, bo, budgets)
 		heterogeneity <- focus_heterogeneity(contrasts, bo)
 		tables <- list(
@@ -851,11 +856,12 @@ run_c4_panel_validation <- function(layer) {
 }
 run_c4_reconstruction <- function(layer) {
 	rd <- file.path(out.base, layer, "c4_connect")
+	dir.create(rd, recursive=TRUE, showWarnings=FALSE)
 	cache <- file.path(rd, "c4.explain.rds")
 	result_names <- c("metrics", "contrasts", "bootstrap", "provenance")
 	if (cache_valid(cache)) {
 		old <- readRDS(cache)
-		if (identical(old$meta$trait, Y) && identical(old$meta$layer, if (layer == "prot") "protein" else "metabolite") &&
+		if (!identical(old$meta$status, "unavailable_upstream_panels") && identical(old$meta$trait, Y) && identical(old$meta$layer, if (layer == "prot") "protein" else "metabolite") &&
 			identical(old$meta$module, "c4_explain") && all(result_names %in% names(old$tables))) {
 			for (nm in result_names) write_raw_csv(old$tables[[nm]], paste0("c4.explain.", nm, ".csv"), rd)
 			cache_message(paste0("C4/reconstruction/", layer), cache)
@@ -866,8 +872,17 @@ run_c4_reconstruction <- function(layer) {
 	if (!is.finite(B) || B < 50) stop("C4_EXPLAIN_BOOT must be at least 50")
 	roles_file <- file.path(rd, "c4.focus.roles.csv.gz")
 	panel_file <- file.path(rd, "c4.focus.panel_members.csv")
-	if (!file.exists(roles_file) || !file.exists(panel_file))
-		stop("Frozen C4 roles/panels missing for ", layer, "; run c4_connect to complete panel validation first. No new split is invented.")
+	if (!file.exists(roles_file) || !file.exists(panel_file)) {
+		reason <- "Frozen C4 roles/panels unavailable; reconstruction requires these inputs"
+		message("[LE8] SKIP C4 reconstruction: ", reason)
+		tables <- list(metrics=tibble(), contrasts=tibble(), bootstrap=tibble(),
+			provenance=tibble(status="unavailable_upstream_panels", reason=reason))
+		for (nm in result_names) write_raw_csv(tables[[nm]], paste0("c4.explain.", nm, ".csv"), rd)
+		out <- list(meta=module_meta(if (layer=="prot") "protein" else "metabolite",
+			extra=list(status="unavailable_upstream_panels")), tables=tables)
+		saveRDS(out, cache)
+		return(invisible(out))
+	}
 	roles <- as.data.frame(fread(roles_file))
 	panels <- as.data.frame(fread(panel_file))
 	if (!all(c("eid", "role") %in% names(roles)) || anyDuplicated(roles$eid))
@@ -921,12 +936,16 @@ run_c4_reconstruction <- function(layer) {
 			a <- cbind(Intercept = 1, z$train)
 			b <- cbind(Intercept = 1, z$test)
 			cf <- lm.fit(a, tr[[cmp]])$coefficients
-			if (any(!is.finite(cf)))
-				stop("Singular reconstruction fit; ", cmp)
+			if (any(!is.finite(cf))) {
+				message("[LE8] SKIP singular C4 reconstruction: ", cmp, "; assays=", paste(fs, collapse=","))
+				return(NULL)
+			}
 			drop(b %*% cf)
 		}
 		pp <- list(Clinical = fit_once(character()))
 		for (model in unique(panels$model)) pp[[model]] <- fit_once(panels$feature[panels$model == model])
+		pp <- Filter(Negate(is.null), pp)
+		if (!length(pp)) next
 		err <- sapply(pp, function(p) (yy - p) ^ 2)
 		baseerr <- (yy - mu) ^ 2
 		for (model in colnames(err)) metrics[[length(metrics) + 1L]] <- tibble(model,
@@ -1691,11 +1710,12 @@ make_proxy_sets <- function(disc, rep, disease_assoc, annotation) {
 	if (!"FDR" %in% names(dis)) dis$FDR <- p.adjust(dis$p.value, "BH")
 	dis <- dis |> arrange(p.value)
 	plus <- dis |>
-		filter(!term %in% ys) |>
+		filter(is.finite(p.value), !term %in% ys) |>
 		slice_head(n = YSP_PLUS_N) |>
 		pull(term) |>
 		unique()
 	ns <- dis |>
+		filter(is.finite(p.value)) |>
 		slice_head(n = NS_N) |>
 		pull(term) |>
 		unique()
@@ -2168,7 +2188,7 @@ run_c4_layer <- function(layer = c("protein", "metabolite")) {
 		}
 		message("C4/", layer, ": cached result incomplete; recomputing")
 	}
-	c1f <- file.path(le8_job_dir(outdir, "c1_correlate"), "c1.res.rds") ; if (!file.exists(c1f)) stop("Run C1 first.", call. = FALSE) ; c1 <- readRDS(c1f) ; le8_check_options(c1) ; disease <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |> as_tibble() ; if (!"beta" %in% names(disease)) disease <- disease |> mutate(beta = safe_log(estimate))
+	c1 <- le8_read_c1_optional(outdir, layer) ; disease <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |> as_tibble() ; if (!"beta" %in% names(disease)) disease <- disease |> mutate(beta = safe_log(estimate))
 	biom <- if (layer == "protein") read_prot() else read_met() ; features <- setdiff(names(biom), "eid") ; ann <- layer_annotation(layer, features)
 	all0 <- read_all() ; prs_vars <- find_prs_vars(all0, Y, 4)
 	need <- unique(c("eid", "ethnic.c", Sys.getenv("LE8_GROUP_COLUMN",Sys.getenv("PGS_GROUP_COLUMN","")), le8_custom_covars, vars.basic, vars.le8, prs_vars, "birth_date", "date_attend", "date_lost", "date_death", paste0("fod_icd10_", Y)))
@@ -2233,6 +2253,8 @@ run_c4_layer <- function(layer = c("protein", "metabolite")) {
 			genetic_edges = tibble(), PRS_variables = prs_vars, mediation = tibble(), state_network = list(), lists = lists
 		)
 		out <- attach_c4_imaging(out, layer, outdir, disease)
+		write_raw_csv(out$scan, "c4.LE8_feature_associations.csv", rawdir)
+		write_raw_csv(out$membership, "c4.proxy_membership_YS_YSP_NS.csv", rawdir)
 		write_raw_csv(status, "c4.status.csv", rawdir) ; saveRDS(out, cache, compress = "xz")
 		write_xlsx2(list(status = status, all_LE8_associations = out$scan), "c4.out.xlsx")
 		finalize_outputs(LE8_JOB, outdir) ; return(out)
@@ -2329,9 +2351,7 @@ run_c4_sex_interactions <- function(layer = c("protein", "metabolite")) {
 		return(invisible(res))
 	}
 	c1f <- file.path(le8_job_dir(outdir, "c1_correlate"), "c1.res.rds")
-	if (!file.exists(c1f))
-		stop("Run C1 first.", call. = FALSE)
-	c1 <- readRDS(c1f)
+	c1 <- le8_read_c1_optional(outdir, layer)
 	a <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |>
 		as_tibble()
 	features <- a |>
@@ -2868,7 +2888,7 @@ run_c4_nonlin <- function(layer) {
 			left_join(res |>
 				select(variable, FDR_nonlin), by = "variable")
 		nadir <- if (!nrow(curves))
-			tibble() else curves |>
+			tibble(variable=character(), nadir_x=numeric(), nadir_HR=numeric(), p_nonlin=numeric(), FDR_nonlin=numeric()) else curves |>
 			group_by(variable) |>
 			slice_min(HR, n = 1, with_ties = FALSE) |>
 			ungroup() |>

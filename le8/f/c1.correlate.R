@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # C1 associations, inherited-score helpers and the dedicated PGS analysis.
 # LE8_C1_MODE=helpers loads PGS functions only; pgs/correlate execute one analysis.
 .c1_mode <- Sys.getenv("LE8_C1_MODE", unset = if (identical(Sys.getenv("LE8_JOB"), "pgs_focus")) "pgs" else if (sys.nframe() == 0L || identical(Sys.getenv("LE8_JOB"), "c1_correlate")) "correlate" else "helpers")
@@ -143,7 +160,9 @@ pgs_pair <- function(d, covars, feature, adjustment = "basic", scope = "existing
 pgs_calibrate <- function(d, covars, k = 5L, seed = 2026L, diagnostics = TRUE) {
 	d <- as.data.frame(d)
 	if (!".group" %in% names(d)) d$.group <- d$eid
-	if (!".fold" %in% names(d)) d$.fold <- pgs_folds(d$.group, k, seed)
+	if (anyNA(d$.group) || any(!nzchar(as.character(d$.group)))) stop("Missing PGS fold group")
+	if (!".fold" %in% names(d)) d$.fold <- if (length(unique(d$.group)) < k)
+		rep(NA_integer_, nrow(d)) else pgs_folds(d$.group, k, seed)
 	for (nm in c(".M", ".G", ".R", ".pred", ".pred0")) d[[nm]] <- NA_real_
 	reports <- list() ; ok <- pgs_complete(d, c(".m", ".g", covars))
 	for (f in sort(unique(d$.fold))) {
@@ -168,7 +187,10 @@ pgs_calibrate <- function(d, covars, k = 5L, seed = 2026L, diagnostics = TRUE) {
 	}
 	ii <- d$.prev %in% 0 & pgs_complete(d, c(".M", ".pred", ".pred0"))
 	mse0 <- sum((d$.M[ii] - d$.pred0[ii]) ^ 2) ; r2 <- if (mse0 > 0) 1 - sum((d$.M[ii] - d$.pred[ii]) ^ 2) / mse0 else NA_real_
-	folds <- pgs_bind(reports) ; b <- folds$slope
+	folds <- pgs_bind(reports)
+	if (!nrow(folds)) folds <- data.frame(fold=integer(), N_train=integer(), N_test=integer(), slope=numeric(),
+		omic_mean=numeric(), omic_sd=numeric(), pgs_mean=numeric(), pgs_sd=numeric(), calibration=character())
+	b <- folds$slope
 	audit <- data.frame(
 		N_calibration = sum(ii), partial_R2 = r2,
 		slope_mean = if (length(b)) mean(b) else NA_real_, slope_min = if (length(b)) min(b) else NA_real_, slope_max = if (length(b)) max(b) else NA_real_,
@@ -717,17 +739,20 @@ pgs_publication_joint <- function(trait, analysis_root, layers = c("prot", "met"
 }
 
 
-find_c1_pgs_file <- function(layer) {
+find_c1_pgs_file <- function(layer, required = TRUE) {
 	label <- switch(layer, protein = "prot", prot = "prot", metabolite = "met", met = "met",
 		stop("Unknown PGS layer: ", layer, call. = FALSE))
-	file <- file.path(Sys.getenv("DIR_DATA", "/mnt/f"), "gwas", label, "pgs", paste0(label, ".pgs.gz"))
-	if (!file.exists(file) || is.na(file.size(file)) || file.size(file) <= 0)
+	file <- file.path(Sys.getenv("DIR_DATA", os_path("DIR_BIG")), "gwas", label, "pgs", paste0(label, ".pgs.gz"))
+	if (!file.exists(file) || is.na(file.size(file)) || file.size(file) <= 0) {
+		if (!required) return(NA_character_)
 		stop("Required canonical PGS file missing/empty: ", file, call. = FALSE)
+	}
 	normalizePath(file, winslash = "/", mustWork = TRUE)
 }
 
 
 c1_pgs_signature <- function(layer) {
+	if (le8_c1_pgs_mode() == "skip") return("skipped_by_request")
 	f <- find_c1_pgs_file(layer)
 	if (is.na(f)) return("missing")
 	i <- file.info(f)
@@ -3386,7 +3411,7 @@ le8_c1_additions <- function(dat, layer, covars, tvar, evar) {
 		out.prot else out.met, "c1_correlate")
 	paired <- tibble()
 	status <- tibble(status = "PGS input unavailable")
-	sf <- find_c1_pgs_file(layer)
+	sf <- if (le8_c1_pgs_mode() == "run") find_c1_pgs_file(layer) else NA_character_
 	if (le8_c1_pgs_mode() == "skip") {
 		old <- c1_saved_pgs_result(rawdir)
 		paired <- c1_saved_pgs_table(rawdir, "c1.paired_pgs_measured.csv", old$review$paired_associations) %||% tibble()

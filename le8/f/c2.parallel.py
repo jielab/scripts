@@ -7,6 +7,13 @@ Every child invokes the existing scientific implementation in an isolated folder
 No changes to the MR likelihood, harmonization, SNPs, or p-value corrections.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse,csv,hashlib,json,os,re,shutil,sys,tempfile,time,uuid
 from pathlib import Path
 import importlib.util
@@ -39,7 +46,7 @@ def reference_identity_files(rows,forward):
         files=[Path(bed+'.'+ext) for ext in ('bed','bim','fam')]
         if not all(p.is_file() for p in files):raise ValueError('Incomplete explicit reference BED')
         return list(map(str,files))
-    directory=Path(option('--reference-pfile-dir','MRLINK2_REF_PFILE_DIR',str(Path(os.getenv("DIR_DATA", "/mnt/f")) / "gen/1kg" / os.getenv("LE8_GRCH", "37") / "pfile")))
+    directory=Path(option('--reference-pfile-dir','MRLINK2_REF_PFILE_DIR',str(Path(os.getenv("DIR_DATA", configured_path('DIR_BIG'))) / "gen/1kg" / os.getenv("LE8_GRCH", "37") / "pfile")))
     pop=option('--reference-pop','MRLINK2_REF_POP','EUR').upper();files=[]
     for chrom in sorted({r['region'].split(':')[0].removeprefix('chr') for r in rows}):
         candidates=[(directory.parent/'bfile'/pop/f'chr{chrom}','bed'),
@@ -148,7 +155,7 @@ def match_main(argv):
         for block in iter(lambda:handle.read(2**20),b''):h.update(block)
     identity=dict(summary_sha256=h.hexdigest(),reference=fingerprint(reference+'.bim','stat',{}),
         matcher=dict(path=str(phe),sha256=digest_file(phe)),build=os.getenv('LE8_GRCH','37'),policy='match_GRCH-v1')
-    cache=Path(os.getenv('MRLINK2_PREPARE_CACHE','/tmp/le8-mrlink2-prepared'))/'aligned'/key_of(identity)
+    cache=Path(os.getenv('MRLINK2_PREPARE_CACHE',configured_path('DIR_RUNTIME_TMP', 'le8-mrlink2-prepared')))/'aligned'/key_of(identity)
     cache.mkdir(parents=True,exist_ok=True);dest=cache/'matched.tsv';audit_dest=cache/'audit.tsv'
     with open(cache/'lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX);valid=False
@@ -174,7 +181,7 @@ def prepare_main(argv):
     source,output,n=argv[:3];region=argv[3] if len(argv)>3 else None
     code=Path(__file__).with_name('c2.mr_link2.py')
     identity=dict(input=fingerprint(source,'stat',{}),region=region,verified_default_N=n,numeric_code=digest_file(code))
-    cache=Path(os.getenv('MRLINK2_PREPARE_CACHE','/tmp/le8-mrlink2-prepared'))/key_of(identity)
+    cache=Path(os.getenv('MRLINK2_PREPARE_CACHE',configured_path('DIR_RUNTIME_TMP', 'le8-mrlink2-prepared')))/key_of(identity)
     cache.mkdir(parents=True,exist_ok=True);dest=cache/'sumstats.tsv.gz'
     with open(cache/'lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX);valid=False

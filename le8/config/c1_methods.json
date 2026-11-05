@@ -1,6 +1,6 @@
 {
-  "version": "LE8-C1-primary-2026-11-02-v1",
-  "description": "Conventional glmnet/LightGBM baselines and transparent count ABM; fitted-head historical methods are explicit sensitivities",
-  "methods": ["glmnet", "lightgbm", "abm_count"],
+  "version": "LE8-C1-count-and-deep-2026-11-05-v1",
+  "description": "Conventional glmnet/LightGBM baselines, transparent count ABM, and the separately labelled deep ABM sensitivity",
+  "methods": ["glmnet", "lightgbm", "abm_count", "abm_deep"],
   "overrides": {}
 }

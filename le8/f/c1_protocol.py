@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """C1 scientific methods, execution policy, family rosters and cohort preparation."""
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 
 # Scientific method definitions and execution policy
@@ -66,7 +74,7 @@ METHODS = {
     "molecular_deviation": MethodSpec("molecular_deviation", "deviation",
         "Existing molecular deviation analysis; optional within C1", experimental=True),
 }
-DEFAULT_METHODS = ("glmnet", "lightgbm", "abm_count")
+DEFAULT_METHODS = ("glmnet", "lightgbm", "abm_count", "abm_deep")
 METHOD_ALIASES = {"pradeep": "glmnet", "lgbm": "lightgbm", "abm_multiview": "abm_profile"}
 LEGACY_MODULE_METHODS = {"c1_abm": ("abm_legacy", "molecular_deviation"), "c1_abm_GPU": ("abm_deep",)}
 
@@ -224,7 +232,7 @@ PRIMARY_SELECTOR = "risk_resid_error"
 COVERAGES = (.2, .4, .5, .6, .8, 1.0)
 SEED = 2026
 PREDICTABILITY_TARGET_MODEL = "elasticnet_full"
-DEFAULT_UKB_REL_FILE = os.getenv("LE8_UKB_REL_FILE", "/mnt/f/gen/ukb/37/typ/ukb_rel.dat")
+DEFAULT_UKB_REL_FILE = os.getenv("LE8_UKB_REL_FILE", configured_path('DIR_GEN', 'ukb/37/typ/ukb_rel.dat'))
 KINSHIP_PROTOCOL = "2026-10-17.ukb-king-components-v1"
 GROUPING_SOURCE = "UKB KING kinship connected components"
 COHORT_CACHE_ROOT = Path(os.getenv("LE8_COHORT_CACHE_ROOT", str(Path(os.getenv("TMPDIR", "/tmp")) / f"le8-cohort-{os.getuid()}")))
@@ -542,7 +550,7 @@ def configure_roster(args, *, settings=None, dry_run=False):
     )
     if args.group_file:
         args.group_file = str(resolve_cohort_path(args.group_file))
-    phe = args.ukb_phe or os.getenv("UKB_PHE", "/mnt/f/ukb")
+    phe = args.ukb_phe or os.getenv("UKB_PHE", configured_path("DIR_UKB"))
     if not args.group_file and not args.group_col:
         source = Path(getattr(args, "ukb_rel_file", None) or os.getenv("LE8_UKB_REL_FILE", DEFAULT_UKB_REL_FILE))
         # stat() propagates permission/I/O errors; only genuine absence permits fallback.

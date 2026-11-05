@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
 	#
 	# One canonical biomarker PGS input per layer, shared with C1 and C4.
 	# Cross-fitted association decomposition, not an identified causal partition.
-	find_c2_score_file <- function(layer) find_c1_pgs_file(layer)
+	find_c2_score_file <- function(layer) find_c1_pgs_file(layer, required = FALSE)
 	read_c2_scores <- function(file) {
 		x <- read_c1_pgs(file)
 		le8_validate_ids(x, paste("PGS", file))
@@ -1507,7 +1507,7 @@ le8_oof_decompose <- function(d, feature, gcol, covars, k = 5, seed = 2026) {
 	z <- pgs_calibrate(d,covars,k,seed)
 	d <- z$data; d$.omic_z <- d$.M; d$.genetic_z <- d$.G; d$.residual_z <- d$.R
 	d$.full_prediction <- d$.pred; d$.reduced_prediction <- d$.pred0; d$.calibration_fold <- factor(d$.fold)
-	folds <- as_tibble(z$folds); folds$feature <- feature; folds$genetic_beta <- folds$slope
+	folds <- as_tibble(z$folds) |> mutate(feature=rep(feature, nrow(z$folds)), genetic_beta=slope)
 	list(data=d,folds=folds,partial_R2=z$audit$partial_R2,N_calibration=z$audit$N_calibration,audit=z$audit)
 }
 
@@ -1531,7 +1531,9 @@ le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir,so
   unavailable<-function(reason) { z<-tibble(status='unavailable',reason);write_raw_csv(z,'c2.state_projection.csv',rawdir);list(status=z) }
   if(!truthy(Sys.getenv('C2_RUN_STATE_PROJECTION','TRUE'))) return(unavailable('explicitly disabled'))
   if(length(selected)<2 || !requireNamespace('glmnet',quietly=TRUE)) return(unavailable('at least two prespecified measured anchors and glmnet required'))
-  d<-as.data.frame(d);role<-le8_group_folds(d$.group,5,SEED+713)
+  d<-as.data.frame(d)
+  if(length(unique(d$.group))<5) return(unavailable('insufficient independent groups for state-projection folds'))
+  role<-le8_group_folds(d$.group,5,SEED+713)
   train<-d[role!=1 & d$.prevalent %in% 0:1,,drop=FALSE]
   test<-d[role==1 & d$.prevalent %in% 0 & is.finite(d[[tvar]]) & d[[tvar]]>0 & d[[evar]] %in% 0:1,,drop=FALSE]
   if(nrow(train)<500 || min(table(factor(train$.prevalent,levels=0:1)))<30 || nrow(test)<100) return(unavailable('insufficient baseline-state training or independent incident validation'))
@@ -1539,6 +1541,8 @@ le8_state_projection <- function(d,features,score_map,covars,tvar,evar,rawdir,so
   pen<-as.numeric(colnames(xx$train) %in% selected)
   if(!any(pen > 0)) return(unavailable('no usable molecular state predictors'))
   fold<-le8_group_folds(train$.group,5,SEED+714)
+  if(any(vapply(unique(fold),function(f) min(table(factor(train$.prevalent[fold!=f],levels=0:1)))<2,
+      logical(1)))) return(unavailable('insufficient cases/controls in a state-projection training fold'))
   fit<-glmnet::cv.glmnet(xx$train,train$.prevalent,family='binomial',alpha=0,penalty.factor=pen,foldid=fold,standardize=FALSE,type.measure='deviance')
   b<-as.matrix(coef(fit,s='lambda.min'));beta<-b[colnames(xx$train),1]
   state_train<-drop(xx$train[,pen==1,drop=FALSE] %*% beta[pen==1]);state<-drop(xx$test[,pen==1,drop=FALSE] %*% beta[pen==1])
@@ -2378,6 +2382,45 @@ instrument_availability_audit <- function(...) {
 	z
 }
 
+run_c2_without_summary_genetics <- function(layer, outdir, rawdir, reason, mode_signature, pgs_signature) {
+	message("[LE8] SKIP C2 summary-genetic analyses: ", reason,
+		"; continue individual biomarker-PGS decomposition when available")
+	mr <- le8_empty_mr()
+	# This analysis uses individual omic PGS, measured omics and phenotype dates;
+	# it does not require a disease GWAS or a significant MR result.
+	individual <- run_individual_genetic_decomposition(layer, outdir,
+		tibble(feature=character(), top_rank=integer(), top_reason=character()))
+	status <- tibble(analysis=c("MR", "reverse_MR", "MR_link2", "DANDELION"),
+		status="unavailable_genetic_inputs", detail=reason)
+	status <- bind_rows(status, tibble(analysis="individual_PGS_decomposition",
+		status=if (nrow(individual$summary %||% tibble())) "completed" else "unavailable_PGS",
+		detail=paste(individual$status$status, collapse="; ")))
+	write_raw_csv(status, "c2.subanalysis_status.csv", rawdir)
+	write_raw_csv(mr, "c2.MR_all.csv", rawdir)
+	write_raw_csv(mr, "c2.reverse_MR_all.csv", rawdir)
+	evidence <- tibble(exposure=character(), evidence_grade=character(), status=character())
+	write_raw_csv(evidence, "c2.evidence_grades.csv", rawdir)
+	write_raw_csv(individual$status, "c2.individual_genetic_decomposition_status.csv", rawdir)
+	write_raw_csv(individual$heritability_status %||% tibble(status="unavailable"), "c2.heritability_status.csv", rawdir)
+	save_plot(plot_individual_genetic_decomposition(individual$summary),
+		"c2.Fig12.genetic_decomposition.png", 17, 13, outdir=outdir)
+	save_plot(plot_component_leadtime(individual$trajectory),
+		"c2.Fig13.genetic_component_leadtime.png", 17, 11, outdir=outdir)
+	out <- list(meta=module_meta(layer, extra=list(code_version=C2_CODE_VERSION,
+		status="completed_with_unavailable_genetics", mode_signature=mode_signature,
+		pgs_signature=pgs_signature, RUN_MRlink2=RUN_MRlink2, RUN_Dandelion=RUN_Dandelion)),
+		MR=mr, MR_reverse=mr, MR_best=mr, evidence_grades=evidence,
+		individual_decomposition=individual, subanalysis_status=status,
+		DANDELION=list(status="unavailable_genetic_inputs"),
+		MRLink2=list(results=tibble(), status=status[status$analysis=="MR_link2",]))
+	saveRDS(out, file.path(rawdir,"c2.res.rds"), compress="xz")
+	write_xlsx2(list(availability=status, MR_all=mr,
+		genetic_decomp_status=individual$status, genetic_decomp_summary=individual$summary,
+		genetic_leadtime=individual$trajectory), "c2.out.xlsx")
+	finalize_outputs("c2_cause", outdir)
+	out
+}
+
 run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	if (LE8_REUSE_RESULTS) return(le8_restore_outputs(match.arg(layer), "c2_cause"))
 	# Check reusable results and initialize the analysis output directory.
@@ -2407,7 +2450,7 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	pgs_file0 <- find_c2_score_file(layer)
 	pgs_check <- length(pgs_file0) == 1L && !is.na(pgs_file0) && nzchar(pgs_file0) &&
 		file.exists(pgs_file0) && file.size(pgs_file0) > 0
-	pgs_expected <- find_c1_pgs_file(layer)
+	pgs_expected <- find_c1_pgs_file(layer, required = FALSE)
 	pgs_signature <- if (is.na(pgs_file0)) "PGS=missing" else paste0(
 		"PGS=", pgs_file0, ";size=", file.size(pgs_file0),
 		";mtime=", format(file.info(pgs_file0)$mtime, tz = "UTC", usetz = TRUE)
@@ -2418,7 +2461,13 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 	)
 
 	base0 <- if (layer == "protein") dir.X else dir.met.gwas
-	c1 <- read_c1_cache_for_c2(outdir) ; assoc <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |> as_tibble() ; if (!"beta" %in% names(assoc)) assoc <- assoc |> mutate(beta = safe_log(estimate))
+	ygfile <- get_y_gwas_file(Y, FALSE)
+	if (is.na(ygfile) || !dir.exists(base0)) {
+		reason <- paste(c(if (is.na(ygfile)) "disease GWAS missing",
+			if (!dir.exists(base0)) paste0("QTL project missing: ", base0)), collapse="; ")
+		return(run_c2_without_summary_genetics(layer, outdir, rawdir, reason, mode_signature, pgs_signature))
+	}
+	c1 <- le8_read_c1_optional(outdir, layer) ; assoc <- (c1$association %||% c1$pwas_incident %||% c1$MWAS) |> as_tibble() ; if (!"beta" %in% names(assoc)) assoc <- assoc |> mutate(beta = safe_log(estimate))
 	base <- base0 ; ann <- layer_annotation(layer, unique(assoc$term)) ; ranked <- assoc |>
 		filter(is.finite(p.value)) |>
 		arrange(p.value) |>
@@ -2477,7 +2526,8 @@ run_c2_layer <- function(layer = c("protein", "metabolite")) {
 		observational_ranking = C2_FEATURE_SCOPE == "observational_top",
 		caveat = if (C2_FEATURE_SCOPE == "all_qtl" && MAX_FEATURES > 0) "Lexicographic resource cap: not an exhaustive scan" else "See full instrument/QC coverage; PGS significance is not MR"
 	), "c2.genetic_discovery_scope.csv", rawdir)
-	if (!length(mr_candidates)) stop("C2/", layer, ": no QTL files mapped under ", base, call. = FALSE)
+	if (!length(mr_candidates)) return(run_c2_without_summary_genetics(layer, outdir, rawdir,
+		paste0("No paired full QTL/COJO inputs mapped under ", base), mode_signature, pgs_signature))
 	input_table <- tibble(feature = audit_features, top_observational = feature %in% head(ranked, if (MAX_FEATURES == 0) length(ranked) else MAX_FEATURES), MR_candidate = feature %in% mr_candidates)
 	write_raw_csv(input_table, "c2.input_features.csv", rawdir) ; message("C2/", layer, ": auditing ", length(audit_features), " traits; ", length(mr_candidates), " have mapped QTL files")
 	stage_started <- le8_stage_start(paste0("C2/", layer, " instruments"))

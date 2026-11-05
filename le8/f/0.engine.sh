@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Parse the whole engine before starting any work. Bash otherwise reads later
 # commands from disk after long-running children return; an in-place edit can
@@ -129,7 +138,7 @@ C1_FULL_LE8_SENSITIVITY="${C1_FULL_LE8_SENSITIVITY:-TRUE}"
 # fields because the model expects an analysis-ready treatment covariate.
 C1_TREATMENT_VARS="${C1_TREATMENT_VARS:-drug.lipid}"
 C2_HERITABILITY_FILE="${C2_HERITABILITY_FILE:-}"
-C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-${DIR_DATA:-/mnt/f}/gwas/prot/ppp.h2.csv}"
+C2_PROT_HERITABILITY_FILE="${C2_PROT_HERITABILITY_FILE:-${DIR_DATA:-${DIR_BIG}}/gwas/prot/ppp.h2.csv}"
 C2_MET_HERITABILITY_FILE="${C2_MET_HERITABILITY_FILE:-}"
 C4_MODULE_BOOT="${C4_MODULE_BOOT:-100}"
 C4_MODULE_STABILITY="${C4_MODULE_STABILITY:-0.70}"
@@ -141,15 +150,15 @@ FINAL_INC_PROT=""
 FINAL_INC_MET=""
 MATCH_SNP_MEMORY_MB="${MATCH_SNP_MEMORY_MB:-4096}"
 MATCH_SNP_SORT_MEMORY_MB="${MATCH_SNP_SORT_MEMORY_MB:-512}"
-MATCH_SNP_TMP_DIR="${MATCH_SNP_TMP_DIR:-${TMPDIR:-/tmp}}"
-LE8_ANALYSIS_ROOT=${LE8_ANALYSIS_ROOT:-${ANALYSIS_ROOT:-/mnt/d/analysis}/le8}
-LE8_GWAS_DIR="${LE8_GWAS_DIR:-${DIR_DATA:-/mnt/f}/gwas/main}"
-LE8_PQTL_IV_DIR="${LE8_PQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/prot}"
-LE8_MQTL_IV_DIR="${LE8_MQTL_IV_DIR:-${DIR_DATA:-/mnt/f}/gwas/met}"
+MATCH_SNP_TMP_DIR="${MATCH_SNP_TMP_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}}"
+LE8_ANALYSIS_ROOT=${LE8_ANALYSIS_ROOT:-${ANALYSIS_ROOT:-${ANALYSIS_ROOT}}/le8}
+LE8_GWAS_DIR="${LE8_GWAS_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/main}"
+LE8_PQTL_IV_DIR="${LE8_PQTL_IV_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/prot}"
+LE8_MQTL_IV_DIR="${LE8_MQTL_IV_DIR:-${DIR_DATA:-${DIR_BIG}}/gwas/met}"
 LE8_PROT_BED="${LE8_PROT_BED:-}"
-LE8_REFGEN_ROOT="${LE8_REFGEN_ROOT:-${DIR_DATA:-/mnt/f}/gen/1kg}"
+LE8_REFGEN_ROOT="${LE8_REFGEN_ROOT:-${DIR_DATA:-${DIR_BIG}}/gen/1kg}"
 LE8_GRCH="${LE8_GRCH:-auto}"
-UKB_PHE="${UKB_PHE:-${DIR_UKB:-${DIR_DATA:-/mnt/f}/ukb}}"
+UKB_PHE="${UKB_PHE:-${DIR_UKB:?Initialize paths with 0f/0os.sh}}"
 Y_GWAS="${Y_GWAS:-}"
 MRLINK2_REF_BED="${MRLINK2_REF_BED:-}"
 MRLINK2_REF_PFILE_DIR="${MRLINK2_REF_PFILE_DIR:-}"
@@ -532,7 +541,7 @@ export C2_DANDELION_GENE_P_FILE C2_DANDELION_GENE_ANNOTATION C2_DANDELION_SNP_FI
 export C2_DANDELION_ALLOW_MAGMA C2_DANDELION_MAX_TARGET_FRACTION
 export LE8_ANALYSIS_ROOT LE8_GWAS_DIR LE8_PQTL_IV_DIR LE8_MQTL_IV_DIR LE8_REFGEN_ROOT UKB_PHE
 if [[ -z "$LE8_PROT_BED" ]]; then
-	for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" "${DIR_DATA:-/mnt/f}/gwas/prot/pheno.bed"; do
+	for prot_bed_candidate in "$LE8_PQTL_IV_DIR/ppp_3k.b38.bed" "${DIR_DATA:-${DIR_BIG}}/gwas/prot/pheno.bed"; do
 		if [[ -s "$prot_bed_candidate" ]]; then
 			LE8_PROT_BED="$prot_bed_candidate"
 			break
@@ -584,7 +593,7 @@ export PHE_F
 	echo "ERROR: missing $PHE_F" >&2
 	exit 2
 }
-# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
+# shellcheck source=${SCRIPTS_ROOT}/0f/phenotype.sh
 source "$PHE_F"
 # Reuse the shared build-specific definitions in R source-score analyses.
 export MHC_START_b37 MHC_END_b37 MHC_START_b38 MHC_END_b38
@@ -739,7 +748,7 @@ if [[ -n ${LE8_RUN_STATE_DIR:-} ]]; then
 	done <<<"$checked_run"
 fi
 {
-	le8_log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
+	le8_log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)
 	mkdir -p "$le8_log_root"
 	resume_audit="$le8_log_root/completed_results.${module_csv//,/-}.$(date +%Y%m%d-%H%M%S).csv"
 	check_jobs=("${requested[@]}")
@@ -804,6 +813,10 @@ plan_job() {
 		return 0
 	fi
 	job_actions[$key]=analysis
+	# The scope worker already schedules each requested stage in order. Retrying
+	# a failed optional upstream stage here would block independent downstream
+	# analyses (all-QTL MR, prespecified coloc loci, and LE8 proxy learning).
+	[[ "${LE8_SCOPE_WORKER:-0}" != 1 ]] || return 0
 	local -a deps=()
 	case "$job" in
 		c3_coloc) deps=(c2_cause) ;;
@@ -898,6 +911,18 @@ preflight() {
 	if job_pending c2_cause prot || job_pending c3_coloc prot; then need_prot_qtl=TRUE; fi
 	if job_pending c2_cause met || job_pending c3_coloc met; then need_met_qtl=TRUE; fi
 	if [[ "$need_prot_qtl" == TRUE ]] || job_pending c4_connect prot; then need_prot_annotation=TRUE; fi
+	# Missing disease GWAS disables only summary-genetic analyses. C2 can still
+	# use individual biomarker PGS; C1/C4/C5 do not need the disease GWAS at all.
+	local any_outcome_gwas=FALSE pending_trait
+	for pending_trait in "${resume_traits[@]}"; do
+		if [[ -s "$(outcome_gwas_file "$pending_trait")" ]]; then any_outcome_gwas=TRUE; fi
+	done
+	if [[ $any_outcome_gwas == FALSE ]]; then
+		need_mrlink2=FALSE; need_dandelion=FALSE; need_gpu_coloc=FALSE
+		need_prot_qtl=FALSE; need_met_qtl=FALSE
+		need_prot_annotation=FALSE
+		if job_pending c4_connect prot; then need_prot_annotation=TRUE; fi
+	fi
 	echo "LE8 5C preflight"
 	echo "  root: $script_dir"
 	echo "  layers: $BIOM (PROT_DO=$PROT_DO, MET_DO=$MET_DO)"
@@ -944,14 +969,12 @@ preflight() {
 	fi
 	if job_pending c2_cause prot; then
 		[[ -z "$C2_PROT_HERITABILITY_FILE" || -s "$C2_PROT_HERITABILITY_FILE" ]] || {
-			echo "  MISSING: C2 protein SNP-heritability file ($C2_PROT_HERITABILITY_FILE)"
-			bad=1
+			echo "  OPTIONAL UNAVAILABLE: C2 protein SNP-heritability ($C2_PROT_HERITABILITY_FILE)"
 		}
 	fi
 	if job_pending c2_cause met; then
 		[[ -z "$C2_MET_HERITABILITY_FILE" || -s "$C2_MET_HERITABILITY_FILE" ]] || {
-			echo "  MISSING: C2 metabolite SNP-heritability file ($C2_MET_HERITABILITY_FILE)"
-			bad=1
+			echo "  OPTIONAL UNAVAILABLE: C2 metabolite SNP-heritability ($C2_MET_HERITABILITY_FILE)"
 		}
 	fi
 	if [[ "$need_dandelion" == TRUE ]]; then
@@ -1011,12 +1034,10 @@ preflight() {
 		[[ -e "$p" ]] || echo "  WARNING: path not visible now: $p"
 	done
 	if [[ "$need_prot_qtl" == TRUE && ! -d "$LE8_PQTL_IV_DIR" ]]; then
-		echo "  MISSING: pQTL gwas_post project $LE8_PQTL_IV_DIR"
-		bad=1
+		echo "  SKIP pQTL-dependent analyses: missing project $LE8_PQTL_IV_DIR"
 	fi
 	if [[ "$need_met_qtl" == TRUE && ! -d "$LE8_MQTL_IV_DIR" ]]; then
-		echo "  MISSING: mQTL gwas_post project $LE8_MQTL_IV_DIR"
-		bad=1
+		echo "  SKIP mQTL-dependent analyses: missing project $LE8_MQTL_IV_DIR"
 	fi
 	if [[ "$need_prot_annotation" == TRUE && ! -s "$LE8_PROT_BED" ]]; then
 		echo "  MISSING: protein BED annotation $LE8_PROT_BED"
@@ -1046,8 +1067,7 @@ preflight() {
 		trait_needs_gwas "$trait" || continue
 		outcome="$(outcome_gwas_file "$trait")"
 		[[ -s "$outcome" ]] || {
-			echo "  MISSING: outcome GWAS $outcome"
-			bad=1
+			echo "  SKIP GWAS-dependent analyses for $trait: missing $outcome; independent analyses continue"
 			continue
 		}
 		outcome="$(realpath -- "$outcome")"
@@ -1253,13 +1273,9 @@ run_one() {
 	mrlink2_ref_pfile_dir="${MRLINK2_REF_PFILE_DIR:-${LE8_REFGEN_ROOT%/}/$grch/pfile}"
 	mrlink2_ref_id_dir="${MRLINK2_REF_ID_DIR:-${mrlink2_ref_pfile_dir%/}/../id}"
 	mrlink2_ref_samples="${MRLINK2_REF_SAMPLES:-${mrlink2_ref_pfile_dir%/}/../samples.txt}"
-	if [[ "$action" == analysis ]] && job_needs_gwas "$job"; then
+	if [[ "$action" == analysis ]] && job_needs_gwas "$job" && [[ -n "$ygwas" && -s "$ygwas" ]]; then
 		[[ "$grch" == 37 || "$grch" == 38 ]] || {
 			echo "ERROR: no detected GRCh build for trait '$trait'." >&2
-			exit 3
-		}
-		[[ -n "$ygwas" && -s "$ygwas" ]] || {
-			echo "ERROR: no resolved outcome GWAS for trait '$trait'." >&2
 			exit 3
 		}
 	fi
@@ -1271,10 +1287,10 @@ run_one() {
 		echo "ERROR: missing worker for $job" >&2
 		exit 3
 	}
-	log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/$trait
+	log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/$trait
 	local log_job="$job"
 	if [[ "$job" == final || "$job" == final_prediction ]]; then
-		log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-/tmp}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/final/$trait
+		log_root=${SCRIPT_LOG_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}/le8-logs}/$(printf '%s' "$analysis_root" | sha256sum | cut -c1-16)/final/$trait
 		[[ "$job" != final ]] || log_job=report
 		[[ "$job" != final_prediction ]] || log_job=prediction
 	fi

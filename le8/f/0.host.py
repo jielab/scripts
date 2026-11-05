@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """0.host utilities and command entry points."""
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # C1_LOCKPAPER::2026-10-17.c1-lockpaper-v1
 import sys
 
@@ -28,7 +36,7 @@ def cohort_parser():
 	p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
 	p.add_argument("--Y", dest="trait", default="cvd_cad")
 	p.add_argument("--biom", choices=["prot", "met"], default="prot")
-	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", "/mnt/f/ukb"))
+	p.add_argument("--ukb-phe", default=os.getenv("UKB_PHE", configured_path("DIR_UKB")))
 	for name in [
 		"phe-file",
 		"omics-file",

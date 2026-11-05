@@ -20,6 +20,14 @@ genetic catalogue. Records retain their comparison scope, source row and hash.
 
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # Shared PNG byte limit; PDF/SVG export settings are preserved.
 import sys as _png_sys
 from pathlib import Path as _PngPath
@@ -1164,7 +1172,7 @@ def shared_analysis_settings(values, environ=None):
 	spec = {
 		"group_file": ("LE8_GROUP_FILE", ""),
 		"group_col": ("LE8_GROUP_COLUMN", env.get("PGS_GROUP_COLUMN", "")),
-		"ukb_rel_file": ("LE8_UKB_REL_FILE", "/mnt/f/gen/ukb/37/typ/ukb_rel.dat"),
+		"ukb_rel_file": ("LE8_UKB_REL_FILE", configured_path('DIR_GEN', 'ukb/37/typ/ukb_rel.dat')),
 		"end_date": ("DATE_FOLLOW_END", "2023-04-01"),
 		"diagnosis_col": ("LE8_Y_DATE", ""),
 		"outer_roster": ("LE8_OUTER_ROSTER", ""),
@@ -1215,7 +1223,7 @@ C4 connect (including interactions, nonlinearity, panel validation and reconstru
 	p.add_argument(
 		"--analysis-root",
 		type=Path,
-		default=Path(os.getenv("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8")),
+		default=Path(os.getenv("LE8_ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT', 'le8'))),
 	)
 	p.add_argument(
 		"--out",
@@ -1768,7 +1776,7 @@ def _table_runtime(argv):
 		x in argv for x in ["--help", "-h", "--dry-run", "--preflight"]
 	):
 		return False
-	root = Path(option("--analysis-root", os.getenv("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8"))).resolve()
+	root = Path(option("--analysis-root", os.getenv("LE8_ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT', 'le8')))).resolve()
 	r_bin = option("--r-bin", os.getenv("R_BIN", "Rscript"))
 	arguments = argv[1:] if argv[:1] == ["dispatch"] else argv
 	if argv[:1] == ["index"]:
@@ -2708,7 +2716,7 @@ def canonical_pgs_file(layer):
 	label = {"prot": "prot", "protein": "prot", "met": "met", "metabolite": "met"}.get(layer)
 	if label is None:
 		raise ValueError(f"Unknown PGS layer: {layer}")
-	path = Path(os.getenv("DIR_DATA", "F:" if os.name == "nt" else "/mnt/f")) / "gwas" / label / "pgs" / f"{label}.pgs.gz"
+	path = Path(os.getenv("DIR_DATA", configured_path('DIR_BIG') if os.name == "nt" else configured_path('DIR_BIG'))) / "gwas" / label / "pgs" / f"{label}.pgs.gz"
 	if not path.is_file() or path.stat().st_size == 0:
 		raise FileNotFoundError(f"Required canonical PGS file missing/empty: {path}")
 	return path

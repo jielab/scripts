@@ -2,6 +2,14 @@
 """C1 saved-model comparisons and publication figures; no risk-model training."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 # Conventional and twin-model comparison
 import gzip, json, re, hashlib
@@ -883,7 +891,7 @@ def compare_scope(root, trait, layer, bootstrap=200, seed=2026, check=False):
 
 def comparison_main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--analysis-root',type=Path,default=Path(os.getenv('LE8_ANALYSIS_ROOT', '/mnt/d/analysis/le8')))
+    p.add_argument('--analysis-root',type=Path,default=Path(os.getenv('LE8_ANALYSIS_ROOT', configured_path('ANALYSIS_ROOT', 'le8'))))
     p.add_argument('--Y',required=True);p.add_argument('--biom',default='prot,met')
     p.add_argument('--bootstrap',type=int,default=200);p.add_argument('--seed',type=int,default=2026)
     p.add_argument('--check',action='store_true');a=p.parse_args()
@@ -1279,7 +1287,19 @@ RELIABILITY_TABLES = ("reliability_status", "reliability_population_performance"
 
 
 def reliability_tables(scope):
-    """Only completed, checksum-verified aggregate files enter publication reports."""
+    """Use verified aggregates or this run's explicit unavailable-model status."""
+    index=Path(scope)/"C1_FINAL_INDEX.json"
+    if index.is_file():
+        latest=json.loads(index.read_text())
+        unavailable={**latest.get("unavailable_methods",{}),**latest.get("failed_methods",{})}
+        if "glmnet" in unavailable:
+            # Preserve old fitted files, but never report their metrics as a
+            # current result when this cohort cannot support the risk model.
+            item=unavailable["glmnet"]
+            status=pd.DataFrame([dict(head=head,status="unavailable_glmnet",
+                reason=item.get("reason",item.get("status","unavailable"))) for head in
+                ("P0_risk_only","P1_incident_support","P2_incident_plus_prevalent")])
+            return {"reliability_status":status},dict(status="skipped_unavailable_glmnet")
     directory=Path(scope)/"reliability"/"FINAL"
     marker=directory/"COMPLETE.json"
     if not marker.is_file():return {},{}

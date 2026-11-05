@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""Lightweight LE8 local/LSF DAG planner: standard library only, no cohort reads.
+"""Lightweight LE8 local/LSF scope planner: standard library only, no cohort reads.
 
 All fitting, native R preparation, dependency checks and aggregation are workers.
-Each scientific scope is transactional; unrelated traits/layers run concurrently.
+One trait/layer is one job; its internal stages run sequentially in that allocation.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
 
 import argparse
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT.parent / "0f"))
@@ -36,7 +46,7 @@ def parser():
     p.add_argument("--Y", "--trait", default=os.getenv("Y", "cvd_cad,ra"))
     p.add_argument("--biom", default=os.getenv("BIOM", "prot,met"))
     p.add_argument("--analysis-root", "--dir-analysis-root", type=Path,
-                   default=Path(os.environ.get("LE8_ANALYSIS_ROOT", "/mnt/d/analysis/le8")))
+                   default=Path(os.environ.get("LE8_ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT', 'le8'))))
     p.add_argument("--cores", type=int, default=int(os.getenv("N_CORES", "8")))
     p.add_argument("--memory-limit-gb", type=float, default=float(os.getenv("LE8_MEMORY_LIMIT_GB", "32")))
     p.add_argument("--queue", default=os.getenv("LE8_QUEUE", "33"))
@@ -82,7 +92,7 @@ def selected_methods(a):
         methods = a.methods.split(",")
     else:
         config = json.loads(a.config.read_text())
-        methods = config.get("methods", ["glmnet", "lightgbm", "abm_count"])
+        methods = config.get("methods", ["glmnet", "lightgbm", "abm_count", "abm_deep"])
     allowed = {"glmnet", "lightgbm", "abm_count", "abm_legacy", "abm_case_preserving", "abm_profile",
                "abm_lenient", "abm_prevalent", "abm_deep", "molecular_deviation"}
     aliases = {"pradeep": "glmnet", "lgbm": "lightgbm", "abm_multiview": "abm_profile"}
@@ -107,7 +117,7 @@ def build_jobs(a, extra=()):
         modules.insert(0, "c1_correlate")
     if set(modules) - MODULES:
         raise ValueError("Unknown modules: " + ",".join(sorted(set(modules) - MODULES)))
-    traits, layers = a.Y.split(","), a.biom.split(",")
+    traits, layers = list(dict.fromkeys(a.Y.split(","))), list(dict.fromkeys(a.biom.split(",")))
     if not traits or any(not re.fullmatch(r"[A-Za-z0-9_]+", t) for t in traits):
         raise ValueError("Invalid trait list")
     if not layers or not set(layers) <= {"prot", "met"}:
@@ -140,7 +150,7 @@ def build_jobs(a, extra=()):
     scientific_env = {k: v for k, v in os.environ.items() if
         k.startswith(("LE8_", "C1_", "C2_", "C3_", "C4_", "C5_", "FINAL_", "MRLINK2_", "PGS_", "RUN_"))
         or k in {"DIR_WORK", "DIR_DATA", "DIR_SCRATCH", "DIR_SOFTWARE", "ANALYSIS_ROOT", "DATE_SCRATCH",
-                 "UKB_PHE", "UKB_COMMON", "UKB_BGEN_DIR", "PHE_F", "CONDA_SH", "CONDA_EXE", "PATH"}}
+                 "UKB_PHE", "UKB_COMMON", "UKB_BGEN_DIR", "PHE_F", "CONDA_SH", "CONDA_EXE", "PATH", "LD_LIBRARY_PATH"}}
     scientific_env.update(PYTHON_BIN=a.python, ABM_PYTHON=a.python, LE8_REPORT_PYTHON=a.python,
         R_BIN=a.r_bin, LE8_TOTAL_CORES=str(a.cores), LE8_RESOURCE_MEMORY_GIB=f"{a.memory_limit_gb:g}",
         LE8_MEMORY_LIMIT_GB=f"{a.memory_limit_gb:g}", LE8_RUNTIME_READY="1",
@@ -165,14 +175,23 @@ def build_jobs(a, extra=()):
                 "--Y", trait or a.Y, "--biom", layer or a.biom, "--cores", str(allocated_cores), "--memory-limit-gb", f"{memory:g}", *tail]
         if module == "c1_correlate":
             argv += ["--methods", ",".join(methods)]
+            if gpu:
+                # An allocated deep-model GPU must be usable; a broken CUDA
+                # runtime must not silently turn the requested GPU fit into CPU.
+                argv += ["--device", "cuda"]
         jobs.append(Job(key, argv, list(deps), dict(queue=a.gpu_queue if gpu else a.queue,
             cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
         return key
 
-    terminals = []
+    # Build the inspectable internal commands first, then bundle them by scope.
+    # They are subprocesses inside one allocation, never additional LSF jobs.
+    scopes = []
+    batch_id = uuid.uuid4().hex
+    scope_keys = [f"{trait}.{layer}" for trait in traits for layer in layers]
     for trait in traits:
         for layer in layers:
             scope = f"{trait}.{layer}"
+            start = len(jobs)
             deps = []
             if "c1_correlate" in modules:
                 for stage in ("prepare", "association", "models", "evaluation"):
@@ -199,26 +218,40 @@ def build_jobs(a, extra=()):
                            or (module == "c2_cause" and eigh_gpu))
                     deps = [add(f"{scope}.{stage}", module, deps, trait, layer,
                         stage_env={"LE8_C4_STAGE": stage} if module == "c4_connect" else None, gpu=gpu)]
-            terminals.extend(deps)
-    # Reports/indexes aggregate all scopes and have one writer after the DAG.
-    # They do not hold a root lock while any scientific scope is fitting.
-    if any(m in modules for m in ("c1_correlate", "c1_reliability")):
-        argv = [a.python, str(Path(__file__).resolve()), "--summary-worker", "--analysis-root", root,
-                "--Y", a.Y, "--biom", a.biom]
-        jobs.append(Job("c1.cross_trait_summary", argv, list(terminals),
-            dict(queue=a.queue, cores=1, memory_gib=min(a.memory_limit_gb, 8), hours=4, gpus=0), scientific_env, str(ROOT)))
-        terminals = ["c1.cross_trait_summary"]
-    for module in ("final", "share", "shiny"):
-        if module in modules:
-            if module == "shiny" and os.getenv("submit", "local") == "hpc":
-                tail = ["--prepare-only"]
-            else:
-                tail = []
-            if module == "final":
-                tail += ["--" + flag for flag in ("fit-joint", "fit-genetic", "fit-reference", "details", "index-only")
-                         if getattr(a, flag.replace("-", "_"))]
-            terminals = [add(f"aggregate.{module}", module, terminals, tail=tail)]
-    return jobs
+            if any(m in modules for m in ("c1_correlate", "c1_reliability")):
+                argv = [a.python, str(Path(__file__).resolve()), "--summary-worker", "--analysis-root", root,
+                        "--Y", a.Y, "--biom", a.biom]
+                jobs.append(Job(f"{scope}.c1.summary", argv, [],
+                    dict(queue=a.queue, cores=1, memory_gib=min(a.memory_limit_gb, 8), hours=a.hours, gpus=0),
+                    scientific_env, str(ROOT)))
+            for module in ("final", "share", "shiny"):
+                if module in modules:
+                    tail = ["--prepare-only"] if module == "shiny" and os.getenv("submit", "local") == "hpc" else []
+                    if module == "final":
+                        tail += ["--" + flag for flag in ("fit-joint", "fit-genetic", "fit-reference", "details", "index-only")
+                                 if getattr(a, flag.replace("-", "_"))]
+                    # The last finished scope performs the original aggregate
+                    # request, including optional joint-layer fits, in its job.
+                    add(f"{scope}.{module}", module, [], tail=tail)
+            stages = jobs[start:]
+            gpu = any(j.resources["gpus"] for j in stages)
+            allocated_cores = max(j.resources["cores"] for j in stages)
+            memory = max(j.resources["memory_gib"] for j in stages)
+            if gpu and memory > a.gpu_memory_limit_gb:
+                raise ValueError("The single scope job needs more host RAM than --gpu-memory-limit-gb; "
+                                 "increase that cap or select CPU backends")
+            env = dict(scientific_env, LE8_TOTAL_CORES=str(allocated_cores),
+                       LE8_RESOURCE_MEMORY_GIB=f"{memory:g}", LE8_MEMORY_LIMIT_GB=f"{memory:g}",
+                       RUN_GPU_COLOC="TRUE" if any(j.env.get("RUN_GPU_COLOC") == "TRUE" for j in stages) else "FALSE",
+                       MRLINK2_EIGH_BACKEND="cuda" if any(j.env.get("MRLINK2_EIGH_BACKEND") == "cuda" for j in stages) else "cpu")
+            steps = [dict(key=j.key, argv=j.argv, env={k:v for k,v in j.env.items() if env.get(k) != v},
+                          aggregate=j.key.endswith((".c1.summary", ".final", ".share", ".shiny"))) for j in stages]
+            argv = [a.python, str(ROOT / "f/scope_workflow.py"), "--analysis-root", root,
+                    "--scope", scope, "--batch-id", batch_id, "--scopes", ",".join(scope_keys),
+                    "--steps-json", json.dumps(steps, separators=(",", ":"))]
+            scopes.append(Job(scope, argv, [], dict(queue=a.gpu_queue if gpu else a.queue,
+                cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
+    return scopes
 
 
 def main(argv=None):
@@ -237,6 +270,23 @@ def main(argv=None):
     else:
         jobs = build_jobs(a, extra)
         path = write_plan(jobs, a.plan_dir or a.analysis_root / "logs/workflows", mode=mode, name="le8")
+        # Keep the actual .cmd reviewable without expanding a huge quoted JSON
+        # argument in its comment. Execution still uses the immutable plan.
+        for job in jobs:
+            if "--steps-json" not in job.argv:
+                continue
+            steps = json.loads(job.argv[job.argv.index("--steps-json") + 1])
+            command = path.parent / "commands" / (job.key + ".cmd")
+            lines = []
+            for line in command.read_text().splitlines():
+                if line.startswith("# Scientific command:"):
+                    lines.append("# Sequential stages inside this single allocation:")
+                    for step in steps:
+                        lines.append("# " + step["key"] + (" (last scope aggregates)" if step["aggregate"] else ""))
+                        lines.append("# " + shlex.join(["env", *[f"{k}={v}" for k,v in sorted(step["env"].items())], *step["argv"]]))
+                else:
+                    lines.append(line)
+            command.write_text("\n".join(lines) + "\n")
     if a.plan_only or a.dry_run:
         print(f"[LE8] Reviewable plan written; no analysis or submission: {path}", flush=True)
         return 0

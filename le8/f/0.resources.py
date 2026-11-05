@@ -7,6 +7,14 @@ admission leases coordinate cooperating invocations. RAM claims are estimates;
 retain the existing whole-process-tree cgroup hard limit in LE8.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+# Keep project modules (notably abm.py) ahead of shared helpers.
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse, contextlib, csv, re, hashlib, json, math, os, signal, subprocess, sys, tempfile, time, uuid
 from pathlib import Path
 import fcntl
@@ -208,7 +216,7 @@ def execute(tasks,outdir,cores=4,memory_gib=32,max_workers=4,pool_path=None,rese
     ids=[str(t['task_id']) for t in tasks]
     if len(set(ids))!=len(ids):raise ValueError('Duplicate task IDs')
     if max_workers<1:raise ValueError('max_workers must be positive')
-    pool=SharedBudget(pool_path or os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),cores,memory_gib,reserve_gib)
+    pool=SharedBudget(pool_path or os.getenv('LE8_RESOURCE_POOL',f'{configured_path('DIR_RUNTIME_TMP')}/le8-resources-{os.getuid()}.json'),cores,memory_gib,reserve_gib)
     pending=[];result={};running={}
     try:
         previous={str(record['task_id']):record for record in json.loads((outdir/'run_status.json').read_text())}
@@ -366,7 +374,7 @@ def gpu_lease():
     # MR workers may use a local CPU/RAM pool; GPU exclusion stays global.
     prefix='LE8_' if os.getenv('LE8_GPU_LOCAL_LEASE')=='1' else 'LE8_GLOBAL_'
     gpu_cpus=os.getenv(prefix+'POOL_CPUS')
-    pool=SharedBudget(os.getenv(prefix+'RESOURCE_POOL',os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json')),
+    pool=SharedBudget(os.getenv(prefix+'RESOURCE_POOL',os.getenv('LE8_RESOURCE_POOL',f'{configured_path('DIR_RUNTIME_TMP')}/le8-resources-{os.getuid()}.json')),
         int(os.getenv(prefix+'TOTAL_CORES',os.getenv('LE8_TOTAL_CORES','16'))),
         float(os.getenv(prefix+'RESOURCE_MEMORY_GIB',os.getenv('LE8_RESOURCE_MEMORY_GIB','32'))),0,
         cpus=None if gpu_cpus is None else list(map(int,gpu_cpus.split(','))))
@@ -417,7 +425,7 @@ def phase_main(argv):
         if a.gpu and os.getenv('LE8_GPU_LEASE_HELD') != '1':
             raise ValueError('Nested GPU phase has no parent GPU reservation')
         return subprocess.run(command, env=dict(os.environ)).returncode
-    pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'/tmp/le8-resources-{os.getuid()}.json'),
+    pool=SharedBudget(os.getenv('LE8_RESOURCE_POOL',f'{configured_path('DIR_RUNTIME_TMP')}/le8-resources-{os.getuid()}.json'),
         int(os.getenv('LE8_TOTAL_CORES','16')),float(os.getenv('LE8_RESOURCE_MEMORY_GIB','32')),
         float(os.getenv('LE8_RESOURCE_RESERVE_GIB','2')))
     reservation=phase_reservation(a.label,a.memory_gib)
@@ -515,7 +523,7 @@ def cached_eigh(matrix, ordered_alleles, backend='cpu'):
         import torch
         identity['torch']=torch.__version__;identity['cuda']=torch.version.cuda
     key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
-    root=Path(os.getenv('MRLINK2_EIGH_CACHE','/tmp/le8-mrlink2-eigh'))/key
+    root=Path(os.getenv('MRLINK2_EIGH_CACHE',configured_path('DIR_RUNTIME_TMP', 'le8-mrlink2-eigh')))/key
     root.mkdir(parents=True,exist_ok=True)
     with open(root/'lock','a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
