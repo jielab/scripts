@@ -1,0 +1,8 @@
+/work/sph-huangj/.conda/envs/grid/bin/python3
+/work/sph-huangj/.conda/envs/grid/bin/Rscript
+/work/sph-huangj/.conda/envs/grid/bin/plink2
+/opt/ibm/lsfsuite/lsf/10.1/linux2.6-glibc2.3-x86_64/bin/bsub
+Python PCA libraries PASS: 1.26.4 2.3.3
+data.table    ggplot2   openxlsx  patchwork       MASS 
+      TRUE       TRUE       TRUE       TRUE       TRUE 
+PLINK v2.0.0-a.6.9LM 64-bit Intel (29 Jan 2025)

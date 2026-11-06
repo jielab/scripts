@@ -21,9 +21,19 @@ HELP
 fi
 
 
+# Load the central runtime directory when sourced without an entry wrapper.
+if [[ -z ${DIR_RUNTIME_TMP:-} ]]; then
+    _console_paths=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    while [[ ! -f "$_console_paths/0f/0os.sh" ]]; do
+        [[ $_console_paths != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2; }
+        _console_paths=$(dirname -- "$_console_paths")
+    done
+    source "$_console_paths/0f/0os.sh"
+    unset _console_paths
+fi
 # 🚩 Runtime temporary files
-export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
-export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/python-cache
+export TMPDIR="${TMPDIR:-$DIR_RUNTIME_TMP}" TMP="${TMP:-$DIR_RUNTIME_TMP}" TEMP="${TEMP:-$DIR_RUNTIME_TMP}"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=${DIR_RUNTIME_TMP}/python-cache
 
 
 # 🚩 Console logging

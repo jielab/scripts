@@ -1,0 +1,2011 @@
+[
+  {
+    "label": "GRID_PHE_FILE",
+    "path": "/work/sph-huangj/phe/ukb/Rdata/phe.rds",
+    "status": "PASS",
+    "bytes": 139570599
+  },
+  {
+    "label": "GRID_REMOVE",
+    "path": "/work/sph-huangj/files/ukb.exclude.id",
+    "status": "FAIL"
+  },
+  {
+    "label": "GRID_MED_FILE",
+    "path": "/work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv",
+    "status": "PASS",
+    "bytes": 402
+  },
+  {
+    "label": "GRID_PCA_WEIGHT",
+    "path": "/work/sph-huangj/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight",
+    "status": "PASS",
+    "bytes": 12566305
+  },
+  {
+    "label": "GRID_PCA_FILE",
+    "path": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz",
+    "status": "PASS",
+    "bytes": 51855985
+  },
+  {
+    "label": "GRID_REL_FILE",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/ukb_rel.dat",
+    "status": "PASS",
+    "bytes": 3804034
+  },
+  {
+    "label": "WORKFLOW_PYTHON",
+    "path": "/work/sph-huangj/.conda/envs/py311/bin/python3",
+    "status": "PASS",
+    "bytes": 25912192
+  },
+  {
+    "label": "runtime:python3",
+    "path": "/work/sph-huangj/.conda/envs/grid/bin/python3",
+    "status": "PASS",
+    "bytes": 25397432
+  },
+  {
+    "label": "runtime:Rscript",
+    "path": "/work/sph-huangj/.conda/envs/grid/bin/Rscript",
+    "status": "PASS",
+    "bytes": 17000
+  },
+  {
+    "label": "runtime:plink2",
+    "path": "/work/sph-huangj/.conda/envs/grid/bin/plink2",
+    "status": "PASS",
+    "bytes": 42492200
+  },
+  {
+    "label": "runtime:zstdcat",
+    "path": "/work/sph-huangj/.conda/envs/grid/bin/zstdcat",
+    "status": "PASS",
+    "bytes": 211704
+  },
+  {
+    "label": "typ:chr1.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.pgen",
+    "status": "PASS",
+    "bytes": 3722834090
+  },
+  {
+    "label": "typ:chr1.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr1.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.pvar",
+    "status": "PASS",
+    "bytes": 1687972
+  },
+  {
+    "label": "typ:chr2.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.pgen",
+    "status": "PASS",
+    "bytes": 3768609718
+  },
+  {
+    "label": "typ:chr2.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr2.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.pvar",
+    "status": "PASS",
+    "bytes": 1648624
+  },
+  {
+    "label": "typ:chr3.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.pgen",
+    "status": "PASS",
+    "bytes": 3166838351
+  },
+  {
+    "label": "typ:chr3.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr3.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.pvar",
+    "status": "PASS",
+    "bytes": 1383453
+  },
+  {
+    "label": "typ:chr4.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.pgen",
+    "status": "PASS",
+    "bytes": 2981115936
+  },
+  {
+    "label": "typ:chr4.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr4.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.pvar",
+    "status": "PASS",
+    "bytes": 1252413
+  },
+  {
+    "label": "typ:chr5.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.pgen",
+    "status": "PASS",
+    "bytes": 2828184043
+  },
+  {
+    "label": "typ:chr5.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr5.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.pvar",
+    "status": "PASS",
+    "bytes": 1223845
+  },
+  {
+    "label": "typ:chr6.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.pgen",
+    "status": "PASS",
+    "bytes": 3351546263
+  },
+  {
+    "label": "typ:chr6.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr6.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.pvar",
+    "status": "PASS",
+    "bytes": 1401829
+  },
+  {
+    "label": "typ:chr7.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.pgen",
+    "status": "PASS",
+    "bytes": 2618223372
+  },
+  {
+    "label": "typ:chr7.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr7.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.pvar",
+    "status": "PASS",
+    "bytes": 1126866
+  },
+  {
+    "label": "typ:chr8.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.pgen",
+    "status": "PASS",
+    "bytes": 2411491345
+  },
+  {
+    "label": "typ:chr8.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr8.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.pvar",
+    "status": "PASS",
+    "bytes": 1011168
+  },
+  {
+    "label": "typ:chr9.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.pgen",
+    "status": "PASS",
+    "bytes": 2116765765
+  },
+  {
+    "label": "typ:chr9.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr9.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.pvar",
+    "status": "PASS",
+    "bytes": 903038
+  },
+  {
+    "label": "typ:chr10.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.pgen",
+    "status": "PASS",
+    "bytes": 2363079855
+  },
+  {
+    "label": "typ:chr10.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr10.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.pvar",
+    "status": "PASS",
+    "bytes": 1043247
+  },
+  {
+    "label": "typ:chr11.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.pgen",
+    "status": "PASS",
+    "bytes": 2353965802
+  },
+  {
+    "label": "typ:chr11.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr11.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.pvar",
+    "status": "PASS",
+    "bytes": 1116494
+  },
+  {
+    "label": "typ:chr12.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.pgen",
+    "status": "PASS",
+    "bytes": 2267110482
+  },
+  {
+    "label": "typ:chr12.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr12.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.pvar",
+    "status": "PASS",
+    "bytes": 1017688
+  },
+  {
+    "label": "typ:chr13.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.pgen",
+    "status": "PASS",
+    "bytes": 1672445320
+  },
+  {
+    "label": "typ:chr13.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr13.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.pvar",
+    "status": "PASS",
+    "bytes": 728342
+  },
+  {
+    "label": "typ:chr14.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.pgen",
+    "status": "PASS",
+    "bytes": 1540858070
+  },
+  {
+    "label": "typ:chr14.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr14.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.pvar",
+    "status": "PASS",
+    "bytes": 693518
+  },
+  {
+    "label": "typ:chr15.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.pgen",
+    "status": "PASS",
+    "bytes": 1518576387
+  },
+  {
+    "label": "typ:chr15.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr15.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.pvar",
+    "status": "PASS",
+    "bytes": 663169
+  },
+  {
+    "label": "typ:chr16.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.pgen",
+    "status": "PASS",
+    "bytes": 1713888771
+  },
+  {
+    "label": "typ:chr16.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr16.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.pvar",
+    "status": "PASS",
+    "bytes": 779807
+  },
+  {
+    "label": "typ:chr17.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.pgen",
+    "status": "PASS",
+    "bytes": 1653442045
+  },
+  {
+    "label": "typ:chr17.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr17.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.pvar",
+    "status": "PASS",
+    "bytes": 781742
+  },
+  {
+    "label": "typ:chr18.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.pgen",
+    "status": "PASS",
+    "bytes": 1427341700
+  },
+  {
+    "label": "typ:chr18.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr18.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.pvar",
+    "status": "PASS",
+    "bytes": 587172
+  },
+  {
+    "label": "typ:chr19.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.pgen",
+    "status": "PASS",
+    "bytes": 1415737362
+  },
+  {
+    "label": "typ:chr19.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr19.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.pvar",
+    "status": "PASS",
+    "bytes": 711302
+  },
+  {
+    "label": "typ:chr20.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.pgen",
+    "status": "PASS",
+    "bytes": 1239160263
+  },
+  {
+    "label": "typ:chr20.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr20.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.pvar",
+    "status": "PASS",
+    "bytes": 531430
+  },
+  {
+    "label": "typ:chr21.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.pgen",
+    "status": "PASS",
+    "bytes": 722530539
+  },
+  {
+    "label": "typ:chr21.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr21.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.pvar",
+    "status": "PASS",
+    "bytes": 304587
+  },
+  {
+    "label": "typ:chr22.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.pgen",
+    "status": "PASS",
+    "bytes": 797824464
+  },
+  {
+    "label": "typ:chr22.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.psam",
+    "status": "PASS",
+    "bytes": 14320201
+  },
+  {
+    "label": "typ:chr22.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.pvar",
+    "status": "PASS",
+    "bytes": 348963
+  },
+  {
+    "label": "imp:chr1.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.pgen",
+    "status": "PASS",
+    "bytes": 208294858279
+  },
+  {
+    "label": "imp:chr1.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr1.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.pvar",
+    "status": "PASS",
+    "bytes": 205092238
+  },
+  {
+    "label": "imp:chr2.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.pgen",
+    "status": "PASS",
+    "bytes": 212759782566
+  },
+  {
+    "label": "imp:chr2.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr2.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.pvar",
+    "status": "PASS",
+    "bytes": 225568634
+  },
+  {
+    "label": "imp:chr3.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.pgen",
+    "status": "PASS",
+    "bytes": 175449294969
+  },
+  {
+    "label": "imp:chr3.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr3.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.pvar",
+    "status": "PASS",
+    "bytes": 184899546
+  },
+  {
+    "label": "imp:chr4.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.pgen",
+    "status": "PASS",
+    "bytes": 181223057044
+  },
+  {
+    "label": "imp:chr4.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr4.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.pvar",
+    "status": "PASS",
+    "bytes": 180913946
+  },
+  {
+    "label": "imp:chr5.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.pgen",
+    "status": "PASS",
+    "bytes": 158443852900
+  },
+  {
+    "label": "imp:chr5.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr5.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.pvar",
+    "status": "PASS",
+    "bytes": 167478984
+  },
+  {
+    "label": "imp:chr6.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.pgen",
+    "status": "PASS",
+    "bytes": 161796630148
+  },
+  {
+    "label": "imp:chr6.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr6.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.pvar",
+    "status": "PASS",
+    "bytes": 158285233
+  },
+  {
+    "label": "imp:chr7.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.pgen",
+    "status": "PASS",
+    "bytes": 153205024418
+  },
+  {
+    "label": "imp:chr7.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr7.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.pvar",
+    "status": "PASS",
+    "bytes": 148490434
+  },
+  {
+    "label": "imp:chr8.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.pgen",
+    "status": "PASS",
+    "bytes": 137795939704
+  },
+  {
+    "label": "imp:chr8.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr8.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.pvar",
+    "status": "PASS",
+    "bytes": 144502017
+  },
+  {
+    "label": "imp:chr9.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.pgen",
+    "status": "PASS",
+    "bytes": 122226498808
+  },
+  {
+    "label": "imp:chr9.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr9.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.pvar",
+    "status": "PASS",
+    "bytes": 111634265
+  },
+  {
+    "label": "imp:chr10.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.pgen",
+    "status": "PASS",
+    "bytes": 128830500549
+  },
+  {
+    "label": "imp:chr10.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr10.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.pvar",
+    "status": "PASS",
+    "bytes": 129612556
+  },
+  {
+    "label": "imp:chr11.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.pgen",
+    "status": "PASS",
+    "bytes": 122688976791
+  },
+  {
+    "label": "imp:chr11.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr11.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.pvar",
+    "status": "PASS",
+    "bytes": 131412680
+  },
+  {
+    "label": "imp:chr12.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.pgen",
+    "status": "PASS",
+    "bytes": 123756074376
+  },
+  {
+    "label": "imp:chr12.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr12.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.pvar",
+    "status": "PASS",
+    "bytes": 125964939
+  },
+  {
+    "label": "imp:chr13.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.pgen",
+    "status": "PASS",
+    "bytes": 91777383288
+  },
+  {
+    "label": "imp:chr13.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr13.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.pvar",
+    "status": "PASS",
+    "bytes": 92842167
+  },
+  {
+    "label": "imp:chr14.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.pgen",
+    "status": "PASS",
+    "bytes": 89740834006
+  },
+  {
+    "label": "imp:chr14.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr14.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.pvar",
+    "status": "PASS",
+    "bytes": 86070724
+  },
+  {
+    "label": "imp:chr15.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.pgen",
+    "status": "PASS",
+    "bytes": 86317106219
+  },
+  {
+    "label": "imp:chr15.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr15.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.pvar",
+    "status": "PASS",
+    "bytes": 78255297
+  },
+  {
+    "label": "imp:chr16.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.pgen",
+    "status": "PASS",
+    "bytes": 89386532087
+  },
+  {
+    "label": "imp:chr16.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr16.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.pvar",
+    "status": "PASS",
+    "bytes": 86566902
+  },
+  {
+    "label": "imp:chr17.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.pgen",
+    "status": "PASS",
+    "bytes": 79698629966
+  },
+  {
+    "label": "imp:chr17.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr17.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.pvar",
+    "status": "PASS",
+    "bytes": 74722727
+  },
+  {
+    "label": "imp:chr18.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.pgen",
+    "status": "PASS",
+    "bytes": 73989440485
+  },
+  {
+    "label": "imp:chr18.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr18.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.pvar",
+    "status": "PASS",
+    "bytes": 72931394
+  },
+  {
+    "label": "imp:chr19.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.pgen",
+    "status": "PASS",
+    "bytes": 69863237746
+  },
+  {
+    "label": "imp:chr19.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr19.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.pvar",
+    "status": "PASS",
+    "bytes": 58516955
+  },
+  {
+    "label": "imp:chr20.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.pgen",
+    "status": "PASS",
+    "bytes": 58989386383
+  },
+  {
+    "label": "imp:chr20.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr20.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.pvar",
+    "status": "PASS",
+    "bytes": 58318794
+  },
+  {
+    "label": "imp:chr21.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.pgen",
+    "status": "PASS",
+    "bytes": 44698741098
+  },
+  {
+    "label": "imp:chr21.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr21.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.pvar",
+    "status": "PASS",
+    "bytes": 35581648
+  },
+  {
+    "label": "imp:chr22.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.pgen",
+    "status": "PASS",
+    "bytes": 44624101464
+  },
+  {
+    "label": "imp:chr22.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "imp:chr22.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.pvar",
+    "status": "PASS",
+    "bytes": 35423723
+  },
+  {
+    "label": "hap:chr1.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr1.pgen",
+    "status": "PASS",
+    "bytes": 3710515158
+  },
+  {
+    "label": "hap:chr1.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr1.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr1.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr1.pvar",
+    "status": "PASS",
+    "bytes": 1402027
+  },
+  {
+    "label": "hap:chr2.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr2.pgen",
+    "status": "PASS",
+    "bytes": 3705968412
+  },
+  {
+    "label": "hap:chr2.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr2.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr2.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr2.pvar",
+    "status": "PASS",
+    "bytes": 1390056
+  },
+  {
+    "label": "hap:chr3.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr3.pgen",
+    "status": "PASS",
+    "bytes": 3134508598
+  },
+  {
+    "label": "hap:chr3.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr3.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr3.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr3.pvar",
+    "status": "PASS",
+    "bytes": 1160883
+  },
+  {
+    "label": "hap:chr4.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr4.pgen",
+    "status": "PASS",
+    "bytes": 2945169664
+  },
+  {
+    "label": "hap:chr4.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr4.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr4.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr4.pvar",
+    "status": "PASS",
+    "bytes": 1083075
+  },
+  {
+    "label": "hap:chr5.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr5.pgen",
+    "status": "PASS",
+    "bytes": 2754788117
+  },
+  {
+    "label": "hap:chr5.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr5.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr5.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr5.pvar",
+    "status": "PASS",
+    "bytes": 1013740
+  },
+  {
+    "label": "hap:chr6.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr6.pgen",
+    "status": "PASS",
+    "bytes": 3297351740
+  },
+  {
+    "label": "hap:chr6.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr6.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr6.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr6.pvar",
+    "status": "PASS",
+    "bytes": 1189725
+  },
+  {
+    "label": "hap:chr7.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr7.pgen",
+    "status": "PASS",
+    "bytes": 2594958587
+  },
+  {
+    "label": "hap:chr7.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr7.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr7.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr7.pvar",
+    "status": "PASS",
+    "bytes": 942600
+  },
+  {
+    "label": "hap:chr8.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr8.pgen",
+    "status": "PASS",
+    "bytes": 2406408721
+  },
+  {
+    "label": "hap:chr8.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr8.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr8.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr8.pvar",
+    "status": "PASS",
+    "bytes": 879484
+  },
+  {
+    "label": "hap:chr9.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr9.pgen",
+    "status": "PASS",
+    "bytes": 2091646025
+  },
+  {
+    "label": "hap:chr9.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr9.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr9.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr9.pvar",
+    "status": "PASS",
+    "bytes": 760746
+  },
+  {
+    "label": "hap:chr10.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr10.pgen",
+    "status": "PASS",
+    "bytes": 2327437961
+  },
+  {
+    "label": "hap:chr10.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr10.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr10.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr10.pvar",
+    "status": "PASS",
+    "bytes": 882166
+  },
+  {
+    "label": "hap:chr11.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr11.pgen",
+    "status": "PASS",
+    "bytes": 2323490485
+  },
+  {
+    "label": "hap:chr11.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr11.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr11.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr11.pvar",
+    "status": "PASS",
+    "bytes": 894529
+  },
+  {
+    "label": "hap:chr12.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr12.pgen",
+    "status": "PASS",
+    "bytes": 2247049496
+  },
+  {
+    "label": "hap:chr12.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr12.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr12.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr12.pvar",
+    "status": "PASS",
+    "bytes": 849967
+  },
+  {
+    "label": "hap:chr13.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr13.pgen",
+    "status": "PASS",
+    "bytes": 1627434106
+  },
+  {
+    "label": "hap:chr13.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr13.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr13.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr13.pvar",
+    "status": "PASS",
+    "bytes": 595617
+  },
+  {
+    "label": "hap:chr14.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr14.pgen",
+    "status": "PASS",
+    "bytes": 1514683846
+  },
+  {
+    "label": "hap:chr14.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr14.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr14.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr14.pvar",
+    "status": "PASS",
+    "bytes": 575083
+  },
+  {
+    "label": "hap:chr15.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr15.pgen",
+    "status": "PASS",
+    "bytes": 1524700058
+  },
+  {
+    "label": "hap:chr15.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr15.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr15.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr15.pvar",
+    "status": "PASS",
+    "bytes": 561077
+  },
+  {
+    "label": "hap:chr16.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr16.pgen",
+    "status": "PASS",
+    "bytes": 1705528094
+  },
+  {
+    "label": "hap:chr16.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr16.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr16.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr16.pvar",
+    "status": "PASS",
+    "bytes": 633218
+  },
+  {
+    "label": "hap:chr17.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr17.pgen",
+    "status": "PASS",
+    "bytes": 1594916979
+  },
+  {
+    "label": "hap:chr17.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr17.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr17.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr17.pvar",
+    "status": "PASS",
+    "bytes": 591968
+  },
+  {
+    "label": "hap:chr18.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr18.pgen",
+    "status": "PASS",
+    "bytes": 1429527011
+  },
+  {
+    "label": "hap:chr18.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr18.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr18.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr18.pvar",
+    "status": "PASS",
+    "bytes": 512026
+  },
+  {
+    "label": "hap:chr19.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr19.pgen",
+    "status": "PASS",
+    "bytes": 1355980459
+  },
+  {
+    "label": "hap:chr19.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr19.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr19.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr19.pvar",
+    "status": "PASS",
+    "bytes": 509277
+  },
+  {
+    "label": "hap:chr20.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr20.pgen",
+    "status": "PASS",
+    "bytes": 1251999612
+  },
+  {
+    "label": "hap:chr20.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr20.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr20.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr20.pvar",
+    "status": "PASS",
+    "bytes": 454321
+  },
+  {
+    "label": "hap:chr21.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr21.pgen",
+    "status": "PASS",
+    "bytes": 728979931
+  },
+  {
+    "label": "hap:chr21.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr21.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr21.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr21.pvar",
+    "status": "PASS",
+    "bytes": 261142
+  },
+  {
+    "label": "hap:chr22.pgen",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr22.pgen",
+    "status": "PASS",
+    "bytes": 812936973
+  },
+  {
+    "label": "hap:chr22.psam",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr22.psam",
+    "status": "PASS",
+    "bytes": 8771924
+  },
+  {
+    "label": "hap:chr22.pvar",
+    "path": "/work/sph-huangj/data/gen/ukb/37/hap/chr22.pvar",
+    "status": "PASS",
+    "bytes": 290259
+  },
+  {
+    "label": "snpinfo",
+    "path": "/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3",
+    "status": "PASS",
+    "bytes": 105463266
+  },
+  {
+    "label": "blocks:AFR",
+    "path": "/work/sph-huangj/data/LD/block/AFR.37.bed",
+    "status": "PASS",
+    "bytes": 61593
+  },
+  {
+    "label": "LD:AFR:chr1",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr1.hdf5",
+    "status": "PASS",
+    "bytes": 379984939
+  },
+  {
+    "label": "LD:AFR:chr2",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr2.hdf5",
+    "status": "PASS",
+    "bytes": 369104922
+  },
+  {
+    "label": "LD:AFR:chr3",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr3.hdf5",
+    "status": "PASS",
+    "bytes": 300781965
+  },
+  {
+    "label": "LD:AFR:chr4",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr4.hdf5",
+    "status": "PASS",
+    "bytes": 249439294
+  },
+  {
+    "label": "LD:AFR:chr5",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr5.hdf5",
+    "status": "PASS",
+    "bytes": 271562939
+  },
+  {
+    "label": "LD:AFR:chr6",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr6.hdf5",
+    "status": "PASS",
+    "bytes": 304579069
+  },
+  {
+    "label": "LD:AFR:chr7",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr7.hdf5",
+    "status": "PASS",
+    "bytes": 233563715
+  },
+  {
+    "label": "LD:AFR:chr8",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr8.hdf5",
+    "status": "PASS",
+    "bytes": 231770029
+  },
+  {
+    "label": "LD:AFR:chr9",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr9.hdf5",
+    "status": "PASS",
+    "bytes": 217705222
+  },
+  {
+    "label": "LD:AFR:chr10",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr10.hdf5",
+    "status": "PASS",
+    "bytes": 243137593
+  },
+  {
+    "label": "LD:AFR:chr11",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr11.hdf5",
+    "status": "PASS",
+    "bytes": 238003176
+  },
+  {
+    "label": "LD:AFR:chr12",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr12.hdf5",
+    "status": "PASS",
+    "bytes": 224229280
+  },
+  {
+    "label": "LD:AFR:chr13",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr13.hdf5",
+    "status": "PASS",
+    "bytes": 169380401
+  },
+  {
+    "label": "LD:AFR:chr14",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr14.hdf5",
+    "status": "PASS",
+    "bytes": 146940028
+  },
+  {
+    "label": "LD:AFR:chr15",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr15.hdf5",
+    "status": "PASS",
+    "bytes": 140011258
+  },
+  {
+    "label": "LD:AFR:chr16",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr16.hdf5",
+    "status": "PASS",
+    "bytes": 142525992
+  },
+  {
+    "label": "LD:AFR:chr17",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr17.hdf5",
+    "status": "PASS",
+    "bytes": 119102960
+  },
+  {
+    "label": "LD:AFR:chr18",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr18.hdf5",
+    "status": "PASS",
+    "bytes": 138135623
+  },
+  {
+    "label": "LD:AFR:chr19",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr19.hdf5",
+    "status": "PASS",
+    "bytes": 73667098
+  },
+  {
+    "label": "LD:AFR:chr20",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr20.hdf5",
+    "status": "PASS",
+    "bytes": 136988573
+  },
+  {
+    "label": "LD:AFR:chr21",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr21.hdf5",
+    "status": "PASS",
+    "bytes": 64734406
+  },
+  {
+    "label": "LD:AFR:chr22",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr22.hdf5",
+    "status": "PASS",
+    "bytes": 74513738
+  },
+  {
+    "label": "GWAS:height.AFR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.gz",
+    "status": "PASS",
+    "bytes": 39331895
+  },
+  {
+    "label": "CSx weights:height.AFR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz",
+    "status": "PASS",
+    "bytes": 1984091
+  },
+  {
+    "label": "GWAS:ldl.AFR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.gz",
+    "status": "PASS",
+    "bytes": 1004946652
+  },
+  {
+    "label": "CSx weights:ldl.AFR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.csx.gz",
+    "status": "PASS",
+    "bytes": 2056052
+  },
+  {
+    "label": "GWAS:t2dm.AFA",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.gz",
+    "status": "PASS",
+    "bytes": 476664005
+  },
+  {
+    "label": "CSx weights:t2dm.AFA",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.csx.gz",
+    "status": "PASS",
+    "bytes": 2058474
+  },
+  {
+    "label": "blocks:EAS",
+    "path": "/work/sph-huangj/data/LD/block/EAS.37.bed",
+    "status": "PASS",
+    "bytes": 34464
+  },
+  {
+    "label": "LD:EAS:chr1",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr1.hdf5",
+    "status": "PASS",
+    "bytes": 337712485
+  },
+  {
+    "label": "LD:EAS:chr2",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr2.hdf5",
+    "status": "PASS",
+    "bytes": 357368103
+  },
+  {
+    "label": "LD:EAS:chr3",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr3.hdf5",
+    "status": "PASS",
+    "bytes": 290585250
+  },
+  {
+    "label": "LD:EAS:chr4",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr4.hdf5",
+    "status": "PASS",
+    "bytes": 232333902
+  },
+  {
+    "label": "LD:EAS:chr5",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr5.hdf5",
+    "status": "PASS",
+    "bytes": 255020149
+  },
+  {
+    "label": "LD:EAS:chr6",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr6.hdf5",
+    "status": "PASS",
+    "bytes": 278845713
+  },
+  {
+    "label": "LD:EAS:chr7",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr7.hdf5",
+    "status": "PASS",
+    "bytes": 231488643
+  },
+  {
+    "label": "LD:EAS:chr8",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr8.hdf5",
+    "status": "PASS",
+    "bytes": 231592292
+  },
+  {
+    "label": "LD:EAS:chr9",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr9.hdf5",
+    "status": "PASS",
+    "bytes": 238930068
+  },
+  {
+    "label": "LD:EAS:chr10",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr10.hdf5",
+    "status": "PASS",
+    "bytes": 245934266
+  },
+  {
+    "label": "LD:EAS:chr11",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr11.hdf5",
+    "status": "PASS",
+    "bytes": 233664281
+  },
+  {
+    "label": "LD:EAS:chr12",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr12.hdf5",
+    "status": "PASS",
+    "bytes": 218068888
+  },
+  {
+    "label": "LD:EAS:chr13",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr13.hdf5",
+    "status": "PASS",
+    "bytes": 153794398
+  },
+  {
+    "label": "LD:EAS:chr14",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr14.hdf5",
+    "status": "PASS",
+    "bytes": 153226809
+  },
+  {
+    "label": "LD:EAS:chr15",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr15.hdf5",
+    "status": "PASS",
+    "bytes": 146187162
+  },
+  {
+    "label": "LD:EAS:chr16",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr16.hdf5",
+    "status": "PASS",
+    "bytes": 144575519
+  },
+  {
+    "label": "LD:EAS:chr17",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr17.hdf5",
+    "status": "PASS",
+    "bytes": 120431601
+  },
+  {
+    "label": "LD:EAS:chr18",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr18.hdf5",
+    "status": "PASS",
+    "bytes": 138431738
+  },
+  {
+    "label": "LD:EAS:chr19",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr19.hdf5",
+    "status": "PASS",
+    "bytes": 74883116
+  },
+  {
+    "label": "LD:EAS:chr20",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr20.hdf5",
+    "status": "PASS",
+    "bytes": 134395307
+  },
+  {
+    "label": "LD:EAS:chr21",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr21.hdf5",
+    "status": "PASS",
+    "bytes": 66516805
+  },
+  {
+    "label": "LD:EAS:chr22",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr22.hdf5",
+    "status": "PASS",
+    "bytes": 69288964
+  },
+  {
+    "label": "GWAS:height.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.gz",
+    "status": "PASS",
+    "bytes": 37781927
+  },
+  {
+    "label": "CSx weights:height.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.csx.gz",
+    "status": "PASS",
+    "bytes": 1894127
+  },
+  {
+    "label": "GWAS:ldl.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.gz",
+    "status": "PASS",
+    "bytes": 482081140
+  },
+  {
+    "label": "CSx weights:ldl.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.csx.gz",
+    "status": "PASS",
+    "bytes": 1953471
+  },
+  {
+    "label": "GWAS:t2dm.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.gz",
+    "status": "PASS",
+    "bytes": 408839472
+  },
+  {
+    "label": "CSx weights:t2dm.EAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.csx.gz",
+    "status": "PASS",
+    "bytes": 1960267
+  },
+  {
+    "label": "blocks:EUR",
+    "path": "/work/sph-huangj/data/LD/block/EUR.37.bed",
+    "status": "PASS",
+    "bytes": 40632
+  },
+  {
+    "label": "LD:EUR:chr1",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr1.hdf5",
+    "status": "PASS",
+    "bytes": 363804570
+  },
+  {
+    "label": "LD:EUR:chr2",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr2.hdf5",
+    "status": "PASS",
+    "bytes": 381191556
+  },
+  {
+    "label": "LD:EUR:chr3",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr3.hdf5",
+    "status": "PASS",
+    "bytes": 294855223
+  },
+  {
+    "label": "LD:EUR:chr4",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr4.hdf5",
+    "status": "PASS",
+    "bytes": 233902083
+  },
+  {
+    "label": "LD:EUR:chr5",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr5.hdf5",
+    "status": "PASS",
+    "bytes": 261904933
+  },
+  {
+    "label": "LD:EUR:chr6",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr6.hdf5",
+    "status": "PASS",
+    "bytes": 284223693
+  },
+  {
+    "label": "LD:EUR:chr7",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr7.hdf5",
+    "status": "PASS",
+    "bytes": 258249094
+  },
+  {
+    "label": "LD:EUR:chr8",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr8.hdf5",
+    "status": "PASS",
+    "bytes": 256386423
+  },
+  {
+    "label": "LD:EUR:chr9",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr9.hdf5",
+    "status": "PASS",
+    "bytes": 247577829
+  },
+  {
+    "label": "LD:EUR:chr10",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr10.hdf5",
+    "status": "PASS",
+    "bytes": 268501607
+  },
+  {
+    "label": "LD:EUR:chr11",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr11.hdf5",
+    "status": "PASS",
+    "bytes": 245671747
+  },
+  {
+    "label": "LD:EUR:chr12",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr12.hdf5",
+    "status": "PASS",
+    "bytes": 225221610
+  },
+  {
+    "label": "LD:EUR:chr13",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr13.hdf5",
+    "status": "PASS",
+    "bytes": 175689259
+  },
+  {
+    "label": "LD:EUR:chr14",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr14.hdf5",
+    "status": "PASS",
+    "bytes": 162353559
+  },
+  {
+    "label": "LD:EUR:chr15",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr15.hdf5",
+    "status": "PASS",
+    "bytes": 149211807
+  },
+  {
+    "label": "LD:EUR:chr16",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr16.hdf5",
+    "status": "PASS",
+    "bytes": 146188959
+  },
+  {
+    "label": "LD:EUR:chr17",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr17.hdf5",
+    "status": "PASS",
+    "bytes": 125997019
+  },
+  {
+    "label": "LD:EUR:chr18",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr18.hdf5",
+    "status": "PASS",
+    "bytes": 148851806
+  },
+  {
+    "label": "LD:EUR:chr19",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr19.hdf5",
+    "status": "PASS",
+    "bytes": 72171994
+  },
+  {
+    "label": "LD:EUR:chr20",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr20.hdf5",
+    "status": "PASS",
+    "bytes": 145985364
+  },
+  {
+    "label": "LD:EUR:chr21",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr21.hdf5",
+    "status": "PASS",
+    "bytes": 68072789
+  },
+  {
+    "label": "LD:EUR:chr22",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr22.hdf5",
+    "status": "PASS",
+    "bytes": 70056100
+  },
+  {
+    "label": "GWAS:height.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.gz",
+    "status": "PASS",
+    "bytes": 41651463
+  },
+  {
+    "label": "CSx weights:height.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.csx.gz",
+    "status": "PASS",
+    "bytes": 2185797
+  },
+  {
+    "label": "GWAS:ldl.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.gz",
+    "status": "PASS",
+    "bytes": 1232859228
+  },
+  {
+    "label": "CSx weights:ldl.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.csx.gz",
+    "status": "PASS",
+    "bytes": 2270405
+  },
+  {
+    "label": "GWAS:t2dm.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.gz",
+    "status": "PASS",
+    "bytes": 459300535
+  },
+  {
+    "label": "CSx weights:t2dm.EUR",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.csx.gz",
+    "status": "PASS",
+    "bytes": 2268972
+  },
+  {
+    "label": "blocks:SAS",
+    "path": "/work/sph-huangj/data/LD/block/SAS.37.bed",
+    "status": "PASS",
+    "bytes": 34464
+  },
+  {
+    "label": "LD:SAS:chr1",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr1.hdf5",
+    "status": "PASS",
+    "bytes": 445076596
+  },
+  {
+    "label": "LD:SAS:chr2",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr2.hdf5",
+    "status": "PASS",
+    "bytes": 463965562
+  },
+  {
+    "label": "LD:SAS:chr3",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr3.hdf5",
+    "status": "PASS",
+    "bytes": 375452860
+  },
+  {
+    "label": "LD:SAS:chr4",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr4.hdf5",
+    "status": "PASS",
+    "bytes": 304496094
+  },
+  {
+    "label": "LD:SAS:chr5",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr5.hdf5",
+    "status": "PASS",
+    "bytes": 330581676
+  },
+  {
+    "label": "LD:SAS:chr6",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr6.hdf5",
+    "status": "PASS",
+    "bytes": 365338875
+  },
+  {
+    "label": "LD:SAS:chr7",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr7.hdf5",
+    "status": "PASS",
+    "bytes": 296594983
+  },
+  {
+    "label": "LD:SAS:chr8",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr8.hdf5",
+    "status": "PASS",
+    "bytes": 309854936
+  },
+  {
+    "label": "LD:SAS:chr9",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr9.hdf5",
+    "status": "PASS",
+    "bytes": 302453683
+  },
+  {
+    "label": "LD:SAS:chr10",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr10.hdf5",
+    "status": "PASS",
+    "bytes": 319988855
+  },
+  {
+    "label": "LD:SAS:chr11",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr11.hdf5",
+    "status": "PASS",
+    "bytes": 294544560
+  },
+  {
+    "label": "LD:SAS:chr12",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr12.hdf5",
+    "status": "PASS",
+    "bytes": 283418239
+  },
+  {
+    "label": "LD:SAS:chr13",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr13.hdf5",
+    "status": "PASS",
+    "bytes": 204355132
+  },
+  {
+    "label": "LD:SAS:chr14",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr14.hdf5",
+    "status": "PASS",
+    "bytes": 197425617
+  },
+  {
+    "label": "LD:SAS:chr15",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr15.hdf5",
+    "status": "PASS",
+    "bytes": 179953709
+  },
+  {
+    "label": "LD:SAS:chr16",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr16.hdf5",
+    "status": "PASS",
+    "bytes": 180871924
+  },
+  {
+    "label": "LD:SAS:chr17",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr17.hdf5",
+    "status": "PASS",
+    "bytes": 153878181
+  },
+  {
+    "label": "LD:SAS:chr18",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr18.hdf5",
+    "status": "PASS",
+    "bytes": 175533415
+  },
+  {
+    "label": "LD:SAS:chr19",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr19.hdf5",
+    "status": "PASS",
+    "bytes": 91681539
+  },
+  {
+    "label": "LD:SAS:chr20",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr20.hdf5",
+    "status": "PASS",
+    "bytes": 178388638
+  },
+  {
+    "label": "LD:SAS:chr21",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr21.hdf5",
+    "status": "PASS",
+    "bytes": 82802866
+  },
+  {
+    "label": "LD:SAS:chr22",
+    "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr22.hdf5",
+    "status": "PASS",
+    "bytes": 91161587
+  },
+  {
+    "label": "GWAS:height.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.gz",
+    "status": "PASS",
+    "bytes": 35894230
+  },
+  {
+    "label": "CSx weights:height.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.csx.gz",
+    "status": "PASS",
+    "bytes": 2102720
+  },
+  {
+    "label": "GWAS:ldl.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.gz",
+    "status": "PASS",
+    "bytes": 470099455
+  },
+  {
+    "label": "CSx weights:ldl.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.csx.gz",
+    "status": "PASS",
+    "bytes": 2182689
+  },
+  {
+    "label": "GWAS:t2dm.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.gz",
+    "status": "PASS",
+    "bytes": 348132192
+  },
+  {
+    "label": "CSx weights:t2dm.SAS",
+    "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.csx.gz",
+    "status": "PASS",
+    "bytes": 2184044
+  },
+  {
+    "label": "scores:height:1csx.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/height/1csx.scores.rds",
+    "status": "PASS",
+    "bytes": 45270855
+  },
+  {
+    "label": "scores:height:2disco.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/height/2disco.scores.rds",
+    "status": "PASS",
+    "bytes": 11055622
+  },
+  {
+    "label": "scores:ldl:1csx.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/ldl/1csx.scores.rds",
+    "status": "PASS",
+    "bytes": 45283702
+  },
+  {
+    "label": "scores:ldl:2disco.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/ldl/2disco.scores.rds",
+    "status": "PASS",
+    "bytes": 11054934
+  },
+  {
+    "label": "scores:t2dm:1csx.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/t2dm/1csx.scores.rds",
+    "status": "PASS",
+    "bytes": 44388065
+  },
+  {
+    "label": "scores:t2dm:2disco.scores.rds",
+    "path": "/work/sph-huangj/data/gen/ukb/pgs/t2dm/2disco.scores.rds",
+    "status": "PASS",
+    "bytes": 11056034
+  },
+  {
+    "label": "PRSformer:src/model.py",
+    "path": "/work/sph-huangj/software/PRSformer/src/model.py",
+    "status": "PASS",
+    "bytes": 27223
+  },
+  {
+    "label": "PRSformer:src/modules.py",
+    "path": "/work/sph-huangj/software/PRSformer/src/modules.py",
+    "status": "PASS",
+    "bytes": 17452
+  },
+  {
+    "label": "PRSformer:src/utils.py",
+    "path": "/work/sph-huangj/software/PRSformer/src/utils.py",
+    "status": "PASS",
+    "bytes": 3397
+  }
+]

@@ -1,0 +1,11 @@
+[csx] LSF job=4386623; requested RAM=16 GiB, analysis budget=16 GiB; cluster manages enforcement.
+[csx] Backend: requested=auto; selected=cpu
+[csx] {"backend": "cpu", "numpy": "1.26.4", "gpu_name": null, "device": null, "block_calls": 0, "cpu_block_calls": 0, "cuda_block_calls": 0, "gpu_min_block": 2048, "block_seconds": 0.0, "gpu_peak_memory_mb": 0}
+[csx] MCMC BLAS threads=1; CUDA minimum block size=2048 (smaller blocks use CPU)
+[csx] Native LD cache=/work/sph-huangj/scripts/grid/.preflight/20261105/cache/csx-ld; budget=16 GiB
+[csx] Scoring: 1 parallel chromosomes, 2048 MiB PLINK workspace each; inference jobs=1
+[csx] work directory: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx
+[csx] command file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/cmd/csx.20261105T092109.963074.sh
+[csx] log file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/log/csx.20261105T092109.963074.log
+ERROR: Missing/empty explicit BIM: /work/sph-huangj/scripts/grid/.preflight/20261105/ukb_array.bim
+ERROR: exit=2; details: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/log/csx.20261105T092109.963074.log

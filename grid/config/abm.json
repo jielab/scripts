@@ -77,7 +77,7 @@
   "validation_status": "exploratory_previously_inspected_test",
   "groups_status": "derive_from_verified_source_do_not_assume",
   "gwas_overlap_status": "derive_from_source_provenance_do_not_assume",
-  "block_config": "/mnt/d/scripts/grid/config/abm.blocks.json",
+  "block_config": "${SCRIPTS_ROOT}/grid/config/abm.blocks.json",
   "predictors": {
     "moe_clusters": [
       4,

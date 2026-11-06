@@ -1,0 +1,46 @@
+
+QUEUE: 8v100-32-sc
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -    90    47    43     0     0    0    24
+Interval for a host to accept two jobs is 0 seconds
+ RUNLIMIT                
+ 20160.0 min
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: 8v100-32-sc/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+eee-chenxm      1       0.333      0        0         0.0        0       0.000             0
+mae-wangyp      1       0.333      0        0         0.0        0       0.000             0
+cse-songym      1       0.333      0        0         0.0        0       0.000             0
+bio-chenlt      1       0.333      0        0         0.0        0       0.000             0
+bme-rongx       1       0.333      0        0         0.0        0       0.000             0
+cse-zhujl       1       0.333      0        0         0.0        0       0.000             0
+med-renyt       1       0.332      0        0         3.9       39       0.000            39
+bio-zhangh9     1       0.223      0        0      1207.5     6466       0.000          6466
+mse-dongcg      1       0.138      0        0      2240.2    19713       0.000         19713
+cse-bianrd      1       0.136      0        0      7045.8    15272       0.000         15272
+bio-wangyx1     1       0.102      2        0      1964.9     2137       0.000          2137
+mae-aolh        1       0.096      1        0      6032.5    16702       0.000         16702
+sme-jinf        1       0.042      0        0      8170.7    99712       0.000        199424
+mse-wangjj      1       0.036      1        0      8239.2   103576       0.000        103576
+bme-yangjd      1       0.034      8        0     12023.2     1576       0.000          1576
+chem-xucs       1       0.018      3        0     25895.8   196054       0.000        196054
+sph-huangj      1       0.016     16        0     10196.5    44607       0.000         44607
+phy-duanzc      1       0.015      8        0      4693.3   197694       0.000        197694
+bio-bist        1       0.008      4        0     38457.4   526414       0.000        526414
+
+USERS: all ~u-exclude/ ~u-ssc/ 
+HOSTS:  hg_8v100-32-sc/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+

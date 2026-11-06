@@ -1,0 +1,5 @@
+[csx] work directory: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx
+[csx] command file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/cmd/csx.20261105T092109.963074.sh
+[csx] log file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/log/csx.20261105T092109.963074.log
+ERROR: Missing/empty explicit BIM: /work/sph-huangj/scripts/grid/.preflight/20261105/ukb_array.bim
+ERROR: exit=2; details: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/log/csx.20261105T092109.963074.log

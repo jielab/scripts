@@ -321,6 +321,60 @@ archaic_vcf() { printf '%s/%s/chr1.vcf.gz\n' "$work" "$1"; }
 
 
 class UpstreamDifferentialTests(unittest.TestCase):
+    def test_2013_missing_lowqual_header_matches_declared_header(self):
+        prepare = os.environ.get("IBDMIX_PREPARE_BIN")
+        if not prepare:
+            self.skipTest("set IBDMIX_PREPARE_BIN for native legacy-header regression")
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            meta = '##fileformat=VCFv4.2\n##contig=<ID=1,length=1000>\n##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+            columns = '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t'
+            modern = folder / 'modern.vcf'
+            modern.write_text(meta + columns + 'person\n1\t100\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n')
+            archaic = folder / 'archaic.vcf'
+            outputs = []
+            for declared in (False, True):
+                header = meta + ('##FILTER=<ID=LowQual,Description="Low quality">\n' if declared else '')
+                archaic.write_text(header + columns + 'archaic\n1\t100\t.\tA\tC\t.\tLowQual\t.\tGT\t1/1\n')
+                out = folder / str(declared)
+                args = [prepare, '--modern', str(modern), '--out', str(out), '--unit', 'C1', '--chrom', '1',
+                        '--threads', '1', '--archaic', 'Denisova.2013', str(archaic), '']
+                subprocess.run(args, check=True, capture_output=True, text=True)
+                with gzip.open(out / 'Denisova.2013.C1.gt.txt.gz', 'rt') as stream:
+                    outputs.append(stream.read())
+            self.assertEqual(outputs[0], outputs[1])
+            self.assertIn('1\t100\tA\tC\t2\t1', outputs[0])
+            archaic.write_text(meta + columns + 'archaic\n1\t100\t.\tA\tC\t.\tLowQual\t.\tGT\t2/2\n')
+            rejected = subprocess.run(args, capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('Unsupported GT allele', rejected.stderr)
+
+    def test_2013_undeclared_info_placeholder_preserves_genotypes(self):
+        prepare = os.environ.get("IBDMIX_PREPARE_BIN")
+        if not prepare:
+            self.skipTest("set IBDMIX_PREPARE_BIN for native legacy-INFO regression")
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            meta = ('##fileformat=VCFv4.2\n##contig=<ID=1,length=1000>\n'
+                    '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
+            columns = '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t'
+            modern, archaic = folder/'modern.vcf', folder/'archaic.vcf'
+            modern.write_text(meta + columns + 'person\n1\t100\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n')
+            args = [prepare, '--modern', str(modern), '--out', str(folder/'out'), '--unit', 'C1', '--chrom', '1',
+                    '--threads', '1', '--archaic', 'Denisova.2013', str(archaic), '']
+            outputs=[]
+            for annotation in ('.', '.;RM'):
+                archaic.write_text(meta + columns + 'archaic\n1\t100\t.\tA\tC\t.\tPASS\t'+annotation+'\tGT\t1/1\n')
+                subprocess.run(args, check=True, capture_output=True, text=True)
+                with gzip.open(folder/'out/Denisova.2013.C1.gt.txt.gz', 'rt') as stream: outputs.append(stream.read())
+            self.assertEqual(outputs[0], outputs[1])
+            strict = list(args); strict[-3] = 'Denisova'
+            self.assertNotEqual(subprocess.run(strict, capture_output=True).returncode, 0)
+            archaic.write_text(archaic.read_text().replace('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n',''))
+            rejected = subprocess.run(args, capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('Missing/invalid GT declaration', rejected.stderr)
+
     def test_native_shared_prepare_matches_upstream_merger(self):
         upstream = os.environ.get("IBDMIX_UPSTREAM")
         prepare = os.environ.get("IBDMIX_PREPARE_BIN")

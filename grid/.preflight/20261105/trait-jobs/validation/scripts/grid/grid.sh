@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
+# GRID transparent agent/reference counting; fitted benchmarks have separate entries.
+set -euo pipefail
+umask 077
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+
+source "$ROOT/f/workflow_entry.sh"
+grid_workflow_entry grid "$@"
+set -- "${GRID_ENTRY_ARGS[@]}"
+
+usage() {
+cat <<'HELP'
+GRID transparent count ABM:
+  prepare       Verify/reuse shared cohort and raw CSx LD-block inputs; freeze
+                training-only geometry, donor bank and one reference radius.
+  twins         Identify ALL eligible in-radius training donors. Predict by
+                their arithmetic mean (binary: cases / all donors). No fitting.
+  evaluate      Attach outcomes AFTER prediction freeze; assess full population,
+                supported people, uncertainty, actual coverage and composition.
+  architecture  Summarize this frozen geometry and available CSx regional weights.
+  final         Read only current count_abm completion receipts; aggregate report.
+  all           prepare -> twins -> evaluate -> architecture -> final (default).
+  self-check    Repository checks.
+  cleanup       Existing cache maintenance utility (preview by default).
+
+Examples:
+  # QiMing: run after the preceding steps have completed successfully.
+  cd /work/sph-huangj/scripts/grid
+  queueinfo
+  bash grid.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+    --queue v4-3t --gpu-queue 8v100-32-sc --traits height,ldl,t2dm --wait FALSE
+  # Preserve stage budgets; Admin's v4-3t / v3-6t queues allow exact CPU counts.
+  # CPU shared.prepare/blockprepare:
+  #   -q v4-3t -n 32 -W 120:00 -M 256GB
+  #   -R "span[hosts=1] rusage[mem=256GB/host]"
+  # CPU evaluate: -q v4-3t -n 8 -W 24:00 -M 32GB
+  #   -R "span[hosts=1] rusage[mem=32GB/host]"
+  # CPU architecture/final: -q v4-3t -n 4 -W 24:00 -M 16GB
+  #   -R "span[hosts=1] rusage[mem=16GB/host]"
+  # GPU count preparation/twins:
+  #   -q 8v100-32-sc -n 8 -W 120:00 -M 160GB
+  #   -R "span[hosts=1] rusage[mem=160GB/host]"
+  #   -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"
+  # Recheck queueinfo (4a100-40 was Closed on 2026-11-05). Global --job-*
+  # overrides affect CPU and GPU stages, so retain their separate profiles.
+  # Add --plan-only to preview the 15-job DAG. The entry calls bsub with
+  # dependencies; do not add an outer bsub. Submission is not completion.
+  # Required: CSx scores, posterior/provenance outputs and shared PCA/ancestry.
+
+  # Other module options:
+  ./grid.sh all --submit local --traits height,ldl,t2dm --plan-only
+  ./grid.sh all --traits height,ldl,t2dm --device auto
+  ./grid.sh prepare --traits height --ld-block-files ALL.37.bed
+  ./grid.sh twins --traits height --device cpu
+  ./grid.sh evaluate --traits height
+  ./grid.sh final --traits height,ldl,t2dm
+  ./grid.sh all --input-manifest '/path/{trait}.input.json' --dry-run
+
+Common options:
+  --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+  --hpc-config FILE --queue NAME --gpu-queue NAME --job-cores N --job-memory-gb N --job-hours N
+  --traits CSV          Default: height,ldl,t2dm
+  --analysis-root DIR   Default: ${ANALYSIS_ROOT}/grid
+  --config FILE_OR_DIR  Default: config/count_abm.json
+  --block-config FILE   Producer block-input configuration (one or four LD maps)
+  --prepared FILE       Existing trusted GRID prepared cohort
+  --device auto|cpu|cuda; --threads N; --dry-run
+  <module> --help       Complete options
+
+Deployment:
+  Set DIR_WORK / DIR_DATA / DIR_SCRATCH for actual mounts and GRID_CONDA_ENV
+  (or GRID_PYTHON / GRID_RSCRIPT) for the installed scientific environment.
+  Generate plans on the execution machine. After fixing a failed LSF job,
+  create a new plan; resume does not automatically retry failed jobs.
+  Final report: count_abm/final/index.html; comparisons: count_vs_benchmarks.tsv.
+  Comparisons require identical test IDs/outcomes and compatible source receipts.
+
+Individual identities, complete donor memberships and counterexamples are
+written only under count_abm/<trait>/_LOCAL_ONLY. Unsupported queries abstain;
+a clearly labelled global donor-mean fallback preserves population evaluation.
+Support and donor dispersion do not guarantee an individual's prediction error.
+
+Fitted methods remain separate: 2.csx.sh blockprepare/blockridge/blocknet for
+block regression; 1.pca.sh, 3.disco.sh and 4.prsformer.sh for their benchmarks.
+This entry does not fit blocknet, PRSformer, CountHeads or an error regression.
+Historical abm/ and final/ outputs are not used by the count_abm final report.
+HELP
+}
+
+case "${1:-all}" in -h|--help|help) usage; exit 0 ;; esac
+runtime=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
+if [[ -x "$runtime/bin/python3" ]]; then default_python="$runtime/bin/python3"; else default_python=python3; fi
+PYTHON=${GRID_PYTHON:-$default_python}
+PYTHON_PATH=$(command -v -- "$PYTHON")
+export GRID_PYTHON="$PYTHON_PATH"
+export PATH="$(dirname -- "$PYTHON_PATH"):$PATH"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+export PYTHONPATH="$ROOT/f${PYTHONPATH:+:$PYTHONPATH}"
+module=all
+if [[ $# -gt 0 && $1 != -* ]]; then module=$1; shift; fi
+case "$module" in
+  prepare|twins|evaluate|architecture|final|all)
+    exec "$PYTHON_PATH" "$ROOT/f/count_abm.py" "$module" "$@"
+    ;;
+  assess|abm)
+    echo "GRID assess/abm now refers only to evaluation of frozen transparent counts; use 'all' to build them." >&2
+    exec "$PYTHON_PATH" "$ROOT/f/count_abm.py" evaluate "$@"
+    ;;
+  blocknet)
+    echo "Block regression moved to ./2.csx.sh blockridge or blocknet (inputs: blockprepare)." >&2
+    echo "The GRID innovation entry predicts directly from observed training-donor counts." >&2
+    exit 2
+    ;;
+  cleanup|self-check)
+    exec "$PYTHON_PATH" "$ROOT/f/twin.py" "$module" "$@"
+    ;;
+  *) echo "ERROR: unknown GRID module: $module" >&2; usage >&2; exit 2 ;;
+esac

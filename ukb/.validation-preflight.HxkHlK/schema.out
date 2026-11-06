@@ -1,0 +1,63 @@
+N: 502370 columns: 1930 
+BATCH COLUMNS: met.batch gen_batch 
+BATCH CLASS: integer values: -11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1,1,2,3,4 
+MISSING PCA:  
+MISSING DATES:  
+MISSING COUNTS:  
+CIMT N: 41612 matched: 41612 batch disagreements: 0 
+White batch missing: 12545 
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@r13n47>
+Subject: Job 4388918: <ukb.schema-check> in cluster <qmhpc> Done
+
+Job <ukb.schema-check> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 22:46:14 2026
+Job was executed on host(s) <10*r13n47>, in queue <33>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 22:46:16 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj> was used as the working directory.
+Started at Thu Nov  5 22:46:16 2026
+Terminated at Thu Nov  5 22:47:04 2026
+Results reported at Thu Nov  5 22:47:04 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash -l
+#BSUB -q 33
+#BSUB -n 10
+#BSUB -M 16GB
+#BSUB -W 0:20
+#BSUB -R "span[hosts=1] rusage[mem=16GB/host]"
+#BSUB -J ukb.schema-check
+#BSUB -o "/work/sph-huangj/scripts/ukb/.validation-preflight.HxkHlK/schema.out"
+#BSUB -e "/work/sph-huangj/scripts/ukb/.validation-preflight.HxkHlK/schema.err"
+set -euo pipefail
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+exec /work/sph-huangj/.conda/envs/le8/bin/Rscript "/work/sph-huangj/scripts/ukb/.validation-preflight.HxkHlK/schema.R"
+
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   41.98 sec.
+    Max Memory :                                 5448 MB
+    Average Memory :                             3371.00 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               10936.00 MB
+    Max Swap :                                   -
+    Max Processes :                              3
+    Max Threads :                                4
+    Run time :                                   46 sec.
+    Turnaround time :                            50 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/ukb/.validation-preflight.HxkHlK/schema.err> for stderr output of this job.
+

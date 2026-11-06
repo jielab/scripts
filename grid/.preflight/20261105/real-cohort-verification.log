@@ -1,0 +1,71 @@
+[GRID data] Reading table with R: split.rds
+[shared inputs] PCA coverage: 487,713 -> 486,745; missing projected PCs: 968
+[GRID data] Reading table with R: split.rds
+[GRID data] Frozen common roster: N=486745, train=243373, test=243372; prepared_family_groups
+[GRID data] Reading table with R: split.rds
+SHARED ROSTER OK: N=486,745; test=243,372; reused unchanged
+[GRID data] Reading table with R: 1csx.scores.rds
+COVERAGE PASS height 1csx.scores.rds 486745
+[GRID data] Reading table with R: 2disco.scores.rds
+COVERAGE PASS height 2disco.scores.rds 486745
+[GRID data] Reading table with R: 1csx.scores.rds
+COVERAGE PASS ldl 1csx.scores.rds 486745
+[GRID data] Reading table with R: 2disco.scores.rds
+COVERAGE PASS ldl 2disco.scores.rds 486745
+[GRID data] Reading table with R: 1csx.scores.rds
+COVERAGE PASS t2dm 1csx.scores.rds 486745
+[GRID data] Reading table with R: 2disco.scores.rds
+COVERAGE PASS t2dm 2disco.scores.rds 486745
+{
+  "status": "PASS",
+  "validation": "Real candidate IDs/families from the completed raw-input preflight; no genotype matrix or training",
+  "candidate_source": "/work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/cache/abm/split.rds",
+  "candidate_source_sha256": "bac6bdda747d95c7b59be6d936edf7e64eb5589209c0c6e1b5719736dd5c4add",
+  "candidate_N": 487713,
+  "common_N": 486745,
+  "missing_pca_N": 968,
+  "family_splits_disjoint": true,
+  "split_counts": {
+    "test": 243372,
+    "train": 194698,
+    "validation": 48675
+  },
+  "coverage": [
+    {
+      "trait": "height",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/height/1csx.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    },
+    {
+      "trait": "height",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/height/2disco.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    },
+    {
+      "trait": "ldl",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/ldl/1csx.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    },
+    {
+      "trait": "ldl",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/ldl/2disco.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    },
+    {
+      "trait": "t2dm",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/t2dm/1csx.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    },
+    {
+      "trait": "t2dm",
+      "file": "/work/sph-huangj/data/gen/ukb/pgs/t2dm/2disco.scores.rds",
+      "cohort_N": 486745,
+      "missing_ids": 0
+    }
+  ]
+}

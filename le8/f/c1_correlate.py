@@ -14,6 +14,7 @@ _paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f
 # Keep project modules (notably abm.py) ahead of shared helpers.
 _paths_sys.path.append(str(_paths_root / "0f"))
 from workflow_paths import configured_path
+from workflow_jobs import atomic_json
 import sys
 sys.dont_write_bytecode = True
 
@@ -90,6 +91,71 @@ def sha_file(path):
     with open(path, "rb") as handle:
         for block in iter(lambda: handle.read(4 * 1024 * 1024), b""): h.update(block)
     return h.hexdigest()
+
+
+def stage_directory():
+    """A unique plan/scope handoff; never infer the current run from old results."""
+    value = os.getenv("LE8_C1_BATCH_DIR")
+    return Path(value) if value else None
+
+
+def freeze_prepared_inputs(args, source):
+    directory = stage_directory()
+    if directory is None:
+        return
+    names = ["development_LOCAL_ONLY.npz", "test_X_LOCAL_ONLY.npz",
+             "test_truth_LOCAL_ONLY.npz", "host_contract.json"]
+    names += [n for n in ("prevalent_source_LOCAL_ONLY.joblib", "deviation_LOCAL_ONLY.joblib")
+              if (source / n).is_file()]
+    atomic_json(directory / "prepared.json", dict(trait=args.Y, layer=args.biom,
+        source=str(source.resolve()), files={n: sha_file(source / n) for n in names}))
+
+
+def bind_prepared_inputs(args):
+    directory = stage_directory()
+    if directory is None:
+        return
+    saved = json.loads((directory / "prepared.json").read_text())
+    if saved.get("trait") != args.Y or saved.get("layer") != args.biom:
+        raise ValueError("Stage input receipt belongs to a different trait/layer")
+    source = Path(saved["source"])
+    if args.prepared_source and args.prepared_source.resolve() != source.resolve():
+        raise ValueError("Prepared source differs from this plan's frozen input receipt")
+    required = {"development_LOCAL_ONLY.npz", "test_X_LOCAL_ONLY.npz",
+                "test_truth_LOCAL_ONLY.npz", "host_contract.json"}
+    files = saved.get("files", {})
+    if not required <= files.keys() or any(not (source / n).is_file() or
+            sha_file(source / n) != digest for n, digest in files.items()):
+        raise RuntimeError("Frozen stage inputs changed or are missing; refusing to prepare a different cohort")
+    args.prepared_source = source
+
+
+def frozen_stage_models(args, methods, source):
+    """Read exact CPU/GPU receipts before the CPU evaluator opens test truth."""
+    directory = stage_directory()
+    if directory is None or args.stage != "evaluation":
+        return None
+    parts = os.environ.get("LE8_C1_MODEL_PARTS", "").split(",")
+    if not parts or any(p not in {"cpu", "gpu"} for p in parts) or len(set(parts)) != len(parts):
+        raise ValueError("Invalid model-stage receipt list")
+    result = dict(methods={}, unavailable_methods={})
+    seen = set()
+    for part in parts:
+        saved = json.loads((directory / f"models.{part}.json").read_text())
+        if saved.get("trait") != args.Y or saved.get("layer") != args.biom or saved.get("source") != source:
+            raise ValueError("Model-stage receipt differs from the frozen input contract")
+        if saved.get("failed_methods"):
+            raise RuntimeError("A model stage failed; evaluation cannot use older results")
+        for category in result:
+            entries = saved.get(category, {})
+            if seen & entries.keys():
+                raise ValueError("Duplicate method in CPU/GPU stage receipts")
+            seen.update(entries)
+            result[category].update(entries)
+    allowed = set(methods) | ({"abm_prevalent_control"} if "abm_prevalent" in methods else set())
+    if not set(methods) <= seen or seen - allowed:
+        raise ValueError("CPU/GPU stage receipts do not cover the requested methods")
+    return result
 
 
 def parser():
@@ -682,6 +748,7 @@ def run_scope(args, plan, base):
         source_fingerprint = {name:sha_file(source/name) for name in
             ("development_LOCAL_ONLY.npz", "test_X_LOCAL_ONLY.npz", "host_contract.json")}
         if history is not None: source_fingerprint["history"] = sha_file(source/"prevalent_source_LOCAL_ONLY.joblib")
+        frozen = frozen_stage_models(args, plan["methods"], source_fingerprint)
         predictions, receipt = {}, dict(methods={}, source=source_fingerprint,
             trait=args.Y, layer=args.biom, horizon=cfg.horizon, grouping_unit=grouping)
         history_config = json.loads(args.history_config.read_text()) if args.history_config else None
@@ -699,7 +766,7 @@ def run_scope(args, plan, base):
                 for field in ("horizon","feature_missing","sample_missing"):
                     if getattr(method_cfg,field) != getattr(cfg,field):
                         raise ValueError(f"{name}: {field} differs from common evaluation/input contract; use a separate study run")
-                device = resolve_device(name,args.device)
+                device = resolve_device(name, args.device, check_available=args.stage != "evaluation")
                 method_context = copy.copy(c)
                 method_context.cfg = method_cfg
                 method_context.common_support = None
@@ -735,7 +802,20 @@ def run_scope(args, plan, base):
                 target = scope/"methods"/name/(signature[:16]+"_"+device["actual"])
                 target.parent.mkdir(parents=True, exist_ok=True)
                 stored_signature = signature
-                if not replace_stage(args,"models"):
+                if frozen is not None:
+                    entry = frozen["methods"].get(name, frozen["unavailable_methods"].get(name))
+                    if entry is None or entry["signature"] != signature:
+                        raise ValueError(f"{name}: model-stage settings differ from evaluation settings")
+                    target = Path(entry["path"]).resolve()
+                    if target.parent != (scope/"methods"/name).resolve():
+                        raise ValueError(f"{name}: model-stage path is outside its method directory")
+                    stored_signature = entry.get("stored_signature", signature)
+                    valid = (completion(target, stored_signature) if name in frozen["methods"] else
+                             unavailable_result(target, stored_signature))
+                    if not valid:
+                        raise RuntimeError(f"{name}: frozen model-stage output changed or is missing")
+                    device = entry.get("device", device)
+                elif not replace_stage(args,"models"):
                     method_context.history_config_bytes = args.history_config.read_bytes() if args.history_config else None
                     target, stored_signature = reusable_method(scope, name, signature, target,
                         method_cfg=method_cfg, context=method_context, extra=extra, source=source_fingerprint)
@@ -746,6 +826,7 @@ def run_scope(args, plan, base):
                 if unavailable:
                     print(f"[LE8 C1] Reuse unavailable status for {name}", flush=True)
                 elif not replace_stage(args,"models") and completion(target,stored_signature):
+                    device = json.loads((target/"COMPLETE.json").read_text()).get("metadata", {}).get("device", device)
                     print(f"[LE8] DONE C1 REUSE MODEL {name}: verified frozen model and projections", flush=True)
                 else:
                     if getattr(args, "stage", "all") == "evaluation":
@@ -779,10 +860,12 @@ def run_scope(args, plan, base):
                         publish(stage,target)
                 if unavailable:
                     receipt.setdefault("unavailable_methods", {})[name] = dict(path=str(target),
-                        signature=signature, status=unavailable["status"], reason=unavailable["reason"])
+                        signature=signature, stored_signature=stored_signature,
+                        status=unavailable["status"], reason=unavailable["reason"])
                     print(f"[LE8] SKIP C1 method={name} Y={args.Y} biom={args.biom}: {unavailable['reason']}", flush=True)
                     continue
-                receipt["methods"][name] = dict(path=str(target),signature=signature,device=device)
+                receipt["methods"][name] = dict(path=str(target), signature=signature,
+                                              stored_signature=stored_signature, device=device)
                 if spec.engine != "deviation":
                     predictions[name] = abm.load_model(target/"test_predictions_LOCAL_ONLY.joblib")
                 if name == "abm_prevalent":
@@ -793,12 +876,24 @@ def run_scope(args, plan, base):
                 receipt.setdefault("failed_methods", {})[name] = dict(status="failed", reason=str(error))
                 print(f"[LE8] ERROR C1 method={name} Y={args.Y} biom={args.biom}: {error}; continue other methods", flush=True)
                 traceback.print_exc()
+        if frozen is not None and receipt.get("failed_methods"):
+            raise RuntimeError("Frozen CPU/GPU outputs failed verification; unified evaluation was not run")
         if getattr(args, "stage", "all") == "models":
-            abm.json_write(scope/"C1_MODELS_FROZEN.json", dict(version=VERSION, **receipt,
-                test_outcomes_used=False, status="models_frozen"))
+            directory = stage_directory()
+            marker = dict(version=VERSION, **receipt, test_outcomes_used=False, status="models_frozen")
+            if directory is not None:
+                part = os.environ.get("LE8_C1_MODEL_PART")
+                if part not in {"cpu", "gpu"}:
+                    raise ValueError("A split model stage needs a CPU/GPU receipt label")
+                atomic_json(directory / f"models.{part}.json", marker)
+                return {"failed_methods": receipt.get("failed_methods", {})}
+            abm.json_write(scope/"C1_MODELS_FROZEN.json", marker)
             # Standalone reliability must use this run's available models only.
             final_index(scope, None, receipt)
             return {"failed_methods": receipt.get("failed_methods", {})}
+        if frozen is not None:
+            atomic_json(scope/"C1_MODELS_FROZEN.json", dict(version=VERSION, **receipt,
+                test_outcomes_used=False, status="models_frozen"))
         if predictions:
             # Freeze the new reliability heads before either evaluator opens test truth.
             if "glmnet" in predictions and getattr(args, "stage", "all") == "all":
@@ -921,9 +1016,12 @@ def main(argv=None):
                         traceback.print_exc()
                 if args.stage == "association":
                     continue
+                if args.stage in {"models", "evaluation"}:
+                    bind_prepared_inputs(scoped)
                 with threadpool_limits(args.cores):
                     scope_support_preflight(scoped, plan, base)
                 if args.stage == "prepare":
+                    freeze_prepared_inputs(scoped, scoped._prepared_inputs[0])
                     print(f"[LE8] DONE C1 prepare Y={trait} biom={layer}; no test truth read", flush=True)
                     continue
                 stage = "methods/evaluation"

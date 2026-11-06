@@ -135,11 +135,13 @@ def _inventory(cfg):
     result = []
     for folder, dirs, names in os.walk(root, followlinks=False):
         for name in dirs:
+            if name.startswith(".rsync-partial"):
+                raise RuntimeError(f"Rsync staging directory inside reference input: {Path(folder)/name}; move it outside reference_raw after the upload finishes")
             if (Path(folder) / name).is_symlink():
                 raise RuntimeError(f"Reference directory symlink requires an explicit real input path: {Path(folder)/name}")
         for name in names:
             path = Path(folder) / name
-            if name.endswith((".aria2", ".partial", ".part", ".tmp")):
+            if name.endswith((".aria2", ".partial", ".part", ".filepart", ".tmp")):
                 raise RuntimeError(f"Unfinished reference download/file: {path}")
             stem = name[:-3] if name.endswith(".gz") else name
             if not stem.lower().endswith(FASTA_SUFFIXES) and stem not in ("UniVec", "UniVec_Core"):

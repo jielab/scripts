@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -15,7 +29,7 @@ set -euo pipefail
 usage() {
 	cat <<'HELP'
 Modules:
-    all/default  Pinned Disco interpolation -> small-validation calibration -> test metrics
+    all/default  One job per trait: shared inputs -> Disco interpolation -> calibration/test
     score        Pinned interpolation only (independent scheduler stage)
     evaluate     Calibrate existing Disco scores and evaluate untouched test
     prepare      Shared cohort/genotype inputs only; no predictor training
@@ -30,7 +44,7 @@ Default permanent paths (outside the analysis output directory):
 
 Main options:
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
-    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
     --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
     --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --distance-pcs N              10; reference and target use the same PCs (>=5).
@@ -44,10 +58,22 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
+    # After 1.pca.sh and all 2.csx.sh jobs are DONE:
     cd /work/sph-huangj/scripts/grid
-    ./1.pca.sh --check
-    ./2.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 1
+    queueinfo
+    bash 3.disco.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+      --queue v4-3t --device cpu --traits height,ldl,t2dm --wait FALSE
+    # Admin's v4-3t / v3-6t queues allow exact CPU counts. The profile generates
+    # three jobs (height.all, ldl.all, t2dm.all), each with:
+    #   -q v4-3t -n 32 -W 120:00 -M 256GB
+    #   -R "span[hosts=1] rusage[mem=256GB/host]"
+    # Preparation and interpolation/calibration run in order inside each job.
+    # A blocking lock serializes shared-cache preparation; later jobs reuse it.
+    # 120 hours is the whole job's budget; --job-hours overrides it.
+    # Add --plan-only for a preview. The entry calls bsub once per trait;
+    # do not wrap it in bsub. Wait for all three jobs to be DONE before step 4.
+
+    # Other input/check options:
     ./3.disco.sh --traits height,ldl,t2dm --check
     ./3.disco.sh --traits height,ldl,t2dm
     ./3.disco.sh --trait height --a-list 1,1,1,1 --regress-pca TRUE

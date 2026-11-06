@@ -162,9 +162,10 @@ class ScopeRunnerTests(unittest.TestCase):
             self.assertEqual(output.read_text(), "done\n")
             self.assertFalse(scope_workflow.claim_aggregates(root, scopes[0], "batch", scopes))
 
-    def test_default_two_jobs_and_no_nested_submission(self):
+    def test_cpu_only_two_jobs_and_no_nested_submission(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, submit="hpc"):
-            args, extra = hpc_workflow.parse_cli(["--Y", "cvd_cad", "--biom", "prot,met", "--analysis-root", td])
+            args, extra = hpc_workflow.parse_cli(["--Y", "cvd_cad", "--biom", "prot,met",
+                                                 "--device", "cpu", "--analysis-root", td])
             jobs = hpc_workflow.build_jobs(args, extra)
             self.assertEqual([j.key for j in jobs], ["cvd_cad.prot", "cvd_cad.met"])
             for job in jobs:

@@ -1,0 +1,1235 @@
+{
+  "status": "PASS",
+  "counts": {
+    "GRID_ANCESTRY_FILE": 1,
+    "GRID_CSX_SNPINFO": 1,
+    "GRID_MED_FILE": 1,
+    "GRID_PCA_FILE": 1,
+    "GRID_PHE_FILE": 1,
+    "GRID_REL_FILE": 1,
+    "code": 10,
+    "genotype": 66,
+    "gwas": 12,
+    "ld_reference": 88,
+    "target_bim": 1
+  },
+  "missing": [],
+  "runtime_imports": {
+    "numpy": "PASS",
+    "pandas": "PASS",
+    "scipy": "PASS",
+    "h5py": "PASS",
+    "torch": "PASS",
+    "sklearn": "PASS",
+    "rdata": "PASS",
+    "psutil": "PASS"
+  },
+  "plink2": "/work/sph-huangj/.conda/envs/grid/bin/plink2",
+  "Rscript": "/work/sph-huangj/.conda/envs/grid/bin/Rscript",
+  "outputs": [
+    {
+      "path": "/work/sph-huangj/analysis/grid",
+      "writable_parent": "/work/sph-huangj/analysis/grid",
+      "writable": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/pgs",
+      "writable_parent": "/work/sph-huangj/data/gen/ukb/pgs",
+      "writable": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common",
+      "writable_parent": "/work/sph-huangj/data/gwas/4grid/common",
+      "writable": true
+    }
+  ],
+  "records": [
+    {
+      "path": "/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3",
+      "kind": "GRID_CSX_SNPINFO",
+      "pass": true,
+      "bytes": 105463266
+    },
+    {
+      "path": "/work/sph-huangj/phe/ukb/Rdata/all.rds",
+      "kind": "GRID_PHE_FILE",
+      "pass": true,
+      "bytes": 551583754
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz",
+      "kind": "GRID_PCA_FILE",
+      "pass": true,
+      "bytes": 51855985
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz",
+      "kind": "GRID_ANCESTRY_FILE",
+      "pass": true,
+      "bytes": 21966469
+    },
+    {
+      "path": "/work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv",
+      "kind": "GRID_MED_FILE",
+      "pass": true,
+      "bytes": 402
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/ukb_rel.dat",
+      "kind": "GRID_REL_FILE",
+      "pass": true,
+      "bytes": 3804034
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 3722834090
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr1.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1687972
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr1.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 379984939,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr1.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 337712485,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr1.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 363804570,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr1.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 445076596,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 3768609718
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr2.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1648624
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr2.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 369104922,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr2.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 357368103,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr2.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 381191556,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr2.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 463965562,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 3166838351
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr3.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1383453
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr3.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 300781965,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr3.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 290585250,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr3.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 294855223,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr3.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 375452860,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2981115936
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr4.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1252413
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr4.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 249439294,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr4.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 232333902,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr4.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 233902083,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr4.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 304496094,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2828184043
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr5.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1223845
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr5.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 271562939,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr5.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 255020149,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr5.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 261904933,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr5.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 330581676,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 3351546263
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr6.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1401829
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr6.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 304579069,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr6.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 278845713,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr6.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 284223693,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr6.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 365338875,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2618223372
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr7.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1126866
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr7.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 233563715,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr7.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 231488643,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr7.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 258249094,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr7.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 296594983,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2411491345
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr8.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1011168
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr8.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 231770029,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr8.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 231592292,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr8.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 256386423,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr8.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 309854936,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2116765765
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr9.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 903038
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr9.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 217705222,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr9.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 238930068,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr9.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 247577829,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr9.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 302453683,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2363079855
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr10.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1043247
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr10.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 243137593,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr10.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 245934266,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr10.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 268501607,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr10.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 319988855,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2353965802
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr11.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1116494
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr11.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 238003176,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr11.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 233664281,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr11.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 245671747,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr11.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 294544560,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 2267110482
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr12.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1017688
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr12.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 224229280,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr12.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 218068888,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr12.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 225221610,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr12.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 283418239,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1672445320
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr13.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 728342
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr13.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 169380401,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr13.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 153794398,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr13.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 175689259,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr13.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 204355132,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1540858070
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr14.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 693518
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr14.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 146940028,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr14.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 153226809,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr14.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 162353559,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr14.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 197425617,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1518576387
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr15.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 663169
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr15.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 140011258,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr15.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 146187162,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr15.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 149211807,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr15.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 179953709,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1713888771
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr16.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 779807
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr16.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 142525992,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr16.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 144575519,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr16.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 146188959,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr16.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 180871924,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1653442045
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr17.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 781742
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr17.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 119102960,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr17.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 120431601,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr17.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 125997019,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr17.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 153878181,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1427341700
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr18.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 587172
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr18.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 138135623,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr18.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 138431738,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr18.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 148851806,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr18.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 175533415,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1415737362
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr19.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 711302
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr19.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 73667098,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr19.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 74883116,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr19.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 72171994,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr19.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 91681539,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 1239160263
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr20.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 531430
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr20.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 136988573,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr20.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 134395307,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr20.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 145985364,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr20.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 178388638,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 722530539
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr21.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 304587
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr21.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 64734406,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr21.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 66516805,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr21.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 68072789,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr21.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 82802866,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.pgen",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 797824464
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.psam",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 14320201
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/chr22.pvar",
+      "kind": "genotype",
+      "pass": true,
+      "bytes": 348963
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_AFR/ldblk_1kg_chr22.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 74513738,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EAS/ldblk_1kg_chr22.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 69288964,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_EUR/ldblk_1kg_chr22.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 70056100,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/LD/csx/ldblk_1kg_SAS/ldblk_1kg_chr22.hdf5",
+      "kind": "ld_reference",
+      "pass": true,
+      "bytes": 91161587,
+      "hdf5_header_valid": true
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 39331895
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 37781927
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 41651463
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 35894230
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 1004946652
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 482081140
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 1232859228
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 470099455
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 476664005
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 408839472
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 459300535
+    },
+    {
+      "path": "/work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.gz",
+      "kind": "gwas",
+      "pass": true,
+      "bytes": 348132192
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/typ/ukb_array.bim",
+      "kind": "target_bim",
+      "pass": true,
+      "bytes": 21868388
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/2.csx.sh",
+      "kind": "code",
+      "pass": true,
+      "bytes": 23252
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/2.csx.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 30498
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/csx/PRScsx.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 7761
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/shared_cohort.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 28844
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/target_benchmark.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 19599
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/config/hpc.qiming.json",
+      "kind": "code",
+      "pass": true,
+      "bytes": 1375
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/csx/mcmc_gtb.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 12410
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/csx/parse_genet.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 9515
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/csx/ld_cache.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 4139
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/csx/check_output.py",
+      "kind": "code",
+      "pass": true,
+      "bytes": 3404
+    }
+  ],
+  "validation_notes": "LD paths resolved with the native lower-case directory then upper-case fallback; posterior implementation is f/2.csx.py. HDF5 headers checked for all 88 panels."
+}

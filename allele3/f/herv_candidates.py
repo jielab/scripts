@@ -21,6 +21,7 @@ import re
 
 import scan
 from allele_common import IntervalMask, af_bin, an_bin, canonical_chrom, chrom_key, open_text
+from scan_input_paths import MASK_OPTIONS, resolve_mask_options
 
 
 FAMILIES = ("ERV1", "ERVK")
@@ -33,8 +34,6 @@ FIELDS = ["chrom", "pos", "ref", "alts", "site_id", "family", "group", "match_id
           "ac10_supported", "observed_alts_all", "alt_ac_all", "alt_an_all",
           "ref_presence_status", "strict_filter_complete", "missing_strict_filters",
           "match_stratum", "sampling_probability", "sampling_weight"]
-MASK_OPTIONS = {"lcr": "architecture_lcr_bed", "segdup": "architecture_segdup_bed",
-                "low_mappability": "architecture_low_mappability_bed"}
 
 
 def metadata(path):
@@ -292,11 +291,13 @@ def run_candidates(args):
     catalog_all = bool(getattr(args, "all_alleles_catalog", False))
     root = Path(args.modern_dir).expanduser().resolve(); out = Path(args.out).expanduser().resolve()
     run, options, shards = load_sources(root)
+    options = resolve_mask_options(run, {name: getattr(args, name + "_bed", None)
+                                         for name in MASK_OPTIONS}, verify=True)
     if out == root or any(out == s["directory"] or out.is_relative_to(s["directory"]) for s in shards):
         raise ValueError("Candidate output must not overwrite the original modern run/shards")
     identity = {"schema": 3, "spatial_definition": spatial_definition,
                 "code": {name: metadata(Path(__file__).with_name(name))
-                         for name in ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py")},
+                         for name in ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "scan_input_paths.py", "0.common.py")},
                 "modern_run": metadata(root / "run.json"), "source_signature": run.get("signature"),
                 "sites": [s["metadata"] for s in shards], "scan_metadata": [s["scan_metadata"] for s in shards],
                 "erv_joined": metadata(args.erv_joined),
@@ -407,7 +408,7 @@ def run_candidates(args):
               "matching": "chrom, canonical trinucleotide, primary ALT AF bin, primary ALT AN bin, secondary ALT AF bin; same missing-filter signature",
               "af_definition": "highest and second-highest AC/AN among AC>=5 observed ALT alleles; no inferred REF AF",
               "estimand_warning": "Candidate follow-up conditional on contemporary multi-ALT occupancy and AF/AN matching. Not an HERV enrichment estimate, an allele-age/retention test, or an AF difference test.",
-              "input_validation": "completion signatures, file sizes and modification metadata; no added full-file checksums",
+              "input_validation": "completion signatures, file sizes and modification metadata; explicit mask relocations checked against original size/edge fingerprints; no added full-file checksums",
               "outputs": {p: metadata(out / p) for p in output_names}}
     write_json(receipt, result)
     print(f"[herv-candidates] {len(cases)} cases, {len(used_controls)} unique controls; {out / 'targets.tsv'}", flush=True)
@@ -457,6 +458,9 @@ def main(argv=None):
     p.add_argument("--modern-dir", required=True, help="Completed modern run.json plus original shards")
     p.add_argument("--erv-joined", required=True, help="GRCh38 14-column joined RepeatMasker table")
     p.add_argument("--out", required=True, help="Separate derived candidate output directory")
+    for name in MASK_OPTIONS:
+        p.add_argument("--" + name.replace("_", "-") + "-bed",
+                       help="Relocated copy of the original scan mask; verifies saved size/edge fingerprint")
     p.add_argument("--max-sites", type=int, default=500, help="Maximum CASE sites PER FAMILY; 0 retains ALL qualified HERV cases")
     p.add_argument("--all-alleles-catalog", action="store_true", help="Also write full-base site_catalog.tsv.gz and allele_catalog.tsv.gz for ancient trajectories")
     p.add_argument("--controls-per-case", type=int, default=4)

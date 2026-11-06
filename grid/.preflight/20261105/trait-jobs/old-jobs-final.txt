@@ -1,0 +1,11 @@
+JOBID   USER    STAT  QUEUE      FROM_HOST   EXEC_HOST   JOB_NAME   SUBMIT_TIME
+4388005 sph-huangj EXIT  v4-3t      b04u17l     32*b03u06s  grid-csx.height.weights Nov  5 19:40
+4388006 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.ldl.weights Nov  5 19:40
+4388007 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.t2dm.weights Nov  5 19:40
+4388008 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.height.score Nov  5 19:40
+4388009 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.ldl.score Nov  5 19:40
+4388010 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.t2dm.score Nov  5 19:40
+4388011 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.shared.prepare Nov  5 19:40
+4388012 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.height.targetfit Nov  5 19:40
+4388013 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.ldl.targetfit Nov  5 19:40
+4388014 sph-huangj EXIT  v4-3t      b04u17l        -        grid-csx.t2dm.targetfit Nov  5 19:40

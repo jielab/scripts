@@ -251,6 +251,21 @@ class PartitionedReferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "inventory"):
             new.plan(self.cfg)
 
+    def test_incoming_filepart_blocks_inventory_even_with_finished_copy(self):
+        raw = self.root / "raw/microbes"
+        raw.mkdir(parents=True)
+        (raw / "reference.fna.gz").write_bytes(b"existing")
+        (raw / "reference.fna.gz.filepart").write_bytes(b"uploading")
+        with self.assertRaisesRegex(RuntimeError, "Unfinished reference download/file.*filepart"):
+            old._inventory(self.cfg)
+
+    def test_rsync_staging_fasta_is_not_accepted_as_another_reference(self):
+        partial = self.root / "raw/microbes/.rsync-partial-qiming-20261104"
+        partial.mkdir(parents=True)
+        (partial / "GCF_000001.1_genomic.fna.gz").write_bytes(b"truncated")
+        with self.assertRaisesRegex(RuntimeError, "Rsync staging directory"):
+            old._inventory(self.cfg)
+
 
 if __name__ == "__main__":
     unittest.main()

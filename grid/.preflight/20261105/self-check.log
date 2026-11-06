@@ -1,0 +1,22 @@
+................................................................................................s..............................{"output": "/tmp/tmp_ica2rrk/final/performance.tsv", "rows": 3, "status": [{"method": "csx-blocknet", "status": "completed", "trait": "height"}, {"method": "csx-blocknet", "status": "completed", "trait": "ldl"}, {"method": "csx-blocknet", "status": "completed", "trait": "t2dm"}, {"trait": "height", "method": "PRSformer", "status": "not_completed"}, {"trait": "height", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "ldl", "method": "PRSformer", "status": "not_completed"}, {"trait": "ldl", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "t2dm", "method": "PRSformer", "status": "not_completed"}, {"trait": "t2dm", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "height", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}, {"trait": "ldl", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}, {"trait": "t2dm", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}]}
+[GRID final] article tables written to /tmp/tmp_ica2rrk/final
+{"tables": 14, "audit_items": 0, "db": "/tmp/tmp_ica2rrk/final/evidence.sqlite"}
+............................................................................s....................................
+----------------------------------------------------------------------
+Ran 240 tests in 207.145s
+
+OK (skipped=2)
+{
+  "status": "passed",
+  "synthetic_only": true,
+  "tests": 240,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 2,
+  "passed": 238,
+  "skip_reasons": [
+    "No CUDA: execution parity not verified",
+    "No CUDA device; CUDA execution was not verified"
+  ],
+  "seconds": 248.582247027196
+}

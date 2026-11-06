@@ -5,6 +5,13 @@ Markov Chain Monte Carlo (MCMC) sampler for cross-ethnic polygenic prediction wi
 
 """
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 import os
 import json
@@ -32,7 +39,7 @@ def _gpu_serialized(function):
         if gpu_min_block() and max((n for group in sizes.values() for n in group), default=0) < gpu_min_block():
             kwargs['_cpu_only'] = True
             return function(*args, **kwargs)
-        with open('/tmp/grid-csx-gpu-%d.lock' % int(device), 'a') as lock:
+        with open(configured_path('DIR_RUNTIME_TMP', 'grid-csx-gpu-%d.lock') % int(device), 'a') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:

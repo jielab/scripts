@@ -5,7 +5,7 @@ project_dir <- dirname(dirname(normalizePath(test_file, winslash = "/", mustWork
 source(file.path(project_dir, "f", "runtime.R"))
 
 run_runtime_tests <- function() {
-	vars <- c("submit", "SUBMIT", "DIR_DAT", "DIR_WORK", "DIR_TMP", "DIR_FILES", "ANALYSIS_ROOT", "EMS120_SCRIPT_DIR", "EMS120_SHARED_DIR", "EMS120_DATA_DIR", "EMS120_ANALYSIS_DIR", "EMS120_FILES_DIR")
+	vars <- c("submit", "SUBMIT", "DIR_DAT", "DIR_WORK", "DIR_TMP", "DIR_FILES", "ANALYSIS_ROOT", "PERSISTENT_ANALYSIS_ROOT", "EMS120_SCRIPT_DIR", "EMS120_SHARED_DIR", "EMS120_DATA_DIR", "EMS120_ANALYSIS_DIR", "EMS120_FILES_DIR")
 	previous <- Sys.getenv(vars, unset = NA_character_)
 	on.exit({
 		Sys.unsetenv(vars)
@@ -20,7 +20,7 @@ run_runtime_tests <- function() {
 	Sys.setenv(submit = "hpc", DIR_WORK = file.path(root, "work"), DIR_DAT = file.path(root, "data"), DIR_TMP = file.path(root, "scratch"), EMS120_SCRIPT_DIR = project_dir)
 	cfg <- ems120_init_paths(file.path(project_dir, "f", "ems120.R"))
 	stopifnot(identical(cfg$analysis, file.path(root, "work", "analysis", "ems120")))
-	stopifnot(identical(cfg$data, file.path(root, "data", "ems120")))
+	stopifnot(identical(cfg$data, file.path(root, "data", "phe", "ems120")))
 	# These inputs need not exist: planning path resolution must not open data.
 	stopifnot(!dir.exists(cfg$data), !dir.exists(cfg$analysis))
 	Sys.setenv(submit = "local", ANALYSIS_ROOT = file.path(root, "local_analysis"))

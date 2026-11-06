@@ -1,0 +1,9 @@
+.........................F
+Stdout:
+[GRID cleanup] CSx candidates: 0.00 GiB
+......................................................................s..E
+Stdout:
+[GRID ABM] Radius: 40 donors × 20 tune_model queries; X only
+[GRID ABM] Frozen radius=1.05753812793; counting all 80 valid queries
+[GRID cleanup] RETAIN /tmp/tmpr4er4exf: cannot inspect PID 4104613
+...........................{"output": "/tmp/tmp_2a0l9qp/final/performance.tsv", "rows": 3, "status": [{"method": "csx-blocknet", "status": "completed", "trait": "height"}, {"method": "csx-blocknet", "status": "completed", "trait": "ldl"}, {"method": "csx-blocknet", "status": "completed", "trait": "t2dm"}, {"trait": "height", "method": "PRSformer", "status": "not_completed"}, {"trait": "height", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "ldl", "method": "PRSformer", "status": "not_completed"}, {"trait": "ldl", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "t2dm", "method": "PRSformer", "status": "not_completed"}, {"trait": "t2dm", "method": "PRSformer2 exploratory", "status": "not_completed"}, {"trait": "height", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}, {"trait": "ldl", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}, {"trait": "t2dm", "method": "DiscoDivas", "status": "unavailable", "reason": "Missing or malformed Disco completion/provenance files"}]}

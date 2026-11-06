@@ -603,7 +603,7 @@ PGS_USAGE
 # 🚩 Genome-build detection
 # Detect GRCh37/38 from sentinel variants; export CHECK_GRCH_RESULT.
 check_GRCH() {
-	local input="${1:?check_GRCH requires INPUT}" expected="${2:-}" gold="${CHECK_GRCH_SNP_LIST:-${OS_SNP_LIST:-${DIR_DATA:-/mnt/f}/ukb/common/snp.lst}}"
+	local input="${1:?check_GRCH requires INPUT}" expected="${2:-}" gold="${CHECK_GRCH_SNP_LIST:-${OS_SNP_LIST:-${DIR_UKB:?Initialize paths with 0f/0os.sh}/common/snp.lst}}"
 	local src="$input" kind=text tmp n m37 m38 best mismatch build expected_n chr candidate pv
 	local -a ref_bims=() ref_pvars=()
 	[[ -s "$gold" ]] || {

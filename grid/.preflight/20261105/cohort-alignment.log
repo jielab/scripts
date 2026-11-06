@@ -1,0 +1,18 @@
+COHORT: reading phenotype /work/sph-huangj/phe/ukb/Rdata/all.rds
+[GRID data] Reading selected columns with R: all.rds
+COHORT: reading ancestry /work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+SPLIT: stratified by ancestry and T2DM; individual random split. Supply --split-group-file for related-family separation.
+LABEL height: train=194,502, validation=48,629, test=243,137
+LABEL ldl: train=163,172, validation=40,816, test=204,091
+LABEL t2dm: train=195,083, validation=48,768, test=243,862
+COHORT_ALIGNMENT {"cohort": 487713, "cohort_without_current_pca": 968, "cohort_without_imp_genotypes": 968}
+COHORT: reading phenotype /work/sph-huangj/phe/ukb/Rdata/all.rds
+[GRID data] Reading selected columns with R: all.rds
+COHORT: reading ancestry /work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+LABEL height: train=194,122, validation=48,735, test=243,411
+LABEL ldl: train=163,040, validation=40,999, test=204,040
+LABEL t2dm: train=194,695, validation=48,873, test=244,145
+[GRID data] Frozen common roster: N=487713, train=243857, test=243856; supplied_family_groups
+[GRID data] Reading table with R: split.rds
+SHARED ROSTER OK: N=487,713; test=243,856; recovered common.keep, families.tsv.gz, prsformer.split.tsv.gz
+FROZEN_FAMILY_ROSTER PASS /work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/prsformer/cache/roster/common.keep /work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/prsformer/cache/roster/prsformer.split.tsv.gz /work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/prsformer/cache/roster/families.tsv.gz

@@ -1,0 +1,33 @@
+[
+  {
+    "entry": "pca",
+    "wait": "FALSE",
+    "jobs": 1,
+    "status": "PASS"
+  },
+  {
+    "entry": "csx",
+    "wait": "FALSE",
+    "jobs": 10,
+    "status": "PASS"
+  },
+  {
+    "entry": "disco",
+    "wait": "FALSE",
+    "jobs": 4,
+    "status": "PASS"
+  },
+  {
+    "entry": "prsformer",
+    "wait": "FALSE",
+    "jobs": 7,
+    "status": "PASS"
+  },
+  {
+    "entry": "grid",
+    "wait": "FALSE",
+    "jobs": 15,
+    "status": "MISSING",
+    "message": "Missing prerequisite files; no jobs were submitted:\n  [MISSING] /work/sph-huangj/analysis/grid/csx/height/provenance.json\n    Required by: height.blockprepare; first: bash 2.csx.sh\n  [MISSING] /work/sph-huangj/analysis/grid/csx/ldl/provenance.json\n    Required by: ldl.blockprepare; first: bash 2.csx.sh\n  [MISSING] /work/sph-huangj/analysis/grid/csx/t2dm/provenance.json\n    Required by: t2dm.blockprepare; first: bash 2.csx.sh\nRun this command again after the required files are available."
+  }
+]

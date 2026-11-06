@@ -3,6 +3,13 @@
 
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import fcntl
 import hashlib
 import json
@@ -82,7 +89,7 @@ def materialize_rds(path):
 	stat = path.stat()
 	key = hashlib.sha256(f"{path}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()
 	label = re.sub(r"[^A-Za-z0-9_.-]+", "_", path.stem)[:48] or "table"
-	directory = Path("/tmp/analysis-results") / (label + "-" + key[:12])
+	directory = Path(configured_path('DIR_RUNTIME_TMP', 'analysis-results')) / (label + "-" + key[:12])
 	directory.mkdir(parents = True, exist_ok = True, mode = 0o700)
 	with (directory / "lock").open("a") as lock:
 		fcntl.flock(lock, fcntl.LOCK_EX)
@@ -135,7 +142,7 @@ def materialize_workbook(path, table=None):
 		sha = entry["sha256"]
 		if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha) or entry["part"] != f"results/exports/{sha}.bin":
 			raise ValueError("Invalid workbook export path")
-		directory = Path("/tmp/analysis-results") / sha
+		directory = Path(configured_path('DIR_RUNTIME_TMP', 'analysis-results')) / sha
 		directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 		target = directory / Path(name).name
 		# Validate the archive even when a prior materialization exists: a warm

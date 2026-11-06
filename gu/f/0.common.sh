@@ -543,7 +543,7 @@ gu_validate_chrx_male_vcf() {
 		}
 	done
 
-	work=$(mktemp -d "${TMPDIR:-/tmp}/gu-x-vcf-check.XXXXXX")
+	work=$(mktemp -d "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-x-vcf-check.XXXXXX")
 	bcftools query -l "$vcf" | sort -u >"$work/vcf.samples"
 	awk 'BEGIN{FS="[[:space:]]+"}
     NR==1{for(i=1;i<=NF;i++){x=tolower($i);sub(/^#/,"",x);if(x=="sample"||x=="iid")id=i;if(x=="sex")sex=i};next}
@@ -646,7 +646,7 @@ gu_check_build_cached() (
 	if [[ ! -f $input ]]; then
 		gu_check_build_uncached "$input" "$expected"; return $?
 	fi
-	cache=${GU_BUILD_CHECK_CACHE_DIR:-/tmp/gu-build-check-cache-$UID}
+	cache=${GU_BUILD_CHECK_CACHE_DIR:-${DIR_RUNTIME_TMP}/gu-build-check-cache-$UID}
 	mkdir -p "$cache" || return
 	key=$(gu_build_check_key "$input" "$expected" "$format") || return
 	exec {fd}>"$cache/$key.lock" || return

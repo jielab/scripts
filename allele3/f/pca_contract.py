@@ -1,5 +1,12 @@
 """Strict shared-coordinate contract; historical hashes are evidence, not guesses."""
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import gzip
 import json
 import math
@@ -8,7 +15,7 @@ from pathlib import Path
 import re
 from analysis_integrity import identity, sha256
 
-DEFAULT_PROVENANCE = '/mnt/f/analysis/allele3_migration_20261028/all_files_verified.json'
+DEFAULT_PROVENANCE = configured_path('ANALYSIS_ROOT', 'allele3_migration_20261028/all_files_verified.json')
 
 
 def historical_identity(path, receipt=None, recorded=None):

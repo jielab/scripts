@@ -283,13 +283,13 @@ class WorkflowTests(unittest.TestCase):
             a.device = "cuda"
             gpu_jobs = [j for j in hpc_workflow.build_jobs(a) if j.resources["gpus"]]
             self.assertEqual(len(gpu_jobs), 4)
-            self.assertEqual({j.key for j in gpu_jobs}, set(by_key))
+            self.assertEqual({j.key for j in gpu_jobs}, {key + ".gpu_c3_coloc" for key in by_key})
             self.assertTrue(all(j.resources["cores"] >= 20 for j in gpu_jobs))
             a.fit_joint = True
             fitted_jobs = hpc_workflow.build_jobs(a)
-            for job in fitted_jobs:
-                steps = json.loads(job.argv[job.argv.index("--steps-json")+1])
-                self.assertEqual([s["key"] for s in steps if "--fit-joint" in s["argv"]], [job.key + ".final"])
+            steps = [s for job in fitted_jobs for s in json.loads(job.argv[job.argv.index("--steps-json")+1])]
+            self.assertEqual({s["key"] for s in steps if "--fit-joint" in s["argv"]},
+                             {key + ".final" for key in by_key})
 
     def test_default_modules_preserve_unknown_option_values(self):
         a, extra = hpc_workflow.parse_cli(["--ukb-phe", "/some/input", "--prepared-source", "/some/prepared",
@@ -322,9 +322,9 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(job.env["RUN_GPU_COLOC"], "FALSE")
             args, extra = hpc_workflow.parse_cli(["c1_correlate", "--Y", "toy", "--biom", "prot", "--methods", "abm_deep"])
             jobs = hpc_workflow.build_jobs(args, extra)
-            self.assertEqual([j.key for j in jobs if j.resources["gpus"]], ["toy.prot"])
-            steps = json.loads(jobs[0].argv[jobs[0].argv.index("--steps-json")+1])
-            models = next(s for s in steps if s["key"].endswith(".c1.models"))
+            self.assertEqual([j.key for j in jobs if j.resources["gpus"]], ["toy.prot.gpu_abm_deep"])
+            steps = [s for job in jobs for s in json.loads(job.argv[job.argv.index("--steps-json")+1])]
+            models = next(s for s in steps if s["key"].endswith(".c1.models_gpu"))
             self.assertEqual(models["argv"][-2:], ["--device", "cuda"])
 
     def test_native_hpc_runtime_auto_coloc_generates_matching_gpu_plan(self):

@@ -122,14 +122,57 @@ if (sys.nframe() == 0L) thin_main(.format_args)
 # 🚩 mplot
 if (.format_mode == "mplot") {
 
-# format_gwas.sh-specific CLI adapter for the reusable mh_plot() implementation
-# supplied by PLOT_F (normally /mnt/d/scripts/0f/manhattan_plot.R).
+# Protein positions are 1-based GRCh38 gene midpoints. Resolve assay aliases
+# exactly within their cohort, including semicolon lists and suffixes like .1.
+read_protein_loci <- function(path, trait, cohort, grch) {
+	empty <- data.frame(CHR = integer(), START = numeric(), END = numeric(), GENE = character())
+	if (is.null(path) || !nzchar(path)) return(list(all = empty, cis = empty))
+	if (!file.exists(path)) stop("Protein coordinate table is missing: ", path)
+	if (!identical(as.character(grch), "38")) {
+		stop("Protein cis coordinates in ", path, " are GRCh38; GWAS is GRCh", grch,
+			". Lift the GWAS to GRCh38 before using --prot-names.")
+	}
+	# NA is a real assay alias in the source mapping, not a missing-name token.
+	z <- utils::read.delim(path, colClasses = "character", na.strings = "",
+		quote = "", comment.char = "", check.names = FALSE, stringsAsFactors = FALSE)
+	if (!all(c("prot", "CHR", "POS") %in% names(z))) stop("--prot-names requires prot, CHR and POS: ", path)
+	if (anyNA(z$prot) || any(!nzchar(z$prot)) || anyDuplicated(z$prot)) stop("--prot-names requires unique, nonempty prot names")
+	chr <- toupper(sub("^chr", "", z$CHR, ignore.case = TRUE))
+	chr[which(chr == "X")] <- "23"; chr[which(chr == "Y")] <- "24"
+	chr <- suppressWarnings(as.integer(chr))
+	pos <- suppressWarnings(as.numeric(z$POS))
+	valid <- is.finite(chr) & chr >= 1L & chr <= 24L & is.finite(pos) & pos > 0 & pos == floor(pos)
+	all <- data.frame(CHR = chr[valid], START = pos[valid], END = pos[valid], GENE = z$prot[valid])
+	if (identical(cohort, "prot")) cohort <- "ukb"
+	index <- integer()
+	if (nzchar(cohort) && cohort %in% names(z) && !cohort %in% c("prot", "CHR", "POS")) {
+		index <- which(vapply(strsplit(ifelse(is.na(z[[cohort]]), "", z[[cohort]]), ";", fixed = TRUE),
+			function(aliases) trait %in% trimws(aliases), logical(1L)))
+	}
+	if (!length(index)) index <- which(z$prot == trait)
+	# UKB repeat controls are stored with their Olink panel suffix, while the
+	# shared name map keeps the protein once. Restrict this fallback to UKB.
+	if (!length(index) && identical(cohort, "ukb")) {
+		base <- sub("\\.(Cardiometabolic|Inflammation|Neurology|Oncology)(_II)?$", "", trait)
+		index <- which(z$prot == base)
+	}
+	if (length(index) > 1L) stop("Ambiguous protein alias '", trait, "' in cohort ", cohort)
+	if (!length(index) || !valid[index]) {
+		message("mplot cis: ", trait, " has no usable primary-chromosome GRCh38 coordinate in ", path)
+		return(list(all = all, cis = empty))
+	}
+	cis <- data.frame(CHR = chr[index], START = pos[index], END = pos[index], GENE = trait)
+	message("mplot cis: ", trait, " -> ", z$prot[index], " GRCh38 chr", z$CHR[index], ":", z$POS[index], " +/- 500000 bp")
+	list(all = all, cis = cis)
+}
+
+# CLI adapter for the reusable mh_plot() supplied by PLOT_F.
 
 main <- function() {
 args <- .format_args
 if (!length(args) %in% c(11L, 16L, 19L, 22L)) {
 	stop(paste("Usage: format.R GWAS OUTPUT TRAIT SELF PANEL MAGMA_GENES",
-						 "PLOT_F CIS_BED MH_PLOT_BED GRCH FLAG_OUTPUT [ADD_SIGNAL MATCH_COL",
+						 "PLOT_F PROT_NAMES MH_PLOT_BED GRCH FLAG_OUTPUT [ADD_SIGNAL MATCH_COL",
 						 "MATCH_VALUE LOCUS_POS DISPLAY_COL [WRITE_SIG SIG_OUTPUT COJO_FILE",
 						 "[PLOT_WIDTH PLOT_HEIGHT PLOT_RES]]]]"))
 }
@@ -141,7 +184,8 @@ method <- args[[4L]]
 panel <- args[[5L]]
 magma_file <- args[[6L]]
 plot_f <- args[[7L]]
-cis_bed <- if (nzchar(args[[8L]])) args[[8L]] else NULL
+prot_names <- if (nzchar(args[[8L]])) args[[8L]] else NULL
+prot_cohort <- Sys.getenv("GWAS_PROT_COHORT", "")
 mh_plot_bed <- if (nzchar(args[[9L]])) args[[9L]] else NULL
 grch <- args[[10L]]
 flag_output <- args[[11L]]
@@ -412,10 +456,9 @@ render_self <- function(path) {
 		z[is.finite(z$CHR) & is.finite(z$START) & is.finite(z$END) & nzchar(z$GENE), , drop = FALSE]
 	}
 	annotation_bed <- read_bed(mh_plot_bed)
-	all_cis_bed <- read_bed(cis_bed)
-	cis_rows <- if (!is.null(all_cis_bed)) {
-		all_cis_bed[all_cis_bed$GENE == trait, , drop = FALSE]
-	} else NULL
+	protein_loci <- read_protein_loci(prot_names, trait, prot_cohort, grch)
+	all_cis_bed <- protein_loci$all
+	cis_rows <- protein_loci$cis
 	cis_gene <- if (!is.null(cis_rows) && nrow(cis_rows)) trait else NULL
 
 	# Flags and hit reports use the complete associations, even when plotting a
@@ -746,7 +789,7 @@ render_self <- function(path) {
 	}
 
 	print(mh_plot(plot_input, col = c("#4B5563", "#A7B0BD"), cis_gene = cis_gene,
-							cis_bed = cis_bed, mh_plot_bed = mh_plot_bed,
+							cis_bed = cis_rows, mh_plot_bed = mh_plot_bed,
 							cis_color = "#D62728", other_top_color = "#159947",
 							other_top_max_per_chr = 1, locus_size = 1e6, main = trait,
 							mirror = mirror, mirror.sig.level = 2.5e-6,

@@ -1,0 +1,85 @@
+{
+  "transitions": [
+    {
+      "from": "ded76536c7f8da418b935bafe22d719ba128914d72429033ed6b807d81f4535a",
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Reviewed runtime/resume bookkeeping update. Model, losses, sampling and optimizer algorithm unchanged. Permit microbatch changes only at fixed subjects per optimizer step; floating-point and dropout trajectories may differ. Public-entry help/docstring renaming only in the final cleanup. Preparation-only change: verify phenotype-equivalent cohort values before reusing unchanged frozen cache; training and resume algorithms unchanged."
+    },
+    {
+      "from": "417660a18bdb13585514769fc4144d271987a42867bc2378e7fb61947f74c5a7",
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Verified AST differs only in public-entry docstring and missing-roster help text; all scientific code and parameters unchanged. Preparation-only change: verify phenotype-equivalent cohort values before reusing unchanged frozen cache; training and resume algorithms unchanged."
+    },
+    {
+      "to": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "reason": "Preparation-only phenotype equivalence verification; frozen cache files and all training/model/optimizer code unchanged.",
+      "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb"
+    },
+    {
+      "from": "417660a18bdb13585514769fc4144d271987a42867bc2378e7fb61947f74c5a7",
+      "to": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "to": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "ded76536c7f8da418b935bafe22d719ba128914d72429033ed6b807d81f4535a",
+      "to": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "eb3075f614986ece5a865d185496b75f507460e649305679d30d730abf939d3a",
+      "to": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb",
+      "to": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "417660a18bdb13585514769fc4144d271987a42867bc2378e7fb61947f74c5a7",
+      "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+      "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "ded76536c7f8da418b935bafe22d719ba128914d72429033ed6b807d81f4535a",
+      "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "eb3075f614986ece5a865d185496b75f507460e649305679d30d730abf939d3a",
+      "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb",
+      "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+      "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    }
+  ],
+  "review_20261102": {
+    "baseline_commit": "7490bfec99fa64278abb0415c55c868b4dfb4ade",
+    "changed_ast_nodes": [
+      "add_model_arguments",
+      "benchmark_analysis_root",
+      "neighborhood_runtime",
+      "publish",
+      "read_inputs",
+      "stage_evaluation",
+      "validate_evaluation"
+    ],
+    "baseline_ast_py311": "9aa45325d0438b612cf339e47ed7c89d4b1c3e8ebb30218d0afccdc699e75a0b",
+    "baseline_ast_py312": "eb3075f614986ece5a865d185496b75f507460e649305679d30d730abf939d3a",
+    "current_ast_py311": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+    "current_ast_py312": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6"
+  }
+}

@@ -7,6 +7,13 @@ the axes. Chromosome SUMs and DENOMs are added before calculating a single AVG.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from collections import Counter, defaultdict
 import contextlib
@@ -29,7 +36,7 @@ import sys
 VERSION = "pca-project-1.1"
 BASES = set("ACGT")
 NA = {"", ".", "NA", "nan", "NaN"}
-DEFAULT_GLOB = "/mnt/f/gen/ukb/37/imp/chr[0-9]*.pgen"
+DEFAULT_GLOB = configured_path('DIR_GEN', 'ukb/37/imp/chr[0-9]*.pgen')
 LIMITATIONS = [
     "The target cohort never participates in PCA fitting, frequency estimation or LD pruning.",
     "Both cohorts are re-scored with the identical retained marker subset, weights and reference frequencies; these subset coordinates must not be mixed with old full-panel coordinates.",

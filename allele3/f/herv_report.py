@@ -9,6 +9,7 @@ from pathlib import Path
 from analysis_integrity import validate_manifest, identity
 from herv_modern import rows
 from herv_primary import select_primary_rows
+from analysis_scope import boolean_option
 
 
 def table_html(data, columns, limit=30):
@@ -29,10 +30,12 @@ def recorded_output(base, name, result):
     return name in result.get('output_inventory', {}) and (base / name).is_file()
 
 
-def make_report(out, modern, analysis_root, pca_temporal_dir=None):
+def make_report(out, modern, analysis_root, pca_temporal_dir=None, *, include_ibdmix=False):
     out, modern, root = Path(out), Path(modern), Path(analysis_root)
     out.mkdir(parents=True, exist_ok=True)
     sections = ["<h1>ERV1 / ERVK and multi-ALT variation</h1><p class='lead'>Measured results, analysis scope and completion status.</p>"]
+    if not include_ibdmix:
+        sections.append("<p>IBDmix evidence is disabled for this run. Archaic tract results are excluded from the main analysis.</p>")
     sections.append("<h2>1. Primary family enrichment</h2>")
     primary_dir = out / "primary"
     primary_available = False
@@ -42,6 +45,8 @@ def make_report(out, modern, analysis_root, pca_temporal_dir=None):
         if primary_state.get("status") in {"failed", "not_available", "blocked", "skipped"}:
             raise ValueError("Primary stage did not complete in this invocation")
         primary = validate_manifest(primary_dir, "primary_manifest.json", require_evidence=True)
+        if bool(primary.get("ibdmix_enabled", True)) != include_ibdmix:
+            raise ValueError("Primary result uses a different IBDmix evidence scope; recompute primary")
         for expected in primary.get("source_counter_inputs", []):
             if identity(expected["path"]) != expected:
                 raise ValueError("Primary counter inputs changed; recompute the primary stage")
@@ -84,6 +89,8 @@ def make_report(out, modern, analysis_root, pca_temporal_dir=None):
     evidence_order = {name:i for i,name in enumerate(("spatial", "ancient", "selection", "archaic", "summary", "windows", "genotypes", "ld"))}
     evidence.sort(key=lambda item:evidence_order[item[0]])
     for directory, filename, title, description, figure in evidence:
+        if directory == "archaic" and not include_ibdmix:
+            continue
         stage_name = "time" if directory == "ancient" else directory
         current = stage_status.get(stage_name, {})
         manifest_name = {"summary":"summary_manifest.json", "spatial":"spatial_manifest.json", "windows":"windows_manifest.json",
@@ -106,6 +113,8 @@ def make_report(out, modern, analysis_root, pca_temporal_dir=None):
             continue
         try:
             result = validate_manifest(base, manifest_name, require_evidence=True)
+            if directory == "summary" and bool(result.get("ibdmix_enabled", True)) != include_ibdmix:
+                raise ValueError("Summary uses a different IBDmix evidence scope; recompute summary")
         except (OSError, ValueError) as exc:
             sections.append("<p class='muted'>Current evidence unavailable: " + html.escape(str(exc)) + "</p>")
             continue
@@ -207,8 +216,9 @@ def main(argv=None):
     p.add_argument("--modern-dir", required=True)
     p.add_argument("--analysis-root", required=True)
     p.add_argument("--pca-temporal-dir")
+    p.add_argument("--ibdmix", type=boolean_option, default=False, metavar="TRUE|FALSE")
     a = p.parse_args(argv)
-    result = make_report(a.out, a.modern_dir, a.analysis_root, a.pca_temporal_dir)
+    result = make_report(a.out, a.modern_dir, a.analysis_root, a.pca_temporal_dir, include_ibdmix=a.ibdmix)
     print(json.dumps(result, indent=2))
 
 

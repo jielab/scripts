@@ -46,7 +46,7 @@ class CommonSupportReferences(unittest.TestCase):
     def summarize(self, modern, out, references=None):
         with patch.object(hm, "plot_families"), patch.object(scan, "bh_fdr", wraps=scan.bh_fdr) as bh, \
                 patch.object(scan, "load_run", side_effect=AssertionError("No VCF scan or run metadata is needed")):
-            hm.summarize_common_support(modern, out, archaic_references=references)
+            hm.summarize_common_support(modern, out, archaic_references=references, include_ibdmix=True)
         return self.read_results(out), bh.call_args.args[0]
 
     def test_default_five_filter_precedes_bh_and_has_explicit_audit(self):

@@ -1,0 +1,13 @@
+{
+  "N_components": 401011,
+  "N_genotype_ids": 488377,
+  "component_rule": "all supplied UKB relationship edges; no additional threshold",
+  "files": {
+    "/work/sph-huangj/data/gen/ukb/37/typ/ukb_rel.dat": "994192fb40a6d13803fc311011be942a560afda4b2fd097b3aad40326c5fedf3",
+    "/work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/cache/shared_preparation/raw_family_components.tsv.gz": "b05cf5d9126b7e78f5c658973d345b2d71d2d8e2080a68cb06064416e10501ee"
+  },
+  "mapping": "/work/sph-huangj/scripts/grid/.preflight/20261105/roster-only/cache/shared_preparation/raw_family_components.tsv.gz",
+  "schema": "grid.shared_family_components.1",
+  "source": "/work/sph-huangj/data/gen/ukb/37/typ/ukb_rel.dat",
+  "split_uses_outcome_values": false
+}

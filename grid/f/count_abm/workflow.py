@@ -116,13 +116,13 @@ def verify_stage(folder, stage, *, config_hash=None, parent=None, verify_code=Tr
     return record
 
 
-def prepare(args, config, trait):
+def geometry(args, config, trait):
+    """CPU-only cohort, geometry and normalized donor/query banks."""
     from abm_core.representation import BlockGeometry
-    from abm_core.support import estimate_radius
     folder = trait_directory(args, trait)
-    if (folder/"PREPARE_COMPLETE.json").is_file():
-        verify_stage(folder, "prepare", config_hash=digest(config))
-        frozen = json.loads((folder/"model.json").read_text())["metadata"]
+    if (folder/"GEOMETRY_COMPLETE.json").is_file():
+        verify_stage(folder, "geometry", config_hash=digest(config))
+        frozen = json.loads((folder/"geometry_model.json").read_text())["metadata"]
         if args.input_manifest:
             requested = Path(str(args.input_manifest).replace("{trait}", trait)).resolve()
             if str(requested) != frozen.get("input_manifest") or file_hash(requested) != frozen.get("input_manifest_sha256"):
@@ -161,6 +161,41 @@ def prepare(args, config, trait):
             truth_path = local/(role+".truth.tsv.gz")
             truth.to_csv(truth_path, sep="\t", index=False)
             artifacts.append(truth_path)
+    features = features.copy()
+    features["retained"] = np.isin(np.arange(len(features)), geometry.keep)
+    features.to_csv(folder/"features.tsv", sep="\t", index=False)
+    json_write(folder/"geometry.json", asdict(geometry))
+    lineage = {role: dict(n=int(mask.sum()), groups=d.loc[mask, "group_id"].nunique(),
+                          ordered_ids_sha256=ids_hash(d.loc[mask, "id"])) for role, mask in
+               (("donor", donor), ("calibration", d.role.eq("calibration")), ("test", d.role.eq("test")))}
+    model = dict(schema_version=SCHEMA, version=VERSION, trait=trait, task=task,
+                 geometry_fit_role="observed_training_donors_only", geometry_sha256=geometry.fingerprint(),
+                 donor_filter="observed_outcome_only_no_residual_or_case_filtering",
+                 prediction_rule="all_in_radius_equal_weight_mean", prior_strength=0,
+                 fallback_rule="global_observed_donor_mean_explicitly_labelled",
+                 global_prior=float(d.loc[donor, "y"].mean()),
+                 query_outcomes_used_for_prediction=False, lineage=lineage, config=config,
+                 development_missing_y_not_donors=int((d.role.eq("donor") & d.y.isna()).sum()),
+                 metadata=metadata,
+                 validation_status=config["validation_status"],
+                 uncertainty="descriptive_local_outcomes_and_cluster_mean_interval_no_conditional_guarantee")
+    json_write(folder/"geometry_model.json", model)
+    artifacts += [folder/"features.tsv", folder/"geometry.json", folder/"geometry_model.json"]
+    commit_stage(folder, "geometry", artifacts, config_hash=digest(config), details=dict(trait=trait, task=task, lineage=lineage))
+    print(f"[GRID count] {trait}: CPU geometry frozen for {int(donor.sum()):,} donors", flush=True)
+
+
+def radius(args, config, trait):
+    """Estimate radius only from the frozen CPU-produced development banks."""
+    from abm_core.support import estimate_radius
+    folder = trait_directory(args, trait)
+    receipt = verify_stage(folder, "geometry", config_hash=digest(config))
+    parent = folder/"GEOMETRY_COMPLETE.json"
+    if (folder/"PREPARE_COMPLETE.json").is_file():
+        verify_stage(folder, "prepare", config_hash=digest(config), parent=parent)
+        print(f"[GRID count] {trait}: verified frozen radius", flush=True)
+        return
+    local = folder/"_LOCAL_ONLY"
     donors, calibration = read_table(local/"donor.tsv.gz"), read_table(local/"calibration.tsv.gz")
     dz = np.load(local/"donor.z.npy", mmap_mode="r")
     cz = np.load(local/"calibration.z.npy", mmap_mode="r")
@@ -172,29 +207,24 @@ def prepare(args, config, trait):
                                  device=args.device, query_batch=config["query_batch"], donor_batch=config["donor_batch"])
     if not np.isfinite(radius) or radius <= 0:
         raise ValueError("Frozen radius must be positive and finite")
-    features = features.copy()
-    features["retained"] = np.isin(np.arange(len(features)), geometry.keep)
-    features.to_csv(folder/"features.tsv", sep="\t", index=False)
-    json_write(folder/"geometry.json", asdict(geometry))
-    lineage = {role: dict(n=int(mask.sum()), groups=d.loc[mask, "group_id"].nunique(),
-                          ordered_ids_sha256=ids_hash(d.loc[mask, "id"])) for role, mask in
-               (("donor", donor), ("calibration", d.role.eq("calibration")), ("test", d.role.eq("test")))}
-    model = dict(schema_version=SCHEMA, version=VERSION, trait=trait, task=task,
-                 radius=float(radius), radius_fit_role="development_calibration_X_only" if "radius" not in config else "explicit_frozen_user_radius",
-                 geometry_fit_role="observed_training_donors_only", geometry_sha256=geometry.fingerprint(),
-                 donor_filter="observed_outcome_only_no_residual_or_case_filtering",
-                 prediction_rule="all_in_radius_equal_weight_mean", prior_strength=0,
-                 fallback_rule="global_observed_donor_mean_explicitly_labelled",
-                 global_prior=float(d.loc[donor, "y"].mean()),
-                 query_outcomes_used_for_prediction=False, lineage=lineage, config=config,
-                 development_missing_y_not_donors=int((d.role.eq("donor") & d.y.isna()).sum()),
-                 metadata=metadata,
-                 validation_status=config["validation_status"],
-                 uncertainty="descriptive_local_outcomes_and_cluster_mean_interval_no_conditional_guarantee")
+    model = json.loads((folder/"geometry_model.json").read_text())
+    model.update(radius=float(radius), radius_fit_role="development_calibration_X_only" if "radius" not in config else "explicit_frozen_user_radius")
     json_write(folder/"model.json", model)
-    artifacts += [folder/"features.tsv", folder/"geometry.json", folder/"model.json"]
-    commit_stage(folder, "prepare", artifacts, config_hash=digest(config), details=dict(trait=trait, task=task, lineage=lineage))
-    print(f"[GRID count] {trait}: {int(donor.sum()):,} donors, radius={radius:.6g}; no predictor fitted", flush=True)
+    artifacts = [folder/name for name in receipt["artifacts"]]
+    artifacts += [parent, folder/"model.json"]
+    commit_stage(folder, "prepare", artifacts, config_hash=digest(config), parent=parent,
+                 details=dict(trait=trait, task=model["task"], lineage=model["lineage"]))
+    print(f"[GRID count] {trait}: radius={radius:.6g}; frozen geometry reused", flush=True)
+
+
+def prepare(args, config, trait):
+    geometry(args, config, trait)
+    radius(args, config, trait)
+
+
+def radius_twins(args, config, trait):
+    radius(args, config, trait)
+    twins(args, config, trait)
 
 
 def twins(args, config, trait):
@@ -470,7 +500,7 @@ def _final(args, config, traits):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=(*PHASES, "all"))
+    p.add_argument("command", choices=(*PHASES, "geometry", "radius", "radius_twins", "all"))
     p.add_argument("--traits", default="height,ldl,t2dm")
     from grid_paths import analysis_default
     p.add_argument("--analysis-root", default=analysis_default())

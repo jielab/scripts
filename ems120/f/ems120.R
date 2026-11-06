@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # EMS120 analysis and figure pipeline.
 ems120_main_file <- {
 	frames <- Filter(Negate(is.null), lapply(sys.frames(), function(frame) frame$ofile))
@@ -14,6 +31,7 @@ ems120_main_file <- {
 }
 ems120_main_file <- normalizePath(ems120_main_file, winslash = "/", mustWork = TRUE)
 source(file.path(dirname(ems120_main_file), "runtime.R"))
+source(file.path(dirname(ems120_main_file), "stages.R"))
 ems120_paths <- ems120_init_paths(ems120_main_file)
 
 ems120_prime_conda_ssl <- function() {
@@ -21,6 +39,7 @@ ems120_prime_conda_ssl <- function() {
 	if (identical(sys, "Windows")) return(invisible(FALSE))
 	py <- Sys.getenv("RETICULATE_PYTHON", unset = "")
 	candidates <- c(
+		Sys.getenv("EMS120_SSL_PREFIX", unset = ""),
 		if (nzchar(py)) normalizePath(file.path(dirname(py), ".."), winslash = "/", mustWork = FALSE) else "",
 		Sys.getenv("CONDA_PREFIX", unset = "")
 	)
@@ -89,6 +108,7 @@ dir.create(dir.cache, showWarnings = FALSE, recursive = TRUE)
 file.dat.phone.rds <- file.path(dir.cache, "dat.ml_phone.rds")
 file.dat.geo.rds <- file.path(dir.cache, "dat.ml_geo.rds")
 file.dat.rds <- file.path(dir.cache, "dat.list.rds")
+dir_dx_cv <- file.path(dir.analysis, "raw", "hfl_cv5")
 
 for (f in c("phenotype.R", "plotting.R")) {
 	ff <- file.path(shared.dir, f)
@@ -718,6 +738,7 @@ make_ml_design_figures <- function() {
 
 ml_python_ready <- FALSE
 ensure_ml_python <- function() {
+	if (ems120_phase %in% c("cpu_prepare", "cpu_report")) stop("ML execution is forbidden in CPU-only stages; use the split workflow.", call. = FALSE)
 	if (isTRUE(ml_python_ready)) return(invisible(TRUE))
 	ems120_configure_python()
 	py_file <- file.path(script.dir, "f", "ems120.py")
@@ -997,6 +1018,14 @@ check_required_vars_in_dat_list <- function(dat_list, required_vars = fig2_requi
 
 
 # 🚩 Data harmonization, ml_phone, ml_geo, and ml_dx
+phone.required <- c("phone.sco0", "phone.sco1", "phone.sco2", "phone.sco3", "phone.sco0.reason", "phone.sco1.reason", "phone.sco2.reason", "phone.sco3.reason", "phone.luck.sco0", "phone.luck.sco1", "phone.luck.sco2", "phone.luck.sco3")
+final.required <- c(
+	"geo.type1", "dx.type0", "dx.type0.reason", "dx.type1", "dx.type1.reason",
+	"dx.type1.confidence", "dx.pipeline.version", "phone.repeated_gt5",
+	"phone.sco", "phone.sco.reason", phone.required, "phone.luck", "phone.luck.quarter"
+)
+
+if (ems120_phase %in% c("all", "cpu_prepare")) {
 if (file.exists("dat0.summary.log") && file.info("dat0.summary.log")$size > 0) {
 	cat("dat0.summary.log exists; skipping phone-variable audit.\n")
 } else {
@@ -1070,9 +1099,21 @@ cat(sprintf(
 rm(train_check)
 
 
+if (identical(ems120_phase, "cpu_prepare")) {
+	ems120_stage_publish("cpu_prepare", c(file.dat0.rds, file.train2019))
+	quit(save = "no", status = 0, runLast = FALSE)
+}
+} # raw preparation
+
+if (identical(ems120_phase, "gpu_ml")) {
+	ems120_stage_restore("cpu_prepare")
+	file.dat0.rds <- file.path(dir.cache, "dat0.list.rds")
+	dat0.list <- lapply(readRDS(file.dat0.rds), normalize_ems120_year_types)
+}
+
+if (ems120_phase %in% c("all", "gpu_ml")) {
 # 🚩 2) phone: score phone number luckiness; keep only RDS cache, not dat.ml_phone/[year].xlsx.
 file.dat.phone.rds <- file.path(dir.cache, "dat.ml_phone.rds")
-phone.required <- c("phone.sco0", "phone.sco1", "phone.sco2", "phone.sco3", "phone.sco0.reason", "phone.sco1.reason", "phone.sco2.reason", "phone.sco3.reason", "phone.luck.sco0", "phone.luck.sco1", "phone.luck.sco2", "phone.luck.sco3")
 phone.ready <- FALSE
 if (file.exists(file.dat.phone.rds)) {
 	dat.phone.list <- readRDS(file.dat.phone.rds)
@@ -1203,11 +1244,6 @@ if (run_dx_cv) {
 
 # 🚩 5) dx: classify disease after phone, geo, and dx CV; keep only RDS cache
 file.dat.rds <- file.path(dir.cache, "dat.list.rds")
-final.required <- c(
-	"geo.type1", "dx.type0", "dx.type0.reason", "dx.type1", "dx.type1.reason",
-	"dx.type1.confidence", "dx.pipeline.version", "phone.repeated_gt5",
-	"phone.sco", "phone.sco.reason", phone.required, "phone.luck", "phone.luck.quarter"
-)
 final.ready <- FALSE
 if (file.exists(file.dat.rds)) {
 	dat1.list <- readRDS(file.dat.rds)
@@ -1258,6 +1294,33 @@ if (!final.ready) {
 	}
 	ems120_save_rds_atomic(dat1.list, file.dat.rds)
 }
+if (identical(ems120_phase, "gpu_ml")) {
+	ems120_stage_publish("gpu_ml", c(file.dat.rds, list.files(dir_dx_cv, full.names = TRUE, pattern = "\\.csv$")),
+		context = list(final_cached = final.ready, report_objects = mget(c("phone_score_vars", "phone_score_summary", "phone_score_bin_summary", "phone_quarter_summary", "geo_xia_merge_log"), envir = .GlobalEnv)))
+	quit(save = "no", status = 0, runLast = FALSE)
+}
+} # phone, geo, disease CV and inference
+
+if (identical(ems120_phase, "cpu_report")) {
+	if (identical(Sys.getenv("EMS120_REPORT_ONLY"), "1")) {
+		context <- list(final_cached = TRUE)
+		if (!file.exists(file.dat.phone.rds)) stop("CPU report requires dat/dat.ml_phone.rds for the original phone-score summaries.", call. = FALSE)
+		dat.phone.list <- lapply(lapply(readRDS(file.dat.phone.rds), apply_phone_luck_use), normalize_ems120_year_types)
+		phone_score_vars <- c("phone.sco0", "phone.sco1", "phone.sco2", "phone.sco3")
+		phone_score_summary <- purrr::imap_dfr(dat.phone.list, function(d, y) { if (is.null(d) || !nrow(d)) return(tibble()); bind_rows(lapply(phone_score_vars, function(v) as_tibble(table(score = d[[v]], useNA = "always")) %>% transmute(Year = as.integer(y), score_name = v, score = as.character(score), n = as.integer(n)))) })
+		phone_score_bin_summary <- purrr::imap_dfr(dat.phone.list, function(d, y) { if (is.null(d) || !nrow(d)) return(tibble()); bind_rows(lapply(phone_score_vars, function(v) tibble(Year = as.integer(y), score_name = v, score_bin = score_bin_label(d[[v]])) %>% count(Year, score_name, score_bin, name = "n"))) })
+		phone_quarter_summary <- bind_rows(lapply(phone_score_vars, function(v) { x <- unlist(lapply(dat.phone.list, function(d) if (is.null(d) || !nrow(d)) numeric(0) else suppressWarnings(as.numeric(d[[v]]))), use.names = FALSE); q <- quasi_quarter(x, .25, .5, .25); tibble(score_name = v, low_cutoff = ifelse(any(q == "low", na.rm = TRUE), max(x[q == "low"], na.rm = TRUE), NA_real_), low_n = sum(q == "low", na.rm = TRUE), high_cutoff = ifelse(any(q == "high", na.rm = TRUE), min(x[q == "high"], na.rm = TRUE), NA_real_), high_n = sum(q == "high", na.rm = TRUE)) }))
+		writexl::write_xlsx(list(score_distribution = phone_score_summary, score_distribution_integer_bins = phone_score_bin_summary, quasi_quarter_cutoffs = phone_quarter_summary), "phone.sco.summary.xlsx")
+		rm(dat.phone.list)
+		geo_xia_merge_log <- if (file.exists("geo_xia_merge.log")) data.table::fread("geo_xia_merge.log", sep = "\t", data.table = FALSE) %>% tibble::as_tibble() else tibble::tibble()
+	} else {
+		context <- ems120_stage_restore("gpu_ml")
+		list2env(context$report_objects, envir = .GlobalEnv)
+	}
+	dat1.list <- ems120_report_cache(file.dat.rds, final.required, years, DX_PIPELINE_VERSION,
+		apply_cached_phone = isTRUE(context$final_cached))
+}
+
 dat1.list <- lapply(dat1.list, function(d) apply_dx_type_use(apply_phone_luck_use(normalize_ems120_year_types(d))))
 write_dat_summary_log(dat1.list, file.dat.rds)
 # Final data files: only dat/[year].xlsx plus RDS caches are written.
@@ -2978,10 +3041,10 @@ fig2_find_chrome <- function() {
 		"/opt/google/chrome/chrome",
 		"/opt/microsoft/msedge/msedge",
 		"/snap/bin/chromium",
-		"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
-		"/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-		"/mnt/c/Program Files/Microsoft/Edge/Application/msedge.exe",
-		"/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+		file.path(os_path("DIR_WINDOWS_PROGRAMFILES"), "Google/Chrome/Application/chrome.exe"),
+		file.path(os_path("DIR_WINDOWS_PROGRAMFILES_X86"), "Google/Chrome/Application/chrome.exe"),
+		file.path(os_path("DIR_WINDOWS_PROGRAMFILES"), "Microsoft/Edge/Application/msedge.exe"),
+		file.path(os_path("DIR_WINDOWS_PROGRAMFILES_X86"), "Microsoft/Edge/Application/msedge.exe")
 	)
 	candidates <- unique(candidates[nzchar(candidates)])
 	candidates[file.exists(candidates)][1]

@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -21,7 +30,7 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    ls -1v *.png | /mnt/d/scripts/0f/img2pdf.sh -o figures.pdf
+    ls -1v *.png | ${SCRIPTS_ROOT}/0f/img2pdf.sh -o figures.pdf
 
     ./img2pdf.sh *.png -o figures.pdf
     ./img2pdf.sh *.png
@@ -114,7 +123,7 @@ for f in "${FILES[@]}"; do
 	fi
 done
 
-TMPDIR_WORK="$(mktemp -d "${TMPDIR:-/tmp}/img2pdf.XXXXXX")"
+TMPDIR_WORK="$(mktemp -d "${TMPDIR:-$DIR_RUNTIME_TMP}/img2pdf.XXXXXX")"
 cleanup() {
 	rm -rf "$TMPDIR_WORK"
 }

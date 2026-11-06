@@ -4,6 +4,13 @@ Public API: prepare_data(args), evolution_data(args, prepared).
 The caller owns model fitting, cache lifecycle and formal output publication.
 """
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 import contextlib
 import gzip
@@ -244,7 +251,7 @@ def id_list(value):
 
 def filter_ids(data, args):
 	keep = id_list(option(args, "keep"))
-	remove = id_list(option(args, "remove", "/mnt/d/files/ukb.exclude.id"))
+	remove = id_list(option(args, "remove"))
 	mask = ~data.eid.str.startswith("-")
 	if keep is not None:
 		mask &= data.eid.isin(keep)
@@ -263,7 +270,7 @@ def source_stamp(path, allow_empty=False):
 
 # 🚩 Genotype metadata; no allele frequencies are estimated here
 def genotype_files(args):
-	root = Path(option(args, "dir_gen", "/mnt/f/gen/ukb/37/hap"))
+	root = Path(option(args, "dir_gen", configured_path('DIR_GEN', 'ukb/37/hap')))
 	result = {}
 	for chrom in selected_chromosomes(args):
 		prefix = root / f"chr{chrom}"
@@ -342,8 +349,8 @@ def attach_families(cohort, args):
 
 def validate_frozen_split(cohort, args):
 	"""Refitting a model must never change an established comparison cohort."""
-	cache = Path(option(args, "cache_dir", "/mnt/d/analysis/grid/cache/abm"))
-	out = Path(option(args, "out_root", "/mnt/d/analysis/grid/abm"))
+	cache = Path(option(args, "cache_dir", configured_path('ANALYSIS_ROOT', 'grid/cache/abm')))
+	out = Path(option(args, "out_root", configured_path('ANALYSIS_ROOT', 'grid/abm')))
 	prs = Path(option(args, "prsformer_root", str(out.parent))) / "prsformer/split.rds"
 	paths = [(cache / "split.rds", False), (out / "grid.split.rds", False), (prs, True)]
 	current = cohort.set_index("eid").sort_index()
@@ -399,7 +406,7 @@ def freeze_split(cohort, args, supplied=None):
 	fraction = float((cohort.split == "train").mean())
 	if abs(fraction - .5) > float(option(args, "half_split_tolerance", .02)):
 		raise ValueError(f"Expected a 50/50 shared roster; training fraction is {fraction:.4f}. Large families or supplied splits need review.")
-	cache = Path(option(args, "cache_dir", "/mnt/d/analysis/grid/cache/abm"))
+	cache = Path(option(args, "cache_dir", configured_path('ANALYSIS_ROOT', 'grid/cache/abm')))
 	validate_frozen_split(cohort, args)
 	cache.mkdir(parents=True, exist_ok=True)
 	split_path = cache / "split.rds"
@@ -577,7 +584,7 @@ def prepared_tables(args, traits, covariates):
 
 
 def raw_tables(args, traits, covariates):
-	path = required(option(args, "pheno_file", "/mnt/f/ukb/Rdata/all.rds"))
+	path = required(option(args, "pheno_file", configured_path("DIR_UKB", "Rdata", "all.rds")))
 	data = filter_ids(read_phenotypes(path, traits, args, covariates), args)
 	definitions = data.attrs["phenotype_definitions"]
 	for column in covariates:
@@ -592,14 +599,14 @@ def raw_tables(args, traits, covariates):
 	derived = definitions.get("t2dm", {}).get("derived_from")
 	if derived:
 		sources.append(derived["helper"])
-	ancestry_path = required(option(args, "ancestry_file", "/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"))
+	ancestry_path = required(option(args, "ancestry_file", configured_path('DIR_GEN', 'ukb/pca_proj/ukb.ancestry.auto.tsv.gz')))
 	ancestry = identified(read_table(ancestry_path), "Ancestry")
 	column = next((x for x in (option(args, "group_col", "genetic_ancestry"), "ancestry", "target", "predicted_ancestry") if x in ancestry), None)
 	if column is None:
 		raise ValueError("No ancestry label column")
 	ancestry["ancestry"] = ancestry[column].fillna("UNASSIGNED").astype(str)
 	data = data.merge(ancestry[["eid", "ancestry"]], on="eid", how="inner", validate="one_to_one")
-	pca_path = required(option(args, "pca_file", "/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz"))
+	pca_path = required(option(args, "pca_file", configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz')))
 	pca = identified(read_table(pca_path), "Projected PCA")
 	npc = int(option(args, "distance_pcs", 10))
 	if not 1 <= npc <= 20:
@@ -621,7 +628,7 @@ def raw_tables(args, traits, covariates):
 	data = data.loc[data.eid.isin(common)].copy()
 	tables = {}
 	for trait in traits:
-		score_path = required(Path(option(args, "score_dir", "/mnt/f/gen/ukb/pgs")) / trait / "1csx.scores.rds")
+		score_path = required(Path(option(args, "score_dir", configured_path('DIR_GEN', 'ukb/pgs'))) / trait / "1csx.scores.rds")
 		score = identified(read_table(score_path), f"{trait} CSx")
 		if set(CSX) - set(score):
 			raise ValueError(f"{score_path}: requires all four csx.<POP> scores")
@@ -765,10 +772,10 @@ def verify_weight_preparation(common, metadata, signature, source, snpinfo, trai
 
 
 def native_weights(args, trait):
-	root = Path(option(args, "gwas_dir", "/mnt/f/gwas/4grid/common"))
+	root = Path(option(args, "gwas_dir", configured_path('DIR_GWAS', '4grid/common')))
 	chrs = selected_chromosomes(args)
 	common = load_module(Path(__file__).with_name("0.common.py"), "grid_data_common")
-	snpinfo = required(option(args, "snpinfo", "/mnt/f/LD/csx/snpinfo_mult_1kg_hm3"))
+	snpinfo = required(option(args, "snpinfo", configured_path('DIR_LD', 'csx/snpinfo_mult_1kg_hm3')))
 	canonical, signatures, sources, registry = None, [], [], {}
 	for pop in POPS:
 		tags = [f"{trait}.{pop}"] + (["t2dm.AFA"] if trait == "t2dm" and pop == "AFR" else [])
@@ -819,7 +826,7 @@ def native_weights(args, trait):
 
 def verify_csx_score_provenance(args, trait, registry, chromosomes):
 	"""Link the four original score columns to the posterior weights being annotated."""
-	score = required(Path(option(args, "score_dir", "/mnt/f/gen/ukb/pgs")) / trait / "1csx.scores.rds")
+	score = required(Path(option(args, "score_dir", configured_path('DIR_GEN', 'ukb/pgs'))) / trait / "1csx.scores.rds")
 	path = score.with_suffix(".provenance.json")
 	if not path.is_file():
 		raise ValueError(f"Missing CSx score/weight provenance: {path}. Rerun 2.csx.sh --stage score with the existing weights; MCMC need not be rerun")
@@ -972,7 +979,7 @@ def check_partition(scores, dictionary):
 
 
 def score_modules(args, directory, weights, cohort, genotypes):
-	cache = Path(option(args, "cache_dir", "/mnt/d/analysis/grid/cache/abm"))
+	cache = Path(option(args, "cache_dir", configured_path('ANALYSIS_ROOT', 'grid/cache/abm')))
 	dictionary = read_table(directory / "modules.tsv.gz")
 	if not {"module", "group", "population"}.issubset(dictionary):
 		raise ValueError("Evolution module dictionary is incomplete")
@@ -1087,7 +1094,7 @@ def evolution_data(args, prepared):
 		raise ValueError("GRID requires explicitly harmonized GRCh37 inputs")
 	helper = load_module(Path(__file__).with_name("evolution.py"), "grid_data_evolution")
 	genotypes = genotype_files(args)
-	cache = Path(option(args, "cache_dir", "/mnt/d/analysis/grid/cache/abm"))
+	cache = Path(option(args, "cache_dir", configured_path('ANALYSIS_ROOT', 'grid/cache/abm')))
 	metadata, scoring_artifacts = {}, {}
 	for trait, frame in prepared["tables"].items():
 		weights, sources = canonical_weights(args, trait)

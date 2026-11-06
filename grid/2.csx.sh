@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -15,7 +29,7 @@ set -euo pipefail
 usage() {
 	cat <<'HELP'
 Modules:
-    all      Weights -> scores -> small target-validation fit -> test accuracy (default)
+    all      One job per trait: weights -> scores -> shared inputs -> target fit/test (default)
     weights  Joint four-population PRS-CSx
     score    Apply saved SNP weights; select with --stage
     prepare  Shared cohort/genotype preparation only; no model training
@@ -40,8 +54,8 @@ Default permanent paths (outside the analysis output directory):
 
 Main options:
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
-    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
-    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
+    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one .cmd/job per trait.
     --stage all|weights|score      Default: all.
     --dir-gwas DIR                ${DIR_GWAS}/4grid/common
     --dir-gen DIR                 ${DIR_GEN}/ukb/37/typ; falls back to hap when typ is absent.
@@ -57,9 +71,32 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
+    # After 1.pca.sh is DONE: full CPU workflow on QiMing.
     cd /work/sph-huangj/scripts/grid
-    ./2.csx.sh                         # Automatically detect CPU/CUDA; run all traits.
+    queueinfo
+    bash 2.csx.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+      --queue v4-3t --device cpu --traits height,ldl,t2dm \
+      --jobs 4 --threads 8 --wait FALSE
+    # Admin recommends v4-3t / v3-6t for exact CPU counts; either may be used
+    # after queueinfo. Three jobs: height.all, ldl.all, t2dm.all. Each requests:
+    #     -q v4-3t -n 32 -W 120:00 -M 256GB
+    #     -R "span[hosts=1] rusage[mem=256GB/host]"
+    # Each job runs weights -> score -> prepare -> targetfit in order. A failed
+    # step stops that job; a new submission reuses validated native caches.
+    # Shared preparation uses a blocking lock and reuses the common cache;
+    # there is no separate shared.prepare job. Weights do not require this cache.
+    # 120 hours is the whole job's budget; --job-hours overrides it.
+    # Four chromosome jobs x eight scoring threads fit 32 cores per worker.
+    # These are configured budgets, not measured CSx peak usage. The full
+    # 256-GiB workflow exceeds a 33 node's 192 GiB; do not change only --queue
+    # to 33. A separately sized 160-GiB CPU job on 33 must reserve -n 40.
+    # Add --plan-only to preview without submitting. This entry generates
+    # one .cmd per trait and calls bsub; do not add an outer bsub.
+    # --wait FALSE returns after submission. Confirm all three jobs are DONE
+    # before running 3.disco.sh. PCA/ancestry, GWAS, LD and genotype paths above
+    # are the shared permanent inputs; --dir-output-root does not move them.
+
+    # Other input/check options:
     ./2.csx.sh --trait height --chrs 22 --check
     ./2.csx.sh --traits height,ldl,t2dm --check
     ./2.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 4

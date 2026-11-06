@@ -59,14 +59,21 @@ def dispatch(code_root, args, dry=False):
         for trait in traits:
             print(f'[GRID] {trait}: skip, repair reports, resume or train at {root / "prsformer" / trait}; shared cache {root / "prsformer/cache"}', flush=True)
         return
-    device = benchmark_device(options.device)
+    stage = options.workflow_stage
+    device = "cpu" if stage == "report" else benchmark_device(options.device)
     from kinship import analysis_guard
     with analysis_guard(root):
-        ensure_inputs(options, config)
+        if stage != "report":
+            ensure_inputs(options, config)
         for index, trait in enumerate(traits, 1):
             print(f'[GRID] PRSformer trait {index}/{len(traits)}: {trait}', flush=True)
             with run_lock(root / 'prsformer' / trait):
                 _run_trait(code_root, options, config, device, trait)
+                if stage == "model":
+                    from grid_paths import read_config
+                    from prsformer_stages import freeze_model
+                    cache = read_config(config["block_config"], root)["prsformer_cache"]
+                    freeze_model(root, "prsformer", trait, root / "prsformer" / trait / "run", cache)
 
 
 def _run_trait(code_root, options, config, device, trait):
@@ -76,10 +83,18 @@ def _run_trait(code_root, options, config, device, trait):
     cache = Path(block['prsformer_cache'])
     base = root / 'prsformer' / trait
     action = plan(root, trait, cache)
+    stage = getattr(options, 'workflow_stage', 'all')
+    if stage == 'report' and action not in {'report', 'skip'}:
+        raise ValueError('CPU publication requires completed model evaluation; it cannot train or predict')
+    if stage == 'model' and action in {'report', 'skip'}:
+        print(f'[GRID] REUSE PRSformer {trait}: model evaluation already complete', flush=True)
+        return
     if action == 'skip':
         print(f'[GRID] SKIP PRSformer {trait}: completed model, evaluation and reports verified', flush=True)
         return
     if action != 'report' and not (cache / 'genotypes.npy').is_file():
+        if stage == 'model':
+            raise FileNotFoundError('Run the CPU preparation stage before the GPU model stage')
         from copy import copy
         from shared_cohort import ensure_inputs
         preparation = copy(options)
@@ -103,9 +118,11 @@ def _run_trait(code_root, options, config, device, trait):
         elif action == 'predict':
             print('[GRID] PRSformer: reuse completed model; regenerate evaluation without training', flush=True)
             subprocess.run([*entry, '--prsformer-mode', 'predict'], check=True, env=env)
-            subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
+            if stage != 'model':
+                subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
         else:
             print('[GRID] PRSformer: ' + ('resume last saved epoch' if action == 'resume' else 'start new training'), flush=True)
             resume = ['--prsformer-arg', '--resume'] if action == 'resume' else []
             subprocess.run([*entry, '--prsformer-mode', 'train', *resume], check=True, env=env)
-            subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)
+            if stage != 'model':
+                subprocess.run([*entry, '--prsformer-mode', 'report', '--prsformer-replace', 'TRUE'], check=True, env=env)

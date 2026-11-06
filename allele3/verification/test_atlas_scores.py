@@ -168,6 +168,35 @@ class AtlasScoresTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "index uses 0-based"):
             self.run_atlas()
 
+    def test_official_vcf_preset_snv_tables_support_tbi_and_csi(self):
+        for csi in (False, True):
+            with self.subTest(csi=csi):
+                self.write_atlas([
+                    ("chr1", 10, "A", "C", "-0.125", "0"),
+                    ("chr1", 10, "A", "G", "0", "1.2"),
+                    ("chr1", 10, "A", "T", "0.6", "20"),
+                    ("chr1", 11, "C", "A", "0.1", "2"),
+                ], header="#CHROM\tPOS\tREF\tALT\traw_score\tPHRED\n")
+                Path(str(self.data) + ".tbi").unlink()
+                pysam.tabix_index(str(self.data), preset="vcf", force=True, csi=csi)
+                result = self.run_atlas()
+                self.assertEqual(result["status"], "complete")
+                self.assertEqual(result["resources"][0]["index_check"]["preset"], "vcf_snv")
+                self.assertEqual(result["query_audits"]["avi"]["returned_rows"], 3)
+                self.assertEqual(self.variant("C")["avi_raw"], "-0.125")
+                self.write_targets([("s2", "1", 11, "C", "A", "GRCh38")])
+                adjacent = self.run_atlas()
+                self.assertEqual(adjacent["query_audits"]["avi"]["returned_rows"], 1)
+                self.assertEqual(self.variant("A")["avi_raw"], "0.1")
+                self.write_targets([("s1", "1", 10, "A", "C", "GRCh38")])
+
+    def test_vcf_preset_rejects_incompatible_metric_column_layout(self):
+        pysam.tabix_index(str(self.data), preset="vcf", force=True)
+        spec = atlas.load_resources(self.args())[0]
+        spec["column_names"] = ["CHROM", "POS", "ALT", "REF", "raw_score", "PHRED"]
+        with self.assertRaisesRegex(ValueError, "VCF-preset SNV index requires"):
+            atlas.index_metadata(str(self.data) + ".tbi", spec)
+
     def test_zero_based_header_rejected_even_if_index_is_one_based(self):
         self.write_atlas([("1", 10, "A", "C", "1", "2")], header="##coordinate_system=0-based\n")
         with self.assertRaisesRegex(ValueError, "header declares zero-based"):

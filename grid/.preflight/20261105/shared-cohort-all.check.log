@@ -1,0 +1,10 @@
+COHORT: reading phenotype /work/sph-huangj/phe/ukb/Rdata/all.rds
+[GRID data] Reading selected columns with R: all.rds
+COHORT: reading ancestry /work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+SPLIT: stratified by ancestry and T2DM; individual random split. Supply --split-group-file for related-family separation.
+LABEL height: train=291,728, validation=97,286, test=97,254
+LABEL ldl: train=244,769, validation=81,720, test=81,590
+LABEL t2dm: train=292,622, validation=97,539, test=97,552
+PREPARE: 487,713 individuals x 158,604 candidate SNPs; ALT dosage, missing=-1, float16
+DISK: upper bound 288.66 GiB for two genotype layouts plus reserve; train-only MAF>=0.01, call rate>=0.98
+CHECK OK: cohort, labels, splits and variant metadata checked. Genotype content QC occurs during prepare.

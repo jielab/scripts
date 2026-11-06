@@ -2,7 +2,8 @@
 """Lightweight LE8 local/LSF scope planner: standard library only, no cohort reads.
 
 All fitting, native R preparation, dependency checks and aggregation are workers.
-One trait/layer is one job; its internal stages run sequentially in that allocation.
+GPU C1 runs use CPU preparation/models -> GPU abm_deep -> CPU evaluation jobs.
+Each allocation contains only stages with the same CPU/GPU requirements.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from workflow_jobs import Job, write_plan, run_plan
 DEFAULT = "c1_correlate,c2_cause,c3_coloc,c4_connect,c5_cellulation"
 MODULES = {"c1_correlate", "c1_reliability", "c2_cause", "c3_coloc", "c4_connect",
            "c5_cellulation", "pgs_focus", "final", "share", "shiny", "install"}
+LEGACY_MODULE_METHODS = {"c1_abm": ["abm_legacy", "molecular_deviation"], "c1_abm_GPU": ["abm_deep"]}
 
 
 def bool_word(value):
@@ -50,7 +52,7 @@ def parser():
     p.add_argument("--cores", type=int, default=int(os.getenv("N_CORES", "8")))
     p.add_argument("--memory-limit-gb", type=float, default=float(os.getenv("LE8_MEMORY_LIMIT_GB", "32")))
     p.add_argument("--queue", default=os.getenv("LE8_QUEUE", "33"))
-    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", os.getenv("HPC_GPU_QUEUE", "4a100-40")))
+    p.add_argument("--gpu-queue", default=os.getenv("LE8_GPU_QUEUE", os.getenv("HPC_GPU_QUEUE", "2v100-32-e5")))
     p.add_argument("--gpu-memory-limit-gb", type=float, default=float(os.getenv("HPC_GPU_MEMORY_GIB", "160")))
     p.add_argument("--gpu-cores", type=int, default=int(os.getenv("LE8_GPU_CORES", "20")))
     p.add_argument("--hours", type=float, default=float(os.getenv("LE8_HOURS", "72")))
@@ -102,21 +104,27 @@ def selected_methods(a):
     return methods
 
 
-def build_jobs(a, extra=()):
-    """Return Job records without importing scientific code or reading UKB data."""
+def selected_modules(a):
+    """Canonical requested modules, shared by execution and visible job names."""
     modules = list(dict.fromkeys(a.modules.split(",")))
-    old_aliases = {"c1_abm": ["abm_legacy", "molecular_deviation"], "c1_abm_GPU": ["abm_deep"]}
-    legacy = [m for m in modules if m in old_aliases]
-    inherited = [method for module in legacy for method in old_aliases[module]]
-    had_c1 = "c1_correlate" in modules
-    if legacy:
-        modules = [m for m in modules if m not in old_aliases]
+    if any(m in LEGACY_MODULE_METHODS for m in modules):
+        modules = [m for m in modules if m not in LEGACY_MODULE_METHODS]
         if "c1_correlate" not in modules:
             modules.insert(0, "c1_correlate")
     if a.run_abm and "c1_correlate" not in modules:
         modules.insert(0, "c1_correlate")
     if set(modules) - MODULES:
         raise ValueError("Unknown modules: " + ",".join(sorted(set(modules) - MODULES)))
+    return modules
+
+
+def build_jobs(a, extra=()):
+    """Return Job records without importing scientific code or reading UKB data."""
+    requested = list(dict.fromkeys(a.modules.split(",")))
+    legacy = [m for m in requested if m in LEGACY_MODULE_METHODS]
+    inherited = [method for module in legacy for method in LEGACY_MODULE_METHODS[module]]
+    had_c1 = "c1_correlate" in requested
+    modules = selected_modules(a)
     traits, layers = list(dict.fromkeys(a.Y.split(","))), list(dict.fromkeys(a.biom.split(",")))
     if not traits or any(not re.fullmatch(r"[A-Za-z0-9_]+", t) for t in traits):
         raise ValueError("Invalid trait list")
@@ -158,9 +166,10 @@ def build_jobs(a, extra=()):
         SCRIPT_LOG_DIR=str(a.analysis_root.resolve() / "logs/runs"),
         SCRIPT_FOREGROUND="1", SCRIPT_CONSOLE_ACTIVE="1")
 
-    def add(key, module, deps, trait=None, layer=None, tail=(), stage_env=None, gpu=False):
+    def add(key, module, deps, trait=None, layer=None, tail=(), stage_env=None, gpu=False,
+            stage_methods=None, device=None):
         env = dict(scientific_env, RUN_GPU_COLOC="FALSE", MRLINK2_EIGH_BACKEND="cpu")
-        allocated_cores = max(a.cores, a.gpu_cores) if gpu else a.cores
+        allocated_cores = a.gpu_cores if gpu else a.cores
         env["LE8_TOTAL_CORES"] = str(allocated_cores)
         if trait and layer:
             env["LE8_CACHE_ROOT"] = str(a.analysis_root.resolve() / "logs/cache" / f"{trait}.{layer}")
@@ -174,31 +183,45 @@ def build_jobs(a, extra=()):
         argv = ["bash", str(ROOT / "le8.sh"), module, *common,
                 "--Y", trait or a.Y, "--biom", layer or a.biom, "--cores", str(allocated_cores), "--memory-limit-gb", f"{memory:g}", *tail]
         if module == "c1_correlate":
-            argv += ["--methods", ",".join(methods)]
-            if gpu:
-                # An allocated deep-model GPU must be usable; a broken CUDA
-                # runtime must not silently turn the requested GPU fit into CPU.
-                argv += ["--device", "cuda"]
+            argv += ["--methods", ",".join(methods if stage_methods is None else stage_methods)]
+        if device is not None:
+            argv += ["--device", device]
         jobs.append(Job(key, argv, list(deps), dict(queue=a.gpu_queue if gpu else a.queue,
             cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
         return key
 
-    # Build the inspectable internal commands first, then bundle them by scope.
-    # They are subprocesses inside one allocation, never additional LSF jobs.
+    # Build inspectable commands, then partition allocations at resource changes.
     scopes = []
     batch_id = uuid.uuid4().hex
     scope_keys = [f"{trait}.{layer}" for trait in traits for layer in layers]
+    split_c1 = ("c1_correlate" in modules and "abm_deep" in methods and
+                (a.device == "cuda" or (a.device == "auto" and os.getenv("submit") == "hpc")))
+    cpu_methods = [m for m in methods if m != "abm_deep"]
     for trait in traits:
         for layer in layers:
             scope = f"{trait}.{layer}"
             start = len(jobs)
             deps = []
             if "c1_correlate" in modules:
-                for stage in ("prepare", "association", "models", "evaluation"):
-                    deps = [add(f"{scope}.c1.{stage}", "c1_correlate", deps, trait, layer,
+                handoff = (dict(LE8_C1_BATCH_DIR=str(a.analysis_root.resolve() / "logs/c1_stages" / batch_id / scope),
+                                LE8_C1_MODEL_PARTS="cpu,gpu" if cpu_methods else "gpu") if split_c1 else {})
+                stages = [("prepare", "prepare", methods, False),
+                          ("association", "association", methods, False)]
+                if split_c1:
+                    if cpu_methods:
+                        stages.append(("models_cpu", "models", cpu_methods, False))
+                    stages.append(("models_gpu", "models", ["abm_deep"], True))
+                else:
+                    stages.append(("models", "models", methods, False))
+                stages.append(("evaluation", "evaluation", methods, False))
+                for label, stage, stage_methods, gpu in stages:
+                    stage_env = dict(handoff)
+                    if split_c1 and stage == "models":
+                        stage_env["LE8_C1_MODEL_PART"] = "gpu" if gpu else "cpu"
+                    deps = [add(f"{scope}.c1.{label}", "c1_correlate", deps, trait, layer,
                         ["--c1-stage", stage, *(["--replace-models", "FALSE"] if stage == "evaluation" else [])],
-                        gpu=stage == "models" and "abm_deep" in methods and
-                            (a.device == "cuda" or (a.device == "auto" and os.getenv("submit") == "hpc")))]
+                        stage_env=stage_env, stage_methods=stage_methods, gpu=gpu,
+                        device="cuda" if gpu else "cpu")]
             if "c1_reliability" in modules or ("c1_correlate" in modules and "glmnet" in methods):
                 deps = [add(f"{scope}.c1.reliability", "c1_reliability", deps, trait, layer)]
             for module in ("c2_cause", "c3_coloc", "c4_connect", "c5_cellulation", "pgs_focus"):
@@ -234,23 +257,47 @@ def build_jobs(a, extra=()):
                     # request, including optional joint-layer fits, in its job.
                     add(f"{scope}.{module}", module, [], tail=tail)
             stages = jobs[start:]
-            gpu = any(j.resources["gpus"] for j in stages)
-            allocated_cores = max(j.resources["cores"] for j in stages)
-            memory = max(j.resources["memory_gib"] for j in stages)
-            if gpu and memory > a.gpu_memory_limit_gb:
-                raise ValueError("The single scope job needs more host RAM than --gpu-memory-limit-gb; "
-                                 "increase that cap or select CPU backends")
-            env = dict(scientific_env, LE8_TOTAL_CORES=str(allocated_cores),
-                       LE8_RESOURCE_MEMORY_GIB=f"{memory:g}", LE8_MEMORY_LIMIT_GB=f"{memory:g}",
-                       RUN_GPU_COLOC="TRUE" if any(j.env.get("RUN_GPU_COLOC") == "TRUE" for j in stages) else "FALSE",
-                       MRLINK2_EIGH_BACKEND="cuda" if any(j.env.get("MRLINK2_EIGH_BACKEND") == "cuda" for j in stages) else "cpu")
-            steps = [dict(key=j.key, argv=j.argv, env={k:v for k,v in j.env.items() if env.get(k) != v},
-                          aggregate=j.key.endswith((".c1.summary", ".final", ".share", ".shiny"))) for j in stages]
-            argv = [a.python, str(ROOT / "f/scope_workflow.py"), "--analysis-root", root,
-                    "--scope", scope, "--batch-id", batch_id, "--scopes", ",".join(scope_keys),
-                    "--steps-json", json.dumps(steps, separators=(",", ":"))]
-            scopes.append(Job(scope, argv, [], dict(queue=a.gpu_queue if gpu else a.queue,
-                cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
+            groups = []
+            for job in stages:
+                gpu = bool(job.resources["gpus"])
+                # Keep C1's final evaluation separate from later module jobs.
+                if split_c1 and ".c1." in job.key and not job.key.endswith(".c1.summary"):
+                    phase = ("gpu_abm_deep" if gpu else "cpu_evaluation" if
+                             job.key.endswith((".evaluation", ".reliability")) else "cpu_prepare_models")
+                else:
+                    phase = "gpu" if gpu else "cpu"
+                aggregate = job.key.endswith((".c1.summary", ".final", ".share", ".shiny"))
+                if groups and not gpu and aggregate and not groups[-1][1][0].resources["gpus"]:
+                    groups[-1][1].append(job)
+                elif groups and groups[-1][0] == phase:
+                    groups[-1][1].append(job)
+                else:
+                    groups.append((phase, [job]))
+            previous = []
+            for index, (phase, group) in enumerate(groups):
+                gpu = bool(group[0].resources["gpus"])
+                if phase in {"cpu", "gpu"}:
+                    labels = list(dict.fromkeys(j.argv[2] if len(j.argv) > 2 and j.argv[0] == "bash"
+                                               else "summary" for j in group))
+                    phase += "_" + "_".join(labels)
+                # A single homogeneous scope keeps its historical command key.
+                key = scope if len(groups) == 1 else f"{scope}.{phase}"
+                allocated_cores = max(j.resources["cores"] for j in group)
+                memory = max(j.resources["memory_gib"] for j in group)
+                env = dict(scientific_env, LE8_TOTAL_CORES=str(allocated_cores),
+                           LE8_RESOURCE_MEMORY_GIB=f"{memory:g}", LE8_MEMORY_LIMIT_GB=f"{memory:g}",
+                           RUN_GPU_COLOC="TRUE" if any(j.env.get("RUN_GPU_COLOC") == "TRUE" for j in group) else "FALSE",
+                           MRLINK2_EIGH_BACKEND="cuda" if any(j.env.get("MRLINK2_EIGH_BACKEND") == "cuda" for j in group) else "cpu")
+                steps = [dict(key=j.key, argv=j.argv, env={k:v for k,v in j.env.items() if env.get(k) != v},
+                              aggregate=j.key.endswith((".c1.summary", ".final", ".share", ".shiny"))) for j in group]
+                argv = [a.python, str(ROOT / "f/scope_workflow.py"), "--analysis-root", root,
+                        "--scope", scope, "--batch-id", batch_id, "--scopes", ",".join(scope_keys),
+                        "--steps-json", json.dumps(steps, separators=(",", ":"))]
+                if len(groups) > 1:
+                    argv += ["--phase", phase, "--fail-fast"]
+                scopes.append(Job(key, argv, previous, dict(queue=a.gpu_queue if gpu else a.queue,
+                    cores=allocated_cores, memory_gib=memory, hours=a.hours, gpus=int(gpu)), env, str(ROOT)))
+                previous = [key]
     return scopes
 
 
@@ -269,7 +316,10 @@ def main(argv=None):
         path = a.resume_plan
     else:
         jobs = build_jobs(a, extra)
-        path = write_plan(jobs, a.plan_dir or a.analysis_root / "logs/workflows", mode=mode, name="le8")
+        # Keep stable trait/layer keys and .cmd filenames; the LSF name also
+        # identifies the requested modules, including single-module reruns.
+        name = "le8." + ".".join(selected_modules(a))
+        path = write_plan(jobs, a.plan_dir or a.analysis_root / "logs/workflows", mode=mode, name=name)
         # Keep the actual .cmd reviewable without expanding a huge quoted JSON
         # argument in its comment. Execution still uses the immutable plan.
         for job in jobs:

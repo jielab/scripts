@@ -15,6 +15,13 @@ matching the physical grid, and gc,recombination,mappability,snp_density.
 Missing rows/values remain missing; they are never silently replaced with zero.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 from analysis_integrity import transactional
 
 import argparse
@@ -523,8 +530,8 @@ def file_info(path):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ld-block-dir", default="/mnt/f/LD/block")
-    p.add_argument("--erv-joined", default="/mnt/f/annot/allele3/repeats/hg38/rmskJoinedCurrent.txt.gz")
+    p.add_argument("--ld-block-dir", default=configured_path('DIR_LD', 'block'))
+    p.add_argument("--erv-joined", default=configured_path('DIR_ANNOT', 'allele3/repeats/hg38/rmskJoinedCurrent.txt.gz'))
     p.add_argument("--out", required=True)
     p.add_argument("--build", choices=("37", "38"), default="38")
     p.add_argument("--annotation-build", choices=("37", "38"), default="38", help="Declared build of joined annotation; must match --build")

@@ -10,7 +10,7 @@
     "memory_scope": "host"
   },
   "gpu": {
-    "queue": "4a100-40",
+    "queue": "2v100-32-sc",
     "cores": 8,
     "memory_gib": 160,
     "hours": 120,
@@ -75,6 +75,11 @@
       "cores": 32,
       "memory_gib": 256,
       "gpus": 1
+    },
+    "countgeometry": {
+      "cores": 32,
+      "memory_gib": 256,
+      "gpus": 0
     }
   }
 }

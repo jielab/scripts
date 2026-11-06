@@ -1,6 +1,13 @@
 """Small, dependency-free utilities for the independent metag HPC workflow."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path, expand_path_roots
+
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 import fcntl
@@ -98,7 +105,7 @@ def software_sources(root):
 def read_config_file(path):
     path = Path(path)
     text = path.read_text(encoding="utf-8")
-    return yaml.safe_load(text) if path.suffix in (".yml", ".yaml") else json.loads(text)
+    return expand_path_roots(yaml.safe_load(text) if path.suffix in (".yml", ".yaml") else json.loads(text))
 
 
 def load_config(config_path=None, root_override=None):
@@ -127,17 +134,17 @@ def load_config(config_path=None, root_override=None):
         raise ValueError("Unsupported HPC configuration schema")
     if cfg.get("database_layout", "single") not in ("single", "partitioned"):
         raise ValueError("database_layout must be single or partitioned")
-    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", "/work/sph-huangj/data"))
+    root_value = root_override or str(cfg["root"]).replace("{dir_data}", os.environ.get("DIR_DATA", configured_path('DIR_BIG')))
     root = Path(root_value).expanduser().absolute()
     cfg["root"] = str(root)
     for key in PATH_KEYS:
-        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", str(Path(os.environ.get("DIR_DAT", "/work/sph-huangj")) / "analysis"))
+        scratch = os.environ.get("SCRATCH_ANALYSIS_ROOT", str(Path(os.environ.get("DIR_DAT", configured_path('DIR_WORK'))) / "analysis"))
         text = str(cfg[key]).replace("{scratch_analysis}", scratch).replace("{scratch_root}", str(Path(scratch).parent))
         for token, variable, fallback in (
             ("{metag_reference_raw}", "METAG_REFERENCE_RAW", str(root / "annot/metag/raw")),
             ("{metag_reads_raw}", "METAG_READS_RAW", str(root / "metag/raw")),
-            ("{metag_state}", "METAG_STATE_ROOT", str(root / "analysis/metag_parallel") if root_override else str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "metag")),
-            ("{metag_tools}", "METAG_TOOLS_DIR", str(root / "tools/metag_parallel") if root_override else str(Path(os.environ.get("DIR_SOFTWARE", "/work/sph-huangj/software")) / "metag_parallel")),
+            ("{metag_state}", "METAG_STATE_ROOT", str(root / "analysis/metag_parallel") if root_override else str(Path(os.environ.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT'))) / "metag")),
+            ("{metag_tools}", "METAG_TOOLS_DIR", str(root / "tools/metag_parallel") if root_override else str(Path(os.environ.get("DIR_SOFTWARE", configured_path('DIR_SOFTWARE'))) / "metag_parallel")),
         ):
             text = text.replace(token, os.environ.get(variable, fallback) if not root_override else fallback)
         value = Path(text).expanduser()
@@ -258,6 +265,9 @@ def code_identity():
     if bundled.is_file():
         paths.append(bundled)
     files = {str(p.relative_to(CODE_ROOT)): sha256(p) for p in paths}
+    # Resource policy affects new command allocations and comparison receipts.
+    # Bind it to the same source identity as the metag planner itself.
+    files["../0f/qiming_resources.py"] = sha256(Path(__file__).resolve().parents[2] / "0f" / "qiming_resources.py")
     return fingerprint(files)
 
 

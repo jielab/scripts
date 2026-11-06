@@ -26,9 +26,10 @@ export LE8_MEMORY_LIMIT_GB=${LE8_MEMORY_LIMIT_GB:-$MEMORY_DEFAULT_GIB}
 # C3 already has an explicit CUDA implementation. On HPC, auto scheduling
 # requests a GPU before execution; local remains CPU unless explicitly enabled.
 if [[ $submit == hpc ]]; then
-    # Public V100 queue verified with queueinfo on 2026-11-05. Explicit caller
+    # Public 32-GB V100 queue checked with queueinfo/bqueues on 2026-11-06.
+    # This is a site default, not a promise of immediate availability. Caller
     # environment and --gpu-queue still win over this LE8-specific site default.
-    if [[ -z ${le8_gpu_queue_override:-} ]]; then export LE8_GPU_QUEUE=2v100-32-sc; fi
+    if [[ -z ${le8_gpu_queue_override:-} ]]; then export LE8_GPU_QUEUE=2v100-32-e5; fi
     export RUN_GPU_COLOC=${RUN_GPU_COLOC:-TRUE}
 else
     export RUN_GPU_COLOC=${RUN_GPU_COLOC:-FALSE}

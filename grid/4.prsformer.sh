@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 # PRSformer + PRSformer2 exploratory.
 #
 # This is deliberately separate from grid.sh:
@@ -16,32 +30,70 @@ cat <<'HELP'
               Does NOT train PRSformer.
   prsformer   Run/resume PRSformer (independent traits).
   prsformer2  Run/resume PRSformer2 exploratory with separate calibration.
-  all         prepare -> independent prsformer and prsformer2 jobs.
+  all         One job per trait: prepare -> prsformer -> prsformer2.
 
-Default module: all (prepare, then independent method/trait jobs).
+Default module: all (three trait jobs; each runs both methods sequentially).
 Scheduler: --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
-Resources: --hpc-config FILE --queue NAME --gpu-queue NAME --job-memory-gb N
+Resources: --hpc-config FILE --queue NAME --gpu-queue NAME
+           --job-cores N --job-memory-gb N --job-hours N
 
 Examples:
-    source /work/sph-huangj/scripts/0f/0os.sh
+  # QiMing: PCA from 1.pca.sh must be complete. CSx (2.csx.sh) and Disco
+  # (3.disco.sh) do not need to finish: this workflow uses raw genotypes and
+  # phenotypes, and creates/reuses the shared cohort cache itself.
+  cd /work/sph-huangj/scripts/grid
+  queueinfo
+  bash 4.prsformer.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+    --config config/abm.qiming-v100.json \
+    --queue v3-6t --gpu-queue 8v100-32-sc --gpu-count 1 \
+    --device cuda --threads 2 --traits height,ldl,t2dm --wait FALSE
+  # Three GPU jobs: height.all, ldl.all, t2dm.all. Each reserves the maximum
+  # CPU/RAM required by preparation and either training method:
+  #   -q 8v100-32-sc -n 32 -W 120:00 -M 256GB
+  #   -R "span[hosts=1] rusage[mem=256GB/host]"
+  #   -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"
+  # 2026-11-06: 8v100-32-sc is Open (V100 32-GiB GPUs, 384-GiB host RAM),
+  # while 4a100-40 is Closed. All 16 V100s were allocated at this check;
+  # Open permits submission but does not promise an immediate start.
+  # Recheck queueinfo; queues reserved for other groups are not alternatives.
+  # The V100 config changes PRSformer2 AMP from BF16 to FP16; V100 cannot
+  # run BF16. PRSformer already uses FP16. The installed CUDA 12.6/NATTEN
+  # stack passed the official-model forward/backward check on this queue.
+  # Shared preparation uses a blocking lock; completed common inputs are reused.
+  # 120 hours covers the entire trait job; --job-hours overrides it.
+  # Add --plan-only to preview without submitting or preparing inputs.
+  # The entry calls bsub once per trait; do not add an outer bsub.
+  # The separate prsformer/prsformer2 modules may still run independently;
+  # either alone uses the GPU profile's 8 cores / 160 GiB after inputs exist.
+  # --queue selects CPU-only modules; --gpu-queue selects these GPU bundles.
+
+  # Other module options:
   ./4.prsformer.sh --traits height,ldl,t2dm
   ./4.prsformer.sh prepare --traits height,ldl,t2dm
   ./4.prsformer.sh prsformer --traits height,ldl,t2dm --device cuda
   ./4.prsformer.sh prsformer2 --traits height,ldl,t2dm --device cuda
   ./4.prsformer.sh all --traits height,ldl,t2dm --device cuda
 
-Training runtime: GPU batch 16, gradient accumulation 4 (64 subjects/update),
-2 loader workers and 2 CPU threads. Existing runs resume from their last saved
-epoch, retaining the optimizer and 30-epoch learning-rate schedule.
-Override runtime with PRSFORMER_BATCH_SIZE, PRSFORMER_ACCUMULATION_STEPS,
-PRSFORMER_WORKERS and --threads; resume requires the same effective batch.
-30 epochs is a maximum; validation early stopping remains enabled (patience 3).
+PRSformer runtime: GPU batch 16, accumulation 4 (64 subjects/update),
+2 loader workers; the HPC example explicitly selects 2 CPU threads.
+Existing runs resume from their last saved epoch, retaining the optimizer
+and 30-epoch learning-rate schedule. Override PRSformer runtime with
+PRSFORMER_BATCH_SIZE, PRSFORMER_ACCUMULATION_STEPS, PRSFORMER_WORKERS and
+--threads; resume requires the same effective batch. Validation early
+stopping remains enabled (patience 3; 30 epochs maximum).
+PRSformer2 settings come from the config's "prsformer" section. The V100
+profile uses FP16, batch 1, accumulation 64, and retains its existing
+learning rate, seed, 30-epoch maximum and early-stopping patience 5.
 
 Default permanent inputs (outside the analysis output directory):
-  READ genotypes: ${DIR_GEN}/ukb/37/hap
+  READ genotypes: ${DIR_GEN}/ukb/37/typ (hap fallback if typ chr1 is absent;
+                  override with GRID_TARGET_DIR)
+  READ phenotypes: ${DIR_UKB}/Rdata/all.rds
+  READ PCA: ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+  READ family relationships: ${DIR_GEN}/ukb/37/typ/ukb_rel.dat
   READ ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
   READ SNP reference: ${DIR_LD}/csx/snpinfo_mult_1kg_hm3
-  READ upstream software: /mnt/d/software/PRSformer (PRSFORMER_UPSTREAM_DIR override)
+  READ upstream software: ${DIR_SOFTWARE}/PRSformer (PRSFORMER_UPSTREAM_DIR override)
   There is currently NO separate permanent F-drive model/genotype-cache output.
   Prepared data, checkpoints and models remain under --analysis-root.
   KEEP_GENOTYPES retains them there; it does not copy them to F:.
@@ -52,6 +104,14 @@ Scientific boundary:
   It may consume the shared preparation files retained by "prepare".
   An active local/kinship/ACTIVE.json applies the verified family grouping
   and excludes development relatives without copying the genotype matrix.
+HPC allocations:
+  All model invocations first verify/restore shared inputs on a CPU allocation.
+  GPU workers only train/resume and predict; CPU workers verify and publish outputs.
+  Names include trait, method and cpu_prepare/gpu_train_predict/cpu_report.
+  CPU: --queue --job-cores --job-memory-gb --job-hours
+  GPU: --gpu-queue --gpu-cores --gpu-memory-gb --gpu-hours --gpu-threads
+  CPU resource overrides never enlarge GPU requests. Failed upstream stages block
+  their dependants. Reports use the exact recorded model and frozen predictions.
 HELP
 }
 
@@ -64,7 +124,7 @@ source "$ROOT/f/workflow_entry.sh"
 grid_workflow_entry prsformer "$@"
 set -- "${GRID_ENTRY_ARGS[@]}"
 export SCRIPT_FOREGROUND=1
-export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-/mnt/d/analysis/grid}/logs}
+export SCRIPT_LOG_DIR=${SCRIPT_LOG_DIR:-${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}/logs}
 source "$ROOT/../0f/console.sh"
 
 runtime=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -92,7 +152,14 @@ args=("$@")
 
 case "$module" in
   prepare)
-    exec "$PYTHON_PATH" "$ROOT/f/shared_cohort.py" prepare "${args[@]}"
+    "$PYTHON_PATH" "$ROOT/f/shared_cohort.py" prepare "${args[@]}"
+    # A preview/check must never start the scientific suite (which includes previews).
+    for arg in "${args[@]}"; do
+      case "$arg" in --dry-run|--dry-run=*|--check|-h|--help) exit 0 ;; esac
+    done
+    # Run scientific checks on the CPU allocation before GPU model workers.
+    export GRID_CACHE_ROOT="${GRID_ANALYSIS_ROOT:-${GRID_OUTPUT_ROOT}}/cache"
+    exec "$PYTHON_PATH" -c 'from automatic_check import ensure_self_check; ensure_self_check()'
     ;;
   prsformer)
     exec "$PYTHON_PATH" "$ROOT/f/prsformer_dispatch.py" prsformer "${args[@]}"

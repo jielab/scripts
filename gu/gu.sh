@@ -1,9 +1,32 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU IBDmix resource flags: --GPU FALSE --submit hpc --queue 33 --slots 40 --memory-cap 160G
+# For 64 GiB on queue 33, use --slots 20; --run-cmd FALSE writes the plan.
+# New CPU jobs auto-round slots. GPU IBDmix retains its separate GPU request.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPYCACHEPREFIX=/tmp/gu-python-cache
-export TMPDIR=${TMPDIR:-/tmp} TMP=${TMPDIR:-/tmp} TEMP=${TMPDIR:-/tmp}
+export PYTHONPYCACHEPREFIX=${DIR_RUNTIME_TMP}/gu-python-cache
+export TMPDIR=${TMPDIR:-$DIR_RUNTIME_TMP} TMP=${TMPDIR:-$DIR_RUNTIME_TMP} TEMP=${TMPDIR:-$DIR_RUNTIME_TMP}
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$ROOT/f/scratch.sh"
 F=$ROOT/f
@@ -11,6 +34,7 @@ SHINY=$ROOT/f/shiny
 GU_ORIGINAL_ARGS=("$@")
 # shellcheck source=f/0.common.sh
 source "$F/0.common.sh"
+# Load f/runtime.env here so submission and help work without a manual source.
 gu_load_config
 # HPC scheduling lives in the main entry point; workers enter the original
 # scientific driver only after LSF has allocated a compute node.
@@ -81,7 +105,7 @@ gu_run_ukb_preparation() (
 	work=$(realpath -m -- "$1") || return $?
 	shift
 	case "$1" in stage-qc | prepare-archaic) wait_mode=--shared ;; esac
-	stderr_file=$(mktemp "${TMPDIR:-/tmp}/gu-ukb-prepare.XXXXXX") || return $?
+	stderr_file=$(mktemp "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-ukb-prepare.XXXXXX") || return $?
 	trap 'rm -f -- "$stderr_file"' EXIT
 	while true; do
 		# Run directly to keep periodic file-read PROGRESS reports off the console.
@@ -205,7 +229,8 @@ gu_ukb_prepared_context() {
 # if gu.sh is updated in place while an analysis is still running.
 gu_main() {
 	usage() {
-		cat <<'HELP'
+		# Resolve example paths here; the caller's shell may not have GU_* exports.
+		cat <<HELP
 GU — whole-genome archaic matching and locus phylogeny
 
 Modules:
@@ -241,11 +266,20 @@ Main options:
     --auto-final TRUE|FALSE   Default FALSE; aggregate after all workers finish
     -h, --help                Show help
 
+Environment:
+    Project settings load automatically from f/runtime.env.
+    LSF workers activate the configured GU Conda environment automatically.
+    WORKFLOW_BSUB_TIMEOUT_SECONDS sets the submission acknowledgement wait [300].
+    Pending-job limits are reported while the same bsub waits for capacity.
+
 Examples:
-    cd /work/sph-huangj/scripts/gu
-    source ./f/runtime.env
-    ./gu.sh ibdmix --chr 22 --grch 37 --target 1kg --dir-target "$GU_REF_ROOT/1kg/37/pfile/chr"
-    ./gu.sh ibdmix --GPU FALSE --grch 37 --target ukb --chr 1-22,X --dir-target "$GU_REF_ROOT/ukb/37/imp/chr" --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix '[013-049]' --keep-psam "$GU_REF_ROOT/ukb/37/imp/chr1.psam,10000,[013-049]" --keep-males
+    cd "$ROOT"
+    # HPC CPU queue 33: cohort 013 is already running; remaining cohorts are 014-049.
+    # 160 GiB exceeds 75% of a 192-GiB node, so reserve all 40 cores on one node.
+    # Check bjobs and the submission journal before submitting this range again.
+    ./gu.sh ibdmix --GPU FALSE --submit hpc --grch 37 --target ukb --chr 1-22,X --dir-target /work/sph-huangj/data/gen/ukb/37/imp/chr --dir-out /work/sph-huangj/data/gen/ukb/37/cohort --postfix '[014-049]' --keep-psam '/work/sph-huangj/data/gen/ukb/37/imp/chr1.psam,10000,[014-049]' --keep-males --queue 33 --slots 40 --memory-cap 160G --jobs 1 --jobs-N 8 --run-cmd TRUE
+    # HPC: all 1KG chromosomes; only the two 2013 references for this command.
+    ./gu.sh ibdmix --GPU FALSE --submit hpc --grch 37 --target 1kg --dir-target /work/sph-huangj/data/gen/1kg/37/pfile/chr --dir-out /work/sph-huangj/analysis/gu/1kg/37/archaic2013 --archaic-path /work/sph-huangj/data/gen/archaic/37/vcf --archaic-gen Altai.2013,Denisova.2013 --queue 33 --slots 20 --memory-cap 64G --run-cmd TRUE
     ./gu.sh final --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix 013
     ./gu.sh shiny --dir-out "$GU_REF_ROOT/ukb/37/cohort" --postfix 013
     ./gu.sh hpc plan trace --env-file ./f/hpc.runtime.env --chr 1,2,22 --dir-arg "$GU_REF_ROOT/1kg/37/arg.tsinfer" --target 1kg --dir-target "$GU_REF_ROOT/1kg/37/pfile/chr" --run-dir "$GU_ANALYSIS_BASE/trace1kg"
@@ -396,6 +430,8 @@ HELP
 	EXTRA=()
 	while (($#)); do
 		case "$1" in
+			-h | --help)
+				usage; exit 0 ;;
 			--GPU)
 				[[ $# -ge 2 ]] || { echo "ERROR: --GPU requires TRUE or FALSE" >&2; exit 2; }
 				GPU_INPUT=$(gu_bool "$2") || { echo "ERROR: --GPU requires TRUE or FALSE" >&2; exit 2; }
@@ -1141,7 +1177,7 @@ PYROOT
 	GU_FINAL_DIR=$GU_ANALYSIS_ROOT/final
 	if [[ -n $GPU_METHOD && $GPU_METHOD != ibdmix ]]; then GU_FINAL_DIR=$GU_FINAL_DIR/$GPU_METHOD-GPU; fi
 	export GU_ANALYSIS_ROOT GU_FINAL_DIR GU_PUBLISHED_ROOT
-	GU_RUN_TMP_ROOT=${GU_RUN_TMP_ROOT:-${TMPDIR:-/tmp}/gu-runs}
+	GU_RUN_TMP_ROOT=${GU_RUN_TMP_ROOT:-${TMPDIR:-$DIR_RUNTIME_TMP}/gu-runs}
 	# Explicit overrides must not silently send primary outputs back to /tmp.
 	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
 		if [[ -n ${!result_var:-} ]]; then
@@ -1241,7 +1277,7 @@ PYKEY
 	gu_cleanup_region_tmp() {
 		[[ -n ${GU_REGION_TMP_ROOT:-} && -d $GU_REGION_TMP_ROOT ]] || return 0
 		case "$GU_REGION_TMP_ROOT" in
-			"${TMPDIR:-/tmp}"/gu-regions.*) rm -rf -- "$GU_REGION_TMP_ROOT" ;;
+			"${TMPDIR:-$DIR_RUNTIME_TMP}"/gu-regions.*) rm -rf -- "$GU_REGION_TMP_ROOT" ;;
 			*) echo "WARNING: refusing to remove unexpected GU region temp path: $GU_REGION_TMP_ROOT" >&2 ;;
 		esac
 	}
@@ -1282,7 +1318,7 @@ PYKEY
 	trap 'gu_cleanup_on_signal INT' INT
 	trap 'gu_cleanup_on_signal TERM' TERM
 	if [[ -n $LOCI_INPUT ]]; then
-		GU_REGION_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gu-regions.XXXXXX")
+		GU_REGION_TMP_ROOT=$(mktemp -d "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-regions.XXXXXX")
 		tmp_core="$GU_REGION_TMP_ROOT/.core.bed"
 		tmp_loci="$GU_REGION_TMP_ROOT/.analysis.bed"
 		tmp_map="$GU_REGION_TMP_ROOT/.map.tsv"
@@ -2259,7 +2295,7 @@ PYCONTRACT
 		command -v bcftools >/dev/null 2>&1 || gu_check_fail "bcftools is required"
 		if [[ ${GU_UKB_DIRECT:-0} == 1 ]]; then
 			export GU_BUILD_CHECK_INPUT=${GU_BUILD_CHECK_INPUT:-$GU_TARGET_BUILD_SOURCE}
-			local ukb_work=/tmp/gu-ukb-prepared/$GU_TARGET/$GU_UKB_SOURCE/$METHOD/$GU_SCOPE_KEY
+			local ukb_work=${DIR_RUNTIME_TMP}/gu-ukb-prepared/$GU_TARGET/$GU_UKB_SOURCE/$METHOD/$GU_SCOPE_KEY
 			mkdir -p "$ukb_work"
 			local -a ukb_args=(pgen-vcf --existing-pgen --ukb-pgen-root "$(dirname -- "$GU_UKB_PGEN_PREFIX")" --ukb-source "$GU_UKB_SOURCE"
 				--chr "$GU_CHRS" --grch "$GU_BUILD" --keep "$GU_KEEP" --sample-panel "$GU_SAMPLE_PANEL" --dataset "$GU_TARGET"
@@ -2376,7 +2412,7 @@ PYCONTRACT
 		GU_BUILD_CHECK_INPUT=${GU_BUILD_CHECK_INPUT:-$GU_TARGET_BUILD_SOURCE}
 		gu_check_log "verify modern genome build from $GU_BUILD_CHECK_INPUT"
 		build_check_ok=0
-		build_check_detail=$(mktemp "${TMPDIR:-/tmp}/gu-build-check.XXXXXX")
+		build_check_detail=$(mktemp "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-build-check.XXXXXX")
 		if gu_check_build_cached "$GU_BUILD_CHECK_INPUT" "$GU_BUILD" "$GU_TARGET_BUILD_FORMAT" >"$build_check_detail" 2>&1; then
 			cat "$build_check_detail" | tee -a "$GU_CHECK_LOG"
 			build_check_ok=1

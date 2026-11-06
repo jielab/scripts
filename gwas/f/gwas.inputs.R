@@ -39,6 +39,7 @@ for(v in c(trait, if(type == 't2e') event, setdiff(covs, cats))) {
 }
 d <- d[complete.cases(d)]
 for(v in c(trait, if(type == 't2e') event, setdiff(covs, cats))) d <- d[is.finite(get(v))]
+if(type == 'ordinal' && any(d[[trait]] != floor(d[[trait]]))) stop('Ordinal phenotype must contain integer ordered scores')
 if(type == 'bt' && !all(d[[trait]] %in% 0:1)) stop('Binary phenotype must use 0/1/NA')
 if(type == 't2e' && (!all(d[[event]] %in% 0:1) || any(d[[trait]] <= 0))) stop('T2E requires positive duration and 0/1 event')
 if(nrow(d) < 10 || uniqueN(d[[trait]]) < 2) stop('Insufficient phenotype variation/sample size')

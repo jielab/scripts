@@ -1,0 +1,48 @@
+r13n47
+1.pca.sh	0
+2.csx.sh	2
+3.disco.sh	0
+shared-cohort	1
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@r13n47>
+Subject: Job 4386623: <grid-preflight-inputs> in cluster <qmhpc> Done
+
+Job <grid-preflight-inputs> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:20:11 2026
+Job was executed on host(s) <2*r13n47>, in queue <33>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:20:12 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj/scripts/grid> was used as the working directory.
+Started at Thu Nov  5 09:20:12 2026
+Terminated at Thu Nov  5 09:21:47 2026
+Results reported at Thu Nov  5 09:21:47 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+bash /work/sph-huangj/scripts/grid/.preflight/20261105/native-checks.cmd
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   34.33 sec.
+    Max Memory :                                 408 MB
+    Average Memory :                             146.19 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               15976.00 MB
+    Max Swap :                                   -
+    Max Processes :                              9
+    Max Threads :                                11
+    Run time :                                   93 sec.
+    Turnaround time :                            96 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/grid/.preflight/20261105/native-checks.4386623.err> for stderr output of this job.
+

@@ -40,11 +40,11 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 PYTHON=${GRID_PRSFORMER_PYTHON:-${GRID_PYTHON:-python3}}
 PYTHON_EXPLICIT=FALSE
 [[ -z ${GRID_PRSFORMER_PYTHON:-${GRID_PYTHON:-}} ]] || PYTHON_EXPLICIT=TRUE
-UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-${DIR_SOFTWARE:-/mnt/d/software}/PRSformer}
+UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-${DIR_SOFTWARE:-${DIR_SOFTWARE}}/PRSformer}
 MODE=all
 TRAITS=height,ldl,t2dm
-DIR_GEN=${GRID_TARGET_DIR:-${DIR_GEN}/ukb/37/hap}
-PHENO_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/phe.rds}
+GENOTYPE_DIR=${GRID_TARGET_DIR:-${DIR_GEN}/ukb/37/hap}
+PHENO_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/all.rds}
 ANCESTRY_FILE=${GRID_ANCESTRY_FILE:-${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz}
 GROUP_COL=genetic_ancestry
 COVARIATES=age,sex,PC1,PC2
@@ -54,7 +54,7 @@ T2DM_COL=auto
 SNP_LIST=${GRID_CSX_SNPINFO:-${GRID_CSX_REF_DIR:-${DIR_LD}/csx}/snpinfo_mult_1kg_hm3}
 CHRS=1-22
 KEEP=none
-REMOVE=${GRID_REMOVE:-${DIR_FILES}/ukb.exclude.id}
+REMOVE=${GRID_REMOVE:-none}
 SPLIT_FILE=none
 SPLIT_GROUP_FILE=none
 REQUIRE_SHARED_COHORT=FALSE
@@ -127,7 +127,7 @@ while (($#)); do
 				--trait | --traits) TRAITS=$2 ;;
 				--python) PYTHON=$2; PYTHON_EXPLICIT=TRUE ;;
 				--upstream-dir) UPSTREAM_DIR=$2 ;;
-				--dir-gen) DIR_GEN=$2 ;;
+				--dir-gen) GENOTYPE_DIR=$2 ;;
 				--pheno-file | --phe-file) PHENO_FILE=$2 ;;
 				--ancestry-file) ANCESTRY_FILE=$2 ;;
 				--group-col) GROUP_COL=$2 ;;
@@ -198,7 +198,7 @@ PREPARE_TRAITS=$TRAITS
 
 # 🚩 The helper interface is shared by standalone and combined modes
 PREPARE=("$PYTHON" "$ROOT/f/prsformer.py" prepare
-	--dir-gen "$DIR_GEN" --pheno-file "$PHENO_FILE" --ancestry-file "$ANCESTRY_FILE"
+	--dir-gen "$GENOTYPE_DIR" --pheno-file "$PHENO_FILE" --ancestry-file "$ANCESTRY_FILE"
 	--group-col "$GROUP_COL" --traits "$PREPARE_TRAITS" --covariates "$COVARIATES"
 	--height-col "$HEIGHT_COL" --ldl-col "$LDL_COL" --t2dm-col "$T2DM_COL"
 	--snp-list "$SNP_LIST" --chrs "$CHRS" --keep "$KEEP" --remove "$REMOVE"

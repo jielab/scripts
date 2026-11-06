@@ -8,6 +8,7 @@ if (!nzchar(script_dir)) {
 }
 source(file.path(script_dir, "f", "runtime.R"))
 ems120_paths <- ems120_init_paths(file.path(script_dir, "f", "ems120.R"))
+ems120_require_packages(c("readxl", "writexl", "data.table", "tidyverse", "scales", "RColorBrewer", "reticulate", "lubridate", "patchwork", "zoo", "broom", "forcats", "circlize", "jpeg", "png", "grid", "lattice", "cowplot", "jsonlite", "base64enc"))
 ems120_configure_python()
 
 reticulate::py_run_string(paste(c(

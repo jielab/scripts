@@ -2,6 +2,13 @@
 """Modern scanning, annotations, population analysis and summaries."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # The shared utility filename is sorted first; use a stable import name in Python.
 import importlib.util as _common_import
 import sys as _common_sys
@@ -1352,9 +1359,9 @@ from allele_common import VERSION, code_hash, dump_json, fingerprint, stable_has
 from allele_common import FastaContext, _backend, _chromosomes, _file_chrom, discover_inputs, read_header, validate_count_header, parse_region
 from allele_common import make_callable
 
-DEFAULT_VCF = "/mnt/f/annot/gnomad/sites"
-DEFAULT_FASTA = "/mnt/f/gen/1hgp/38/GRCH38.fasta.gz"
-DEFAULT_OUT = "/mnt/d/analysis/allele3/gnomad_local"
+DEFAULT_VCF = configured_path('DIR_ANNOT', 'allele3/gnomad/sites')
+DEFAULT_FASTA = configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz')
+DEFAULT_OUT = configured_path('ANALYSIS_ROOT', 'allele3/gnomad_local')
 
 
 def parser():
@@ -1409,7 +1416,7 @@ def parser():
     p.add_argument("--with-architecture", action="store_true")
     p.add_argument("--enrichment-track", action="append", default=[], help="NAME=BED4; uses the original scanner QC")
     p.add_argument("--enrichment-bootstrap", type=int, default=2000)
-    p.add_argument("--ld-block-dir", default="/mnt/f/LD/block")
+    p.add_argument("--ld-block-dir", default=configured_path('DIR_LD', 'block'))
     p.add_argument("--architecture-build", choices=["37", "38"], default="38")
     p.add_argument("--erv-joined", help="Joined all-repeat table; absent annotation is NA")
     p.add_argument("--architecture-prefix", default="architecture", help="Shard-local filename prefix")
@@ -2131,7 +2138,7 @@ def validate_existing_joined_cache(path, directory):
     from scan_store import verify_cached_fingerprint
     d = Path(directory)
     old = json.loads((d / 'manifest.json').read_text())
-    verify_cached_fingerprint(path, old['source'])
+    verify_cached_fingerprint(path, old['source'], context=d)
     if not old.get('files'):
         raise ValueError('Completed annotation cache has no recorded outputs')
     for name, fp in old['files'].items():
@@ -4792,8 +4799,8 @@ def main_enrichment(argv=None):
     p=argparse.ArgumentParser(description='Normalize annotation and run the original scanner with an enrichment sidecar')
     p.add_argument('--dir',required=True);p.add_argument('--type',choices=['herv','archaic','bed'],required=True)
     p.add_argument('--format',choices=['rmsk-joined','ibdmix','ibdmix-xlsx','bed'],required=True);p.add_argument('--out',required=True)
-    p.add_argument('--vcf-dir');p.add_argument('--vcf');p.add_argument('--region');p.add_argument('--fasta',default='/mnt/f/gen/1hgp/38/GRCH38.fasta.gz')
-    p.add_argument('--ld-block-dir',default='/mnt/f/LD/block');p.add_argument('--jobs',type=int,default=2)
+    p.add_argument('--vcf-dir');p.add_argument('--vcf');p.add_argument('--region');p.add_argument('--fasta',default=configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz'))
+    p.add_argument('--ld-block-dir',default=configured_path('DIR_LD', 'block'));p.add_argument('--jobs',type=int,default=2)
     p.add_argument('--sample-panel');p.add_argument('--build',default='37');p.add_argument('--chain');p.add_argument('--liftover',default='liftOver')
     p.add_argument('--segdup-bed');p.add_argument('--lcr-bed');p.add_argument('--low-mappability-bed')
     a=p.parse_args(argv)

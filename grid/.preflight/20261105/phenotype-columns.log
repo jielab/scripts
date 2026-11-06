@@ -1,0 +1,30 @@
+phe.rds rows 501936 columns 613 
+eid TRUE 
+age TRUE 
+sex TRUE 
+height TRUE 
+ldl FALSE 
+ethnicity TRUE 
+PC1 FALSE 
+PC2 FALSE 
+t2dm.Yr2e FALSE 
+t2dm.Yt2e FALSE 
+cnt_icd10_t2dm FALSE 
+date_death FALSE 
+fod_icd10_t2dm FALSE 
+matching columns: ethnicity, gen_ethnicity, ethnic.c 
+all.rds rows 502370 columns 1930 
+eid TRUE 
+age TRUE 
+sex TRUE 
+height TRUE 
+ldl TRUE 
+ethnicity TRUE 
+PC1 TRUE 
+PC2 TRUE 
+t2dm.Yr2e TRUE 
+t2dm.Yt2e TRUE 
+cnt_icd10_t2dm TRUE 
+date_death TRUE 
+fod_icd10_t2dm TRUE 
+matching columns: ethnicity, gen_ethnicity, ethnic.c, fod_icd10_t2dm, lod_icd10_t2dm, cnt_icd10_t2dm, cnt_undated_icd10_t2dm, aodtxt_icd10_t2dm, fod_srd_t2dm, lod_srd_t2dm, cnt_srd_t2dm, cnt_undated_srd_t2dm, aodtxt_srd_t2dm, fod_gp2_t2dm, lod_gp2_t2dm, cnt_gp2_t2dm, cnt_undated_gp2_t2dm, aodtxt_gp2_t2dm, fod_gp3_t2dm, lod_gp3_t2dm, cnt_gp3_t2dm, cnt_undated_gp3_t2dm, aodtxt_gp3_t2dm, fod_gp_t2dm, lod_gp_t2dm, cnt_gp_t2dm, cnt_undated_gp_t2dm, aodtxt_gp_t2dm, fod_ref_t2dm, cnt_ref_t2dm, cnt_undated_ref_t2dm, ldl, t2dm.Yt2e, t2dm.Yr2e, t2dm.t2e, t2dm.r2e, t2dm.b2e, t2dm.bi2e 

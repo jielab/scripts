@@ -39,6 +39,7 @@ class Job:
     resources: dict = field(default_factory=dict)
     env: dict = field(default_factory=dict)
     cwd: str | None = None
+    job_name: str | None = None
 
 
 def utcnow():
@@ -106,6 +107,8 @@ def normalized(jobs, common_env=None):
         j = asdict(item) if isinstance(item, Job) else dict(item)
         if not KEY.fullmatch(str(j.get("key", ""))):
             raise ValueError("Job keys must be safe, unique labels")
+        if j.get("job_name") is not None and not KEY.fullmatch(str(j["job_name"])):
+            raise ValueError("Job names must be safe labels")
         argv = j.get("argv")
         if not isinstance(argv, (list, tuple)) or not argv:
             raise ValueError("A job needs a nonempty argv list")
@@ -174,7 +177,8 @@ def write_plan(jobs, out_dir, *, mode="hpc", name="workflow", common_env=None):
             mem = math.ceil(r["memory_gib"])
             suffix = "/host" if r["memory_scope"] == "host" else ""
             reservation = f"{mem}GB{suffix}"
-        lines = ["#!/usr/bin/env bash", f"#BSUB -J {name}.{j['key']}", f"#BSUB -q {r['queue']}",
+        job_name = j.get("job_name") or f"{name}.{j['key']}"
+        lines = ["#!/usr/bin/env bash", f"#BSUB -J {job_name}", f"#BSUB -q {r['queue']}",
                  f"#BSUB -n {r['cores']}", f"#BSUB -W {minutes//60}:{minutes%60:02d}",
                  f"#BSUB -M {math.ceil(r['memory_gib'])}GB",
                  f'#BSUB -R "span[hosts=1] rusage[mem={reservation}]"',

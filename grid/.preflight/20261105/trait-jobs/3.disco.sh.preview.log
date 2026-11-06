@@ -1,0 +1,6 @@
+[PLAN] /work/sph-huangj/scripts/grid/.preflight/20261105/trait-jobs/preview-plans/3.disco.sh/grid-disco-20261105T135618-e795d285/plan.json (3 jobs; hpc)
+{
+  "status": "PLANNED",
+  "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/trait-jobs/preview-plans/3.disco.sh/grid-disco-20261105T135618-e795d285/plan.json",
+  "jobs": 3
+}

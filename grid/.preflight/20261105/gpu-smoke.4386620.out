@@ -1,0 +1,93 @@
+a05u14g
+name, driver_version, memory.total [MiB]
+Tesla V100-SXM2-32GB, 550.54.15, 32768 MiB
+torch 2.12.0+cu126 CUDA 12.6 NATTEN 0.21.7
+gpu Tesla V100-SXM2-32GB capability (7, 0)
+CUDA matrix forward/backward PASS
+NATTEN WILL USE FNA!
+NATTEN WILL USE FNA!
+{
+  "status": "RUNTIME OK: official model forward/backward passed",
+  "python": "/work/sph-huangj/.conda/envs/grid/bin/python3",
+  "torch": "2.12.0+cu126",
+  "cuda": "12.6",
+  "gpu": "Tesla V100-SXM2-32GB",
+  "attention": "neighborhood",
+  "amp": "fp16",
+  "architecture": {
+    "seq_len": 385,
+    "embed_dim": 64,
+    "num_heads": 4,
+    "dim_feedforward": 128,
+    "num_layers": 2,
+    "num_covars": 0,
+    "num_phenos": 3,
+    "kernel_size": 385,
+    "dilation": [
+      1,
+      1
+    ],
+    "dlm_reprs": null,
+    "weight_the_loss": false,
+    "use_snp_annots": false,
+    "snp_indices": null
+  },
+  "upstream": {
+    "repository": "https://github.com/23andMe/PRSformer",
+    "class": "g2p_transformer_ExplicitNaNDose2",
+    "commit": "7dea4e1bb27975885c937f2be82f9243bc82bda7",
+    "source_sha256": {
+      "utils": "19b724648c0634518236fd10f593468028c725bdb0b680ddeeeb27c98bdcd6be",
+      "modules": "5bea0445eb63bf6dc6a9c6c6e68567168bd0334b81569c278c1b4b7795af8da2",
+      "model": "fd803257bda0fc0c41c87143c67c7ebca7e368ec3d9e389d97ad4393e49df51f"
+    },
+    "import_adaptation": [
+      "NATTEN 0.21.7: translate dim/zero dropout/relative-bias options; explicitly use cutlass-fna with unchanged qkv/proj parameters.",
+      "Skipped the unused pytorch_lightning import in utils.py; all functions are unchanged."
+    ]
+  }
+}
+GRID CUDA tiny prediction PASS
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@a05u14g>
+Subject: Job 4386620: <grid-preflight-gpu> in cluster <qmhpc> Done
+
+Job <grid-preflight-gpu> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:19:02 2026
+Job was executed on host(s) <2*a05u14g>, in queue <8v100-32-sc>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:21:02 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj/scripts/grid> was used as the working directory.
+Started at Thu Nov  5 09:21:02 2026
+Terminated at Thu Nov  5 09:22:27 2026
+Results reported at Thu Nov  5 09:22:27 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+bash /work/sph-huangj/scripts/grid/.preflight/20261105/gpu-smoke.sh
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   14.36 sec.
+    Max Memory :                                 981 MB
+    Average Memory :                             441.38 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               15403.00 MB
+    Max Swap :                                   1 MB
+    Max Processes :                              4
+    Max Threads :                                12
+    Run time :                                   86 sec.
+    Turnaround time :                            205 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/grid/.preflight/20261105/gpu-smoke.4386620.err> for stderr output of this job.
+

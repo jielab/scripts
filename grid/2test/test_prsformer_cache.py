@@ -27,6 +27,18 @@ def commands(script, args):
 
 
 class SharedCacheTests(unittest.TestCase):
+    def test_genotype_directory_does_not_replace_the_shared_data_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "gen"
+            target = root / "ukb/37/typ"
+            with patch.dict(os.environ, DIR_GEN=str(root), GRID_TARGET_DIR=str(target),
+                            GRID_ANCESTRY_FILE="", GRID_REMOVE=""):
+                prepare = commands("prsformer.sh", ["--mode", "prepare"])[0]
+            self.assertEqual(prepare[prepare.index("--dir-gen") + 1], str(target))
+            self.assertEqual(prepare[prepare.index("--ancestry-file") + 1],
+                             str(root / "ukb/pca_proj/ukb.ancestry.auto.tsv.gz"))
+            self.assertEqual(prepare[prepare.index("--remove") + 1], "none")
+
     def test_phenotype_only_refresh_preserves_frozen_cache(self):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as tmp:

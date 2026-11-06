@@ -7,6 +7,13 @@ requirements. Only report() reads held-out outcomes after the predictor is froze
 """
 
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 
 import argparse
 import base64
@@ -1109,24 +1116,24 @@ def parser():
 	p.add_argument("--attention-reconstruction", type=float, default=.1)
 	p.add_argument("--donor-block", type=int, default=8192)
 	p.add_argument("--traits", "--trait", default = "height,ldl,t2dm")
-	p.add_argument("--cache-dir", default = "/mnt/d/analysis/grid/cache/abm")
-	p.add_argument("--out-root", default = "/mnt/d/analysis/grid/abm")
+	p.add_argument("--cache-dir", default = configured_path('ANALYSIS_ROOT', 'grid/cache/abm'))
+	p.add_argument("--out-root", default = configured_path('ANALYSIS_ROOT', 'grid/abm'))
 	p.add_argument("--prsformer-root", default = None)
 	p.add_argument("--publish-only", action="store_true", help="Publish ABM models, predictions and confidence diagnostics; cross-method performance is evaluated by grid.sh final")
-	p.add_argument("--pheno-file", default = "/mnt/f/ukb/Rdata/all.rds")
-	p.add_argument("--score-dir", default = "/mnt/f/gen/ukb/pgs")
-	p.add_argument("--pca-file", default = "/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz")
-	p.add_argument("--ancestry-file", default = "/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz")
+	p.add_argument("--pheno-file", default = configured_path("DIR_UKB", "Rdata", "all.rds"))
+	p.add_argument("--score-dir", default = configured_path('DIR_GEN', 'ukb/pgs'))
+	p.add_argument("--pca-file", default = configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz'))
+	p.add_argument("--ancestry-file", default = configured_path('DIR_GEN', 'ukb/pca_proj/ukb.ancestry.auto.tsv.gz'))
 	p.add_argument("--group-col", default = "genetic_ancestry")
-	p.add_argument("--dir-gen", default = "/mnt/f/gen/ukb/37/hap")
-	p.add_argument("--gwas-dir", default = "/mnt/f/gwas/4grid/common")
-	p.add_argument("--snpinfo", default = "/mnt/f/LD/csx/snpinfo_mult_1kg_hm3")
+	p.add_argument("--dir-gen", default = configured_path('DIR_GEN', 'ukb/37/hap'))
+	p.add_argument("--gwas-dir", default = configured_path('DIR_GWAS', '4grid/common'))
+	p.add_argument("--snpinfo", default = configured_path('DIR_LD', 'csx/snpinfo_mult_1kg_hm3'))
 	p.add_argument("--weights-file")
 	p.add_argument("--data-file")
 	p.add_argument("--split-file")
 	p.add_argument("--split-group-file")
 	p.add_argument("--keep")
-	p.add_argument("--remove", default = "/mnt/d/files/ukb.exclude.id")
+	p.add_argument("--remove", default = "none")
 	p.add_argument("--covariates", default = "age,sex,PC1,PC2")
 	p.add_argument("--distance-pcs", type = int, default = 10)
 	p.add_argument("--height-col", default = "height")

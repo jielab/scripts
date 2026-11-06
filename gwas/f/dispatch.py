@@ -3,12 +3,16 @@
 
 Only standard-library planning occurs here. No genotype/reference/GWAS scans
 or statistical work are performed on a login node. The scientific driver keeps
-its chromosome/trait order and its existing validated completion markers.
+its chromosome dependencies and its existing validated completion markers.
+HPC REGENIE submissions use one independently scheduled job per phenotype.
 """
 from __future__ import annotations
+from dataclasses import replace
+import hashlib
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -19,27 +23,60 @@ from qiming_resources import cpu_queue
 
 
 def option(argv, name, default=None):
+    names = (name,) if isinstance(name, str) else name
     value = default
     for i, token in enumerate(argv):
-        if token == name:
+        if token in names:
             if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
-                raise ValueError(f"{name} requires a value")
+                raise ValueError(f"{token} requires a value")
             value = argv[i + 1]
-        elif token.startswith(name + "="):
+        elif any(token.startswith(n + "=") for n in names):
             value = token.split("=", 1)[1]
     return value
 
 
 def set_option(argv, name, value):
+    names = (name,) if isinstance(name, str) else name
     out, i = [], 0
     while i < len(argv):
-        if argv[i] == name:
+        if argv[i] in names:
             i += 2
-        elif argv[i].startswith(name + "="):
+        elif any(argv[i].startswith(n + "=") for n in names):
             i += 1
         else:
             out.append(argv[i]); i += 1
-    return out + [name, str(value)]
+    return out + [names[0], str(value)]
+
+
+def label(value, limit):
+    """Keep LSF names readable, safe and distinct after sanitizing/truncation."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", value).strip(".-") or "analysis"
+    if safe != value or len(safe) > limit:
+        safe = safe[:limit - 9] + "-" + hashlib.sha256(value.encode()).hexdigest()[:8]
+    return safe
+
+
+def regenie_jobs(job):
+    args = job.argv[3:]
+    names = ("--pheno-name", "--phenotypes", "--traits")
+    traits = option(args, names, "height").split(",")
+    if any(not t or t in {".", ".."} or any(c.isspace() or c in "/\\" or ord(c) < 32 or ord(c) == 127 for c in t) for t in traits):
+        raise ValueError("Empty or invalid trait name in --pheno-name")
+    if len(set(traits)) != len(traits):
+        raise ValueError("Duplicate trait name in --pheno-name")
+    kind = option(args, "--type", "auto")
+    if kind not in {"auto", "qt", "ordinal", "bt", "t2e"}:
+        raise ValueError("Invalid --type")
+    inferred = {"bmi": "qt", "height": "qt", "ldl": "qt", "bald": "ordinal",
+                "bald12": "bt", "bald13": "bt", "bald14": "bt", "cvd_cad.Yt2e": "bt", "cvd_cad.t2e": "t2e"}
+    jobs = []
+    for trait in traits:
+        trait_type = kind if kind != "auto" else inferred.get(trait, "qt" if trait.endswith(".adu") else None)
+        if trait_type is None:
+            raise ValueError(f"Specify --type for {trait}")
+        jobs.append(replace(job, key=f"{trait_type}.{label(trait, 64)}",
+                            argv=job.argv[:3] + set_option(args, names, trait)))
+    return jobs
 
 
 def integer(value, name):
@@ -84,7 +121,7 @@ def build(entry, argv):
     if run not in {"TRUE", "FALSE"}:
         raise ValueError("--run-cmd/--run must be TRUE or FALSE")
     dry = os.environ.get("GWAS_PLAN_ONLY", "FALSE").upper() == "TRUE" or run == "FALSE"
-    count = integer(option(argv, "--jobs", "8" if entry == "gwas.sh" else "4" if entry == "format.sh" else "1"), "--jobs")
+    count = integer(option(argv, "--jobs", "6" if entry == "gwas.sh" else "4" if entry == "format.sh" else "1"), "--jobs")
     per_process = 1
     if entry == "gwas.sh":
         per_process = max(integer(option(argv, "--threads", "4"), "--threads"),
@@ -95,7 +132,7 @@ def build(entry, argv):
                           integer(os.environ.get("GWAS_EAF_THREADS", "2"), "GWAS_EAF_THREADS"),
                           integer(os.environ.get("GWAS_CLEAN_COMP_THREADS", "1"), "GWAS_CLEAN_COMP_THREADS"))
     required_cores = count * per_process
-    queue = os.environ.get("GWAS_QUEUE", "auto" if mode == "hpc" else os.environ.get("HPC_CPU_QUEUE", "33"))
+    queue = os.environ.get("GWAS_QUEUE", os.environ.get("HPC_CPU_QUEUE", "33"))
     cores = integer(os.environ.get("GWAS_CORES", str(max(40 if mode == "hpc" and queue == "short" else 1, required_cores))), "--cores")
     if cores < required_cores or (mode == "hpc" and queue == "short" and cores < 40):
         raise ValueError(f"--cores must cover {required_cores} concurrent worker threads; short requires >=40")
@@ -160,13 +197,19 @@ def main(argv=None):
         if os.environ.get("WORKFLOW_MEMORY_GIB") and float(os.environ["WORKFLOW_MEMORY_GIB"]) < job.resources["memory_gib"]:
             raise ValueError("Allocated workflow memory is smaller than the requested GWAS budget")
         os.execvpe(job.argv[0], job.argv, {**os.environ, **job.env})
+    split = mode == "hpc" and entry == "gwas.sh" and job.key in {"regenie", "run_regenie"}
+    jobs = regenie_jobs(job) if split else [job]
+    concurrent = min(len(jobs), integer(os.environ.get("GWAS_PHENO_JOBS", str(len(jobs))), "--pheno-jobs")) if split else 1
     directory = Path(os.environ.get("GWAS_PLAN_DIR", str(Path(os.environ["GWAS_ANALYSIS_ROOT"]) / "jobs")))
-    path = workflow.write_plan([job], directory, mode=mode, name="gwas-" + entry.removesuffix(".sh"))
-    print(f"[GWAS] {job.resources['cores']} CPU slots; {job.resources['memory_gib']:g} GiB total; {job.resources['hours']:g} h", flush=True)
+    path = workflow.write_plan(jobs, directory, mode=mode,
+                               name="regenie" if split else "gwas-" + entry.removesuffix(".sh"))
+    _, saved = workflow.load_plan(path)
+    r = saved["jobs"][0]["resources"]
+    print(f"[GWAS] {len(jobs)} jobs; up to {concurrent} concurrent; each: {r['cores']} CPU slots, {r['memory_gib']:g} GiB RAM, {r['hours']:g} h", flush=True)
     if dry:
-        print(f"[GWAS] Plan only. Execute the reviewed plan with: {sys.executable} {ROOT.parent / '0f/workflow_jobs.py'} run {path} --submit {mode} --wait", flush=True)
+        print(f"[GWAS] Plan only. Execute the reviewed plan with: {sys.executable} {ROOT.parent / '0f/workflow_jobs.py'} run {path} --submit {mode} --jobs-N {concurrent} --wait", flush=True)
         return 0
-    workflow.run_plan(path, submit=mode, jobs=1, wait=os.environ.get("SUBMIT_WAIT") == "TRUE")
+    workflow.run_plan(path, submit=mode, jobs=concurrent, wait=os.environ.get("SUBMIT_WAIT") == "TRUE")
     return 0
 
 

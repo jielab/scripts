@@ -64,6 +64,16 @@
       "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb",
       "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
       "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
+    },
+    {
+      "from": "bbabe630d0ad3d98a2c6a1d197cb7139528ec8c40b90b5e1697a1095c26bcfcf",
+      "to": "80daa93849fb83c77be272ce0837b4b753e33288a23d1c361d9322e9a04554cb",
+      "reason": "Reviewed 2026-11-05 Python 3.12: parser default for --remove changes from an implicit ukb.exclude.id file to none. Exact source comparison changes only this parser default. Training/model/loss/optimizer code is unchanged. Existing resume validation still requires identical prepared data, IDs, splits, preprocessing, architecture and training schedule; this does not authorize reuse with a changed cohort."
+    },
+    {
+      "from": "c04e17406397334501012a4aa419d6fd97b0a7983f6ad836616a2305a7cef970",
+      "to": "66e297eecd7bd655c572a5a428674d5f278682f715dc2b8a63876789fe5eb62c",
+      "reason": "Reviewed 2026-11-05 Python 3.11: parser default for --remove changes from an implicit ukb.exclude.id file to none. Exact source comparison changes only this parser default. Training/model/loss/optimizer code is unchanged. Existing resume validation still requires identical prepared data, IDs, splits, preprocessing, architecture and training schedule; this does not authorize reuse with a changed cohort."
     }
   ],
   "review_20261102": {
@@ -81,5 +91,23 @@
     "baseline_ast_py312": "eb3075f614986ece5a865d185496b75f507460e649305679d30d730abf939d3a",
     "current_ast_py311": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
     "current_ast_py312": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6"
+  },
+  "review_20261105": {
+    "changed_ast_nodes": [
+      "parser"
+    ],
+    "change": "Sample exclusion is opt-in; no implicit ID list",
+    "ast_pairs": [
+      {
+        "python": "3.12",
+        "from": "bbabe630d0ad3d98a2c6a1d197cb7139528ec8c40b90b5e1697a1095c26bcfcf",
+        "to": "80daa93849fb83c77be272ce0837b4b753e33288a23d1c361d9322e9a04554cb"
+      },
+      {
+        "python": "3.11",
+        "from": "c04e17406397334501012a4aa419d6fd97b0a7983f6ad836616a2305a7cef970",
+        "to": "66e297eecd7bd655c572a5a428674d5f278682f715dc2b8a63876789fe5eb62c"
+      }
+    ]
   }
 }

@@ -1,0 +1,44 @@
+[
+  {
+    "entry": "2.csx.sh",
+    "jobs": 3,
+    "plan": "/work/sph-huangj/analysis/grid/jobs/grid-csx-20261105T135616-90ad52ab/plan.json",
+    "status": "PASS",
+    "resources": {
+      "cores": 32,
+      "gpus": 0,
+      "hours": 120.0,
+      "memory_gib": 256.0,
+      "memory_scope": "host",
+      "queue": "v4-3t"
+    }
+  },
+  {
+    "entry": "3.disco.sh",
+    "jobs": 3,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/trait-jobs/preview-plans/3.disco.sh/grid-disco-20261105T135618-e795d285/plan.json",
+    "status": "PASS",
+    "resources": {
+      "cores": 32,
+      "gpus": 0,
+      "hours": 120.0,
+      "memory_gib": 256.0,
+      "memory_scope": "host",
+      "queue": "v4-3t"
+    }
+  },
+  {
+    "entry": "4.prsformer.sh",
+    "jobs": 3,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/trait-jobs/preview-plans/4.prsformer.sh/grid-prsformer-20261105T135619-2a02835d/plan.json",
+    "status": "PASS",
+    "resources": {
+      "cores": 32,
+      "gpus": 1,
+      "hours": 120.0,
+      "memory_gib": 256.0,
+      "memory_scope": "host",
+      "queue": "8v100-32-sc"
+    }
+  }
+]

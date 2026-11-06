@@ -6,6 +6,13 @@ The same evaluation infrastructure can calibrate an already computed Disco or
 official CSx meta/auto score; it never supplies features to a twin predictor.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 import hashlib
 import json
@@ -289,7 +296,7 @@ def parser(method="csx"):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--analysis-root", "--output-root", default=analysis_default())
     p.add_argument("--traits", "--trait", default="height,ldl,t2dm")
-    p.add_argument("--score-dir", default=os.environ.get("GRID_SCORE_DIR", relocate("/mnt/f/gen/ukb/pgs")))
+    p.add_argument("--score-dir", default=os.environ.get("GRID_SCORE_DIR", relocate(configured_path('DIR_GEN', 'ukb/pgs'))))
     p.add_argument("--scores", "--score-file", help="TSV/RDS; {trait} is expanded per trait")
     p.add_argument("--score-subset", default="", help="Subset score directory, e.g. chr22; keeps its evaluation separate from genome-wide results")
     p.add_argument("--cohort", help="Optional standalone TSV: id, group_id, split, trait/y and covariates")

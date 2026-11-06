@@ -150,6 +150,14 @@ def write_plan(jobs, out_dir, *, mode="hpc", name="workflow", common_env=None):
         raise ValueError("Invalid mode or plan name")
     shared = {k:v for k,v in os.environ.items() if k.startswith(('DIR_', 'HPC_', '_OS_DEFAULT_')) or k in ('ANALYSIS_ROOT', 'DATE_SCRATCH')}
     ordered = normalized(jobs, {**shared, **(common_env or {})})
+    if mode == "hpc":
+        shared_dir = Path(os.environ.get("EMS120_SHARED_DIR", Path(__file__).resolve().parents[2] / "0f"))
+        sys.path.insert(0, str(shared_dir))
+        from qiming_resources import cpu_slots
+        for job in ordered:
+            r = job["resources"]
+            if not r["gpus"]:
+                r["queue"], r["cores"] = cpu_slots(r["queue"], r["cores"], r["memory_gib"], r["hours"])
     root = Path(out_dir).expanduser().resolve()
     text(root, "plan directory")
     fingerprint = hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()
@@ -373,10 +381,15 @@ def _run_hpc(path, plan, jobs, wait, resume):
             argv += ["-w", " && ".join(dict.fromkeys(condition))]
         receipts[key] = dict(status="submitting", argv=argv, submitted=utcnow())
         atomic_json(journal, dict(plan=str(path), jobs=receipts))
+        print(f"[SUBMIT] {key}: waiting for LSF acceptance; group pending limits may delay this step. Do not submit a duplicate.", flush=True)
         try:
             with (path.parent / "commands" / f"{key}.cmd").open() as handle:
+                # QiMing bsub retries its group pending-job threshold every
+                # 60 seconds. A 60-second client timeout can lose the receipt
+                # just as the scheduler accepts the job. Let bsub finish;
+                # interruption still retains the unknown receipt below.
                 p = subprocess.run(argv, stdin=handle, capture_output=True, text=True,
-                                   timeout=60, env={**os.environ, "LC_ALL": "C"})
+                                   env={**os.environ, "LC_ALL": "C"})
         except BaseException:
             # Keep the unknown submission receipt; never retry blindly.
             raise

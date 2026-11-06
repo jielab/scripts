@@ -1,0 +1,21 @@
+[disco] work directory: /work/sph-huangj/scripts/grid/.preflight/20261105/native/disco/work
+[disco] command file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/disco/cmd/disco.20261105T092109.963645.sh
+[disco] log file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/disco/log/disco.20261105T092109.963645.log
+input PCA: /work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+input reference centers: /work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv
+input score file: /work/sph-huangj/data/gen/ukb/pgs/height/1csx.scores.rds
+output score files: /work/sph-huangj/data/gen/ukb/pgs/height/2disco.scores.rds; /work/sph-huangj/data/gen/ukb/pgs/height/2disco.coefficients.xlsx
+Disco R runtime: /work/sph-huangj/.conda/envs/grid/bin/Rscript
+CHECK/PLAN complete; no Disco calculation executed
+input PCA: /work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+input reference centers: /work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv
+input score file: /work/sph-huangj/data/gen/ukb/pgs/ldl/1csx.scores.rds
+output score files: /work/sph-huangj/data/gen/ukb/pgs/ldl/2disco.scores.rds; /work/sph-huangj/data/gen/ukb/pgs/ldl/2disco.coefficients.xlsx
+Disco R runtime: /work/sph-huangj/.conda/envs/grid/bin/Rscript
+CHECK/PLAN complete; no Disco calculation executed
+input PCA: /work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+input reference centers: /work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv
+input score file: /work/sph-huangj/data/gen/ukb/pgs/t2dm/1csx.scores.rds
+output score files: /work/sph-huangj/data/gen/ukb/pgs/t2dm/2disco.scores.rds; /work/sph-huangj/data/gen/ukb/pgs/t2dm/2disco.coefficients.xlsx
+Disco R runtime: /work/sph-huangj/.conda/envs/grid/bin/Rscript
+CHECK/PLAN complete; no Disco calculation executed

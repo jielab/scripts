@@ -107,6 +107,39 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                     self.assertIn(str(path),result.stderr)
                 self.assertFalse(jobs.exists())
 
+    def test_no_module_submits_once_with_all_main_stages_and_does_not_resubmit(self):
+        fake = self.path / "lsf"
+        fake.mkdir()
+        state = self.path / "fake.json"
+        state.write_text('{}')
+        for name in ("bsub", "bjobs", "bwait"):
+            script = fake / name
+            script.write_text('#!' + sys.executable + '\n' + FAKE_LSF)
+            script.chmod(0o755)
+        env = {**self.shell_env(), "PATH": str(fake) + os.pathsep + os.environ["PATH"],
+               "ALLELE3_WORKFLOW_FAKE_LSF": str(state)}
+        out, jobs = self.path / "out", self.path / "jobs"
+        command=["bash", ENTRY, "--submit", "hpc", "--out", out, "--job-dir", jobs,
+                     "--queue", "33", "--job-cores", "20", "--job-memory-gb", "64",
+                     "--wait", "FALSE"]
+        self.run_ok(command, env, timeout=60)
+        plan = json.loads((jobs / "plan.json").read_text())
+        names = [j["id"] for j in plan["jobs"]]
+        self.assertEqual(names, ["all"])
+        self.assertEqual(plan['provenance']['selected'], ["primary", "summary", "spatial", "windows", "alleles",
+                                 "time", "selection", "candidates", "genotypes", "ld", "report"])
+        self.assertEqual(plan["jobs"][0]["deps"], [])
+        self.assertIn('--all-stages',plan['jobs'][0]['argv'])
+        self.assertEqual(len(plan['jobs'][0]['outputs']),11)
+        self.assertEqual([p.name for p in (jobs/'cmd').glob('*.cmd')],['all.cmd'])
+        submitted = json.loads(state.read_text())
+        self.assertEqual(submitted["bsub_n"], 1)
+        self.assertFalse(plan["provenance"]["ibdmix_enabled"])
+        self.assertEqual(submitted['jobs']['700']['dependency'],'')
+        self.run_ok(command,env,timeout=60)
+        self.assertEqual(json.loads(state.read_text())['bsub_n'],1)
+        self.assertFalse(out.exists(), "Submission ran a payload on the login node")
+
     def test_atlas_plan_resolves_config_relative_paths_and_data_override_index(self):
         import importlib.util
         if importlib.util.find_spec('pysam') is None:
@@ -175,7 +208,9 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                 # Simulate switching from the shared local-mode environment.
                 env = {**self.shell_env(), "submit":"local", "SUBMIT":"local",
                        "DIR_DATA":"/mnt/f", "DIR_WORK":"/mnt/d", "DIR_SCRATCH":"/mnt/d",
-                       "DIR_SOFTWARE":"/mnt/d/software", "DATE_SCRATCH":"2026-10-31"}
+                       "DIR_SOFTWARE":"/mnt/d/software", "DATE_SCRATCH":"2026-10-31",
+                       "_OS_DEFAULT_DIR_DATA":"/mnt/f", "_OS_DEFAULT_DIR_WORK":"/mnt/d",
+                       "_OS_DEFAULT_DIR_SCRATCH":"/mnt/d", "_OS_DEFAULT_DIR_SOFTWARE":"/mnt/d/software"}
                 result = self.run_ok(["bash", ENTRY, *flags, "batch", "allofus", "--write-cmd",
                     "--chromosomes", "1", "--window-bp", "250000000", "--out", out, "--job-dir", jobs], env)
                 plan = json.loads((jobs/"plan.json").read_text())
@@ -187,7 +222,9 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                 self.assertEqual(windows["source"], "/work/sph-huangj/data/annot/allele3/allofus/hg38_allofus.txt.gz")
                 for job in plan["jobs"]:
                     self.assertEqual(job["env"]["DIR_SCRATCH"], "/work/sph-huangj")
-                    self.assertEqual(job["env"]["ALLELE_VCF_DIR"], "/work/sph-huangj/data/annot/gnomad/sites")
+                    self.assertEqual(job["env"]["ALLELE_VCF_DIR"], "/work/sph-huangj/data/annot/allele3/gnomad/sites")
+                    self.assertEqual(job["env"]["ALLELE_SCAN_STORE"], "/work/sph-huangj/analysis/allele3/stores/gnomad_scan")
+                    self.assertEqual(job["env"]["ALLELE_ARCHAIC_CACHE"], "/work/sph-huangj/analysis/allele3/stores/archaic_overlap")
                     self.assertEqual(job["env"]["ALLELE_ARCHAIC_ROOT"], "/work/sph-huangj/data/gen")
                     self.assertEqual(job["argv"][0], "/work/sph-huangj/.conda/envs/allele3-evolution/bin/python")
                     resolved_paths = {k:v for k,v in job["env"].items()
@@ -195,7 +232,9 @@ class BatchWorkflowsIntegration(unittest.TestCase):
                     # Code binds to the submission checkout, which can be on
                     # /mnt during WSL planning tests; data roots must be HPC.
                     self.assertEqual(job["env"]["ALLELE_OS_CONFIG"], str(actual_os_config()))
-                    self.assertNotIn("/mnt/", json.dumps(resolved_paths))
+                    # Code may be checked out on a mounted drive even when data defaults are HPC.
+                    encoded = json.dumps(resolved_paths).replace(str(ROOT.parent), "<checkout>")
+                    self.assertNotIn("/mnt/", encoded)
                 self.assertIn("date_scratch="+date, result.stdout)
                 self.assertFalse(out.exists())
 

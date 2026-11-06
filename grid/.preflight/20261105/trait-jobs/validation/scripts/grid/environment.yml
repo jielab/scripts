@@ -1,0 +1,77 @@
+name: grid
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy=1.26.4
+  - h5py
+  - tskit=0.6.4
+  - msprime=1.3.4
+  - fastcluster=1.2.6
+  - click
+  - newick
+  - demes
+  - psutil
+  - cython
+  - pybind11
+  - scikit-build-core
+  - numba
+  - cmake
+  - make
+  - compilers
+  - boost-cpp
+  - gsl
+  - eigen
+  - pkg-config
+  - git
+  - gzip
+  - pigz
+  - zstd
+  - plink2
+  - bgenix
+  - r-base>=4.2
+  - r-data.table
+  - r-ggplot2
+  - r-patchwork
+  - r-openxlsx
+  - r-proc
+  - r-matrix
+  - r-r.utils
+  - r-survival
+  - r-mass
+  - r-dplyr
+  - r-stringr
+  - r-rio
+  - r-jsonlite
+  - r-digest
+  - r-optparse
+  - r-shiny
+  - r-bslib
+  - r-dt
+  - r-dbi
+  - r-rsqlite
+  - r-testthat
+  - r-plotly
+  - pip
+  # Also supplies PRS-CSx float64 CUDA Cholesky/triangular solves (no CuPy needed).
+  # One tested runtime for GRID and PRSformer: CUDA 13.0 native wheels.
+  - pip:
+      - --index-url https://pypi.org/simple
+      - --find-links https://whl.natten.org
+      - "--only-binary=:all:"
+      - rdata==1.1.0
+      - torch==2.12.0
+      - natten==0.21.7+torch2120cu130
+      - pandas==2.3.3
+      - pyarrow>=15,<24
+      - scipy==1.17.1
+      - pgenlib==0.95.1
+      - pyreadr==0.5.7
+      - matplotlib==3.11.2
+      - openpyxl==3.1.5
+      - scikit-learn==1.9.1
+      - joblib>=1.3,<2
+      - threadpoolctl>=3.1
+      - pytest>=8,<10

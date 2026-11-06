@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'f'))
 import prsformer
 from grid_paths import read_config
-from shared_cohort import prepare_frozen_roster, load_cohort, preparation_options
+from shared_cohort import prepare_frozen_roster, load_cohort, preparation_options, align_projected_cohort
 
 
 def test_portable_builtin_paths_honor_explicit_analysis_root(tmp_path,monkeypatch):
@@ -29,7 +29,7 @@ def test_portable_builtin_paths_honor_explicit_analysis_root(tmp_path,monkeypatc
     assert c['prsformer_cache']==str(tmp_path/'other/prsformer/cache')
 
 
-def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_path):
+def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_path, monkeypatch):
     n=600; rng=np.random.default_rng(37)
     gen=tmp_path/'gen';gen.mkdir()
     (gen/'chr1.pgen').write_bytes(b'metadata-only-fixture')
@@ -39,13 +39,17 @@ def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_
         ldl=rng.normal(3,.3,n),t2dm=rng.binomial(1,.2,n),age=rng.normal(55,4,n),
         sex=rng.integers(0,2,n),PC1=rng.normal(size=n),PC2=rng.normal(size=n),genetic_ancestry='EUR'))
     pheno=tmp_path/'pheno.tsv';frame.to_csv(pheno,sep='\t',index=False)
+    pca=tmp_path/'pca.tsv'
+    pd.DataFrame({'IID':frame.eid.iloc[:-2], **{f'PC{i}':np.zeros(n-2) for i in range(1,11)}}).to_csv(pca,sep='\t',index=False)
+    monkeypatch.setenv('GRID_PCA_FILE',str(pca))
     rel=tmp_path/'ukb_rel.dat'
     # Include a path through an individual outside the genotype roster: the
     # full relation graph, not just retained edges, defines family components.
     pd.DataFrame(dict(ID1=['0','outside','2','4'],ID2=['outside','1','3','5'],Kinship=[.2]*4)).to_csv(rel,sep='\t',index=False)
     root=tmp_path/'analysis';cache=root/'prsformer/cache'
     args=prsformer.parser().parse_args(['prepare','--cache-dir',str(cache),'--dir-gen',str(gen),
-        '--pheno-file',str(pheno),'--chrs','1','--t2dm-col','t2dm','--remove','none'])
+        '--pheno-file',str(pheno),'--chrs','1','--t2dm-col','t2dm'])
+    assert args.remove == 'none'
     prepare_frozen_roster(args,root,rel)
     groups=pd.read_csv(args.split_group_file,sep='\t',dtype=str).set_index('eid')
     split=pd.read_csv(args.split_file,sep='\t',dtype=str).set_index('eid')
@@ -53,7 +57,11 @@ def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_
     joined=split.join(groups)
     assert joined.groupby('group').split.nunique().max()==1
     assert set(joined.split)=={'train','validation','test'}
-    assert len(joined)==n
+    assert len(joined)==n-2
+    assert not {str(n-2), str(n-1)} & set(joined.index)
+    coverage=json.loads((root/'cache/shared_preparation/PCA_COHORT.json').read_text())
+    assert coverage['missing_pca_N']==2
+    assert coverage['retained_N']==n-2
     assert args.require_shared_cohort is True
     assert not (root/'csx').exists()
     assert not (root/'cache/abm/prepared.joblib').exists()
@@ -73,7 +81,28 @@ def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_
         load_cohort(root,'height',cohort=path)
 
 
-def test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores(tmp_path):
+def test_projected_pc_alignment_rejects_corruption_and_frozen_roster_changes(tmp_path, monkeypatch):
+    path=tmp_path/'pca.tsv'
+    monkeypatch.setenv('GRID_PCA_FILE',str(path))
+    frame=pd.DataFrame({'eid':['001','002','003'], 'height':[170.,np.nan,180.]})
+    with pytest.raises(FileNotFoundError,match='1.pca.sh'):
+        align_projected_cohort(frame,tmp_path)
+    pca=pd.DataFrame({'IID':['001','002'], **{f'PC{i}':[0.,1.] for i in range(1,11)}})
+    pca.to_csv(path,sep='\t',index=False)
+    selected=align_projected_cohort(frame,tmp_path)
+    assert selected.eid.tolist()==['001','002']
+    assert pd.isna(selected.height.iloc[1])
+    with pytest.raises(ValueError,match='Frozen shared cohort'):
+        align_projected_cohort(frame,tmp_path,frozen=True)
+    pca.loc[0,'PC10']=np.nan
+    pca.to_csv(path,sep='\t',index=False)
+    with pytest.raises(ValueError,match='nonfinite'):
+        align_projected_cohort(frame,tmp_path)
+
+
+def test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores(tmp_path, monkeypatch):
+    # A synthetic roster must never load the host's real UKB projection.
+    monkeypatch.setenv('GRID_PCA_FILE', str(tmp_path / 'absent.pca.tsv.gz'))
     import joblib
     from data import write_rds
     from shared_cohort import complete_score_features, prepared_for_trait, sha256

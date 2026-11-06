@@ -15,6 +15,6 @@ bash install.sh --check
 bash f/install-arg-hpc.sh
 export GU_TEST_OUTPUT_ROOT=$GU_SOFT/validation
 mkdir -p "$GU_TEST_OUTPUT_ROOT"
-export IBDMIX_UPSTREAM=$GU_SOFT/ibdmix IBDMIX_PREPARE_BIN=$GU_SOFT/ibdmix-prepare/prepare
+export IBDMIX_UPSTREAM=$GU_SOFT/ibdmix IBDMIX_PREPARE_BIN=$GU_SOFT/ibdmix-prepare/prepare-v3
 python -m pytest -q -p no:cacheprovider f/tests -rs
 printf 'GU core software installed and checked\n' > "$GU_SOFT/logs/core.complete"

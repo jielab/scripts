@@ -1,0 +1,81 @@
+{
+  "plan": "/work/sph-huangj/scripts/grid/.preflight/20261106/queue-prsformer/plans/grid-prsformer-20261105T234343-b215b7e0/plan.json",
+  "status": "PLANNED_NOT_SUBMITTED",
+  "jobs": [
+    {
+      "key": "height.all",
+      "resources": {
+        "queue": "8v100-32-sc",
+        "cores": 32,
+        "memory_gib": 256.0,
+        "hours": 120.0,
+        "gpus": 1,
+        "memory_scope": "host"
+      },
+      "steps": [
+        "prepare",
+        "prsformer",
+        "prsformer2"
+      ],
+      "depends": []
+    },
+    {
+      "key": "ldl.all",
+      "resources": {
+        "queue": "8v100-32-sc",
+        "cores": 32,
+        "memory_gib": 256.0,
+        "hours": 120.0,
+        "gpus": 1,
+        "memory_scope": "host"
+      },
+      "steps": [
+        "prepare",
+        "prsformer",
+        "prsformer2"
+      ],
+      "depends": []
+    },
+    {
+      "key": "t2dm.all",
+      "resources": {
+        "queue": "8v100-32-sc",
+        "cores": 32,
+        "memory_gib": 256.0,
+        "hours": 120.0,
+        "gpus": 1,
+        "memory_scope": "host"
+      },
+      "steps": [
+        "prepare",
+        "prsformer",
+        "prsformer2"
+      ],
+      "depends": []
+    }
+  ],
+  "raw_input_paths": {
+    "phenotypes": "/work/sph-huangj/phe/ukb/Rdata/all.rds",
+    "ancestry": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz",
+    "snp_reference": "/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3",
+    "projected_pca": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz",
+    "relationships": "/work/sph-huangj/data/gen/ukb/37/typ/ukb_rel.dat"
+  },
+  "genotype_dir": "/work/sph-huangj/data/gen/ukb/37/typ",
+  "chromosomes": 22,
+  "genotype_files": 66,
+  "shared_cache": "/work/sph-huangj/analysis/grid/prsformer/cache",
+  "prepared_cache_exists": false,
+  "upstream": "/work/sph-huangj/software/PRSformer",
+  "prsformer2_settings": {
+    "lr": 0.0001,
+    "amp": "fp16",
+    "epochs": 30,
+    "patience": 5,
+    "batch_size": 1,
+    "accumulation_steps": 64,
+    "seed": 20261020
+  },
+  "csx_scores_required": false,
+  "disco_scores_required": false
+}

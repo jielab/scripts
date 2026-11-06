@@ -1,0 +1,96 @@
+{
+  "pca_files": [
+    {
+      "file": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz",
+      "rows": 487409,
+      "unique_ids": 487409,
+      "header": [
+        "IID",
+        "PC1",
+        "PC2",
+        "PC3",
+        "PC4",
+        "PC5",
+        "PC6",
+        "PC7",
+        "PC8",
+        "PC9",
+        "PC10",
+        "PC11",
+        "PC12",
+        "PC13",
+        "PC14",
+        "PC15",
+        "PC16",
+        "PC17",
+        "PC18",
+        "PC19",
+        "PC20"
+      ],
+      "invalid_width": 0,
+      "invalid_id": 0,
+      "invalid_pcs": 0,
+      "gzip_complete": true
+    },
+    {
+      "file": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb_reference_distances.tsv.gz",
+      "rows": 487409,
+      "unique_ids": 487409,
+      "header": [
+        "IID",
+        "closest_reference",
+        "nearest_euclidean_distance",
+        "second_minus_first_distance",
+        "relative_distance_margin",
+        "AFR",
+        "EAS",
+        "EUR",
+        "SAS"
+      ],
+      "invalid_width": 0,
+      "invalid_id": 0,
+      "invalid_pcs": 0,
+      "gzip_complete": true
+    },
+    {
+      "file": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz",
+      "rows": 487409,
+      "unique_ids": 487409,
+      "header": [
+        "eid",
+        "genetic_ancestry",
+        "ancestry_probability",
+        "predicted_core_ancestry",
+        "self_report_ancestry",
+        "nearest_1kg",
+        "nearest_1kg_distance",
+        "second_minus_first_distance",
+        "relative_distance_margin",
+        "classifier_method",
+        "prob_AFR",
+        "prob_EAS",
+        "prob_EUR",
+        "prob_SAS",
+        "ancestry_self_report_match",
+        "fine_tune_eligible"
+      ],
+      "invalid_width": 0,
+      "invalid_id": 0,
+      "invalid_pcs": 0,
+      "gzip_complete": true
+    }
+  ],
+  "same_ids_in_all_three": true,
+  "chromosome_markers": 22,
+  "reports": {
+    "projection.xlsx": 21658,
+    "projection.png": 371631,
+    "ancestry.xlsx": 19403,
+    "ancestry.png": 285155,
+    "summary.rds": 4061,
+    "projection.signature": 65,
+    "distance.signature": 65,
+    "ancestry.signature": 65
+  },
+  "status": "PASS"
+}

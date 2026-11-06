@@ -4,6 +4,13 @@
 # 🚩 Console runner
 """Run a CLI in the foreground with full file logs and event-driven console output (no periodic time reports)."""
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import csv
 from contextlib import contextmanager
@@ -483,7 +490,7 @@ def run(script, args):
 		stage_console = IbdmixConsole()
 	completion_only_gu = label == "gu" and args[:1] in (["phyml"], ["ibdmix"])
 	quiet_gu = completion_only_gu
-	default_log_dir = Path(os.environ.get("ANALYSIS_ROOT", "/mnt/d/analysis")) / script.parent.name / "logs"
+	default_log_dir = Path(os.environ.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT'))) / script.parent.name / "logs"
 	directory = Path(os.environ.get("SCRIPT_LOG_DIR", default_log_dir))
 	directory.mkdir(parents=True, exist_ok=True)
 	log = directory / f"{label}.{datetime.datetime.now():%Y%m%d-%H%M%S}.{os.getpid()}.log"

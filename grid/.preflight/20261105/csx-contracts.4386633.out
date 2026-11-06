@@ -1,0 +1,45 @@
+csx	0
+data-contracts	1
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@r13n47>
+Subject: Job 4386633: <grid-preflight-contracts> in cluster <qmhpc> Done
+
+Job <grid-preflight-contracts> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:22:20 2026
+Job was executed on host(s) <2*r13n47>, in queue <33>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:22:21 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj/scripts/grid> was used as the working directory.
+Started at Thu Nov  5 09:22:21 2026
+Terminated at Thu Nov  5 09:24:19 2026
+Results reported at Thu Nov  5 09:24:19 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+bash /work/sph-huangj/scripts/grid/.preflight/20261105/csx-contracts.cmd
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   94.52 sec.
+    Max Memory :                                 379 MB
+    Average Memory :                             174.11 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               16005.00 MB
+    Max Swap :                                   -
+    Max Processes :                              10
+    Max Threads :                                12
+    Run time :                                   117 sec.
+    Turnaround time :                            119 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/grid/.preflight/20261105/csx-contracts.4386633.err> for stderr output of this job.
+

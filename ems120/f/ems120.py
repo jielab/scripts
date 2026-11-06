@@ -1,4 +1,11 @@
 # 🚩 Imports, paths, and shared inputs
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import os, json, time, re, math, gc, shutil, tempfile, uuid
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -55,8 +62,8 @@ torch.set_num_threads(CPU_CORES)
 
 # 🚩 Paths and shared inputs
 _LOCAL = os.environ.get("submit", os.environ.get("SUBMIT", "hpc")).lower() == "local" or os.name == "nt"
-_LOCAL_BIG = "F:/" if os.name == "nt" else "/mnt/f"
-_WORK_ROOT = Path(os.environ.get("DIR_WORK", "/mnt/d" if _LOCAL else "/work/sph-huangj"))
+_LOCAL_BIG = configured_path('DIR_BIG') if os.name == "nt" else configured_path('DIR_BIG')
+_WORK_ROOT = Path(os.environ.get("DIR_WORK", configured_path('DIR_DAT') if _LOCAL else configured_path('DIR_WORK')))
 _BIG_ROOT = Path(os.environ.get("DIR_BIG", _LOCAL_BIG if _LOCAL else str(_WORK_ROOT / "data")))
 ANALYSIS_DIR = Path(
 	os.environ.get(

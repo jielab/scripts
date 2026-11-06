@@ -1,0 +1,3 @@
+COHORT: reading phenotype /work/sph-huangj/phe/ukb/Rdata/phe.rds
+[GRID data] Reading selected columns with R: phe.rds
+ERROR: T2DM auto needs t2dm.Yr2e and t2dm.Yt2e, or raw UKB dates/counts; missing ['cnt_icd10_t2dm', 'date_death', 'fod_icd10_t2dm']. Run UKB phe4gwas or supply --t2dm-col for an explicit baseline 0/1 endpoint

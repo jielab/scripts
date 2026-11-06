@@ -40,7 +40,7 @@ class PortableRuntime(unittest.TestCase):
 
     def plan(self, entry, module, *args, env=None):
         result = self.call(entry, module, "--submit", "hpc", "--plan-only", *args, env=env)
-        match = re.search(r"^\[PLAN\] (.+) \(1 jobs; hpc\)$", result.stdout, re.M)
+        match = re.search(r"^\[PLAN\] (.+) \(\d+ jobs; hpc\)$", result.stdout, re.M)
         self.assertIsNotNone(match, result.stdout)
         path = Path(match.group(1))
         return path, json.loads(path.read_text())
@@ -78,7 +78,7 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
         os.mkfifo(raw)
         path, plan = self.plan("format.sh", "format", "--raw-file", raw, "--jobs", "3", "--tool-threads", "4")
         job = plan["jobs"][0]
-        self.assertEqual(job["resources"]["cores"], 12)
+        self.assertEqual(job["resources"]["cores"], 40)
         self.assertEqual(job["resources"]["queue"], "33")
         self.assertEqual(job["env"]["GWAS_TOOL_THREADS"], "4")
         self.assertIn(str(raw), job["argv"])
@@ -96,10 +96,20 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
         _, plan = self.plan("format.sh", "magma", env=env)
         settings = plan["jobs"][0]["env"]
         self.assertEqual(settings["GWAS_DATA_ROOT"], "/work/sph-huangj/data")
-        self.assertEqual(settings["GWAS_FILES_ROOT"], "/work/sph-huangj/data/files")
+        self.assertEqual(settings["GWAS_FILES_ROOT"], "/work/sph-huangj/files")
         _, plan = self.plan("format.sh", "format", "--dir-data-root", str(self.work / "legacy"))
         self.assertEqual(plan["jobs"][0]["env"]["GWAS_FILES_ROOT"], str(self.work / "legacy/files"))
         self.assertEqual(plan["jobs"][0]["env"]["GWAS_SOFTWARE_ROOT"], str(self.work / "legacy/software"))
+
+    def test_protein_plot_table_reaches_hpc_worker_without_data_reads(self):
+        table = self.work / "shared protein names.tsv"
+        os.mkfifo(table)
+        path, plan = self.plan("format.sh", "magma,mplot", "--label", "scot", "--grch", "38",
+                               "--prot-names", table, "--thin", "FALSE", "--add-panel", "magma")
+        args = plan["jobs"][0]["argv"]
+        self.assertEqual(args[args.index("--prot-names") + 1], str(table))
+        self.assertEqual(args[args.index("--label") + 1], "scot")
+        self.assertEqual(subprocess.run(["bash", "-n", str(path.parent / "commands/magma_mplot.cmd")]).returncode, 0)
 
     def test_genotype_resource_budget(self):
         _, plan = self.plan("gwas.sh", "regenie", "--jobs", "3", "--threads", "2", "--step2-threads", "4", "--queue", "ser")
@@ -110,22 +120,88 @@ pathlib.Path(str(out)+'.acount').write_text('#CHROM ID REF ALT ALT_CTS OBS_CT\\n
         self.call("gwas.sh", "regenie", "--submit", "hpc", "--plan-only", "--memory-gb", "16", success=False)
         self.call("format.sh", "pgs", "--submit", "hpc", "--plan-only", "--memory-gb", "8", success=False)
 
+    def test_regenie_phenotype_plans_and_job_names(self):
+        phenotype = self.work / "must-not-open.phe"
+        os.mkfifo(phenotype)
+        for model in ["ukb_regenie", "ukb_center_tdi"]:
+            path, plan = self.plan("gwas.sh", "run_regenie", "--pheno", phenotype,
+                                   "--pheno-name", "obsolete", "--traits=bmi,height,ldl",
+                                   "--type", "qt", "--dir-output", self.work / model)
+            self.assertEqual(plan["name"], "regenie")
+            self.assertEqual(len(plan["jobs"]), 3)
+            for trait, job in zip(["bmi", "height", "ldl"], plan["jobs"]):
+                self.assertEqual(job["key"], f"qt.{trait}")
+                self.assertEqual(job["depends"], [])
+                args = job["argv"]
+                self.assertEqual(args.count("--pheno-name"), 1)
+                self.assertEqual(args[args.index("--pheno-name") + 1], trait)
+                self.assertEqual(args[args.index("--output-dir") + 1], str(self.work / model))
+                self.assertNotIn("obsolete", args)
+                self.assertFalse(any(a.startswith("--traits") for a in args))
+                self.assertEqual(job["resources"]["cores"], 40)
+                cmd = path.parent / "commands" / (job["key"] + ".cmd")
+                self.assertIn(f"#BSUB -J regenie.qt.{trait}\n", cmd.read_text())
+                self.assertEqual(subprocess.run(["bash", "-n", str(cmd)]).returncode, 0)
+            self.assertFalse((self.work / model).exists())
+        _, plan = self.plan("gwas.sh", "regenie", "--phenotypes", "bald,bald12,cvd_cad.t2e")
+        self.assertEqual([j["key"] for j in plan["jobs"]],
+                         ["ordinal.bald", "bt.bald12", "t2e.cvd_cad.t2e"])
+
+    def test_regenie_submissions_parallel_and_capped(self):
+        self.tool("bsub", '''import json,os,pathlib,sys
+p=pathlib.Path(os.environ['GWAS_PLAN_DIR'])/'bsub.calls'
+previous=p.read_text().splitlines() if p.exists() else []
+with p.open('a') as f: f.write(json.dumps({'args':sys.argv[1:],'script':sys.stdin.read()})+'\\n')
+print('Job <%d> is submitted to queue <33>.' % (1000+len(previous)))
+''')
+        args = ["regenie", "--submit", "hpc", "--pheno-name", "bmi,height,ldl", "--type", "qt"]
+        for cap in [None, "2"]:
+            extra = [] if cap is None else ["--pheno-jobs", cap]
+            self.call("gwas.sh", *args, *extra)
+            calls = [json.loads(s) for s in (self.work / "plans/bsub.calls").read_text().splitlines()][-3:]
+            self.assertEqual([c["args"] for c in calls[:2]], [[], []])
+            self.assertEqual(calls[2]["args"], [] if cap is None else ["-w", "ended(1003)"])
+        for receipt in (self.work / "plans").glob("*/submission.json"):
+            jobs = json.loads(receipt.read_text())["jobs"]
+            self.assertEqual(len(jobs), 3)
+            self.assertTrue(all(j["status"] == "submitted" for j in jobs.values()))
+
+    def test_regenie_rejects_bad_phenotypes_before_submission(self):
+        for traits in ["bmi,bmi", "bmi,", "bmi,,height", "bmi,../height", "bmi,unknown"]:
+            self.call("gwas.sh", "regenie", "--submit", "hpc", "--pheno-name", traits, success=False)
+        self.call("gwas.sh", "regenie", "--submit", "hpc", "--pheno-jobs", "0", success=False)
+        self.assertFalse(list((self.work / "plans").glob("*/plan.json")))
+
+    def test_concurrent_shared_counts_prepared_once(self):
+        geno, plink = self.genotype_fixture()
+        plink.write_text(plink.read_text().replace("a=sys.argv[1:]", "import time\ntime.sleep(0.5)\na=sys.argv[1:]"))
+        cmd = ["bash", str(ROOT / "gwas.sh"), "acount", "--submit", "local", "--dir-imputed", str(geno),
+               "--chr", "1,22", "--plink2", str(plink), "--jobs", "2"]
+        processes = [subprocess.Popen(cmd, cwd=self.work, env=self.env, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+        results = [p.communicate(timeout=30) for p in processes]
+        for p, (stdout, stderr) in zip(processes, results):
+            self.assertEqual(p.returncode, 0, stdout + stderr)
+        for chrom in ["1", "22"]:
+            self.assertEqual((geno / f"chr{chrom}.calls").read_text(), "call\n")
+            self.assertEqual((geno / f"chr{chrom}.extract").read_text(), "rsKeep\n")
+
     def test_invalid_combination_rejected_before_submission(self):
         self.call("gwas.sh", "regenie,acount", "--submit", "hpc", "--plan-only", success=False)
 
-    def test_default_eight_workers_use_larger_queue(self):
+    def test_default_six_workers_use_queue33(self):
         _, plan = self.plan("gwas.sh", "regenie")
         r = plan['jobs'][0]['resources']
-        self.assertEqual(r['cores'], 32)
-        self.assertEqual(r['memory_gib'], 192)
-        self.assertEqual(r['queue'], '38')
-        result = self.call("gwas.sh", "regenie", "--submit", "hpc", "--plan-only", "--queue", "33", success=False)
+        self.assertEqual(r['cores'], 40)
+        self.assertEqual(r['memory_gib'], 160)
+        self.assertEqual(r['queue'], '33')
+        result = self.call("gwas.sh", "regenie", "--submit", "hpc", "--plan-only", "--jobs", "8", success=False)
         self.assertIn('single-node budget', result.stderr)
 
     def test_auto_queue_covers_large_worker_core_count(self):
-        _, plan = self.plan("gwas.sh", "regenie", "--jobs", "12", "--threads", "8")
+        _, plan = self.plan("gwas.sh", "regenie", "--jobs", "12", "--threads", "8", "--queue", "auto")
         r = plan['jobs'][0]['resources']
-        self.assertEqual(r['cores'], 96)
+        self.assertEqual(r['cores'], 120)
         self.assertEqual(r['queue'], '1t81c')
 
     def test_magma_combination_preserves_execution_default(self):

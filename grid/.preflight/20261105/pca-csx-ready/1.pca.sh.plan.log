@@ -1,0 +1,6 @@
+[PLAN] /work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/1.pca.sh/grid-pca-20261105T112913-090d4d60/plan.json (1 jobs; hpc)
+{
+  "status": "PLANNED",
+  "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/1.pca.sh/grid-pca-20261105T112913-090d4d60/plan.json",
+  "jobs": 1
+}

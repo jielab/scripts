@@ -99,7 +99,7 @@ if not all(map(math.isfinite,(t,p,b,c,w,seed))) or not (t>0 and 0<p<=1 and b>=0 
 PYVALID
 for x in python3 awk sort find gzip stat cmp grep diff comm flock pgrep; do need "$x"; done
 if [[ $ACTION != check ]]; then for x in trace-extract trace-infer trace-summarize; do need "$x"; done; fi
-TRACE_LOG_DIR=/tmp/gu-logs/trace/$(printf '%s' "$OUT" | sha256sum | cut -c1-16)
+TRACE_LOG_DIR=${DIR_RUNTIME_TMP}/gu-logs/trace/$(printf '%s' "$OUT" | sha256sum | cut -c1-16)
 mkdir -p "$OUT"/{manifest,samples/groups,regions,maps,extract,datafiles,infer,calls,final} "$TRACE_LOG_DIR"
 # A persistent lock in the shared result directory also protects jobs on
 # different HPC nodes. Never unlink a live flock inode.

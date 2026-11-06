@@ -1,0 +1,6 @@
+[PLAN] /work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/4.prsformer.sh/grid-prsformer-20261105T112917-d7bd76f2/plan.json (7 jobs; hpc)
+{
+  "status": "PLANNED",
+  "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/4.prsformer.sh/grid-prsformer-20261105T112917-d7bd76f2/plan.json",
+  "jobs": 7
+}

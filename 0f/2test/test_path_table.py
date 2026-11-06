@@ -27,6 +27,15 @@ class PathTableTests(unittest.TestCase):
         out = self.shell('submit=local; source "$1"; printf "%s:%s:%s:%s" "$DIR_WORK" "$DIR_GEN" "$DIR_METAG" "$ANALYSIS_ROOT"', submit='hpc')
         self.assertEqual(out, '/mnt/d:/mnt/f/gen:/mnt/f/metag:/mnt/d/analysis')
 
+    def test_local_ukb_follows_small_data_root(self):
+        self.assertEqual(self.shell('printf "%s" "$DIR_UKB"', submit='local'), '/mnt/d/phe/ukb')
+        self.assertEqual(self.shell('printf "%s" "$DIR_UKB"', submit='local', DIR_DAT='/custom data'), '/custom data/phe/ukb')
+        self.assertEqual(self.shell('printf "%s" "$DIR_UKB"', submit='local', DIR_UKB='/custom/ukb'), '/custom/ukb')
+
+    def test_ukb_mode_switch(self):
+        self.assertEqual(self.shell('submit=local; source "$1"; printf "%s" "$DIR_UKB"', submit='hpc'), '/mnt/d/phe/ukb')
+        self.assertEqual(self.shell('submit=hpc; source "$1"; printf "%s" "$DIR_UKB"', submit='local'), '/work/sph-huangj/phe/ukb')
+
     def test_default_hpc_without_scheduler_detection(self):
         out = self.shell('printf "%s:%s:%s:%s" "$submit" "$HPC_GPU_QUEUE" "$HPC_GPU_MEMORY_GIB" "$HPC_WALLTIME"')
         self.assertEqual(out, 'hpc:4a100-40:160:120:00')

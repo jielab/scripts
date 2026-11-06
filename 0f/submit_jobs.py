@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,10 +19,70 @@ import time
 import uuid
 
 
-def bsub_process(argv, handle, timeout=30):
-    return subprocess.run(argv, stdin=handle, capture_output=True, text=True,
-                          encoding='utf-8', errors='replace', timeout=timeout,
-                          env={**os.environ, 'LC_ALL': 'C'})
+def submission_timeout():
+    value = os.environ.get('WORKFLOW_BSUB_TIMEOUT_SECONDS', '300')
+    try:
+        timeout = float(value)
+    except ValueError:
+        raise ValueError('WORKFLOW_BSUB_TIMEOUT_SECONDS must be a finite positive number') from None
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError('WORKFLOW_BSUB_TIMEOUT_SECONDS must be a finite positive number')
+    return timeout
+
+
+PENDING_RETRY = re.compile(r'[^\n]*Pending (?:job|job slots?) threshold reached[^\n]*Retrying in (\d+) seconds[^\n]*', re.I)
+
+
+def bsub_process(argv, handle, timeout=None):
+    timeout = submission_timeout() if timeout is None else timeout
+    position = handle.tell()
+    while True:
+        result = _bsub_client(argv, handle, timeout)
+        response = result.stdout + result.stderr
+        # Some LSF installations reject the old credentials after a long
+        # capacity wait. Refresh only after an explicit NOT-submitted reply;
+        # a lost reply or a reported job ID must never trigger a new client.
+        if (result.returncode and PENDING_RETRY.search(response)
+                and 'User permission denied. Job not submitted.' in response
+                and not re.search(r'Job <\d+>', response)):
+            print('[LSF WAIT] LSF explicitly rejected the old request after waiting for capacity; '
+                  'refreshing the submission client (Job not submitted).', flush=True)
+            handle.seek(position)
+            continue
+        return result
+
+
+def _bsub_client(argv, handle, timeout):
+    # LSF keeps the same client alive when MAX_PEND_JOBS is reached. Its
+    # explicit rejection/retry messages are progress, not a lost acknowledgement.
+    # Keep that client (never launch a duplicate) while it waits for capacity.
+    with subprocess.Popen(argv, stdin=handle, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, encoding='utf-8', errors='replace',
+                          env={**os.environ, 'LC_ALL': 'C'}) as process:
+        deadline = time.monotonic() + timeout
+        seen_retries = 0
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=max(.001, min(10, deadline - time.monotonic())))
+                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired as exc:
+                partial = exc.stderr or b''
+                if isinstance(partial, bytes):
+                    partial = partial.decode('utf-8', errors='replace')
+                retries = list(PENDING_RETRY.finditer(partial))
+                if len(retries) > seen_retries:
+                    for retry in retries[seen_retries:]:
+                        print('[LSF WAIT] ' + retry[0].strip(), flush=True)
+                    seen_retries = len(retries)
+                    deadline = time.monotonic() + max(timeout, int(retries[-1][1]) + 30)
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from None
+            except BaseException:
+                process.kill()
+                process.communicate()
+                raise
 
 
 def local_one(path, index=None):
@@ -102,6 +163,7 @@ def run(paths, mode=None, jobs=None, wait=False, merge=None):
     paths = [Path(p).resolve() for p in paths]
     if not paths or any(not p.is_file() for p in paths):
         raise ValueError('Every command file must exist')
+    timeout = submission_timeout() if mode == 'hpc' else None
     journal = paths[0].parent / ('submission-' + uuid.uuid4().hex[:12] + '.jsonl')
     print(f'Submission journal: {journal}', flush=True)
     def record(value):
@@ -125,12 +187,29 @@ def run(paths, mode=None, jobs=None, wait=False, merge=None):
             argv += ['-w', ' && '.join(f'done({i})' for i in ids)]
         elif n >= jobs:
             argv += ['-w', f'ended({ids[n-jobs]})']
-        record({'cmd': str(path), 'status': 'submitting', 'argv': argv})
-        with path.open() as handle:
-            process = bsub_process(argv, handle)
+        record({'cmd': str(path), 'status': 'submitting', 'argv': argv,
+                'timeout_seconds': timeout})
+        try:
+            with path.open() as handle:
+                process = bsub_process(argv, handle, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            def decoded(value):
+                return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
+            stdout, stderr = decoded(exc.stdout), decoded(exc.stderr)
+            match = re.search(r'Job <(\d+)>', stdout + stderr)
+            record({'cmd': str(path), 'status': 'uncertain', 'argv': argv,
+                    'job_id': match[1] if match else None, 'timeout_seconds': timeout,
+                    'stdout': stdout, 'stderr': stderr})
+            raise RuntimeError(
+                f'LSF submission acknowledgement timed out after {timeout:g}s for {path.name}; '
+                f'the job may already be accepted. Inspect bjobs and {journal} before retrying. '
+                'No automatic resubmission was attempted. '
+                'WORKFLOW_BSUB_TIMEOUT_SECONDS controls this wait.'
+            ) from exc
         match = re.search(r'Job <(\d+)>', process.stdout + process.stderr)
         result = {'cmd': str(path), 'job_id': match[1] if match else None,
-                  'returncode': process.returncode, 'stdout': process.stdout, 'stderr': process.stderr}
+                  'returncode': process.returncode, 'stdout': process.stdout, 'stderr': process.stderr,
+                  'status': 'submitted' if process.returncode == 0 and match else 'uncertain'}
         record(result)
         print((process.stdout + process.stderr).strip(), flush=True)
         if process.returncode or not match:

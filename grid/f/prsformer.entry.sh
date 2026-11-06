@@ -222,7 +222,7 @@ if [[ $STAGE == check ]]; then
 	if [[ -d $PRS_ROSTER_DIR ]]; then
 		ROSTER_ARGS+=(--check)
 	elif [[ $DRY_RUN == FALSE ]]; then
-		PRS_ROSTER_DIR=$(mktemp -d /tmp/grid-prsformer-roster-check.XXXXXX)
+		PRS_ROSTER_DIR=$(mktemp -d "${DIR_RUNTIME_TMP}/grid-prsformer-roster-check.XXXXXX")
 		trap 'rm -rf -- "$PRS_ROSTER_DIR"' EXIT
 	fi
 fi

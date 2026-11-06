@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#BSUB -J grid-grid.t2dm.evaluate
+#BSUB -q 33
+#BSUB -n 8
+#BSUB -W 24:00
+#BSUB -M 32GB
+#BSUB -R "span[hosts=1] rusage[mem=32GB/host]"
+#BSUB -o /work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/grid/grid-grid-20261105T013825-7ed15c63/logs/t2dm.evaluate.%J.out
+#BSUB -e /work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/grid/grid-grid-20261105T013825-7ed15c63/logs/t2dm.evaluate.%J.err
+
+set -euo pipefail
+umask 077
+[[ -n "${LSB_JOBID:-}" ]] || { echo "Submit this .cmd with bsub; do not run on a login node." >&2; exit 2; }
+[[ ${LSB_DJOB_NUMPROC:-0} -ge 8 ]] || { echo "Insufficient allocated CPU slots" >&2; exit 2; }
+# Dependencies: t2dm.twins
+# Scientific command: bash /work/sph-huangj/scripts/grid/grid.sh evaluate --traits t2dm --analysis-root /work/sph-huangj/analysis/grid --block-config /work/sph-huangj/scripts/grid/config/abm.blocks.json
+exec /work/sph-huangj/.conda/envs/py311/bin/python3 /work/sph-huangj/scripts/0f/workflow_jobs.py worker --plan /work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/grid/grid-grid-20261105T013825-7ed15c63/plan.json --key t2dm.evaluate

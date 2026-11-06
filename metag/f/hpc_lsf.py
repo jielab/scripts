@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import uuid
 
@@ -74,7 +75,12 @@ def _settings(cfg, kind):
         raise ValueError("cores must be a positive integer")
     memory = _number(values["memory_gib"] if values["memory_gib"] is not None else os.environ["MEMORY_DEFAULT_GIB"], "memory_gib")
     minutes = int((_number(values["hours"], "hours") * 60).to_integral_value(rounding=ROUND_CEILING))
-    return queue, int(cores), memory, f"{minutes // 60}:{minutes % 60:02d}"
+    allocated = int(cores)
+    if os.environ.get("submit", "hpc") != "local":
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "0f"))
+        from qiming_resources import cpu_slots
+        queue, allocated = cpu_slots(queue, int(cores), memory, Decimal(minutes) / 60)
+    return queue, allocated, memory, f"{minutes // 60}:{minutes % 60:02d}"
 
 
 def _memory(cfg, memory, cores):

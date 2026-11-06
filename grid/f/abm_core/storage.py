@@ -5,6 +5,13 @@ The donor bank, block inputs and shared genotypes are persistent dependencies.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from contextlib import contextmanager
 import fcntl
@@ -197,7 +204,7 @@ def clean_completed_support(analysis_root, *, traits=None, apply=False, best_eff
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--analysis-root", default="/mnt/d/analysis/grid")
+    parser.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     total = clean_completed_support(args.analysis_root, apply=args.apply)

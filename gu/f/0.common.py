@@ -2,6 +2,13 @@
 """GU 0.common utilities. See --help for commands."""
 
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
@@ -585,7 +592,7 @@ def gu_work_root(published):
 
 
 def gu_result_lock(run):
-	directory = Path("/tmp/gu-locks")
+	directory = Path(configured_path('DIR_RUNTIME_TMP', 'gu-locks'))
 	directory.mkdir(parents=True, exist_ok=True)
 	return directory / (hashlib.sha256(str(Path(run).resolve()).encode()).hexdigest()[:16] + ".lock")
 
@@ -621,6 +628,11 @@ def gu_result_r(*arguments):
 			Path(__file__).parent / "results.py",
 		):
 			shutil.copy2(source, stage / source.name)
+		# The staged Python workbook helper imports the shared path resolver.
+		shared = stage / "0f"
+		shared.mkdir()
+		for name in ("workflow_paths.py", "0os.sh"):
+			shutil.copy2(_paths_root / "0f" / name, shared / name)
 		environment["GU_RESULTS_R"] = str(stage / "results.R")
 		environment["RESULTS_PY"] = str(stage / "results.py")
 		environment.setdefault("RESULTS_PYTHON", sys.executable)
@@ -1068,7 +1080,7 @@ def gu_native_files(run, method):
 
 
 def gu_native_view_root(work):
-	return Path("/tmp/gu-native-view") / hashlib.sha256(str(work).encode()).hexdigest()[:16]
+	return Path(configured_path('DIR_RUNTIME_TMP', 'gu-native-view')) / hashlib.sha256(str(work).encode()).hexdigest()[:16]
 
 
 def gu_extract_native(archive, destination, run, work, replace=False):
@@ -1240,7 +1252,7 @@ def _gu_compact_results(work, methods, run_only=None):
 					if p.is_dir() and not p.is_symlink():
 						if p.name in ("mask", "log", "logs", "tmp"):
 							cache = (
-								Path("/tmp/gu-intermediate")
+								Path(configured_path('DIR_RUNTIME_TMP', 'gu-intermediate'))
 								/ hashlib.sha256(str(run).encode()).hexdigest()[:16]
 								/ p.name
 							)

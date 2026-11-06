@@ -24,9 +24,7 @@ allele_execution_init() {
         esac
     done
     case "$chosen_mode" in auto|local|hpc) ;; *) fail '--submit needs local or hpc' ;; esac
-    if [[ ${submit:-${SUBMIT:-hpc}} != auto && $chosen_mode != "${submit:-${SUBMIT:-hpc}}" ]]; then
-        unset DIR_WORK DIR_DATA DIR_SCRATCH DIR_SOFTWARE SHARED_PYTHON
-    fi
+    # 0os.sh recomputes tracked defaults while preserving explicit root overrides.
     export submit=$chosen_mode SUBMIT=$chosen_mode DATE_SCRATCH=$chosen_date
     # The shared file owns the OS roots. No separate OS table is maintained.
     source "$os_config"

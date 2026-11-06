@@ -1,6 +1,6 @@
 id	type	path	build	evidence	role	notes
-gnomad_scan	scan	{dir_data}/annot/gnomad/allele3	38	scan_counters	Existing primary population-level multi-ALT occupancy and enrichment	Preserve original scan and adoption receipts; run.json records actual source VCF paths
-gnomad_sites	vcf_directory	{dir_data}/annot/gnomad/sites	38	aggregate_counts	Native population-level allele-count source	Enumerate existing VCF filenames; sample columns and AC/AN must be read from the actual header
+gnomad_scan	scan	{analysis_root}/allele3/stores/gnomad_scan	38	scan_counters	Existing primary population-level multi-ALT occupancy and enrichment	Preserve original scan and adoption receipts; run.json records actual source VCF paths
+gnomad_sites	vcf_directory	{dir_data}/annot/allele3/gnomad/sites	38	aggregate_counts	Native population-level allele-count source	Enumerate existing VCF filenames; sample columns and AC/AN must be read from the actual header
 1kg_sites	vcf	{dir_data}/annot/allele3/1kg/38/chr{chrom}.vcf.gz	38	aggregate_counts	Separate-cohort population-level allele-count validation; overlap to assess	Read #CHROM; a 1KG directory name does not establish individual GT availability or cohort independence
 1kg_pgen	pgen	{dir_data}/gen/1kg/38/pfile/chr{chrom}	38	called_genotypes	Modern individual allele counts and personal HERV follow-up	PGEN genotype content and phase require downstream decoding checks
 1kg_vcf	vcf	{dir_data}/gen/1kg/38/vcf/chr{chrom}.vcf.gz	38	called_genotypes	Optional actual individual VCF source	Use individual analyses only if sample columns and required genotypes are present

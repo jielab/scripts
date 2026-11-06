@@ -29,24 +29,28 @@ class PlanningTests(unittest.TestCase):
     def test_csx_all_has_each_core_score_and_own_evaluation(self):
         jobs = self.build("csx")
         index = {j.key: j for j in jobs}
-        self.assertEqual(len(index), 10)
-        self.assertEqual(set(index["shared.prepare"].depends), {t+".score" for t in ("height", "ldl", "t2dm")})
+        self.assertEqual(len(index), 3)
         for trait in ("height", "ldl", "t2dm"):
-            self.assertEqual(index[trait+".score"].depends, [trait+".weights"])
-            self.assertEqual(index[trait+".targetfit"].depends, ["shared.prepare"])
-            self.assertEqual(index[trait+".weights"].argv[2], "weights")
+            job = index[trait+".all"]
+            self.assertEqual(job.depends, [])
+            steps = json.loads(job.env["GRID_TRAIT_STEPS"])
+            self.assertEqual([step["argv"][2] for step in steps], ["weights", "score", "prepare", "targetfit"])
+            for step in steps:
+                self.assertEqual(planner.option(step["argv"], {"--traits"}), trait)
+                self.assertLessEqual(float(step["env"]["GRID_MEMORY_CAP_GB"]), job.resources["memory_gib"])
         self.assertNotIn("grid.sh", " ".join(" ".join(j.argv) for j in jobs))
 
     def test_existing_external_cohort_does_not_start_genotype_preparation(self):
         jobs = self.build("csx", extra=["--cohort", "/tmp/existing.tsv", "--validation-n", "400"])
         self.assertNotIn("shared.prepare", {j.key for j in jobs})
         for job in jobs:
-            if job.key.endswith("targetfit"):
-                self.assertIn("/tmp/existing.tsv", job.argv)
-                self.assertEqual(len(job.depends), 3)
-            else:
-                self.assertNotIn("--cohort", job.argv)
-                self.assertNotIn("--validation-n", job.argv)
+            steps = json.loads(job.env["GRID_TRAIT_STEPS"])
+            self.assertEqual([s["argv"][2] for s in steps], ["weights", "score", "targetfit"])
+            self.assertIn("/tmp/existing.tsv", steps[-1]["argv"])
+            self.assertIn("--validation-n", steps[-1]["argv"])
+            for step in steps[:-1]:
+                self.assertNotIn("--cohort", step["argv"])
+                self.assertNotIn("--validation-n", step["argv"])
 
     def test_check_never_schedules_cohort_preparation_or_target_fitting(self):
         for entry in ("csx", "disco"):
@@ -62,10 +66,43 @@ class PlanningTests(unittest.TestCase):
     def test_chromosome_subset_is_carried_to_its_own_target_evaluation(self):
         for specification in ("21-22", "chr21;CHR22;21", "21,22"):
             jobs = self.build("csx", options=["--traits", "height"], extra=["--chrs", specification])
-            fit = next(job for job in jobs if job.key.endswith("targetfit"))
-            self.assertEqual(planner.option(fit.argv, {"--score-subset"}), "chr21,22")
-        fit = self.build("csx", options=["--traits", "height"])[-1]
-        self.assertNotIn("--score-subset", fit.argv)
+            fit = json.loads(jobs[0].env["GRID_TRAIT_STEPS"])[-1]
+            self.assertEqual(planner.option(fit["argv"], {"--score-subset"}), "chr21,22")
+        job = self.build("csx", options=["--traits", "height"])[0]
+        self.assertNotIn("--score-subset", json.loads(job.env["GRID_TRAIT_STEPS"])[-1]["argv"])
+
+    def test_disco_all_retains_one_allocation_per_trait(self):
+        for entry, modules in (("disco", ["prepare", "all"]),):
+            jobs = self.build(entry, options=["--hpc-config", str(GRID/"config/hpc.qiming.json"),
+                                              "--queue", "v4-3t", "--gpu-queue", "8v100-32-sc"])
+            self.assertEqual([j.key for j in jobs], [t+".all" for t in ("height", "ldl", "t2dm")])
+            for job in jobs:
+                self.assertEqual(job.depends, [])
+                self.assertEqual([s["argv"][2] for s in json.loads(job.env["GRID_TRAIT_STEPS"])], modules)
+                self.assertEqual(job.resources["cores"], 32)
+                self.assertEqual(job.resources["memory_gib"], 256)
+                self.assertEqual(job.resources["queue"], "8v100-32-sc" if entry == "prsformer" else "v4-3t")
+                self.assertEqual(job.resources["gpus"], int(entry == "prsformer"))
+
+    def test_bundle_preserves_stage_specific_resources_and_total_walltime_override(self):
+        job = self.build("csx", options=["--traits", "height", "--threads", "8", "--job-hours", "168"],
+                         extra=["--jobs", "4"])[0]
+        self.assertEqual(job.resources["hours"], 168)
+        steps = json.loads(job.env["GRID_TRAIT_STEPS"])
+        self.assertEqual(steps[0]["env"]["GRID_THREADS"], "8")
+        self.assertEqual(steps[-1]["env"]["GRID_MEMORY_CAP_GB"], "32")
+        self.assertEqual(planner.option(steps[0]["argv"], {"--jobs"}), "4")
+        with self.assertRaisesRegex(ValueError, "exceeds --job-cores"):
+            self.build("csx", options=["--threads", "16", "--job-cores", "32"], extra=["--jobs", "4"])
+
+    def test_stage_environment_overrides_inherited_resource_values(self):
+        with patch.dict(os.environ, {"GRID_MEMORY_CAP_GB": "160", "GRID_THREADS": "8"}):
+            jobs = self.build("prsformer", options=["--traits", "height",
+                "--hpc-config", str(GRID/"config/hpc.qiming.json")])
+        self.assertEqual(jobs[0].env["GRID_MEMORY_CAP_GB"], "256")
+        self.assertEqual(jobs[1].env["GRID_MEMORY_CAP_GB"], "160")
+        self.assertEqual(jobs[2].env["GRID_MEMORY_CAP_GB"], "32")
+        self.assertFalse(any("GRID_TRAIT_STEPS" in j.env for j in jobs))
 
     def test_block_and_count_have_distinct_jobs_and_boundary_options(self):
         block = self.build("csx", "blocknet", options=["--traits", "height"],
@@ -77,8 +114,8 @@ class PlanningTests(unittest.TestCase):
         count = self.build("grid", options=["--traits", "height,ldl"],
                            extra=["--input-manifest", "/tmp/{trait}.json"])
         self.assertEqual(len(count), 8)
-        self.assertEqual(count[-2].depends, ["height.evaluate", "ldl.evaluate"])
-        self.assertEqual(count[-1].depends, ["architecture"])
+        self.assertEqual(count[-2].depends, ["height.count.cpu_evaluate", "ldl.count.cpu_evaluate"])
+        self.assertEqual(count[-1].depends, ["count.cpu_architecture"])
         self.assertFalse(any("blocknet" in j.key for j in count))
 
     def test_shared_raw_options_are_not_passed_to_block_or_count_models(self):
@@ -96,12 +133,12 @@ class PlanningTests(unittest.TestCase):
             path.write_text(json.dumps(dict(schema_version="grid.count_abm.config.1", block_config="custom-blocks.json")))
             jobs = self.build("grid", options=["--traits", "height,ldl"], extra=["--config", str(path)])
             lookup = {j.key:j for j in jobs}
-            for key in ("shared.prepare", "height.blockprepare", "ldl.blockprepare", "height.prepare", "ldl.prepare"):
+            for key in ("shared.cpu_prepare", "height.count.cpu_blockprepare", "ldl.count.cpu_blockprepare", "height.count.cpu_geometry", "ldl.count.cpu_geometry"):
                 argv = lookup[key].argv
                 self.assertEqual(argv[argv.index("--block-config")+1], str(path.parent/"custom-blocks.json"))
-            self.assertEqual(lookup["ldl.blockprepare"].depends, ["height.blockprepare"])
-            self.assertEqual(lookup["height.prepare"].depends, ["ldl.blockprepare"])
-            self.assertEqual(lookup["ldl.prepare"].depends, ["ldl.blockprepare"])
+            self.assertEqual(lookup["ldl.count.cpu_blockprepare"].depends, ["height.count.cpu_blockprepare"])
+            self.assertEqual(lookup["height.count.cpu_geometry"].depends, ["ldl.count.cpu_blockprepare"])
+            self.assertEqual(lookup["ldl.count.cpu_geometry"].depends, ["ldl.count.cpu_blockprepare"])
             self.assertEqual(planner.count_block_config(["--config", str(path), "--block-config", "grid/config/abm.blocks.json"]),
                              str((Path.cwd()/"grid/config/abm.blocks.json").resolve()))
 
@@ -115,7 +152,7 @@ class PlanningTests(unittest.TestCase):
 
     def test_explicit_gpu_and_cpu_requests(self):
         gpu = self.build("grid", "twins", options=["--traits", "height", "--device", "cuda"])[0]
-        self.assertEqual(gpu.resources["queue"], os.environ.get("HPC_GPU_QUEUE", "4a100-40"))
+        self.assertEqual(gpu.resources["queue"], "2v100-32-sc")
         self.assertEqual(gpu.resources["gpus"], 1)
         cpu = self.build("csx", "blocknet", options=["--traits", "height", "--device", "cpu"])[-1]
         self.assertEqual(cpu.resources["gpus"], 0)
@@ -126,19 +163,20 @@ class PlanningTests(unittest.TestCase):
     def test_hpc_count_auto_requests_gpu_but_cpu_override_is_preserved(self):
         for stage in ("prepare", "twins"):
             extra = ["--input-manifest", "/tmp/{trait}.json"] if stage == "prepare" else []
-            automatic = self.build("grid", stage, options=["--traits", "height"], extra=extra)[0]
+            automatic = self.build("grid", stage, options=["--traits", "height"], extra=extra)[-1]
             self.assertEqual(automatic.resources["gpus"], 1)
             self.assertEqual(automatic.resources["memory_gib"], 160)
             self.assertEqual(automatic.argv[automatic.argv.index("--device")+1], "cuda")
-            cpu = self.build("grid", stage, options=["--traits", "height", "--device", "cpu"], extra=extra)[0]
+            cpu = self.build("grid", stage, options=["--traits", "height", "--device", "cpu"], extra=extra)[-1]
             self.assertEqual(cpu.resources["gpus"], 0)
             self.assertEqual(cpu.argv[cpu.argv.index("--device")+1], "cpu")
 
     def test_eight_threads_and_cuda_radius_do_not_force_gpu_reports(self):
         jobs = self.build("grid", options=["--traits", "height", "--device", "cuda", "--threads", "8"],
                           extra=["--input-manifest", "/tmp/height.json"])
-        self.assertEqual(jobs[0].resources["gpus"], 1)
-        self.assertEqual(jobs[0].argv[jobs[0].argv.index("--device")+1], "cuda")
+        self.assertEqual(jobs[0].resources["gpus"], 0)
+        self.assertEqual(jobs[0].argv[jobs[0].argv.index("--device")+1], "cpu")
+        self.assertEqual(jobs[1].resources["gpus"], 1)
         for job in jobs[-2:]:
             self.assertEqual(job.resources["gpus"], 0)
             self.assertEqual(job.env["GRID_THREADS"], "4")
@@ -156,6 +194,131 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(install.argv, ["bash", str(GRID/"install.sh")])
         check = self.build("install", extra=["--check"])[0]
         self.assertEqual(check.argv, ["bash", str(GRID/"install.sh"), "--check"])
+
+
+class UpstreamFileTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="grid prerequisites ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.pca = self.root / "projection/pca.tsv.gz"
+        self.ancestry = self.root / "projection/ancestry.tsv.gz"
+        self.scores = self.root / "scores"
+        environment = patch.dict(os.environ, {
+            "submit": "hpc", "GRID_PCA_FILE": str(self.pca),
+            "GRID_ANCESTRY_FILE": str(self.ancestry), "GRID_SCORE_DIR": str(self.scores),
+            "GRID_GWAS_DIR": str(self.root / "gwas"), "GRID_CHRS": "1-22",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def touch(self, path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("exists\n")  # Only existence is checked on the submission host.
+        return path
+
+    def jobs(self, entry, module="all", extra=()):
+        args = planner.parser().parse_args(["--entry", entry, "--workflow-module", module,
+            "--analysis-root", str(self.root / "analysis"), "--traits", "height"])
+        return planner.build_jobs(args, list(extra))
+
+    def projection(self):
+        self.touch(self.pca)
+        self.touch(self.ancestry)
+
+    def test_csx_all_checks_pca_but_allows_its_own_future_scores(self):
+        jobs = self.jobs("csx")
+        with self.assertRaisesRegex(ValueError, "Missing prerequisite files; no jobs were submitted") as error:
+            planner.check_upstream_files(jobs)
+        self.assertIn(str(self.pca), str(error.exception))
+        self.assertIn("bash 1.pca.sh", str(error.exception))
+        self.projection()
+        planner.check_upstream_files(jobs)
+        self.assertFalse((self.scores / "height/1csx.scores.rds").exists())
+
+    def test_csx_bundle_still_checks_explicit_external_evaluation_scores(self):
+        self.projection()
+        score = self.root / "external/height.tsv"
+        jobs = self.jobs("csx", extra=["--scores", str(score.parent / "{trait}.tsv")])
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        self.assertIn(str(score), str(error.exception))
+        self.touch(score)
+        planner.check_upstream_files(jobs)
+
+    def test_disco_respects_explicit_paths_and_lists_missing_csx(self):
+        pca = self.touch(self.root / "custom/pca.gz")
+        ancestry = self.touch(self.root / "custom/ancestry.gz")
+        scores = self.root / "custom/scores"
+        jobs = self.jobs("disco", extra=["--pca-file", str(pca), "--ancestry-file", str(ancestry),
+                                        "--dir-score", str(scores)])
+        self.assertEqual(jobs[0].env["GRID_PCA_FILE"], str(pca))
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        score = scores / "height/1csx.scores.rds"
+        self.assertIn(str(score), str(error.exception))
+        self.assertIn("bash 2.csx.sh", str(error.exception))
+        self.touch(score)
+        planner.check_upstream_files(jobs)
+
+    def test_prsformer_all_needs_projection_without_other_methods_outputs(self):
+        jobs = self.jobs("prsformer")
+        with self.assertRaises(ValueError):
+            planner.check_upstream_files(jobs)
+        self.projection()
+        planner.check_upstream_files(jobs)
+        self.assertFalse(self.scores.exists())
+
+    def test_grid_checks_score_provenance_and_referenced_weight_files(self):
+        self.projection()
+        self.touch(self.scores / "height/1csx.scores.rds")
+        jobs = self.jobs("grid")
+        provenance = self.root / "analysis/csx/height/provenance.json"
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        self.assertIn(str(provenance), str(error.exception))
+        weights = {p: self.root / "weights" / (p + ".gz") for p in ("AFR", "EAS", "EUR", "SAS")}
+        provenance.parent.mkdir(parents=True, exist_ok=True)
+        provenance.write_text(json.dumps({"models": {"csx."+p: {"weights_file": str(w)} for p,w in weights.items()}}))
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        for weight in weights.values():
+            self.assertIn(str(weight), str(error.exception))
+            self.touch(weight)
+        planner.check_upstream_files(jobs)
+        self.assertFalse((self.root / "analysis/prsformer/cache/data.tsv.gz").exists())
+
+    def test_score_only_needs_existing_weights_and_signatures(self):
+        for pop in ("AFR", "EAS", "EUR", "SAS"):
+            self.touch(self.root / "gwas" / f"height.{pop}.gz")
+        jobs = self.jobs("csx", "score", ["--chrs", "22"])
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        self.assertIn("height.AFR.chr22.csx.gz", str(error.exception))
+        for pop in ("AFR", "EAS", "EUR", "SAS"):
+            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz")
+            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz.signature")
+        planner.check_upstream_files(jobs)
+
+    def test_standalone_count_stage_reports_the_producing_command(self):
+        jobs = self.jobs("grid", "twins")
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        receipt = self.root / "analysis/count_abm/height/PREPARE_COMPLETE.json"
+        self.assertIn(str(receipt), str(error.exception))
+        self.assertIn("bash grid.sh prepare", str(error.exception))
+        self.touch(receipt)
+        planner.check_upstream_files(jobs)
+
+    def test_external_manifest_is_checked_and_internal_stages_are_not_blocked(self):
+        manifest = self.root / "input/height.json"
+        jobs = self.jobs("grid", extra=["--input-manifest", str(manifest.parent / "{trait}.json")])
+        with self.assertRaises(ValueError) as error:
+            planner.check_upstream_files(jobs)
+        self.assertIn(str(manifest), str(error.exception))
+        self.touch(manifest)
+        planner.check_upstream_files(jobs)
 
 
 class PublicEntryTests(unittest.TestCase):
@@ -216,6 +379,51 @@ class PublicEntryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertIn(str(GRID / "environment.hpc.yml"), result.stdout)
         self.assertFalse((self.root / "env").exists())
+
+    def test_default_hpc_submission_returns_without_querying_job_status(self):
+        bin_dir = self.root / "fake-lsf"
+        bin_dir.mkdir()
+        submitted, polled = self.root / "submitted", self.root / "polled"
+        for name, body in {
+            "bsub": 'cat >/dev/null\nprintf "accepted\\n" >> "$TEST_SUBMITTED"\necho "Job <12345> is submitted to queue <33>."\n',
+            "bjobs": 'touch "$TEST_POLLED"\nexit 1\n',
+        }.items():
+            executable = bin_dir / name
+            executable.write_text("#!/usr/bin/env bash\n" + body)
+            executable.chmod(0o755)
+        env = dict(self.env, PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], SUBMIT_WAIT="FALSE",
+                   TEST_SUBMITTED=str(submitted), TEST_POLLED=str(polled))
+        result = subprocess.run(["bash", str(GRID / "1.pca.sh"), "--submit", "hpc",
+            "--analysis-root", str(self.root / "submit")], env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('"status": "SUBMITTED"', result.stdout)
+        self.assertEqual(submitted.read_text(), "accepted\n")
+        self.assertFalse(polled.exists())
+
+    def test_missing_prerequisite_is_printed_before_any_plan_or_submission(self):
+        output = self.root / "missing-output"
+        pca = self.root / "missing.pca.tsv.gz"
+        scores = self.root / "missing-scores"
+        bin_dir = self.root / "blocked-lsf"
+        bin_dir.mkdir()
+        submitted = self.root / "unexpected-submission"
+        bsub = bin_dir / "bsub"
+        bsub.write_text('#!/usr/bin/env bash\ntouch "$TEST_SUBMITTED"\nexit 1\n')
+        bsub.chmod(0o755)
+        env = dict(self.env, GRID_PCA_FILE=str(pca), GRID_SCORE_DIR=str(scores),
+                   GRID_ANCESTRY_FILE=str(self.root / "missing.ancestry.tsv.gz"), SUBMIT_WAIT="FALSE",
+                   PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], TEST_SUBMITTED=str(submitted))
+        result = subprocess.run(["bash", str(GRID / "3.disco.sh"), "--traits", "height",
+            "--submit", "hpc", "--analysis-root", str(output)], env=env,
+            capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stdout+result.stderr)
+        self.assertIn("[MISSING] " + str(pca), result.stderr)
+        self.assertIn(str(scores / "height/1csx.scores.rds"), result.stderr)
+        self.assertIn("bash 1.pca.sh", result.stderr)
+        self.assertIn("bash 2.csx.sh", result.stderr)
+        self.assertNotIn("[SUBMITTED]", result.stdout)
+        self.assertFalse(submitted.exists())
+        self.assertFalse((output / "jobs").exists())
 
     def test_real_public_local_count_pipeline_completes_all_five_workers(self):
         from test_count_abm import exported_fixture

@@ -33,6 +33,9 @@ gwas_format_resume_prepare() {
 	local -a modules
 	gwas_resume_done=()
 	[[ "$replace" != TRUE && "$liftOver" != TRUE && "$delete_raw" != TRUE ]] || return 0
+	# Protein plots must compare the coordinate-table fingerprint and cohort in
+	# their state; names alone would reuse plots made before cis annotation.
+	if [[ -n "${prot_names:-}" && ",$step," == *,mplot,* ]]; then return 0; fi
 	IFS=',' read -r -a modules <<<"$step"
 	for module in "${modules[@]}"; do
 		case "$module" in format | thin | magma | lead | mplot) ;; *) return 0 ;; esac

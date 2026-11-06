@@ -1,0 +1,23 @@
+{
+  "input_N": 487713,
+  "missing_pca_N": 968,
+  "required_pcs": [
+    "PC1",
+    "PC2",
+    "PC3",
+    "PC4",
+    "PC5",
+    "PC6",
+    "PC7",
+    "PC8",
+    "PC9",
+    "PC10"
+  ],
+  "retained_N": 486745,
+  "rule": "intersect available projected PCs before freezing family-based splits",
+  "schema": "grid.shared_pca_cohort.1",
+  "selected_ids_sha256": "80481752b557beb3b8b34aabe1fce93166bdeeaf037bd301056cf4b826bdc7a7",
+  "source": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz",
+  "source_sha256": "152e0fbe68f8117ef9281069de27fe7059e9c0b0044463d4ebf16dd834647c1e",
+  "uses_score_or_outcome_values": false
+}

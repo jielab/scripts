@@ -1077,7 +1077,7 @@ arg_tsinfer() (
 	REPLACE=${REFGEN_REPLACE:-FALSE}
 	FORMAT=${REFGEN_ARG_FORMAT:-native}
 	TRACE_DIR=$OUT_DIR/trace/tsinfer
-	TMP_PARENT=${REFGEN_TSINFER_TMP_ROOT:-/tmp/refgen/arg/tsinfer/$(basename -- "${REFGEN_GEN_ROOT:?}").b${REFGEN_GRCH:-37}}
+	TMP_PARENT=${REFGEN_TSINFER_TMP_ROOT:-${DIR_RUNTIME_TMP}/refgen/arg/tsinfer/$(basename -- "${REFGEN_GEN_ROOT:?}").b${REFGEN_GRCH:-37}}
 	WORK=
 	if [[ $ACTION == check ]]; then
 		[[ -d $OUT_DIR ]] || {
@@ -1227,7 +1227,7 @@ Main options:
     --threads N           bcftools threads (default: 4)
     --missing-max X       require F_MISSING < X (default: 0.05)
     --mac-min N           require minor allele count >= N (default: 2)
-    --dir-tmp-root DIR        temporary work root (default: /tmp/gu-arg-vcf-$USER)
+    --dir-tmp-root DIR        temporary work root (default: ${DIR_RUNTIME_TMP}/gu-arg-vcf-$USER)
     --ref-fasta FILE      optional reference FASTA for REF validation/normalization
     --replace TRUE|FALSE  replace an existing output (default: FALSE)
     Detailed requirements: 0.README.md
@@ -1252,7 +1252,7 @@ USAGE
 	}
 
 	in="" out="" threads=4 missing_max=0.05 mac_min=2
-	tmp_root=${ARG_TMP_ROOT:-/tmp/gu-arg-vcf-${USER:-user}}
+	tmp_root=${ARG_TMP_ROOT:-${DIR_RUNTIME_TMP}/gu-arg-vcf-${USER:-user}}
 	ref_fasta="" replace=0 chrom="" build=37 x_psam=""
 	while (($#)); do
 		case "$1" in

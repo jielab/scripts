@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run all stages of one trait/layer in one local process or LSF allocation.
+"""Run a resource-compatible group of trait/layer stages in one allocation.
 
-Expected scientific unavailability is handled by the individual analyses. An
-unexpected stage failure remains an error, but does not cancel later analyses.
+Expected scientific unavailability is handled by the individual analyses.
+Split allocations stop on failure so success-dependent jobs cannot consume
+partial results. Historical single-allocation plans retain their continuation policy.
 """
 from __future__ import annotations
 
@@ -53,14 +54,15 @@ def claim_aggregates(root, scope, batch_id, scopes):
         return True
 
 
-def run_steps(root, scope, steps, *, batch_id=None, scopes=None):
+def run_steps(root, scope, steps, *, batch_id=None, scopes=None, phase=None, fail_fast=False):
     if os.getenv("submit") == "hpc" and not os.getenv("LSB_JOBID"):
         raise RuntimeError("Scope worker requires an LSF allocation")
     # Every scientific child inherits WORKFLOW_WORKER, preventing nested bsub.
     env = dict(os.environ, WORKFLOW_WORKER="1", LE8_SCOPE_WORKER="1")
-    status = Path(root) / "logs/scopes" / f"{scope}.json"
+    status_key = f"{scope}.{phase}" if phase else scope
+    status = Path(root) / "logs/scopes" / f"{status_key}.json"
     result = dict(scope=scope, job_id=os.getenv("LSB_JOBID"),
-                  started=datetime.now(timezone.utc).isoformat(), status="RUN", steps=[])
+                  phase=phase, started=datetime.now(timezone.utc).isoformat(), status="RUN", steps=[])
     save_status(status, result)
     aggregate_owner = None
     for step in steps:
@@ -87,6 +89,9 @@ def run_steps(root, scope, steps, *, batch_id=None, scopes=None):
             record = dict(key=step["key"], exit_code=1, status="FAILED", error=str(error))
         result["steps"].append(record)
         save_status(status, result)
+        if fail_fast and record["status"] == "FAILED":
+            print(f"[LE8] FAILED {step['key']}; stopping this phase and blocking dependent jobs", flush=True)
+            break
         print(f"[LE8] {record['status']} {step['key']} exit={record['exit_code']}; "
               "continuing with remaining analyses", flush=True)
     failed = [s["key"] for s in result["steps"] if s["status"] == "FAILED"]
@@ -104,6 +109,8 @@ def main(argv=None):
     p.add_argument("--steps-json", required=True)
     p.add_argument("--batch-id")
     p.add_argument("--scopes")
+    p.add_argument("--phase")
+    p.add_argument("--fail-fast", action="store_true")
     a = p.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9_]+\.(prot|met)", a.scope):
         p.error("Expected one trait.prot or trait.met scope")
@@ -112,7 +119,10 @@ def main(argv=None):
         p.error("Invalid scope list")
     if a.batch_id and not re.fullmatch(r"[a-f0-9]{32}", a.batch_id):
         p.error("Invalid batch ID")
-    return run_steps(a.analysis_root, a.scope, json.loads(a.steps_json), batch_id=a.batch_id, scopes=scopes)
+    if a.phase and not re.fullmatch(r"[A-Za-z0-9_]+", a.phase):
+        p.error("Invalid phase label")
+    return run_steps(a.analysis_root, a.scope, json.loads(a.steps_json), batch_id=a.batch_id,
+                     scopes=scopes, phase=a.phase, fail_fast=a.fail_fast)
 
 
 if __name__ == "__main__":

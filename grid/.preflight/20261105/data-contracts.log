@@ -1,0 +1,39 @@
+RESOLVED_PATHS {
+  "dir_gen": "/work/sph-huangj/data/gen/ukb/37/typ",
+  "pheno_file": "/work/sph-huangj/phe/ukb/Rdata/phe.rds",
+  "ancestry_file": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz",
+  "snp_list": "/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3",
+  "remove": "",
+  "cache_dir": "/work/sph-huangj/analysis/grid/prsformer/cache",
+  "score_root": "/work/sph-huangj/data/gen/ukb/pgs",
+  "csx_analysis_root": "/work/sph-huangj/analysis/grid/csx",
+  "output_root": "/work/sph-huangj/analysis/grid/csx_blocks/features",
+  "cpu_abm_prepared": "/work/sph-huangj/analysis/grid/cache/abm/prepared.joblib",
+  "dosage_supplement_dir": "/work/sph-huangj/data/gen/ukb/37/typ",
+  "ld_block_dir": "/work/sph-huangj/data/LD/block"
+}
+TARGET_VALID_IDS 488130 PCA_IDS 487409 TARGET_WITHOUT_PCA 968
+Traceback (most recent call last):
+  File "/work/sph-huangj/scripts/grid/.preflight/20261105/data-contracts.py", line 25, in <module>
+    d=io.read_result_table(p,dtype={'eid':str,'IID':str})
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/scripts/0f/results.py", line 189, in read_table
+    return pd.read_csv(resolve_table(path), **options)
+                       ^^^^^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/scripts/0f/results.py", line 169, in resolve_table
+    return materialize_rds(path) if path.suffix.lower() == ".rds" else materialize_workbook(path) if path.suffix.lower() == ".xlsx" else path
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/scripts/0f/results.py", line 104, in materialize_rds
+    table = Path(run_r("export-table", path, directory))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/scripts/0f/results.py", line 38, in run_r
+    return subprocess.run(
+           ^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/.conda/envs/grid/lib/python3.11/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/sph-huangj/.conda/envs/grid/lib/python3.11/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/work/sph-huangj/.conda/envs/grid/lib/python3.11/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/usr/bin/Rscript'

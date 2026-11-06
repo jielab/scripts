@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """ibdmix utilities and command entry points."""
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import sys
 
 sys.dont_write_bytecode = True
@@ -1524,8 +1531,8 @@ def resume_scoring(saved, chrom):
 
 def resume_disposable(path):
 	p = Path(path)
-	return (p.parent.parent == Path("/tmp/gu-psam-chunks") and p.name == "chunk.keep") or (
-		p.parent.parent == Path("/tmp/gu-cohorts") and p.name in {"samples.txt", "cohort.keep"}
+	return (p.parent.parent == Path(configured_path('DIR_RUNTIME_TMP', 'gu-psam-chunks')) and p.name == "chunk.keep") or (
+		p.parent.parent == Path(configured_path('DIR_RUNTIME_TMP', 'gu-cohorts')) and p.name in {"samples.txt", "cohort.keep"}
 	)
 
 
@@ -2211,7 +2218,7 @@ def loci_prepare(database, cache_dir, dataset, build, window_bp=50_000, floor=0.
 def loci_main():
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("--database", type=Path, required=True)
-	parser.add_argument("--cache-dir", type=Path, default=Path("/tmp/gu-shiny-evidence"))
+	parser.add_argument("--cache-dir", type=Path, default=Path(configured_path('DIR_RUNTIME_TMP', 'gu-shiny-evidence')))
 	parser.add_argument("--dataset", required=True)
 	parser.add_argument("--build", required=True)
 	parser.add_argument("--window-bp", type=int, default=50_000)

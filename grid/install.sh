@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# This installer/checker runs directly; for a CPU installation worker, for example:
+#   bsub -q 33 -n 10 -W 4:00 -M 32GB -R "span[hosts=1] rusage[mem=32GB/host]" bash install.sh
+# GPU builds/checks require a suitable GPU allocation instead.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -18,7 +32,7 @@ Modules:
 
 Main options:
     GRID_ENV_NAME  Conda environment [grid]
-    PRSFORMER_UPSTREAM_DIR  Source [/mnt/d/software/PRSformer]
+    PRSFORMER_UPSTREAM_DIR  Source [${DIR_SOFTWARE}/PRSformer]
     --environment-file FILE  Explicit Conda recipe; HPC defaults to environment.hpc.yml
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
     --device cuda           Allocate a GPU and require actual GPU runtime checks
@@ -27,8 +41,8 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
-    cd /work/sph-huangj/scripts/grid
+    source "${SCRIPTS_ROOT}/0f/0os.sh"
+    cd ${SCRIPTS_ROOT}/grid
     ./install.sh --dry-run
     ./install.sh
 

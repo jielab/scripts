@@ -6,6 +6,13 @@ The finite-D stability rule and degenerate-coordinate conventions are explicitly
 implementation choices, not a claim of identity to restricted author outputs.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 from datetime import date
 import contextlib
@@ -150,11 +157,24 @@ def sha(path):
 
 def relocated_output_stamp(record):
     """Resolve legacy data/analysis receipts under the configured analysis root."""
-    path = Path(record['path'])
-    previous = Path('/work/sph-huangj/data/analysis/ld')
+    path = Path(record['path']).resolve()
+    if str(path) != record['path']:
+        # A verified cross-filesystem move may reduce timestamp precision.
+        # Use the recorded destination stamp, never the file's current stamp,
+        # so later modifications still invalidate the original cache receipt.
+        for parent in path.parents:
+            migration = read_json(parent / 'LD_OUTPUT_MIGRATION.json')
+            if not migration or migration.get('status') != 'complete' or not migration.get('checksum_verified'):
+                continue
+            item = migration.get('files', {}).get(record['path'])
+            if (item and item.get('before') == record and
+                    item.get('after', {}).get('path') == str(path) and
+                    item['after'].get('size') == record['size']):
+                return dict(item['after'])
+    previous = Path(configured_path('ANALYSIS_ROOT', 'ld'))
     if path.is_relative_to(previous):
         base = Path(os.environ.get('SCRATCH_ANALYSIS_ROOT',
-                    os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis"))) / 'ld'
+                    os.environ.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT')))) / 'ld'
         path = base / path.relative_to(previous)
     return dict(record, path=str(path.resolve()))
 
@@ -251,14 +271,14 @@ class Pipeline:
         self.input_format = os.environ.get('INPUT_FORMAT', 'pgen')
         if self.input_format not in ('vcf', 'pgen'):
             raise Stop('INPUT_FORMAT must be vcf or pgen')
-        self.pfile_dir = Path(os.environ.get('PFILE_DIR', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/pfile')).expanduser().resolve()
-        self.out = Path(os.environ.get('OUT', str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "ld" / self.genome_build))).expanduser().resolve()
+        self.pfile_dir = Path(os.environ.get('PFILE_DIR', f"{configured_path('DIR_GEN')}/1kg/{self.genome_build}/pfile")).expanduser().resolve()
+        self.out = Path(os.environ.get('OUT', str(Path(os.environ.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT'))) / "ld" / self.genome_build))).expanduser().resolve()
         self.work = self.out / 'rebuild_v2'
         self.tmp_parent = Path(os.environ.get('LD_TMP_DIR', str(self.out / 'tmp'))).expanduser().resolve()
         self.resume_dir = (Path(os.environ['LD_RESUME_DIR']).expanduser().resolve()
                            if os.environ.get('LD_RESUME_DIR') else None)
-        self.vcf_dir = Path(os.environ.get('VCF_DIR', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/vcf')).expanduser().resolve()
-        self.panel = Path(os.environ.get('PANEL', f'/work/sph-huangj/data/gen/1kg/{self.genome_build}/samples.txt')).expanduser().resolve()
+        self.vcf_dir = Path(os.environ.get('VCF_DIR', f"{configured_path('DIR_GEN')}/1kg/{self.genome_build}/vcf")).expanduser().resolve()
+        self.panel = Path(os.environ.get('PANEL', f"{configured_path('DIR_GEN')}/1kg/{self.genome_build}/samples.txt")).expanduser().resolve()
         self.chroms = parse_chroms(os.environ.get('CHRS', '1-22'))
         self.threads = positive_int('THREADS', 8)
         self.parallel_chroms = positive_int('PARALLEL_CHROMS', 1)
@@ -374,36 +394,37 @@ class Pipeline:
         free = shutil.disk_usage(disk_path).free
         path = Path(disk_path).resolve()
         filesystem = path.parts[1] if len(path.parts) > 1 else ""
-        if filesystem in ("data", "scratch"):
+        if filesystem in ("work", "data", "scratch"):
             group = grp.getgrgid(path.stat().st_gid).gr_name
             key = (filesystem, group)
             cache = getattr(self, "_quota_cache", {})
             now = time.monotonic()
-            if key not in cache or now - cache[key][0] > 60:
+            if key not in cache or now - cache[key][0] > 10:
                 try:
-                    result = subprocess.run(
-                        ["/usr/lpp/mmfs/bin/mmlsquota", "-Y", "-g", group, filesystem],
-                        capture_output=True, text=True, check=True, timeout=15)
-                    header, found, remaining = None, False, []
-                    for line in result.stdout.splitlines():
-                        values = line.split(":")
-                        if len(values) > 2 and values[2] == "HEADER":
-                            header = values
-                        elif header and values[:2] == header[:2]:
-                            row = dict(zip(header, values))
-                            if row.get("filesystemName") != filesystem:
-                                continue
-                            found = True
-                            limits = [int(row[k]) for k in ("blockQuota", "blockLimit") if int(row[k]) > 0]
+                    mount = json.loads(subprocess.run(
+                        ['findmnt', '--json', '--output', 'SOURCE,FSTYPE,TARGET', '--target', str(path)],
+                        capture_output=True, text=True, check=True, timeout=15).stdout)['filesystems'][0]
+                    if mount['fstype'] == 'lustre':
+                        remaining = []
+                        for option, identity in (('-u', str(os.getuid())), ('-g', str(path.stat().st_gid))):
+                            result = subprocess.run(
+                                ['lfs', 'quota', option, identity, mount['target']],
+                                capture_output=True, text=True, check=True, timeout=15)
+                            fields = result.stdout.split()
+                            index = fields.index(mount['target'])
+                            used, soft, hard = (int(x.rstrip('*')) for x in fields[index + 1:index + 4])
+                            limits = [n for n in (soft, hard) if n > 0]
                             if limits:
-                                remaining.append(max(0, min(limits) - int(row["blockUsage"]) -
-                                                     int(row.get("blockInDoubt", 0))) * 1024)
-                    if not found:
-                        raise ValueError("missing GPFS quota record")
-                    cache[key] = (now, min(remaining) if remaining else float("inf"))
-                    self._quota_cache = cache
-                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
-                    raise Stop(f"Cannot verify {filesystem} quota for group {group}: {exc}") from exc
+                                remaining.append(max(0, min(limits) - used) * 1024)
+                        cache[key] = (now, min(remaining) if remaining else float('inf'))
+                        self._quota_cache = cache
+                    elif mount['fstype'] == 'gpfs':
+                        cache[key] = (now, self.gpfs_quota_free(group, mount['source']))
+                        self._quota_cache = cache
+                    else:
+                        raise ValueError(f"Unsupported quota filesystem: {mount['fstype']}")
+                except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as exc:
+                    raise Stop(f"Cannot verify {filesystem} user/group quota: {exc}") from exc
             free = min(free, cache[key][1])
         if free < self.min_free:
             detail = ''
@@ -411,10 +432,33 @@ class Pipeline:
                 size = sum(p.stat().st_size for p in Path(disk_path).glob('*.vcor') if not p.is_symlink())
                 detail = f'; temporary .vcor size={size / 1e9:.3f} GB'
             raise Stop(f'Free disk below MIN_FREE_GB={self.min_free / 1e9:g}: '
-                       f'{disk_path} had {free / 1e9:.3f} GB available (filesystem/group quota) before cleanup{detail}. '
+                       f'{disk_path} had {free / 1e9:.3f} GB available (filesystem/user/group quota) before cleanup{detail}. '
                        'Deleting temporary files releases space, so free space after stopping can be much higher. '
                        'Set LD_TMP_DIR to a filesystem with more free space and rerun.')
         return free
+
+    @staticmethod
+    def gpfs_quota_free(group, filesystem):
+        result = subprocess.run(
+            ["/usr/lpp/mmfs/bin/mmlsquota", "-Y", "-g", group, filesystem],
+            capture_output=True, text=True, check=True, timeout=15)
+        header, found, remaining = None, False, []
+        for line in result.stdout.splitlines():
+            values = line.split(":")
+            if len(values) > 2 and values[2] == "HEADER":
+                header = values
+            elif header and values[:2] == header[:2]:
+                row = dict(zip(header, values))
+                if row.get("filesystemName") != filesystem:
+                    continue
+                found = True
+                limits = [int(row[k]) for k in ("blockQuota", "blockLimit") if int(row[k]) > 0]
+                if limits:
+                    remaining.append(max(0, min(limits) - int(row["blockUsage"]) -
+                                         int(row.get("blockInDoubt", 0))) * 1024)
+        if not found:
+            raise ValueError("missing GPFS quota record")
+        return min(remaining) if remaining else float("inf")
 
     def run_command(self, command, disk_path=None, *, stderr_path=None):
         note(shlex.join(map(str, command)))

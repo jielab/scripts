@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # 🚩 Packages, paths, and shared inputs
 sys <- Sys.info()[["sysname"]]
 resolve_dir0 <- function() {
@@ -9,7 +26,7 @@ resolve_dir0 <- function() {
 	env_dir0 <- Sys.getenv("EMS120_DIR0", unset = "")
 	if (!nzchar(env_dir0)) env_dir0 <- Sys.getenv("DIR0", unset = "")
 	if (nzchar(env_dir0)) return(normalize_dir0(env_dir0))
-	candidates <- if (sys == "Windows") c("D:") else c("/mnt/d", "/d")
+	candidates <- if (sys == "Windows") c(os_path("DIR_DAT")) else c(os_path("DIR_DAT"))
 	hit <- candidates[file.exists(candidates)]
 	if (length(hit)) normalize_dir0(hit[1]) else normalize_dir0(candidates[1])
 }
@@ -31,16 +48,16 @@ py_ai <- switch(
 		Sys.getenv("RETICULATE_PYTHON", ""),
 		file.path(Sys.getenv("USERPROFILE"), "anaconda3", "envs", "ai", "python.exe"),
 		file.path(Sys.getenv("USERPROFILE"), "miniconda3", "envs", "ai", "python.exe"),
-		"C:/ProgramData/anaconda3/envs/ai/python.exe",
-		"C:/ProgramData/miniconda3/envs/ai/python.exe",
-		"D:/anaconda3/envs/ai/python.exe",
-		"D:/miniconda3/envs/ai/python.exe"
+		file.path(os_path("DIR_WINDOWS_PROGRAMDATA"), "anaconda3/envs/ai/python.exe"),
+		file.path(os_path("DIR_WINDOWS_PROGRAMDATA"), "miniconda3/envs/ai/python.exe"),
+		file.path(os_path("DIR_DAT"), "anaconda3/envs/ai/python.exe"),
+		file.path(os_path("DIR_DAT"), "miniconda3/envs/ai/python.exe")
 	)),
 	Linux = pick_python(c(
 		Sys.getenv("RETICULATE_PYTHON", ""),
 		file.path(Sys.getenv("HOME"), "anaconda3", "envs", "ai", "bin", "python"),
-		"/home/huangj/anaconda3/envs/ai/bin/python",
-		"/home/jiehuang001/anaconda3/envs/ai/bin/python"
+		file.path(os_path("DIR_HOME"), "anaconda3/envs/ai/bin/python"),
+		file.path(os_path("DIR_HOME"), "anaconda3/envs/ai/bin/python")
 	)),
 	Darwin = pick_python(c(
 		Sys.getenv("RETICULATE_PYTHON", ""),

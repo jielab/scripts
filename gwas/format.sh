@@ -1,4 +1,27 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --cores 40 --memory-gb 160 --hours 24 --plan-only
+# New HPC plans auto-round slots. Keep tool threads within the allocated total.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Resolve paths and dispatch before any scientific work or input discovery.
 GWAS_ENTRY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -31,13 +54,15 @@ Main options:
     --local-io AUTO|TRUE|FALSE --local-cache DIR  Local reference caches
     --run-cmd TRUE|FALSE         Execute generated commands [FALSE]
     --replace TRUE|FALSE         Recompute selected results [FALSE]
+    --prot-names FILE            GRCh38 prot/CHR/POS table for cis coloring
+                                Default: <data-root>/gwas/prot.names.tsv for protein projects
     --hm3 TRUE|FALSE --thin TRUE|FALSE  SNP selection
     --thin-chr-max N             Thinned SNP cap [10000]
     -h, --help                   Show options and examples below
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
-    cd /work/sph-huangj/scripts/gwas
+    source "${SCRIPTS_ROOT}/0f/0os.sh"
+    cd ${SCRIPTS_ROOT}/gwas
 
     # Main GWAS: raw downloads -> standardized tables -> MAGMA/lead SNPs -> plots/PGS.
     ./format.sh format --dir-raw ${DIR_DAT}/Downloads --dir-out ${DIR_GWAS}/main \
@@ -53,7 +78,7 @@ Example:
 
     # 为已有 GWAS 仅生成 .thin.gz；跳过有效结果，8 个 GWAS 并发。
     # 在同一个 Bash / WSL 终端复制运行完整一段。
-    cd /work/sph-huangj/scripts/gwas
+    cd ${SCRIPTS_ROOT}/gwas
     for project in 4grid main met prot; do
       ./format.sh thin \
         --dir-out "${DIR_GWAS}/$project" --label "$project" --category common \
@@ -121,6 +146,8 @@ thin_r="${SCRIPT_PATH%/*}/f/format.R"
 plot_f=""
 mplot_r=""
 mh_plot_bed=""
+prot_names="${GWAS_PROT_NAMES:-}"
+prot_names_sha256=""
 add_panel=none
 plot_width=13.333333
 plot_height=auto
@@ -452,6 +479,11 @@ while [[ $# -gt 0 ]]; do
 			cis_bed="$2"
 			shift 2
 			;;
+		--prot-names)
+			need_arg_value "$1" "${2-}"
+			prot_names="$2"
+			shift 2
+			;;
 		--cis-flank)
 			need_arg_value "$1" "${2-}"
 			cis_flank="$2"
@@ -564,7 +596,11 @@ phe_r="${phef%.sh}.R"
 perf_f="${SCRIPT_PATH%/*}/f/format.f.sh"
 [[ -z "$plot_f" ]] && plot_f="$SCRIPTS_ROOT/0f/manhattan_plot.R"
 [[ -z "$mplot_r" ]] && mplot_r="${SCRIPT_PATH%/*}/f/format.R"
-if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$GWAS_FILES_ROOT/glist.${grch}.bed"; fi
+# Gene annotations and MAGMA panels may live in the shared large-data tree.
+# Retain the older files/ and LD/magma/ layouts for existing HPC installations.
+gene_files_root="$GWAS_FILES_ROOT"
+[[ ! -s "$GWAS_DATA_ROOT/annot/genes/glist.38.bed" ]] || gene_files_root="$GWAS_DATA_ROOT/annot/genes"
+if [[ -z "$mh_plot_bed" && "$grch" != auto ]]; then mh_plot_bed="$gene_files_root/glist.${grch}.bed"; fi
 [[ -z "$hm3_file" ]] && hm3_file="$GWAS_DATA_ROOT/gen/hm3/hapmap3_r3.snp"
 [[ -z "$hm3_pos" ]] && hm3_pos="$GWAS_DATA_ROOT/gen/hm3/hapmap3_r3_grch{grch}.snplist"
 [[ -z "$chain" ]] && chain="$GWAS_FILES_ROOT/liftOver/hg19ToHg38.over.chain.gz"
@@ -572,10 +608,13 @@ if [[ "$grch" != auto ]]; then
 	[[ -z "$refGen_clump" ]] && refGen_clump="$GWAS_DATA_ROOT/gen/1kg/${grch}/pfile/"
 	[[ -z "$refGen_cojo" ]] && refGen_cojo="$GWAS_DATA_ROOT/gen/1kg/${grch}/pfile/${refGen_pop}/"
 fi
-[[ -z "$magma_ref" ]] && magma_ref="$GWAS_DATA_ROOT/LD/magma/g1000_eur"
+if [[ -z "$magma_ref" ]]; then
+	magma_ref="$GWAS_DATA_ROOT/LD/magma/g1000_eur"
+	[[ ! -s "$GWAS_DATA_ROOT/gen/1kg/37/magma/g1000_eur.bed" ]] || magma_ref="$GWAS_DATA_ROOT/gen/1kg/37/magma/g1000_eur"
+fi
 [[ -z "$synonyms" ]] && synonyms="$GWAS_DATA_ROOT/annot/dbsnp/dbsnp151.synonyms"
 if [[ -z "$gene_loc" && "$grch" != auto ]]; then
-	[[ "$grch" == 37 ]] && gene_loc="$GWAS_FILES_ROOT/NCBI.37.gene.loc" || gene_loc="$GWAS_FILES_ROOT/NCBI.38.gene.loc"
+	[[ "$grch" == 37 ]] && gene_loc="$gene_files_root/NCBI.37.gene.loc" || gene_loc="$gene_files_root/NCBI.38.gene.loc"
 fi
 [[ "$grch" == 37 || "$grch" == 38 || "$grch" == auto ]] || {
 	echo "ERROR: --grch must be 37, 38, or auto" >&2
@@ -593,14 +632,24 @@ if [[ -z "$label" ]]; then
 		label=met
 	fi
 fi
-[[ -z "$cis_bed" && "$label" == prot ]] && cis_bed="$GWAS_DATA_ROOT/gwas/prot/pheno.bed"
+# BED input is retained only for the separate cis-extraction module.
+if has_step cis && [[ -z "$cis_bed" && "$label" == prot ]]; then
+	cis_bed="$GWAS_DATA_ROOT/gwas/prot/pheno.bed"
+fi
+case "$label" in
+	prot | ukb | ckb | decode | scot)
+		[[ -n "$prot_names" ]] || prot_names="$GWAS_DATA_ROOT/gwas/prot.names.tsv"
+		;;
+esac
+prot_cohort="$label"
+[[ "$prot_cohort" != prot ]] || prot_cohort=ukb
 
 if [[ -n "$dir_out_arg" ]]; then
 	dir_out="$dir_out_arg"
 else
 	dir_out="$GWAS_DATA_ROOT/gwas/$label"
 fi
-# Durable harmonized GWAS may remain in F:/gwas; coordinator/cache/log files do not.
+# Durable harmonized GWAS may remain in ${DIR_GWAS}; coordinator/cache/log files do not.
 if [[ -n ${GWAS_WORK_ROOT:-} ]]; then
 	project_work=$GWAS_WORK_ROOT
 elif [[ $dir_out == "$GWAS_DATA_ROOT/gwas/"* ]]; then
@@ -675,12 +724,15 @@ flock -n "$run_lock_fd" || {
 
 # 🚩 Check resources, discover GWAS, generate commands and dispatch
 need_file "$phef"
-# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
+# shellcheck source=${SCRIPTS_ROOT}/0f/phenotype.sh
 source "$phef"
 gwas_format_check_resources
+if has_step mplot && [[ -n "$prot_names" ]]; then
+	prot_names_sha256=$(sha256sum -- "$prot_names" | cut -d ' ' -f 1)
+fi
 gwas_storage_configure
 
-log "label=$label step=$step hm3=$hm3_mode thin=$thin thin-chr-max=$thin_chr_max liftOver=$liftOver add-panel=$add_panel plot=${plot_width}x${plot_height}in@${plot_res}dpi write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
+log "label=$label step=$step hm3=$hm3_mode thin=$thin thin-chr-max=$thin_chr_max liftOver=$liftOver add-panel=$add_panel plot=${plot_width}x${plot_height}in@${plot_res}dpi write-sig=$write_sig add-signal=${add_signal:-none} match=$signal_match_col:$signal_match_value locus-pos=$signal_locus_pos display-col=$signal_display_col prot-names=${prot_names:-none} prot-cohort=$prot_cohort cis-bed=$cis_bed mh-plot-bed=${mh_plot_bed:-<auto:glist.37/glist.38>} cis-flank=$cis_flank chrs=$chrs jobs=$jobs run-cmd=$run_cmd is.bsub=$is_bsub"
 log "raw=$dir_raw project=$dir_out category=$category layout=<project>/<category>/<trait>/{gwas,magma,pgs,qc} mplot=<project>/mplot coordinator-cmd=$dir_cmd refGen_clump=$refGen_clump refGen_cojo=$refGen_cojo pgs_pfile_dir=${pgs_pfile_dir:-<auto:$GWAS_DATA_ROOT/gen/ukb/GRCh/imp>}"
 if has_step pgs; then
 	write_pgs_step2_cmd

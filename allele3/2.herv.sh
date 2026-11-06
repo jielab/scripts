@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# Add to the analysis command below for a 160-GiB job:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --job-hours 24 --write-cmd
+# New HPC plans auto-round slots; remove --write-cmd to submit the reviewed scope.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 # Independent individual-genome HERV census. See 0.README.md for dependencies.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -42,7 +56,7 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
-    source /work/sph-huangj/scripts/0f/0os.sh
+    source "${SCRIPTS_ROOT}/0f/0os.sh"
   ./2.herv.sh [OPTIONS]
   ./2.herv.sh --out ${DIR_GEN}/1kg/38/herv/HG00096
 HELP
@@ -112,15 +126,15 @@ main() {
     [[ $gen =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && $sample =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail '--gen and --sample must be single names (letters, digits, dots, underscores or hyphens)'
     [[ $build == 37 || $build == 38 ]] || fail '--build must be 37 or 38'
     export ALLELE_ACTIVE_HERV_BUILD=$build
-    local sample_out=${DIR_DATA:-/mnt/f}/gen/$gen/$build/herv/$sample
+    local sample_out=${DIR_DATA:-${DIR_BIG}}/gen/$gen/$build/herv/$sample
     if [[ ${submit:-local} == hpc ]]; then sample_out=$DIR_SCRATCH/allele3/herv/$gen/$build/$sample; fi
     if [[ -z $out ]]; then
         if [[ -n $analysis_root ]]; then out=$analysis_root/herv/$gen/$sample; else out=$sample_out; fi
     fi
-    vcf=${vcf:-${DIR_DATA:-/mnt/f}/gen/$gen/$build/vcf}
-    pfile=${pfile:-${DIR_DATA:-/mnt/f}/gen/$gen/$build/pfile}
+    vcf=${vcf:-${DIR_DATA:-${DIR_BIG}}/gen/$gen/$build/vcf}
+    pfile=${pfile:-${DIR_DATA:-${DIR_BIG}}/gen/$gen/$build/pfile}
     if [[ -z $fasta ]]; then
-        if [[ $build == 37 ]]; then fasta=${ALLELE_FASTA37:-${DIR_DATA:-/mnt/f}/gen/1hgp/37/GRCH37.fasta.gz}; else fasta=${ALLELE_FASTA:-${DIR_DATA:-/mnt/f}/gen/1hgp/38/GRCH38.fasta.gz}; fi
+        if [[ $build == 37 ]]; then fasta=${ALLELE_FASTA37:-${DIR_DATA:-${DIR_BIG}}/gen/1hgp/37/GRCH37.fasta.gz}; else fasta=${ALLELE_FASTA:-${DIR_DATA:-${DIR_BIG}}/gen/1hgp/38/GRCH38.fasta.gz}; fi
     fi
     extra+=(--pfile-dir "$pfile")
     # The canonical sample directory can be recalculated or resumed in place.

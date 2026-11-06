@@ -1,0 +1,38 @@
+{
+  "jobs": {
+    "height.all": {
+      "argv": [
+        "bsub"
+      ],
+      "job_id": "4388790",
+      "returncode": 0,
+      "status": "submitted",
+      "stderr": "",
+      "stdout": "Job <4388790> is submitted to queue <v4-3t>.\n",
+      "submitted": "2026-11-05T13:56:35.928437+00:00"
+    },
+    "ldl.all": {
+      "argv": [
+        "bsub"
+      ],
+      "job_id": "4388791",
+      "returncode": 0,
+      "status": "submitted",
+      "stderr": "",
+      "stdout": "Job <4388791> is submitted to queue <v4-3t>.\n",
+      "submitted": "2026-11-05T13:56:36.087577+00:00"
+    },
+    "t2dm.all": {
+      "argv": [
+        "bsub"
+      ],
+      "job_id": "4388792",
+      "returncode": 0,
+      "status": "submitted",
+      "stderr": "",
+      "stdout": "Job <4388792> is submitted to queue <v4-3t>.\n",
+      "submitted": "2026-11-05T13:56:36.231914+00:00"
+    }
+  },
+  "plan": "/work/sph-huangj/analysis/grid/jobs/grid-csx-20261105T135616-90ad52ab/plan.json"
+}

@@ -39,7 +39,7 @@ case "${1:-}" in
 		shift
 		here=$F
 		prefix=${IBDMIX_HTSLIB_PREFIX:-${GU_ENV_PREFIX:-${CONDA_PREFIX:-/usr}}}
-		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-prepare/prepare}
+		out=${IBDMIX_PREPARE_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-prepare/prepare-v3}
 		compiler=${CXX:-g++}
 		[[ -s $prefix/include/htslib/vcf.h ]] || { echo "ERROR: HTSlib headers missing under $prefix" >&2; exit 2; }
 		mkdir -p "$(dirname -- "$out")"
@@ -61,13 +61,20 @@ case "${1:-}" in
 		nvcc=${IBDMIX_NVCC:-$(command -v nvcc || true)}
 		out=${IBDMIX_GPU_BIN:-${GU_SOFT:-$HOME/.local/share/gu/software}/ibdmix-gpu/ibdmix-gpu}
 		[[ -x $nvcc ]] || { echo "ERROR: set IBDMIX_NVCC to a CUDA compiler" >&2; exit 2; }
+		cli11_include=${IBDMIX_CLI11_INCLUDE_DIR:-$upstream/build/_deps/cli11-src/include}
+		# Offline CPU builds can use a shared CLI11 checkout via CMake.
+		if [[ ! -s $cli11_include/CLI/CLI.hpp && -z ${IBDMIX_CLI11_INCLUDE_DIR:-} && -r $upstream/build/CMakeCache.txt ]]; then
+			cli11_source=$(sed -n 's/^CLI11_SOURCE_DIR:STATIC=//p' "$upstream/build/CMakeCache.txt")
+			[[ -z $cli11_source ]] || cli11_include=$cli11_source/include
+		fi
+		[[ -s $cli11_include/CLI/CLI.hpp ]] || { echo "ERROR: CLI11 headers missing; build the CPU caller first or set IBDMIX_CLI11_INCLUDE_DIR" >&2; exit 2; }
 		mkdir -p "$(dirname -- "$out")"
 		exec 8>"$out.build.lock"
 		flock 8
 		tmp=$out.build.$$
 		trap 'rm -f "$tmp"' EXIT
 		"$nvcc" -O3 -std=c++17 --fmad=false -arch=native \
-		  -I"$upstream/include" -I"$upstream/build/_deps/cli11-src/include" \
+		  -I"$upstream/include" -I"$cli11_include" \
 		  "$here/ibdmix.gpu.cu" "$upstream/src/lod_calculator.cc" \
 		  "$upstream/src/Mask_Reader.cc" "$upstream/src/Sample_Mapper.cc" -o "$tmp"
 		"$tmp" --gpu-check
@@ -139,7 +146,7 @@ IBDMIX_LOCUS_FLANK_BP=${IBDMIX_LOCUS_FLANK_BP:-100000}
 IBDMIX_REPLACE=${IBDMIX_REPLACE:-0}
 GU_CHRX_PAR_DIPLOID=${GU_CHRX_PAR_DIPLOID:-0}
 
-prepare_bin=${IBDMIX_PREPARE_BIN:-$GU_SOFT/ibdmix-prepare/prepare}
+prepare_bin=${IBDMIX_PREPARE_BIN:-$GU_SOFT/ibdmix-prepare/prepare-v3}
 ibdmix_bin=$dirsoft/build/src/ibdmix
 ibdmix_options=()
 case "${IBDMIX_BACKEND:-cpu}" in
@@ -156,7 +163,7 @@ esac
 helper=$F/ibdmix.py
 # Semantic reuse contract: bump for changes to genotype preparation, calling,
 # filtering or output meaning; path/log/comment edits do not change it.
-pipeline_version=2026-10-31.shared-hts-v1
+pipeline_version=2026-11-05.shared-hts-v3
 [[ ${IBDMIX_BACKEND:-cpu} != cuda ]] || pipeline_version=$pipeline_version.cuda-segment-v1
 # Published resources only; generated masks are disposable scratch data.
 mask_root=${IBDMIX_MASK_ROOT:-$(dirname -- "$dirarch")/mask}
@@ -243,9 +250,9 @@ flock -n 9 || {
 	echo "ERROR: another IBDmix run is using $dirout" >&2
 	exit 1
 }
-ibdmix_tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/gu-ibdmix.XXXXXX")
+ibdmix_tmp_root=$(mktemp -d "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-ibdmix.XXXXXX")
 trap 'rm -rf -- "$ibdmix_tmp_root"' EXIT
-ibdmix_mask_root=/tmp/gu-intermediate/$ibdmix_cache_key/mask
+ibdmix_mask_root=${DIR_RUNTIME_TMP}/gu-intermediate/$ibdmix_cache_key/mask
 ibdmix_log_root=$dirout/logs
 mkdir -p "$ibdmix_mask_root" "$ibdmix_log_root"
 
@@ -439,7 +446,7 @@ run_record() {
 	stat -c $'sample_file\t%n:%s:%Y' "$sample_file"
 	[[ -z $loci_file ]] || stat -c $'loci_file\t%n:%s:%Y' "$loci_file"
 	stat -c $'software\t%n:%s:%Y' "$prepare_bin" "$ibdmix_bin" "$helper" "$F/0.common.py" "$F/ibdmix.sh"
-	printf 'genotype_preparation\tshared-hts-v1\ngenotype_binary_sha256\t%s\n' "$(sha256sum "$prepare_bin" | cut -d' ' -f1)"
+	printf 'genotype_preparation\tshared-hts-v3\ngenotype_binary_sha256\t%s\n' "$(sha256sum "$prepare_bin" | cut -d' ' -f1)"
 	if [[ ${IBDMIX_BACKEND:-cpu} == cuda ]]; then
 		printf 'calling_backend\tcuda-segment-v1\ngpu_binary_sha256\t%s\n' "$(sha256sum "$ibdmix_bin" | cut -d' ' -f1)"
 	fi
@@ -621,8 +628,8 @@ run_ibdmix_caller() (
 		# LSF remaps each allocated card to logical device 0. Lock its visible
 		# physical ID/UUID, so two jobs on different cards do not serialize.
 		lock_id=${physical//[^a-zA-Z0-9_.-]/_}
-		mkdir -p /tmp/gu-locks
-		exec 8>"/tmp/gu-locks/ibdmix-gpu-${UID}-${lock_id}.lock"
+		mkdir -p "${DIR_RUNTIME_TMP}/gu-locks"
+		exec 8>"${DIR_RUNTIME_TMP}/gu-locks/ibdmix-gpu-${UID}-${lock_id}.lock"
 		if ! flock -n 8; then
 			log "GPU WAIT device=$device"
 			flock 8 || return $?

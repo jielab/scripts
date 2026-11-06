@@ -1,0 +1,12 @@
+[
+  {
+    "file": "4.prsformer.sh",
+    "before": "426be8d54ea986267ed3c24f2779dafb4548dbacf3a711a4983947a5e95ea8b8",
+    "after": "592787a91fcbeb1812a0f5995133c850a3eefac98c24179dadc1fa752365d3ed"
+  },
+  {
+    "file": "config/abm.qiming-v100.json",
+    "before": null,
+    "after": "b7c44a99325cb700d6a0dda011265b1ae806d07a31b9f54f79070b56fab62e9d"
+  }
+]

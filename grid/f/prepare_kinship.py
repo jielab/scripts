@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """Build and atomically activate LOCAL connected-component evidence."""
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 from contextlib import ExitStack, contextmanager
 import fcntl
@@ -190,7 +197,7 @@ def prepare(source, analysis_root, *, activate=False):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", required=True)
-    p.add_argument("--analysis-root", default="/mnt/d/analysis/grid")
+    p.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
     p.add_argument("--activate", action="store_true")
     a = p.parse_args(argv)
     prepare(a.source, a.analysis_root, activate=a.activate)

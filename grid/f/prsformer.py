@@ -9,6 +9,13 @@ Training uses masked height/ldl/baseline-t2dm tasks and training-only transforms
 """
 
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import ast
 import contextlib
@@ -1983,19 +1990,19 @@ def parser():
 	roster.add_argument("--check", action="store_true")
 	roster.set_defaults(func=shared_roster)
 	a = sub.add_parser("prepare", help = "Align individual data, fix splits, apply train-only QC and write dosage memmap")
-	a.add_argument("--dir-gen", default = "/mnt/f/gen/ukb/37/hap")
-	a.add_argument("--pheno-file", default = "/mnt/f/ukb/Rdata/all.rds")
-	a.add_argument("--ancestry-file", default = "/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz")
+	a.add_argument("--dir-gen", default = configured_path('DIR_GEN', 'ukb/37/hap'))
+	a.add_argument("--pheno-file", default = configured_path("DIR_UKB", "Rdata", "all.rds"))
+	a.add_argument("--ancestry-file", default = configured_path('DIR_GEN', 'ukb/pca_proj/ukb.ancestry.auto.tsv.gz'))
 	a.add_argument("--group-col", default = "genetic_ancestry")
 	a.add_argument("--traits", default = "height,ldl,t2dm")
 	a.add_argument("--covariates", default = "age,sex,PC1,PC2")
 	a.add_argument("--height-col", default = "height")
 	a.add_argument("--ldl-col", default = "ldl")
 	a.add_argument("--t2dm-col", default = "auto")
-	a.add_argument("--snp-list", default = "/mnt/f/LD/csx/snpinfo_mult_1kg_hm3")
+	a.add_argument("--snp-list", default = configured_path('DIR_LD', 'csx/snpinfo_mult_1kg_hm3'))
 	a.add_argument("--chrs", default = "1-22")
 	a.add_argument("--keep", default = "none")
-	a.add_argument("--remove", default = "/mnt/d/files/ukb.exclude.id")
+	a.add_argument("--remove", default = "none")
 	a.add_argument("--split-file", default = "none")
 	a.add_argument("--split-group-file", default = "none")
 	a.add_argument("--require-shared-cohort", action="store_true")
@@ -2014,7 +2021,7 @@ def parser():
 	b = sub.add_parser("publish", help = "Publish held-out RDS predictions, reusable model and aggregate figure/workbook pairs")
 	b.add_argument("--run-dir", required = True)
 	b.add_argument("--cache-dir", required = True)
-	b.add_argument("--output-root", default = "/mnt/d/analysis/grid")
+	b.add_argument("--output-root", default = configured_path('ANALYSIS_ROOT', 'grid'))
 	b.add_argument("--publication-dir", help="Model and report directory; default OUTPUT_ROOT/prsformer")
 	b.add_argument("--score-dir", help="Default OUTPUT_ROOT/prsformer/scores")
 	b.add_argument("--traits", default = "height,ldl,t2dm")

@@ -8,6 +8,13 @@ and reference FASTA inputs outside the old result directory are never copied.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from contextlib import contextmanager
 import copy
@@ -30,9 +37,10 @@ if "allele_common" not in sys.modules:
 from allele_common import dump_json, fingerprint, stable_hash
 
 SCHEMA = "allele3-scan-store-1.0"
-DEFAULT_SOURCE = "/mnt/d/analysis/allele3/final/gnomad_local"
-DEFAULT_STORE = "/mnt/f/annot/gnomad/allele3"
-OWNED = {"relocation.json", "adoption_receipt.json", "adoption_state.json", ".adoption-transfer"}
+INPUT_LOCATIONS_SCHEMA = "allele3-scan-input-locations-1"
+DEFAULT_SOURCE = configured_path('ANALYSIS_ROOT', 'allele3/final/gnomad_local')
+DEFAULT_STORE = str(Path(os.environ.get('ALLELE_ANALYSIS_ROOT', configured_path('ANALYSIS_ROOT', 'allele3'))) / 'stores/gnomad_scan')
+OWNED = {"relocation.json", "adoption_receipt.json", "adoption_state.json", ".adoption-transfer", "input_locations.json"}
 FP_KEYS = ("size", "mtime_ns", "edge_sha256")
 
 
@@ -57,6 +65,91 @@ def relative_target(root, relative):
 
 def same_content(actual, expected):
     return all(actual.get(k) == expected.get(k) for k in ("size", "edge_sha256"))
+
+
+def _input_fingerprints(run):
+    """Original input identities, without touching the underlying data."""
+    found = {}
+    def visit(value):
+        if isinstance(value, dict):
+            if {"path", *FP_KEYS} <= value.keys():
+                record = {key: value[key] for key in ("path", *FP_KEYS)}
+                previous = found.setdefault(record["path"], record)
+                if previous != record:
+                    raise ValueError(f"Conflicting original input identities: {record['path']}")
+            else:
+                for child in value.values(): visit(child)
+        elif isinstance(value, list):
+            for child in value: visit(child)
+    visit(run.get("identity", {}))
+    visit(run.get("options", {}))
+    return found
+
+
+def _mapped_input(path, mappings):
+    path = Path(path)
+    for entry in sorted(mappings, key=lambda row: len(Path(row["source"]).parts), reverse=True):
+        source = Path(entry["source"])
+        if path == source or path.is_relative_to(source):
+            return Path(entry["destination"]) / path.relative_to(source)
+    return path
+
+
+def configure_input_locations(store, mappings):
+    """Register verified external copies once; never edit scientific manifests.
+
+    mappings is a dict of original file/directory paths to their current paths.
+    Bounded fingerprints must match before the single active location receipt
+    is published. Later readers use its recorded destination timestamps.
+    """
+    root = absolute(store)
+    run = _raw_manifest(root)
+    rows = [dict(source=str(absolute(source)), destination=str(absolute(destination)))
+            for source, destination in mappings.items()]
+    records = _input_fingerprints(run)
+    files = []
+    for source, expected in records.items():
+        target = _mapped_input(source, rows)
+        if target == Path(source): continue
+        actual = fingerprint(target)
+        if not same_content(actual, expected):
+            raise ValueError(f"Relocated input differs from the completed scan: {source} -> {target}")
+        files.append(dict(source=expected, destination=actual))
+    for row in rows:
+        if not any(Path(f["source"]["path"]).is_relative_to(row["source"]) for f in files):
+            raise ValueError(f"Input mapping has no verified original files: {row['source']}")
+    receipt = dict(schema=INPUT_LOCATIONS_SCHEMA, status="complete", run_signature=run["signature"],
+                   mappings=rows, files=files, updated=now(),
+                   validation="original size/edge fingerprints; recorded destination timestamps; no rescan")
+    _read_input_locations(run, receipt)
+    dump_json(root / "input_locations.json", receipt)
+    return dict(status="complete", relocated_inputs=len(files), receipt=str(root / "input_locations.json"))
+
+
+def _read_input_locations(run, receipt):
+    if (receipt.get("schema") != INPUT_LOCATIONS_SCHEMA or receipt.get("status") != "complete"
+            or receipt.get("run_signature") != run["signature"]):
+        raise ValueError("External input locations do not match this completed scan")
+    mappings = receipt["mappings"]
+    sources = [row["source"] for row in mappings]
+    if len(set(sources)) != len(sources) or any(not Path(row[k]).is_absolute() for row in mappings for k in ("source", "destination")):
+        raise ValueError("External input mappings must have unique absolute source paths")
+    original = _input_fingerprints(run)
+    files = {}
+    for item in receipt["files"]:
+        source, destination = item["source"], item["destination"]
+        if (original.get(source["path"]) != source or not same_content(source, destination)
+                or str(_mapped_input(source["path"], mappings)) != destination["path"]
+                or not set(FP_KEYS) <= destination.keys()):
+            raise ValueError(f"External input location has conflicting provenance: {source['path']}")
+        if destination["path"] in files:
+            raise ValueError(f"Duplicate external input destination: {destination['path']}")
+        files[destination["path"]] = item
+    for source in original:
+        destination = _mapped_input(source, mappings)
+        if destination != Path(source) and str(destination) not in files:
+            raise ValueError(f"External input mapping lacks a verified copy: {source}")
+    return mappings, files
 
 
 def _raw_manifest(root):
@@ -110,6 +203,10 @@ def load_run_metadata(out):
         if len(files) != len(receipt.get("files", [])):
             raise ValueError("Duplicate file paths in adoption receipt")
     run["_store"] = {"root": str(root), "source_root": original, "mappings": mapping, "files": files}
+    locations = root / "input_locations.json"
+    if locations.is_file():
+        inputs, input_files = _read_input_locations(run, json.loads(locations.read_text()))
+        run["_store"].update(input_mappings=inputs, input_files=input_files)
 
     def project(value):
         if isinstance(value, dict):
@@ -149,7 +246,7 @@ def resolve_run_path(run, path):
         if p == source or p.is_relative_to(source):
             target = relative_target(root, entry["destination"])
             return target / p.relative_to(source)
-    return p
+    return _mapped_input(p, state.get("input_mappings", []))
 
 
 def resolve_recorded_fingerprint(run, expected):
@@ -171,6 +268,11 @@ def resolve_recorded_fingerprint(run, expected):
             if not same_content(saved["destination"], expected):
                 raise ValueError(f"Copied file disagrees with its original input fingerprint: {p}")
             result["mtime_ns"] = saved["destination"]["mtime_ns"]
+    saved = run.get("_store", {}).get("input_files", {}).get(str(p))
+    if saved:
+        if not same_content(saved["source"], expected):
+            raise ValueError(f"External copy disagrees with its original input fingerprint: {p}")
+        result["mtime_ns"] = saved["destination"]["mtime_ns"]
     return result
 
 
@@ -186,14 +288,14 @@ def verify_recorded_input(run, expected):
     return actual
 
 
-def verify_cached_fingerprint(path, expected):
+def verify_cached_fingerprint(path, expected, *, context=None):
     """Preserve cache checks while allowing an explicitly receipted store move."""
     p = absolute(path)
     actual = fingerprint(p)
     if actual == expected:
         return actual
-    for root in p.parents:
-        if (root / "relocation.json").is_file():
+    for root in dict.fromkeys([*p.parents, *(absolute(context).parents if context else ())]):
+        if (root / "relocation.json").is_file() or (root / "input_locations.json").is_file():
             run = load_run_metadata(root)
             target = resolve_recorded_fingerprint(run, expected)
             if target.get("path") == str(p) and all(actual[k] == target.get(k) for k in FP_KEYS):
@@ -450,16 +552,16 @@ def scan_command(store, extra):
     def has(*names):
         return any(word.split("=", 1)[0] in names for word in extra)
     command = [sys.executable, str(Path(__file__).with_name("scan.py")), "run", "--out", str(store)]
-    defaults = [("--fasta", os.environ.get("ALLELE_FASTA", "/mnt/f/gen/1hgp/38/GRCH38.fasta.gz")),
+    defaults = [("--fasta", os.environ.get("ALLELE_FASTA", configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz'))),
                 ("--jobs", os.environ.get("ALLELE_JOBS", "2")), ("--min-an", "100"), ("--min-af", "0"),
                 ("--thresholds", "1,2,5,10"), ("--backend", "auto"), ("--candidate-storage", "deferred"),
-                ("--ld-block-dir", os.environ.get("ALLELE_LD_BLOCK_DIR", "/mnt/f/LD/block")),
+                ("--ld-block-dir", os.environ.get("ALLELE_LD_BLOCK_DIR", configured_path('DIR_LD', 'block'))),
                 ("--architecture-build", "38"),
-                ("--erv-joined", os.environ.get("ALLELE_ERV_JOINED", "/mnt/f/annot/allele3/repeats/hg38/rmskJoinedCurrent.txt.gz")),
+                ("--erv-joined", os.environ.get("ALLELE_ERV_JOINED", configured_path('DIR_ANNOT', 'allele3/repeats/hg38/rmskJoinedCurrent.txt.gz'))),
                 ("--architecture-annotation-cache", str(store / "annotations")),
-                ("--architecture-low-mappability-bed", os.environ.get("ALLELE_LOW_MAPPABILITY_BED", "/mnt/d/files/allele3/umap/hg38.k100.lt1.bed.gz"))]
+                ("--architecture-low-mappability-bed", os.environ.get("ALLELE_LOW_MAPPABILITY_BED", configured_path('DIR_FILES', 'allele3/umap/hg38.k100.lt1.bed.gz')))]
     if not has("--vcf", "--dir-vcf", "--vcf-dir"):
-        command += ["--dir-vcf", os.environ.get("ALLELE_VCF_DIR", "/mnt/f/annot/gnomad/sites")]
+        command += ["--dir-vcf", os.environ.get("ALLELE_VCF_DIR", configured_path('DIR_ANNOT', 'allele3/gnomad/sites'))]
     if not has("--dir-cache", "--cache-dir"):
         # Do not inherit an old D:-drive ALLELE_CACHE_DIR for a new permanent scan.
         command += ["--dir-cache", str(store / "shards")]

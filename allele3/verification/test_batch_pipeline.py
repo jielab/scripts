@@ -40,6 +40,7 @@ class StubPipeline:
         p.add_argument("command", nargs="?", default="pipeline")
         p.add_argument("--out", required=True)
         p.add_argument("--targets")
+        p.add_argument("--stages")
         p.add_argument("--allele-catalog")
         p.add_argument("--label", default="fixture")
         p.add_argument("--dry-run", action="store_true")
@@ -123,7 +124,73 @@ class BatchPipelineTests(unittest.TestCase):
         self.temp.cleanup()
 
     def argv(self, *extra):
-        return ["pipeline", "--out", str(self.out), *extra]
+        # Existing tests exercise explicitly selected independent stage sets.
+        return ["pipeline", "--out", str(self.out), "--stages", "fixture", *extra]
+
+    def test_default_all_modules_requires_previous_success_even_for_independent_stages(self):
+        argv = ["--out", str(self.out)]
+        selected = ",".join(self.stub.STAGES)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_stage_worker("primary", selected, self.batch, argv), 0)
+            self.stub.results["archaic"] = "failed"
+            self.assertEqual(bp.run_stage_worker("archaic", selected, self.batch, argv), 2)
+            self.assertEqual(bp.run_stage_worker("summary", selected, self.batch, argv), 2)
+        self.assertIn("Dependency archaic is failed", self.record("summary")["reason"])
+        self.assertEqual([call[0] for call in self.stub.calls], ["primary", "archaic"])
+
+    def test_default_all_modules_rejects_starting_an_independent_module_early(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = bp.run_stage_worker("candidates", ",".join(self.stub.STAGES), self.batch,
+                                       ["--out", str(self.out)])
+        self.assertEqual(code, 2)
+        self.assertIn("Dependency selection is not_started", self.record("candidates")["reason"])
+        self.assertEqual(self.stub.calls, [])
+
+    def test_one_allocation_runs_in_order_with_individual_verified_receipts(self):
+        names=['primary','summary','alleles','time','report']
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_sequence_worker(names,self.batch,['--out',str(self.out)]),0)
+        self.assertEqual([r[0] for r in self.stub.calls],names)
+        for name in names:
+            self.assertEqual(self.record(name)['lsf_job_id'],'123')
+            br.validate_output_file(self.out/'.batch_stage_status'/self.batch/(name+'.json'))
+        status=json.loads((self.out/'pipeline_status.json').read_text())
+        self.assertEqual(status['status'],'complete_requested_stages')
+        self.assertEqual([r['stage'] for r in status['stages']],names)
+
+    def test_one_allocation_stops_on_failure_and_retries_same_batch(self):
+        names=['primary','summary','candidates','report']
+        self.stub.results['summary']='failed'
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_sequence_worker(names,self.batch,self.argv()),2)
+        self.assertEqual([r[0] for r in self.stub.calls],['primary','summary'])
+        self.assertEqual(self.record('candidates')['status'],'not_available')
+        self.assertEqual(self.record('candidates')['blocked_by'],'summary')
+        self.assertEqual(json.loads((self.out/'pipeline_status.json').read_text())['status'],'failed')
+        self.stub.results.update(primary='reused',summary='complete')
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_sequence_worker(names,self.batch,self.argv()),0)
+        self.assertEqual(self.record('primary')['status'],'reused')
+        self.assertEqual(json.loads((self.out/'pipeline_status.json').read_text())['status'],'complete_requested_stages')
+
+    def test_failed_sequence_allows_a_corrected_new_plan_to_take_over(self):
+        names=['primary','summary','report']
+        self.stub.results['summary']='failed'
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_sequence_worker(names,self.batch,self.argv()),2)
+        self.stub.results.update(primary='reused',summary='complete')
+        replacement='b'*64
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bp.run_sequence_worker(names,replacement,self.argv('--label','corrected')),0)
+        owner=json.loads((self.out/'.batch_stage_owner.json').read_text())
+        self.assertEqual(owner['batch_id'],replacement)
+        self.assertIn(self.batch,owner['previous_batches'])
+
+    def test_one_allocation_excludes_live_stage_worker(self):
+        with bp.file_lock(self.out/'.pipeline.lock',shared=True):
+            with self.assertRaisesRegex(RuntimeError,'no duplicate stage'):
+                bp.run_sequence_worker('primary,report',self.batch,self.argv())
+        self.assertEqual(self.stub.calls,[])
 
     def run_stage(self, name, selected=None, batch=None, extra=()):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):

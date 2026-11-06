@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Direct CLI help must return before setup, downloads or analysis.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -106,7 +115,7 @@ gwas_index_file() {
 	rm -f -- "${target}.tbi" "${target}.csi"
 
 	tmp="${target%.gz}.index.tmp.${BASHPID:-$$}.gz"
-	sort_tmp="${GWAS_POST_TMP:-${GWAS_INDEX_TMP_DIR:-${TMPDIR:-/tmp}}}"
+	sort_tmp="${GWAS_POST_TMP:-${GWAS_INDEX_TMP_DIR:-${TMPDIR:-$DIR_RUNTIME_TMP}}}"
 	mkdir -p "$sort_tmp"
 	rm -f -- "$tmp" "${tmp}.tbi" "${tmp}.csi"
 	gwas_index_log "normalize coordinate order/BGZF before tabix: $target"
@@ -1461,7 +1470,7 @@ if [[ ${1:-} == --worker ]]; then
 			printf '%s\n' "$bim"
 			stat -Lc '%s %y' -- "$bim"
 		} | sha256sum | cut -d ' ' -f 1)
-		cache="${GWAS_POST_TMP_BASE:-${TMPDIR:-/tmp}}/shared/magma/${key}.chromosomes"
+		cache="${GWAS_POST_TMP_BASE:-${TMPDIR:-$DIR_RUNTIME_TMP}}/shared/magma/${key}.chromosomes"
 		mkdir -p "${cache%/*}"
 		exec {lock_fd}>"${cache}.lock"
 		flock "$lock_fd"
@@ -1570,12 +1579,16 @@ if [[ ${1:-} == --worker ]]; then
 		awk -F '\t' -v thin="${THIN_MODE:-FALSE}" -v cap="${THIN_CHR_MAX:-10000}" -v method="$PLOT_METHOD" -v panel="$ADD_PANEL" -v grch="$GRCH" \
 			-v signal="$signal_input" -v match_col="$SIGNAL_MATCH_COL" -v match_value="$SIGNAL_MATCH_VALUE" \
 			-v locus_pos="$SIGNAL_LOCUS_POS" -v display_col="$SIGNAL_DISPLAY_COL" -v write_sig="$WRITE_SIG" \
+			-v prot_names="${PROT_NAMES:-}" -v prot_sha="${PROT_NAMES_SHA256:-}" -v prot_cohort="${PROT_COHORT:-}" \
 			-v plot_width="$PLOT_WIDTH" -v plot_height="$PLOT_HEIGHT" -v plot_res="$PLOT_RES" '
     $1=="plot_method"&&$2==method{m=1}
     $1=="add_panel"&&$2==panel{p=1}
     $1=="grch"&&$2==grch{g=1}
     $1=="magma_threshold"&&$2+0==2.5e-6{t=1}
-    $1=="mplot_style"&&$2==9{s=1}
+    $1=="mplot_style"&&$2==10{s=1}
+    $1=="prot_names"&&$2==prot_names{pn=1}
+    $1=="prot_names_sha256"&&$2==prot_sha{ps=1}
+    $1=="prot_cohort"&&$2==prot_cohort{pc=1}
     $1=="thin_mode"&&$2==thin{tn=1}
     $1=="thin_chr_max"&&$2==cap{tc=1}
     $1=="plot_width"&&$2+0==plot_width+0{x=1}
@@ -1587,7 +1600,7 @@ if [[ ${1:-} == --worker ]]; then
     $1=="signal_match_value"&&$2==match_value{c=1}
     $1=="signal_locus_pos"&&$2==locus_pos{d=1}
     $1=="signal_display_col"&&$2==display_col{e=1}
-    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn&&tc)}' "$MH_META" || return 1
+    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn&&tc&&pn&&ps&&pc)}' "$MH_META" || return 1
 		if [[ "$ADD_PANEL" == magma ]]; then
 			[[ -s "$genes" && "$MH_PNG" -nt "$genes" ]] || return 1
 		fi
@@ -1654,6 +1667,10 @@ if [[ ${1:-} == --worker ]]; then
 	gwas_post_mplot() {
 		local genes="${MAGMA_PREFIX}.genes.out" meta_tmp panel_input signal_input sig_input cojo_input
 		[[ "$DO_STEP" == all || ",${DO_STEP}," == *,mplot,* ]] || return 0
+		if [[ -n "${PROT_NAMES:-}" ]]; then
+			gwas_post_need_file "$PROT_NAMES"
+			PROT_NAMES_SHA256=$(sha256sum -- "$PROT_NAMES" | cut -d ' ' -f 1)
+		fi
 		if [[ "$REPLACE" != TRUE ]] && gwas_post_mplot_current; then
 			gwas_post_append_mplot_flag
 			gwas_post_log "Manhattan plot exists and is current: $MH_PNG"
@@ -1673,8 +1690,9 @@ if [[ ${1:-} == --worker ]]; then
 		rm -f -- "$MH_META" "${MH_PNG}.meta.tsv"
 		[[ "$WRITE_SIG" != TRUE ]] || rm -f -- "$MH_SIG"
 		gwas_post_log "Manhattan plot method=$PLOT_METHOD panel=$ADD_PANEL write-sig=$WRITE_SIG: $GWAS_POST_MPLOT_INPUT -> $MH_PNG"
-		GWAS_FULL="$FINAL" GWAS_THIN="${THIN_MODE:-FALSE}" Rscript "$MPLOT_R" mplot "$GWAS_POST_MPLOT_INPUT" "$MH_PNG" "$GWAS" "$PLOT_METHOD" "$ADD_PANEL" \
-			"$genes" "$PLOT_F" "$CIS_BED" "$MH_PLOT_BED" "$GRCH" "$MH_FLAG" \
+		GWAS_FULL="$FINAL" GWAS_THIN="${THIN_MODE:-FALSE}" GWAS_PROT_COHORT="${PROT_COHORT:-}" \
+			Rscript "$MPLOT_R" mplot "$GWAS_POST_MPLOT_INPUT" "$MH_PNG" "$GWAS" "$PLOT_METHOD" "$ADD_PANEL" \
+			"$genes" "$PLOT_F" "${PROT_NAMES:-}" "$MH_PLOT_BED" "$GRCH" "$MH_FLAG" \
 			"$ADD_SIGNAL" "$SIGNAL_MATCH_COL" "$SIGNAL_MATCH_VALUE" "$SIGNAL_LOCUS_POS" "$SIGNAL_DISPLAY_COL" \
 			"$WRITE_SIG" "$MH_SIG" "$COJO_FILE" "$PLOT_WIDTH" "$PLOT_HEIGHT" "$PLOT_RES"
 		[[ -s "$MH_PNG" && -s "$MH_FLAG" ]] || {
@@ -1697,11 +1715,13 @@ if [[ ${1:-} == --worker ]]; then
 			sig_input="$MH_SIG"
 			[[ ! -s "$COJO_FILE" ]] || cojo_input="$COJO_FILE"
 		fi
-		printf 'key\tvalue\nplot_method\t%s\nadd_panel\t%s\ngrch\t%s\nmagma_threshold\t2.5e-6\nmplot_style\t9\nplot_width\t%s\nplot_height\t%s\nplot_res\t%s\nwrite_sig\t%s\nsig_output\t%s\ncojo_input\t%s\nsignal_input\t%s\nsignal_match_col\t%s\nsignal_match_value\t%s\nsignal_locus_pos\t%s\nsignal_display_col\t%s\ngwas\t%s\ngwas_input\t%s\nmagma_input\t%s\nflag_fragment\t%s\ncreated\t%s\n' \
+		printf 'key\tvalue\nplot_method\t%s\nadd_panel\t%s\ngrch\t%s\nmagma_threshold\t2.5e-6\nmplot_style\t10\nplot_width\t%s\nplot_height\t%s\nplot_res\t%s\nwrite_sig\t%s\nsig_output\t%s\ncojo_input\t%s\nsignal_input\t%s\nsignal_match_col\t%s\nsignal_match_value\t%s\nsignal_locus_pos\t%s\nsignal_display_col\t%s\ngwas\t%s\ngwas_input\t%s\nmagma_input\t%s\nflag_fragment\t%s\ncreated\t%s\n' \
 			"$PLOT_METHOD" "$ADD_PANEL" "$GRCH" "$PLOT_WIDTH" "$PLOT_HEIGHT" "$PLOT_RES" "$WRITE_SIG" "$sig_input" "$cojo_input" \
 			"$signal_input" "$SIGNAL_MATCH_COL" "$SIGNAL_MATCH_VALUE" "$SIGNAL_LOCUS_POS" \
 			"$SIGNAL_DISPLAY_COL" "$GWAS" "$FINAL" "$panel_input" "$MH_FLAG" "$(date '+%F %T')" >"$meta_tmp"
 		printf 'thin_mode\t%s\nthin_chr_max\t%s\ndisplay_input\t%s\n' "${THIN_MODE:-FALSE}" "${THIN_CHR_MAX:-10000}" "$GWAS_POST_MPLOT_INPUT" >>"$meta_tmp"
+		printf 'prot_names\t%s\nprot_names_sha256\t%s\nprot_cohort\t%s\n' \
+			"${PROT_NAMES:-}" "${PROT_NAMES_SHA256:-}" "${PROT_COHORT:-}" >>"$meta_tmp"
 		mv -f -- "$meta_tmp" "$MH_META"
 	}
 
@@ -1933,7 +1953,7 @@ else
 				echo "ERROR: missing or empty file: $phef" >&2
 				exit 1
 			}
-			# shellcheck source=/mnt/d/scripts/0f/phenotype.sh
+			# shellcheck source=${SCRIPTS_ROOT}/0f/phenotype.sh
 			source "$phef"
 			if declare -F phe_check_existing_tasks >/dev/null 2>&1; then
 				# Only reject another run of the same module set.  Different modules use
@@ -2070,8 +2090,8 @@ else
 		if [[ -n "$gene_loc" ]]; then
 			need_file "$gene_loc"
 		elif [[ "$grch" == auto ]]; then
-			need_file "$GWAS_FILES_ROOT/NCBI.37.gene.loc"
-			need_file "$GWAS_FILES_ROOT/NCBI.38.gene.loc"
+			need_file "$gene_files_root/NCBI.37.gene.loc"
+			need_file "$gene_files_root/NCBI.38.gene.loc"
 		else
 			echo "ERROR: no MAGMA gene-location file resolved for GRCh$grch" >&2
 			exit 1
@@ -2204,6 +2224,7 @@ export CHECK_GRCH_SNP_LIST=$(q "$CHECK_GRCH_SNP_LIST")
 export GWAS_TOOL_THREADS=$(q "$GWAS_TOOL_THREADS") GWAS_PLINK_MEMORY_MB=$(q "$GWAS_PLINK_MEMORY_MB")
 export PGS_PLINK_MEMORY_MB=$(q "$PGS_PLINK_MEMORY_MB")
 PGS_STEP_HEADER
+			printf 'export DIR_RUNTIME_TMP=%q\n' "$DIR_RUNTIME_TMP"
 			printf 'DEFAULT_PROJECT=%q\nDEFAULT_CATEGORY=%q\nDEFAULT_LABEL=%q\n' "$dir_out" "$category" "$label"
 			cat <<'PGS_STEP_BODY'
 PROJECT=${1:-$DEFAULT_PROJECT}
@@ -2225,7 +2246,7 @@ declare -a ACTIVE_STREAM_DIRS=()
 cleanup(){
   local d
   for d in "${ACTIVE_STREAM_DIRS[@]}"; do
-    case "$d" in /tmp/gwas-post-pgs-streams.*)
+    case "$d" in "${DIR_RUNTIME_TMP}/"gwas-post-pgs-streams.*)
       [[ ! -d "$d" ]] || { rm -f -- "$d"/*; rmdir -- "$d" 2>/dev/null || true; }
       ;;
     esac
@@ -2303,8 +2324,8 @@ merge_trait_batch(){
   local n=$# f fifo pid rc producer_rc=0 i=0
   local stream_dir
   local -a fifos=() producer_pids=()
-  stream_dir=$(mktemp -d /tmp/gwas-post-pgs-streams.XXXXXX)
-  case "$stream_dir" in /tmp/gwas-post-pgs-streams.*) ;; *) echo "ERROR: unsafe stream directory: $stream_dir" >&2; return 1;; esac
+  stream_dir=$(mktemp -d "${DIR_RUNTIME_TMP}/gwas-post-pgs-streams.XXXXXX")
+  case "$stream_dir" in "${DIR_RUNTIME_TMP}/"gwas-post-pgs-streams.*) ;; *) echo "ERROR: unsafe stream directory: $stream_dir" >&2; return 1;; esac
   ACTIVE_STREAM_DIRS+=("$stream_dir")
   for f in "$@"; do
     fifo="$stream_dir/in.$(printf '%04d' "$i")"
@@ -2373,8 +2394,8 @@ final_tmp="$TMP_DIR/$LABEL.pgs.gz"
 if (( ${#chunks[@]} == 1 )); then
   cp -- "${chunks[0]}" "$final_tmp"
 else
-  stream_dir=$(mktemp -d /tmp/gwas-post-pgs-streams.XXXXXX)
-  case "$stream_dir" in /tmp/gwas-post-pgs-streams.*) ;; *) echo "ERROR: unsafe stream directory: $stream_dir" >&2; exit 1;; esac
+  stream_dir=$(mktemp -d "${DIR_RUNTIME_TMP}/gwas-post-pgs-streams.XXXXXX")
+  case "$stream_dir" in "${DIR_RUNTIME_TMP}/"gwas-post-pgs-streams.*) ;; *) echo "ERROR: unsafe stream directory: $stream_dir" >&2; exit 1;; esac
   ACTIVE_STREAM_DIRS+=("$stream_dir")
   fifos=(); producer_pids=(); i=0; producer_rc=0
   for f in "${chunks[@]}"; do
@@ -2467,12 +2488,16 @@ PGS_STEP_BODY
 			-v match_col="$signal_match_col" -v match_value="$signal_match_value" \
 			-v locus_pos="$signal_locus_pos" -v display_col="$signal_display_col" -v write_sig="$write_sig" \
 			-v thin="${thin:-FALSE}" -v cap="${thin_chr_max:-10000}" \
+			-v prot_names="${prot_names:-}" -v prot_sha="${prot_names_sha256:-}" -v prot_cohort="${prot_cohort:-}" \
 			-v plot_width="$plot_width" -v plot_height="$plot_height" -v plot_res="$plot_res" '
     $1=="plot_method"&&$2=="self"{m=1}
     $1=="add_panel"&&$2==panel{p=1}
     $1=="grch"&&$2==grch{g=1}
     $1=="magma_threshold"&&$2+0==2.5e-6{t=1}
-    $1=="mplot_style"&&$2==9{s=1}
+    $1=="mplot_style"&&$2==10{s=1}
+    $1=="prot_names"&&$2==prot_names{pn=1}
+    $1=="prot_names_sha256"&&$2==prot_sha{ps=1}
+    $1=="prot_cohort"&&$2==prot_cohort{pc=1}
     $1=="thin_mode"&&$2==thin{tn=1}
     $1=="thin_chr_max"&&$2==cap{tc=1}
     $1=="plot_width"&&$2+0==plot_width+0{x=1}
@@ -2484,7 +2509,7 @@ PGS_STEP_BODY
     $1=="signal_match_value"&&$2==match_value{c=1}
     $1=="signal_locus_pos"&&$2==locus_pos{d=1}
     $1=="signal_display_col"&&$2==display_col{e=1}
-    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn&&(thin!="TRUE"||tc))}' "$meta" || return 1
+    END{exit !(m&&p&&g&&t&&s&&x&&y&&r&&w&&a&&b&&c&&d&&e&&tn&&(thin!="TRUE"||tc)&&pn&&ps&&pc)}' "$meta" || return 1
 		if [[ "$add_panel" == magma ]]; then
 			[[ -s "$genes" && "$png" -nt "$genes" ]] || return 1
 		fi
@@ -2757,12 +2782,12 @@ PGS_STEP_BODY
 			# Create project-level plot destinations before the potentially long
 			# per-GWAS command-generation pass, so background progress is visible at once.
 			mkdir -p "$dir_out/mplot" "$project_work/$category/mplot/flag"
-			[[ -z "$cis_bed" ]] || need_file "$cis_bed"
+			[[ -z "$prot_names" ]] || need_file "$prot_names"
 			if [[ -n "$mh_plot_bed" ]]; then
 				need_file "$mh_plot_bed"
 			else
-				need_file "$GWAS_FILES_ROOT/glist.37.bed"
-				need_file "$GWAS_FILES_ROOT/glist.38.bed"
+				need_file "$gene_files_root/glist.37.bed"
+				need_file "$gene_files_root/glist.38.bed"
 			fi
 		fi
 		if { has_step lead || wants_magma; } && [[ "$grch" != auto ]]; then
@@ -2966,11 +2991,11 @@ THIN_CMD
 		fi
 		gwas_gene_loc="$gene_loc"
 		if [[ -z "$gwas_gene_loc" ]]; then
-			[[ "$gwas_grch" == 37 ]] && gwas_gene_loc="$GWAS_FILES_ROOT/NCBI.37.gene.loc" || gwas_gene_loc="$GWAS_FILES_ROOT/NCBI.38.gene.loc"
+			[[ "$gwas_grch" == 37 ]] && gwas_gene_loc="$gene_files_root/NCBI.37.gene.loc" || gwas_gene_loc="$gene_files_root/NCBI.38.gene.loc"
 		fi
 		gwas_mh_plot_bed=""
 		gwas_mh_plot_bed="$mh_plot_bed"
-		[[ -n "$gwas_mh_plot_bed" ]] || gwas_mh_plot_bed="$GWAS_FILES_ROOT/glist.${gwas_grch}.bed"
+		[[ -n "$gwas_mh_plot_bed" ]] || gwas_mh_plot_bed="$gene_files_root/glist.${gwas_grch}.bed"
 		if has_step format && [[ "$liftOver" == TRUE && "$gwas_grch" != 37 ]]; then
 			echo "ERROR: --liftover TRUE uses the GRCh37-to-GRCh38 chain, but $gwas was detected/configured as GRCh$gwas_grch" >&2
 			exit 1
@@ -3148,6 +3173,9 @@ LIFTOVER_BIN=$(q "$liftover_bin")
 
 CIS_BED=$(q "$cis_bed")
 CIS_FLANK=$(q "$cis_flank")
+PROT_NAMES=$(q "$prot_names")
+PROT_NAMES_SHA256=$(q "$prot_names_sha256")
+PROT_COHORT=$(q "$prot_cohort")
 
 P_LEAD=$(q "$p_lead")
 LEAD_WINDOW=$(q "$lead_window")
@@ -3440,57 +3468,7 @@ gwas_post_magma(){
   echo "[\$(date '+%F %T')] MAGMA done: \$MAGMA_PREFIX.genes.out" >&2
 }
 
-gwas_post_mplot(){
-  [[ ",\$DO_STEP," == *,mplot,* || "\$DO_STEP" == "all" ]] || return 0
-  gwas_post_need_file "\$FINAL"
-  if [[ "\$REPLACE" != "TRUE" && -s "\$MH_PNG" ]]; then
-    gwas_post_log "Manhattan plot exists: \$MH_PNG"
-    return 0
-  fi
-  command -v Rscript >/dev/null 2>&1 || { echo "ERROR: Rscript not found; required for Manhattan plotting" >&2; exit 1; }
-  mkdir -p "\$(dirname "\$MH_PNG")"
-  plot_input="\$FINAL"
-  if [[ "\$HM3_MODE" == "FALSE" ]]; then
-    plot_input="\${QC_PREFIX}.mplot.hm3.gz"
-    gwas_post_log "Subset Manhattan input to HM3 or P < 0.001: \$plot_input"
-    gwas_post_zcat "\$FINAL" | awk -v FS='\t' -v OFS='\t' -v hm3_file="\$HM3" -v pthr='0.001' '
-      function isnum(x){return x ~ /^[-+]?([0-9]*[.])?[0-9]+([eE][-+]?[0-9]+)?\$/}
-      BEGIN{while((getline x<hm3_file)>0){split(x,a,/[ \t]+/); if(a[1]!=""&&a[1]!="SNP")hm3[a[1]]=1} close(hm3_file)}
-      NR==1{for(i=1;i<=NF;i++)c[\$i]=i; print; next}
-      (("SNP" in c)&&\$(c["SNP"]) in hm3) || (("P" in c)&&isnum(\$(c["P"]))&&\$(c["P"])+0<pthr){print}' | gwas_clean_compress > "\$plot_input"
-    gzip -t "\$plot_input"
-  fi
-  gwas_post_log "Manhattan plot: \$plot_input -> \$MH_PNG"
-  Rscript - "\$plot_input" "\$MH_PNG" "\$GWAS" "\$PLOT_F" "\$CIS_BED" "\$MH_PLOT_BED" <<'RSCRIPT'
-args <- commandArgs(trailingOnly = TRUE)
-input <- args[[1]]
-output <- args[[2]]
-gwas <- args[[3]]
-plot_f <- args[[4]]
-cis_bed <- if (nzchar(args[[5]])) args[[5]] else NULL
-mh_plot_bed <- if (nzchar(args[[6]])) args[[6]] else NULL
-source(plot_f)
-
-cis_gene_arg <- NULL
-if (!is.null(cis_bed) && file.exists(cis_bed)) {
-  cis_rows <- tryCatch(utils::read.table(cis_bed, header=FALSE, comment.char="#", stringsAsFactors=FALSE),
-                       error=function(e) NULL)
-  if (!is.null(cis_rows) && ncol(cis_rows) >= 4 && any(as.character(cis_rows[[4]]) == gwas))
-    cis_gene_arg <- gwas
-}
-
-png_args <- list(filename = output, width = 13.333, height = 7.5, units = "in", res = 300)
-if (capabilities("cairo")) png_args[["type"]] <- "cairo"
-do.call(grDevices::png, png_args)
-on.exit(grDevices::dev.off(), add = TRUE)
-graphics::par(mar = c(5, 5, 3, 1) + 0.1)
-print(mh_plot(input, col=c("gray", "darkgray"), cis_gene=cis_gene_arg, cis_bed=cis_bed, mh_plot_bed=mh_plot_bed,
-              cis_color="red", other_top_color="green",
-              other_top_max_per_chr=2, locus_size=1e6, main=gwas))
-RSCRIPT
-  [[ "\$plot_input" == "\$FINAL" ]] || rm -f "\$plot_input"
-  [[ -s "\$MH_PNG" ]] || { echo "ERROR: Manhattan plot was not created: \$MH_PNG" >&2; exit 1; }
-}
+# gwas_post_mplot is supplied by PERF_F below; all plotting uses PROT_NAMES.
 
 gwas_post_pgs_current(){
   [[ -s "\$PGS_OUTPUT" && -s "\$PGS_DONE" ]]

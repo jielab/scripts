@@ -9,7 +9,7 @@
 # The examples are allocation guidance, not measured peak RAM for every stage.
 # CPU planning flags (also supported by the install dispatcher):
 #   --submit hpc --queue 33 --cores 40 --memory-limit-gb 160 --hours 24 --plan-only
-# New CPU plans auto-round slots. A scope needing a GPU uses --gpu-queue for its one job.
+# New CPU plans auto-round slots. GPU phases use separate --gpu-queue allocations.
 # Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
 # END QIMING RESOURCE EXAMPLES
 
@@ -35,7 +35,7 @@ workflow_init le8 "$@"
 set -- "${WORKFLOW_ARGS[@]}"
 source "$LE8_ROOT/f/runtime_env.sh"
 unset le8_gpu_queue_override
-# Public runs produce one inspectable .cmd per trait/biom. Planning uses only Python
+# Public runs produce inspectable .cmd files per trait/biom/resource phase. Planning uses only Python
 # stdlib; no R, cohort preparation or fitting can execute on an HPC login node.
 if [[ ${WORKFLOW_WORKER:-0} != 1 ]]; then
     le8_plan=TRUE
@@ -73,14 +73,14 @@ Modules:
     Default: c1_correlate -> C2 -> C3 -> C4 -> C5
 
 Main options:
-    --submit local|hpc   One sequential job per trait/biom (default hpc)
+    --submit local|hpc   CPU/GPU jobs linked by successful stage completion (default hpc)
     --jobs-N N          Concurrent local jobs / maximum active LSF submissions
     --wait TRUE|FALSE   Wait for submitted HPC jobs [FALSE]
-    --plan-only         Write <trait>.<biom>.cmd without analysis/submission
+    --plan-only         Write <trait>.<biom>[.<phase>].cmd without analysis/submission
     --plan-dir DIR      Persistent plans/logs [ANALYSIS_ROOT/le8/logs/workflows]
     --resume-plan FILE  Continue submission/waiting for the same plan (no failed-job retry)
-    --queue NAME --gpu-queue NAME --hours N  LSF resources [33,2v100-32-sc,72]
-    --gpu-cores N       CPU slots when any stage needs GPU [20, at least --cores]
+    --queue NAME --gpu-queue NAME --hours N  LSF resources [33,2v100-32-e5,72]
+    --gpu-cores N       CPU slots for GPU phases, independent of --cores [20]
     --gpu-memory-limit-gb N  GPU-node host RAM cap in GiB [160; not GPU VRAM]
     --eigh-backend auto|cpu|cuda  C2 eigendecomposition [auto; HPC requests GPU]
     --run-gpu-coloc TRUE|FALSE   Explicit C3 GPU choice, overriding --device
@@ -99,7 +99,8 @@ Main options:
                           Historical sensitivities: abm_case_preserving,abm_profile,
                           abm_prevalent,abm_legacy,molecular_deviation
     --device NAME         [auto], cpu or cuda; independent of scientific method
-                          If C2 eigh, C3 or abm_deep needs GPU, the scope job reserves it.
+                          C1: CPU preparation/models -> GPU abm_deep -> CPU evaluation.
+                          C2 eigh/C3 GPU work also uses a separate allocation from CPU stages.
                           Primary abm_count/glmnet/LightGBM remain CPU methods.
     --config FILE         C1 parameter file [config/c1_methods.json]
     --history-config FILE Historical-case assumptions [config/c1_history.json]

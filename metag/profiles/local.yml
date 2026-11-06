@@ -2,14 +2,14 @@
 # Paths can be changed independently; this never moves or deletes existing caches.
 # A category/query whose uncapped estimate exceeds this budget is refused.
 schema: 1
-root: /mnt/f
-reference_raw: /mnt/f/annot/metag/raw
-reads_raw: /mnt/f/metag/raw
-metadata_dir: /mnt/d/analysis/metag_parallel/metadata
-library_dir: /mnt/f/annot/metag/lib_parallel
-output_dir: /mnt/d/analysis/metag_parallel/split
-work_dir: /mnt/d/analysis/metag_parallel/work
-tools_dir: /mnt/d/tools/metag_parallel
+root: ${DIR_BIG}
+reference_raw: ${DIR_ANNOT}/metag/raw
+reads_raw: ${DIR_METAG}/raw
+metadata_dir: ${ANALYSIS_ROOT}/metag_parallel/metadata
+library_dir: ${DIR_ANNOT}/metag/lib_parallel
+output_dir: ${ANALYSIS_ROOT}/metag_parallel/split
+work_dir: ${ANALYSIS_ROOT}/metag_parallel/work
+tools_dir: ${DIR_DAT}/tools/metag_parallel
 legacy_library_dir: null
 legacy_metadata_dir: null
 setup_cores: 4

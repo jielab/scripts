@@ -4,6 +4,13 @@
 Source data are read-only. Missing data are reported without inventing estimates.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 from dataclasses import dataclass
 import datetime as dt
@@ -16,13 +23,12 @@ import shutil
 import subprocess
 import sys
 from analysis_integrity import identity as content_identity, validate_manifest
+from analysis_scope import STAGES, DEFAULT_STAGES, boolean_option, select_stages
 
 VERSION = "6.0.1"
 SOURCE = Path(__file__).resolve().parent
-DEFAULT_STAGES = ("primary", "archaic", "summary", "spatial", "windows", "alleles", "time", "selection", "candidates", "genotypes", "ld", "report")
-STAGES = DEFAULT_STAGES
 PREFIX = "AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes"
-SCAN_STORE = "/mnt/f/annot/gnomad/allele3"
+SCAN_STORE = str(Path(os.environ.get('ALLELE_ANALYSIS_ROOT', configured_path('ANALYSIS_ROOT', 'allele3'))) / 'stores/gnomad_scan')
 
 
 def now():
@@ -83,15 +89,10 @@ def resolve(args):
 
 
 def stage_selection(args):
-    chosen = ([s.strip() for s in args.stages.split(",") if s.strip()] if args.stages
-              else list(DEFAULT_STAGES) if args.command == "pipeline" else [args.command])
-    unknown = set(chosen) - set(STAGES)
-    if unknown or not chosen or len(chosen) != len(set(chosen)):
-        raise ValueError(f"Select unique stages from {','.join(STAGES)}; invalid={sorted(unknown)}")
-    return [stage for stage in STAGES if stage in chosen]
+    return select_stages(args.command, args.stages, args.ibdmix)
 
 
-def modern_files(modern, kind):
+def modern_files(modern, kind, mask_overrides=None):
     """Audit the files actually read, including merged-counter/shard fallback.
 
     Keep this metadata-only: preflight must report missing scientific packages
@@ -99,13 +100,16 @@ def modern_files(modern, kind):
     """
     from scan_store import load_run_metadata, resolve_run_path
     modern = Path(modern)
-    sidecars = [modern / name for name in ("relocation.json", "adoption_receipt.json") if (modern/name).is_file()]
+    sidecars = [modern / name for name in ("relocation.json", "adoption_receipt.json", "input_locations.json") if (modern/name).is_file()]
     run_path = modern / "run.json"
     inputs = [run_path, *sidecars]
     if not run_path.is_file():
         return inputs
     run = load_run_metadata(modern)
     options = run.get("options", {})
+    if mask_overrides:
+        from scan_input_paths import resolve_mask_options
+        options = resolve_mask_options(run, mask_overrides)
     prefix = options.get("architecture_prefix", "architecture")
     targeted = kind in {"windows", "spatial"}
     counter_kinds = {"primary": ("global", "exposure"), "summary": ("global", "exposure"), "windows": ("global",),
@@ -197,22 +201,25 @@ def plan(args, paths, names):
     out, modern = paths["out"], paths["modern"]
     report = str(SOURCE / "herv_report.py")
     commands = {}
+    ibdmix = "TRUE" if args.ibdmix else "FALSE"
+    if "archaic" in names and not args.ibdmix:
+        raise ValueError("Archaic analysis requires --ibdmix TRUE")
     common_report = ["--analysis-root", str(paths["root"]), "--modern-dir", str(modern)]
     commands["primary"] = Stage("primary", [py, str(SOURCE / "herv_primary.py"),
-        "--modern-dir", str(modern), "--out", str(out / "primary"), "--bootstrap", str(args.bootstrap), "--seed", str(args.seed)],
+        "--modern-dir", str(modern), "--out", str(out / "primary"), "--bootstrap", str(args.bootstrap), "--seed", str(args.seed), "--ibdmix", ibdmix],
         modern_files(modern, "primary") if "primary" in names else [], out / "primary",
         ("herv_primary.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py"),
         ("numpy", "matplotlib"), manifest="primary_manifest.json")
     commands["summary"] = Stage("summary", [py, str(SOURCE / "herv_modern.py"), "summary", "--modern-dir", str(modern),
         "--out", str(out / "summary"), "--bootstrap", str(args.bootstrap), "--seed", str(args.seed), "--min-training-sites", str(args.min_training_sites), "--min-support", str(args.min_support),
-        "--archaic-references", args.archaic_references],
+        "--archaic-references", args.archaic_references, "--ibdmix", ibdmix],
         modern_files(modern, "summary") if "summary" in names else [], out / "summary", ("herv_modern.py", "scan.py", "scan_store.py", "0.common.py"), ("numpy", "scipy", "matplotlib"), manifest="summary_manifest.json")
     if "archaic" in names:
         from herv_archaic import discover, modern_inputs
         datasets = discover(args.archaic_root, args.archaic_datasets, args.archaic_module, args.archaic_chromosomes, args.archaic_references)
         ready = [d for d in datasets if d['status'] == 'ready']
         needs_lift = any(d['build'] != '38' for d in ready)
-        cache = args.archaic_cache or str(modern.with_name(modern.name + '-archaic'))
+        cache = args.archaic_cache or str(paths['root'] / 'stores/archaic_overlap')
         archaic_cmd = [py, str(SOURCE / 'herv_archaic.py'), '--gu-root', args.archaic_root,
             '--datasets', args.archaic_datasets, '--module', args.archaic_module,
             '--chromosomes', args.archaic_chromosomes, '--references', args.archaic_references,
@@ -228,17 +235,21 @@ def plan(args, paths, names):
             ('numpy', 'matplotlib', 'pysam'), ('sort', args.bcftools) + ((args.archaic_liftover,) if needs_lift else ()),
             manifest='manifest.json', details={'datasets': [{k: v for k, v in d.items() if k not in {'files', 'inputs', 'sample_panel'}} for d in datasets],
                 'dataset_cache': cache, 'gnomad_access': 'indexed tract-union queries; completed background remains read-only'})
+    mask_overrides = {name: getattr(args, name + "_bed", None)
+                      for name in ("segdup", "lcr", "low_mappability")}
+    mask_flags = [value for name, path in mask_overrides.items() if path
+                  for value in ("--" + name.replace("_", "-") + "-bed", str(path))]
     commands["candidates"] = Stage("candidates", [py, str(SOURCE / "herv_candidates.py"), "--modern-dir", str(modern),
         "--erv-joined", args.erv_joined, "--out", str(out / "candidates"), "--max-sites", str(args.max_sites),
         "--controls-per-case", str(args.controls_per_case), "--seed", str(args.seed),
-        "--end-bp", str(args.end_bp), "--body-bins", str(args.body_bins)],
-        [*(modern_files(modern, "candidates") if "candidates" in names else []), Path(args.erv_joined)], out / "candidates", ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py"), ("numpy",), manifest="candidate_manifest.json")
+        "--end-bp", str(args.end_bp), "--body-bins", str(args.body_bins), *mask_flags],
+        [*(modern_files(modern, "candidates", mask_overrides) if "candidates" in names else []), Path(args.erv_joined)], out / "candidates", ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "scan_input_paths.py", "0.common.py"), ("numpy",), manifest="candidate_manifest.json")
     commands["alleles"] = Stage("alleles", [py, str(SOURCE / "herv_candidates.py"), "--modern-dir", str(modern),
         "--erv-joined", args.erv_joined, "--out", str(out / "alleles"), "--max-sites", str(args.allele_max_sites),
         "--controls-per-case", str(args.allele_controls_per_case), "--all-alleles-catalog", "--seed", str(args.seed),
-        "--end-bp", str(args.end_bp), "--body-bins", str(args.body_bins)],
-        [*(modern_files(modern, "candidates") if "alleles" in names else []), Path(args.erv_joined)], out / "alleles",
-        ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "0.common.py"), ("numpy",), manifest="candidate_manifest.json")
+        "--end-bp", str(args.end_bp), "--body-bins", str(args.body_bins), *mask_flags],
+        [*(modern_files(modern, "candidates", mask_overrides) if "alleles" in names else []), Path(args.erv_joined)], out / "alleles",
+        ("herv_candidates.py", "herv_modern.py", "scan.py", "scan_store.py", "scan_input_paths.py", "0.common.py"), ("numpy",), manifest="candidate_manifest.json")
     kg_inputs = [paths["targets"], Path(args.kg_sample_panel)]
     # Only chromosomes represented in frozen targets are required for the targeted fetch.
     chromosomes = []
@@ -331,7 +342,7 @@ def plan(args, paths, names):
         ld_inputs.append(Path(args.ld_covariates))
     commands["ld"] = Stage("ld", ld_cmd, ld_inputs, out / "ld", ("herv_ld.py", "scan.py", "0.common.py"), ("numpy", "scipy", "matplotlib"), manifest="manifest.json")
     # Optional regional association. A request never silently starts VCF counting.
-    commands["report"] = Stage("report", [py, report, "report", *common_report, "--out", str(out)], [], out, ("herv_report.py", "herv_modern.py", "scan.py", "0.common.py"), ("numpy", "matplotlib"))
+    commands["report"] = Stage("report", [py, report, "report", *common_report, "--out", str(out), "--ibdmix", ibdmix], [], out, ("herv_report.py", "herv_modern.py", "scan.py", "0.common.py"), ("numpy", "matplotlib"))
     if getattr(args, 'pca_temporal_dir', None):
         commands['report'].command += ['--pca-temporal-dir', args.pca_temporal_dir]
     return [commands[name] for name in names]
@@ -346,7 +357,7 @@ def availability(stage):
 
 
 def snapshot(stage):
-    inputs = list(dict.fromkeys(stage.inputs + [SOURCE / p for p in stage.modules] + [SOURCE / p for p in ("analysis_integrity.py", "pca_contract.py", "pca_coordinate_receipts.py", "temporal_stats.py", "herv_joint.py", "allele_measurement.py", "herv_primary.py")]))
+    inputs = list(dict.fromkeys(stage.inputs + [SOURCE / p for p in stage.modules] + [SOURCE / p for p in ("analysis_scope.py", "analysis_integrity.py", "pca_contract.py", "pca_coordinate_receipts.py", "temporal_stats.py", "herv_joint.py", "allele_measurement.py", "herv_primary.py")]))
     return dict(schema=VERSION, command=stage.command, inputs=[state(p) for p in inputs])
 
 
@@ -435,7 +446,9 @@ def execute(args):
     paths = resolve(args)
     names = stage_selection(args)
     configuration = {k:str(v) if isinstance(v, Path) else v for k,v in paths.items()}
-    configuration.update(stages=names, version=VERSION, reuse="size/mtime and parameters; no added large-file checksum")
+    configuration.update(stages=names, version=VERSION, ibdmix_enabled=args.ibdmix,
+                         disabled_stages=[] if args.ibdmix else ["archaic"],
+                         reuse="size/mtime and parameters; no added large-file checksum")
     if args.dry_run or args.preflight:
         stages = plan(args, paths, names)
         details = []
@@ -458,8 +471,18 @@ def execute(args):
         records = []
         status_path = out / "pipeline_status.json"
         for name in names:
+            if args.command == "pipeline" and not args.stages and records and records[-1]["status"] not in {"complete", "reused"}:
+                records.append(dict(stage=name, status="not_available",
+                                    reason="previous module did not complete; all-module execution stopped"))
+                save(status_path, dict(status=overall(records), stages=records, configuration=configuration, updated=now()))
+                continue
             # Re-resolve generated candidate files and their exact chromosomes.
-            stage = plan(args, paths, [name])[0]
+            try:
+                stage = plan(args, paths, [name])[0]
+            except (OSError, ValueError, RuntimeError) as exc:
+                records.append(dict(stage=name, status="failed", reason="input planning: " + str(exc)))
+                save(status_path, dict(status=overall(records), stages=records, configuration=configuration, updated=now()))
+                continue
             candidate_status = next((r["status"] for r in records if r["stage"] == "candidates"), None)
             if name == "genotypes" and not args.targets and candidate_status not in {None, "complete", "reused"}:
                 records.append(dict(stage=name, status="not_available", reason="candidates stage did not complete; stale candidate output is not reused"))
@@ -495,17 +518,19 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command", nargs="?", choices=("pipeline", *STAGES), default="pipeline")
     p.add_argument("--stages", help="Comma-separated stage subset; only requested stages run")
-    p.add_argument("--dir-analysis-root", default=os.environ.get("ALLELE_ANALYSIS_ROOT", "/mnt/d/analysis/allele3"))
+    p.add_argument("--ibdmix", type=boolean_option, default=False, metavar="TRUE|FALSE",
+                   help="Enable exploratory IBDmix evidence and archaic analysis [FALSE]")
+    p.add_argument("--dir-analysis-root", default=os.environ.get("ALLELE_ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT', 'allele3')))
     p.add_argument("--dir-modern", "--modern-dir", "--scan-dir", default=os.environ.get("ALLELE_SCAN_STORE", SCAN_STORE))
     p.add_argument("--dir-out", "--out", default=os.environ.get("ALLELE_HERV_FOCUS_OUT"),
                    help="Output directory; the analysis root expands to ROOT/final/herv_focus_20261028")
-    p.add_argument("--dir-ancient", default=os.environ.get("ALLELE_ANCIENT_DIR", "/mnt/f/gen/ancient"))
-    p.add_argument("--erv-joined", default=os.environ.get("ALLELE_ERV_JOINED", "/mnt/f/annot/allele3/repeats/hg38/rmskJoinedCurrent.txt.gz"))
-    p.add_argument("--fasta38", default=os.environ.get("ALLELE_FASTA", "/mnt/f/gen/1hgp/38/GRCH38.fasta.gz"))
-    p.add_argument("--fasta37", default=os.environ.get("ALLELE_FASTA37", "/mnt/f/gen/1hgp/37/GRCH37.fasta.gz"))
-    p.add_argument("--chain38to37", default=os.environ.get("ALLELE_CHAIN38TO37", "/mnt/f/gen/chains/hg38ToHg19.over.chain.gz"))
-    p.add_argument("--chain37to38", default=os.environ.get("ALLELE_CHAIN37TO38", "/mnt/f/gen/chains/hg19ToHg38.over.chain.gz"))
-    p.add_argument("--ld-block-dir", default=os.environ.get("ALLELE_LD_BLOCK_DIR", "/mnt/f/LD/block"))
+    p.add_argument("--dir-ancient", default=os.environ.get("ALLELE_ANCIENT_DIR", configured_path('DIR_GEN', 'ancient')))
+    p.add_argument("--erv-joined", default=os.environ.get("ALLELE_ERV_JOINED", configured_path('DIR_ANNOT', 'allele3/repeats/hg38/rmskJoinedCurrent.txt.gz')))
+    p.add_argument("--fasta38", default=os.environ.get("ALLELE_FASTA", configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz')))
+    p.add_argument("--fasta37", default=os.environ.get("ALLELE_FASTA37", configured_path('DIR_GEN', '1hgp/37/GRCH37.fasta.gz')))
+    p.add_argument("--chain38to37", default=os.environ.get("ALLELE_CHAIN38TO37", configured_path('DIR_FILES', 'liftOver/hg38ToHg19.over.chain.gz')))
+    p.add_argument("--chain37to38", default=os.environ.get("ALLELE_CHAIN37TO38", configured_path('DIR_FILES', 'liftOver/hg19ToHg38.over.chain.gz')))
+    p.add_argument("--ld-block-dir", default=os.environ.get("ALLELE_LD_BLOCK_DIR", configured_path('DIR_LD', 'block')))
     for name in ("pgen-prefix", "hq-variants", "metadata", "coordinates", "supplement-xlsx", "targets", "allele-catalog", "selection-stats", "ld-covariates", "chrom-sizes", "chromosomes"):
         p.add_argument("--" + name)
     for name in ("basis-dir", "coordinate-receipt", "provenance-manifest", "pca-temporal-dir"):
@@ -513,17 +538,17 @@ def parser():
     p.add_argument("--selection-effect-allele", choices=("raw_only", "ALT"), default="raw_only", help="Keep published signs raw unless the source's ALT effect contract has been verified")
     for name in ("segdup", "lcr", "low-mappability"):
         p.add_argument("--" + name + "-bed")
-    p.add_argument("--kg-vcf-dir", default=os.environ.get("ALLELE_1KG_VCF_DIR", "/mnt/f/gen/1kg/38/vcf"))
-    p.add_argument("--kg-sample-panel", default=os.environ.get("ALLELE_1KG_PANEL", "/mnt/f/gen/1kg/38/samples.txt"))
+    p.add_argument("--kg-vcf-dir", default=os.environ.get("ALLELE_1KG_VCF_DIR", configured_path('DIR_GEN', '1kg/38/vcf')))
+    p.add_argument("--kg-sample-panel", default=os.environ.get("ALLELE_1KG_PANEL", configured_path('DIR_GEN', '1kg/38/samples.txt')))
     p.add_argument("--kg-vcf-pattern", default="chr{chrom}.vcf.gz")
     p.add_argument("--kg-min-ac", type=int, default=2)
-    p.add_argument('--archaic-root', default=os.environ.get('ALLELE_ARCHAIC_ROOT', str(Path(os.environ.get('DIR_GEN', '/mnt/f/gen')))))
+    p.add_argument('--archaic-root', default=os.environ.get('ALLELE_ARCHAIC_ROOT', str(Path(os.environ.get('DIR_GEN', configured_path('DIR_GEN'))))))
     p.add_argument('--archaic-datasets', default=os.environ.get('ALLELE_ARCHAIC_DATASETS', '1kg'), help='Comma-separated names/globs [default: %(default)s]; auto selects all complete 1kg/ukbNNN datasets')
     p.add_argument('--archaic-references', default='Altai,Chagyr,Denisova,Denisova25,Vindija', help='Explicit tested reference set; .2013 references are opt-in only')
     p.add_argument('--archaic-module', choices=('auto', 'ibdmix', 'ibdmix-GPU'), default='auto')
     p.add_argument('--archaic-chromosomes', default='auto', help='auto includes available X/Y separately; or autosomes,X,Y / X,Y / X / Y')
-    p.add_argument('--archaic-cache', default=os.environ.get('ALLELE_ARCHAIC_CACHE'), help='Persistent per-cohort products; default SCAN-DIR-archaic')
-    p.add_argument('--archaic-liftover', default=os.environ.get('ALLELE_ARCHAIC_LIFTOVER', '/mnt/d/software/bin/liftOver'))
+    p.add_argument('--archaic-cache', default=os.environ.get('ALLELE_ARCHAIC_CACHE'), help='Persistent per-cohort products; default ANALYSIS-ROOT/stores/archaic_overlap')
+    p.add_argument('--archaic-liftover', default=os.environ.get('ALLELE_ARCHAIC_LIFTOVER', configured_path('DIR_SOFTWARE', 'bin/liftOver')))
     p.add_argument('--archaic-min-lod', type=float, default=4.)
     p.add_argument('--archaic-min-length', type=int, default=50000)
     p.add_argument('--archaic-carrier-thresholds', default='0.01,0.05,0.10,0.20')

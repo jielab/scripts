@@ -5,6 +5,13 @@ No fitted PRSformer, block model, or twin predictor is an input. The historical
 directory ``prsformer/cache`` is retained as a storage location only.
 """
 from __future__ import annotations
+# Resolve data roots through the shared 0os.sh table.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import hashlib
 import json
@@ -205,8 +212,8 @@ def preparation_options(args, config=None):
             if isinstance(value, str):
                 setattr(options, key, relocate(value, root))
         options.train_fraction, options.validation_fraction = .4, .1
-        options.pheno_file = os.environ.get("GRID_PHE_FILE", relocate("/mnt/f/ukb/Rdata/phe.rds", root))
-        options.dir_gen = os.environ.get("GRID_TARGET_DIR", relocate("/mnt/f/gen/ukb/37/typ", root))
+        options.pheno_file = os.environ.get("GRID_PHE_FILE", configured_path("DIR_UKB", "Rdata", "all.rds"))
+        options.dir_gen = os.environ.get("GRID_TARGET_DIR", relocate(configured_path('DIR_GEN', 'ukb/37/typ'), root))
         options.ancestry_file = os.environ.get("GRID_ANCESTRY_FILE", options.ancestry_file)
         options.snp_list = os.environ.get("GRID_CSX_SNPINFO", options.snp_list)
         options.remove = os.environ.get("GRID_REMOVE", options.remove)
@@ -240,18 +247,53 @@ def preparation_command(args, config=None):
     return command
 
 
+def align_projected_cohort(frame, analysis_root, *, frozen=False):
+    """Bind shared IDs to usable reference PCs before any family split is frozen."""
+    path = Path(os.environ.get("GRID_PCA_FILE") or
+                configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz'))
+    if not path.is_file():
+        raise FileNotFoundError(f"Shared preparation requires projected PCs: {path}; run 1.pca.sh first")
+    pca = table(path)
+    pcs = [f"PC{i}" for i in range(1, 11)]
+    if not set(pcs) <= set(pca):
+        raise ValueError("Shared preparation requires projected PC1-PC10")
+    if not np.isfinite(pca[pcs].apply(pd.to_numeric, errors="raise").to_numpy(float)).all():
+        raise ValueError("Projected PCs contain nonfinite values; rebuild the PCA input")
+    ids = identified(frame).id
+    keep = ids.isin(pca.id).to_numpy()
+    missing = int((~keep).sum())
+    if frozen:
+        if missing:
+            raise ValueError(f"Frozen shared cohort lacks projected PCs for {missing} participants; "
+                             "use a new analysis root to rebuild a common roster")
+        return frame
+    if not keep.any():
+        raise ValueError("No shared participants have projected PCs")
+    selected = frame.loc[keep].copy()
+    atomic_json(Path(analysis_root) / "cache/shared_preparation/PCA_COHORT.json", dict(
+        schema="grid.shared_pca_cohort.1", source=str(path.resolve()), source_sha256=sha256(path),
+        required_pcs=pcs, input_N=len(frame), retained_N=len(selected), missing_pca_N=missing,
+        selected_ids_sha256=hashlib.sha256("\n".join(ids[keep]).encode()).hexdigest(),
+        rule="intersect available projected PCs before freezing family-based splits",
+        uses_score_or_outcome_values=False))
+    print(f"[shared inputs] PCA coverage: {len(frame):,} -> {len(selected):,}; "
+          f"missing projected PCs: {missing:,}", flush=True)
+    return selected
+
+
 def prepare_frozen_roster(options, analysis_root, relationship_file=None):
     """On a fresh run freeze IDs/families without reading any score or model."""
     import prsformer
     root, cache = Path(analysis_root), Path(options.cache_dir)
     if (cache / "prepare.json").is_file():
+        align_projected_cohort(table(cache / "data.tsv.gz"), root, frozen=True)
         return  # Existing preparation already owns its exact input identities.
     outer = root / "cache/abm/split.rds"
     legacy = root / "abm/grid.split.rds"
     if not outer.is_file() and not legacy.is_file():
         genotype_sources = prsformer.genotype_files(options.dir_gen, prsformer.chromosomes(options.chrs))
         if not options.split_group_file or options.split_group_file == "none":
-            source = Path(relationship_file or os.environ.get("GRID_REL_FILE", relocate("/mnt/f/gen/ukb/37/typ/ukb_rel.dat")))
+            source = Path(relationship_file or os.environ.get("GRID_REL_FILE", relocate(configured_path('DIR_GEN', 'ukb/37/typ/ukb_rel.dat'))))
             if not source.is_file():
                 raise FileNotFoundError(f"Fresh shared preparation needs UKB relationship data: {source}; "
                     "set --relationship-file/GRID_REL_FILE or provide --group-file (eid,group)")
@@ -274,6 +316,7 @@ def prepare_frozen_roster(options, analysis_root, relationship_file=None):
         initial = prsformer.make_cohort(options, genotype_sources)
         if "group" not in initial:
             raise ValueError("The declared family file was not carried into the raw cohort")
+        initial = align_projected_cohort(initial, root)
         cohort = initial[["eid", "target", "group"]].rename(columns={"target": "ancestry", "group": "family_id"})
         settings = SimpleNamespace(**{k:v for k,v in vars(options).items() if k not in {"func", "command"}})
         settings.cache_dir = str(root / "cache/abm")
@@ -286,6 +329,7 @@ def prepare_frozen_roster(options, analysis_root, relationship_file=None):
     roster = cache / "roster"
     prsformer.shared_roster(SimpleNamespace(cache_dir=str(root / "cache/abm"), grid_split=str(legacy),
         roster_dir=str(roster), seed=options.seed, check=False))
+    align_projected_cohort(table(roster / "prsformer.split.tsv.gz"), root, frozen=True)
     options.keep = str(roster / "common.keep")
     options.split_file = str(roster / "prsformer.split.tsv.gz")
     options.split_group_file = str(roster / "families.tsv.gz")
@@ -353,7 +397,7 @@ def complete_score_features(args, config=None):
                 raise ValueError("Nonfinite score in fixed cohort")
             paths = [source, cache / "prepare.json", score_path]
             match_pcs = []
-            pca_path = Path(os.environ.get("GRID_PCA_FILE", relocate("/mnt/f/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz")))
+            pca_path = Path(os.environ.get("GRID_PCA_FILE", relocate(configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz'))))
             if pca_path.is_file():
                 pca = table(pca_path).set_index("id")
                 if not set(frame.id) <= set(pca.index):
@@ -426,8 +470,21 @@ def ensure_inputs(args, config=None):
         # are never called. This stage needs no CSx scores on a fresh analysis.
         import prsformer
         from dosage_storage import dosage_lock, prsformer_cache_lock
-        with dosage_lock(block, exclusive=True, wait=True), prsformer_cache_lock(options.cache_dir, exclusive=True):
-            prsformer.prepare(options)
+        # Independent trait jobs may already be training from this cache. A
+        # verified reuse needs only read locks, otherwise an unnecessary writer
+        # lock would wait for those entire training jobs to finish.
+        reusable = False
+        cache = Path(options.cache_dir)
+        with dosage_lock(block, wait=True), prsformer_cache_lock(cache):
+            if (cache / "prepare.json").is_file() and (cache / "genotypes.npy").is_file():
+                files = prsformer.genotype_files(options.dir_gen, prsformer.chromosomes(options.chrs))
+                signature, _ = prsformer.identity(options, files)
+                reusable = not options.replace and prsformer.validate_cache(cache, signature)
+        if not reusable:
+            with dosage_lock(block, exclusive=True, wait=True), prsformer_cache_lock(cache, exclusive=True):
+                prsformer.prepare(options)
+        else:
+            print(f"[shared inputs] REUSE verified prepared cache: {cache}", flush=True)
         if getattr(args, "complete_features", True):
             # Count ABM may request its existing score feature table after CSx
             # scoring. Benchmark preparation itself does not need that table.

@@ -1,0 +1,4 @@
+JOBID   USER    STAT  QUEUE      FROM_HOST   EXEC_HOST   JOB_NAME   SUBMIT_TIME
+4388790 sph-huangj RUN   v4-3t      b04u17l     32*b03u06s  grid-csx.height.all Nov  5 21:56
+4388791 sph-huangj PEND  v4-3t      b04u17l        -        grid-csx.ldl.all Nov  5 21:56
+4388792 sph-huangj PEND  v4-3t      b04u17l        -        grid-csx.t2dm.all Nov  5 21:56

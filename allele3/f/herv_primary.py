@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 import tempfile
 from analysis_integrity import transactional, InputPath, check_output_paths
+from analysis_scope import boolean_option
 
 MISSING = {"", ".", "NA", "NONE", "NULL"}
 ROW_STATES = {
@@ -110,12 +111,14 @@ def _read_tsv(path):
         yield from csv.DictReader(handle, delimiter="\t")
 
 
-def merge_counter_files(paths, destination):
+def merge_counter_files(paths, destination, *, exclude_ibdmix=False):
     """Stream existing counters; do not read or reconstruct raw VCF loci."""
     paths = [Path(p).resolve() for p in paths]
     if not paths or len(set(paths)) != len(paths):
         raise ValueError("Counter paths must be nonempty and unique")
     header = None
+    excluded = 0
+    from herv_modern import archaic_label_reference
     with gzip.open(destination, "wt", newline="") as dst:
         writer = None
         for path in paths:
@@ -128,12 +131,17 @@ def merge_counter_files(paths, destination):
                     header = reader.fieldnames
                     writer = csv.DictWriter(dst, header, delimiter="\t")
                     writer.writeheader()
-                writer.writerows(reader)
+                for row in reader:
+                    if exclude_ibdmix and archaic_label_reference(row.get("label", "")) is not None:
+                        excluded += 1
+                        continue
+                    writer.writerow(row)
+    return excluded
 
 
 @transactional("primary_manifest.json")
 def compute_primary_from_counters(modern, out, *, bootstrap=2000, seed=20261028,
-                                  families=("ERV1", "ERVK"), minimum=1):
+                                  families=("ERV1", "ERVK"), minimum=1, include_ibdmix=False):
     """Compute the declared primary estimator from complete source counters."""
     import scan
     from herv_modern import architecture_paths, write_rows
@@ -151,8 +159,8 @@ def compute_primary_from_counters(modern, out, *, bootstrap=2000, seed=20261028,
         global_file = Path(temp) / "global.tsv.gz"
         exposure_file = Path(temp) / "exposure.tsv.gz"
         merge_counter_files(gp, global_file)
-        merge_counter_files(ep, exposure_file)
-        # All labels remain in this call so the estimator's FDR family is kept.
+        excluded = merge_counter_files(ep, exposure_file, exclude_ibdmix=not include_ibdmix)
+        # Remove optional evidence before inference, including the BH family.
         result = scan.summarize_exposure(global_file, exposure_file, out,
                                          reps=bootstrap, seed=seed, min_training_sites=minimum)
     if input_identities != [identity(p) for p in (*gp, *ep)]:
@@ -166,6 +174,8 @@ def compute_primary_from_counters(modern, out, *, bootstrap=2000, seed=20261028,
     run_path = modern / "run.json"
     run = scan.load_run_metadata(modern) if run_path.is_file() else {}
     manifest = dict(result, schema="herv-primary-1", status="complete",
+                    ibdmix_enabled=include_ibdmix, excluded_ibdmix_counter_rows=excluded,
+                    testing_family="all retained annotation labels after optional IBDmix exclusion",
                     source_counter_inputs=input_identities,
                     source_run=identity(run_path) if run_path.is_file() else None,
                     source_options=run.get("options", run.get("identity", {}).get("options", {})),
@@ -281,9 +291,10 @@ def main(argv=None):
     p.add_argument('--families', default='ERV1,ERVK')
     p.add_argument('--bootstrap', type=int, default=2000)
     p.add_argument('--seed', type=int, default=20261028)
+    p.add_argument('--ibdmix', type=boolean_option, default=False, metavar='TRUE|FALSE')
     a = p.parse_args(argv)
     result = compute_primary_from_counters(a.modern_dir, a.out, bootstrap=a.bootstrap,
-        seed=a.seed, families=tuple(a.families.split(',')))
+        seed=a.seed, families=tuple(a.families.split(',')), include_ibdmix=a.ibdmix)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

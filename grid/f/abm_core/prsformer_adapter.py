@@ -1,4 +1,11 @@
 """Independent PRSformer2 traits sharing inputs and frozen calibration roles."""
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import json
 import os
 from pathlib import Path
@@ -69,7 +76,7 @@ def publish(run, cache, traits):
 
 def main(argv=None):
     p = benchmark_parser("prsformer2", "Train or resume independent PRSformer2 traits sequentially, with separate prediction calibration.")
-    p.add_argument("--upstream-dir", default="/mnt/d/software/PRSformer")
+    p.add_argument("--upstream-dir", default=configured_path('DIR_SOFTWARE', 'PRSformer'))
     p.add_argument("--check", action="store_true", help="Validate inputs and model runtime")
     args = p.parse_args(argv)
     config = benchmark_config(args)
@@ -78,6 +85,19 @@ def main(argv=None):
         print("[GRID] PRSformer2 plan: independent traits in order: " + " -> ".join(traits), flush=True)
         for trait in traits:
             print(f'[GRID] {trait}: skip, resume or train at {Path(args.analysis_root) / "prsformer2" / trait}; shared cache {Path(args.analysis_root) / "prsformer/cache"}', flush=True)
+        return
+    if args.workflow_stage == "report":
+        from prsformer_stages import frozen_model
+        from grid_paths import read_config
+        from resume import run_lock
+        from kinship import analysis_guard
+        root = Path(args.analysis_root)
+        cache = Path(read_config(config["block_config"], root)["prsformer_cache"])
+        with analysis_guard(root):
+            for trait in args.traits.split(","):
+                with run_lock(root / "prsformer2" / trait):
+                    local = frozen_model(root, "prsformer2", trait, cache)
+                    publish(local.parent, cache, [trait])
         return
     _run(args, config, benchmark_device(args.device))
     if not args.check and os.environ.get("GRID_KEEP_SHARED_INPUTS") != "1":
@@ -120,7 +140,10 @@ def _run(args, config, device):
         for index, trait in enumerate(traits, 1):
             print(f"[GRID] PRSformer2 trait {index}/{len(traits)}: {trait}", flush=True)
             with run_lock(root / "prsformer2" / trait):
-                _run_trait(args, config, device, cache, preparation, roles, trait)
+                run = _run_trait(args, config, device, cache, preparation, roles, trait)
+                if args.workflow_stage == "model" and not args.check:
+                    from prsformer_stages import freeze_model
+                    freeze_model(root, "prsformer2", trait, run / "_LOCAL_ONLY", cache)
 
 
 def _run_trait(args, config, device, cache, preparation, roles, trait):
@@ -150,14 +173,18 @@ def _run_trait(args, config, device, cache, preparation, roles, trait):
     from dosage_storage import dosage_lock, prsformer_cache_lock
     from grid_paths import read_config
     block = read_config(config["block_config"], root)
+    stage = getattr(args, "workflow_stage", "all")
     if (run / "COMPLETE.json").is_file():
         with dosage_lock(block, wait=True), prsformer_cache_lock(cache):
             verify_complete(run, cache, traits)
-            write_json(run.parent / "CURRENT.json", dict(run=run.name))
+            if stage != "model":
+                write_json(run.parent / "CURRENT.json", dict(run=run.name))
         print(f"[GRID] SKIP PRSformer2 {trait}: completed outputs verified", flush=True)
-        return
+        return run
     action = action_for(local)
     if action != "publish" and not (cache / "genotypes.npy").is_file():
+        if stage == "model":
+            raise FileNotFoundError("Run CPU preparation before GPU model training")
         from copy import copy
         from shared_cohort import ensure_inputs as restore_inputs
         options = copy(args)
@@ -185,7 +212,9 @@ def _run_trait(args, config, device, cache, preparation, roles, trait):
             subprocess.run(cmd, check=True)
             if args.check:
                 return
-        publish(run, cache, traits)
+        if stage != "model":
+            publish(run, cache, traits)
+    return run
 
 
 if __name__ == "__main__":

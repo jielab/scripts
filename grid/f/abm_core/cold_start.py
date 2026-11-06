@@ -1,4 +1,11 @@
 """Prepare missing inputs from raw sources without training any predictor."""
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 from pathlib import Path
 import json
 import sys
@@ -11,11 +18,12 @@ def benchmark_parser(name, description):
     p = argparse.ArgumentParser(prog="./4.prsformer.sh " + name, description=description)
     p.add_argument("--traits", default="height,ldl,t2dm",
                    help="Comma-separated traits; train independent models sequentially in this order")
-    p.add_argument("--analysis-root", default="/mnt/d/analysis/grid")
+    p.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
     p.add_argument("--config", default=str(ROOT / "config/abm.json"))
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     p.add_argument("--threads", type=int, default=2 if name == "prsformer" else 4)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--workflow-stage", choices=("all", "model", "report"), default="all")
     return p
 
 

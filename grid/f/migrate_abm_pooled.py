@@ -5,6 +5,13 @@ unused interpolation inputs, and obsolete CURRENT pointers are removed on --appl
 Large immutable support arrays use hard links so historical paths keep working.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 import ast
 import copy
@@ -218,7 +225,7 @@ def migrate(root, trait, sources, apply=False):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--analysis-root", default="/mnt/d/analysis/grid")
+    p.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
     p.add_argument("--traits", default="height,ldl,t2dm")
     p.add_argument("--apply", action="store_true")
     p.add_argument("--report", required=True)

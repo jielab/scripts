@@ -1,0 +1,16 @@
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+pillow>=10
+joblib
+lightgbm
+xgboost
+catboost
+shap
+nibabel
+nilearn
+scikit-image
+vtk
+# ENIGMA toolbox: install the MICA-MNI/ENIGMA repository separately.

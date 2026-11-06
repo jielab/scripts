@@ -1,0 +1,8 @@
+[pca] work directory: /work/sph-huangj/scripts/grid/.preflight/20261105/native/pca/work
+[pca] command file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/pca/cmd/pca.20261105T092013.962973.sh
+[pca] log file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/pca/log/pca.20261105T092013.962973.log
+input genotype: /work/sph-huangj/data/gen/ukb/37/imp/chr{1..22}
+input PCA weights: /work/sph-huangj/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+output PCA files: /work/sph-huangj/data/gen/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+output individual distance/ancestry: /work/sph-huangj/data/gen/ukb/pca_proj; reports: /work/sph-huangj/scripts/grid/.preflight/20261105/native/pca
+CHECK PASS: genotype inputs exist; projection is needed

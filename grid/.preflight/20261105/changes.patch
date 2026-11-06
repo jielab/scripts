@@ -1,0 +1,840 @@
+--- a/0f/results.py
++++ b/0f/results.py
+@@ -15,6 +15,7 @@
+ import json
+ import os
+ import re
++import shutil
+ from pathlib import Path
+ import subprocess
+ import tempfile
+@@ -28,17 +29,18 @@
+ # 🚩 R table storage
+ def run_r(*arguments):
+ 	environment = os.environ.copy()
+-	rscript = environment.get("RESULTS_RSCRIPT", "/usr/bin/Rscript")
++	rscript = (environment.get("RESULTS_RSCRIPT") or environment.get("GRID_RSCRIPT")
++		or shutil.which("Rscript") or "/usr/bin/Rscript")
++	rscript = shutil.which(rscript) or rscript
+ 	if Path(rscript).resolve() == Path("/usr/bin/Rscript").resolve():
+ 		for name in ("R_HOME", "R_LIBS", "R_LIBS_USER", "R_LIBS_SITE", "R_ENVIRON_USER"):
+ 			environment.pop(name, None)
+-	with tempfile.TemporaryDirectory(prefix = "result-code-", dir = "/tmp") as directory:
+-		script = Path(directory) / "results.R"
+-		script.write_bytes(Path(__file__).with_suffix(".R").read_bytes())
+-		return subprocess.run(
+-			[rscript, "--vanilla", str(script), *map(str, arguments)],
+-			check = True, capture_output = True, text = True, env = environment,
+-		).stdout.strip()
++	# results.R resolves 0f/0os.R relative to its own repository location.
++	script = Path(__file__).with_suffix(".R").resolve()
++	return subprocess.run(
++		[rscript, "--vanilla", str(script), *map(str, arguments)],
++		check = True, capture_output = True, text = True, env = environment,
++	).stdout.strip()
+ 
+ 
+ def write_rds(table, path, metadata = None, float_format = "%.17g"):
+--- a/0f/workflow_env.sh
++++ b/0f/workflow_env.sh
+@@ -32,10 +32,11 @@
+             export GRID_TARGET_DIR
+         fi
+         export GRID_IMP_DIR=${GRID_IMP_DIR:-$DIR_GEN/ukb/37/imp}
+-        export GRID_PHE_FILE=${GRID_PHE_FILE:-$DIR_UKB/Rdata/phe.rds}
++        export GRID_PHE_FILE=${GRID_PHE_FILE:-$DIR_UKB/Rdata/all.rds}
+         export GRID_SCORE_DIR=${GRID_SCORE_DIR:-$DIR_GEN/ukb/pgs}
+         export GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-$DIR_LD/csx}
+-        export GRID_REMOVE=${GRID_REMOVE:-$OS_FILES_ROOT/ukb.exclude.id}
++        # Sample exclusion is opt-in; no default withdrawal/ID file is required.
++        export GRID_REMOVE=${GRID_REMOVE:-}
+         export GRID_REL_FILE=${GRID_REL_FILE:-$DIR_GEN/ukb/37/typ/ukb_rel.dat}
+         export GRID_MED_FILE=${GRID_MED_FILE:-$OS_FILES_ROOT/DiscoDivas/med.g1000.4pop.tsv}
+         export GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-$OS_FILES_ROOT/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight}
+--- a/grid/2test/test_hpc_workflow.py
++++ b/grid/2test/test_hpc_workflow.py
+@@ -158,6 +158,121 @@
+         self.assertEqual(check.argv, ["bash", str(GRID/"install.sh"), "--check"])
+ 
+ 
++class UpstreamFileTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(prefix="grid prerequisites ")
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.pca = self.root / "projection/pca.tsv.gz"
++        self.ancestry = self.root / "projection/ancestry.tsv.gz"
++        self.scores = self.root / "scores"
++        environment = patch.dict(os.environ, {
++            "submit": "hpc", "GRID_PCA_FILE": str(self.pca),
++            "GRID_ANCESTRY_FILE": str(self.ancestry), "GRID_SCORE_DIR": str(self.scores),
++            "GRID_GWAS_DIR": str(self.root / "gwas"), "GRID_CHRS": "1-22",
++        })
++        environment.start()
++        self.addCleanup(environment.stop)
++
++    def touch(self, path):
++        path = Path(path)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text("exists\n")  # Only existence is checked on the submission host.
++        return path
++
++    def jobs(self, entry, module="all", extra=()):
++        args = planner.parser().parse_args(["--entry", entry, "--workflow-module", module,
++            "--analysis-root", str(self.root / "analysis"), "--traits", "height"])
++        return planner.build_jobs(args, list(extra))
++
++    def projection(self):
++        self.touch(self.pca)
++        self.touch(self.ancestry)
++
++    def test_csx_all_checks_pca_but_allows_its_own_future_scores(self):
++        jobs = self.jobs("csx")
++        with self.assertRaisesRegex(ValueError, "Missing prerequisite files; no jobs were submitted") as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(self.pca), str(error.exception))
++        self.assertIn("bash 1.pca.sh", str(error.exception))
++        self.projection()
++        planner.check_upstream_files(jobs)
++        self.assertFalse((self.scores / "height/1csx.scores.rds").exists())
++
++    def test_disco_respects_explicit_paths_and_lists_missing_csx(self):
++        pca = self.touch(self.root / "custom/pca.gz")
++        ancestry = self.touch(self.root / "custom/ancestry.gz")
++        scores = self.root / "custom/scores"
++        jobs = self.jobs("disco", extra=["--pca-file", str(pca), "--ancestry-file", str(ancestry),
++                                        "--dir-score", str(scores)])
++        self.assertEqual(jobs[0].env["GRID_PCA_FILE"], str(pca))
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        score = scores / "height/1csx.scores.rds"
++        self.assertIn(str(score), str(error.exception))
++        self.assertIn("bash 2.csx.sh", str(error.exception))
++        self.touch(score)
++        planner.check_upstream_files(jobs)
++
++    def test_prsformer_all_needs_projection_without_other_methods_outputs(self):
++        jobs = self.jobs("prsformer")
++        with self.assertRaises(ValueError):
++            planner.check_upstream_files(jobs)
++        self.projection()
++        planner.check_upstream_files(jobs)
++        self.assertFalse(self.scores.exists())
++
++    def test_grid_checks_score_provenance_and_referenced_weight_files(self):
++        self.projection()
++        self.touch(self.scores / "height/1csx.scores.rds")
++        jobs = self.jobs("grid")
++        provenance = self.root / "analysis/csx/height/provenance.json"
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(provenance), str(error.exception))
++        weights = {p: self.root / "weights" / (p + ".gz") for p in ("AFR", "EAS", "EUR", "SAS")}
++        provenance.parent.mkdir(parents=True, exist_ok=True)
++        provenance.write_text(json.dumps({"models": {"csx."+p: {"weights_file": str(w)} for p,w in weights.items()}}))
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        for weight in weights.values():
++            self.assertIn(str(weight), str(error.exception))
++            self.touch(weight)
++        planner.check_upstream_files(jobs)
++        self.assertFalse((self.root / "analysis/prsformer/cache/data.tsv.gz").exists())
++
++    def test_score_only_needs_existing_weights_and_signatures(self):
++        for pop in ("AFR", "EAS", "EUR", "SAS"):
++            self.touch(self.root / "gwas" / f"height.{pop}.gz")
++        jobs = self.jobs("csx", "score", ["--chrs", "22"])
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn("height.AFR.chr22.csx.gz", str(error.exception))
++        for pop in ("AFR", "EAS", "EUR", "SAS"):
++            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz")
++            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz.signature")
++        planner.check_upstream_files(jobs)
++
++    def test_standalone_count_stage_reports_the_producing_command(self):
++        jobs = self.jobs("grid", "twins")
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        receipt = self.root / "analysis/count_abm/height/PREPARE_COMPLETE.json"
++        self.assertIn(str(receipt), str(error.exception))
++        self.assertIn("bash grid.sh prepare", str(error.exception))
++        self.touch(receipt)
++        planner.check_upstream_files(jobs)
++
++    def test_external_manifest_is_checked_and_internal_stages_are_not_blocked(self):
++        manifest = self.root / "input/height.json"
++        jobs = self.jobs("grid", extra=["--input-manifest", str(manifest.parent / "{trait}.json")])
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(manifest), str(error.exception))
++        self.touch(manifest)
++        planner.check_upstream_files(jobs)
++
++
+ class PublicEntryTests(unittest.TestCase):
+     def setUp(self):
+         self.temp = tempfile.TemporaryDirectory(prefix="grid scheduler ")
+@@ -217,6 +332,51 @@
+         self.assertIn(str(GRID / "environment.hpc.yml"), result.stdout)
+         self.assertFalse((self.root / "env").exists())
+ 
++    def test_default_hpc_submission_returns_without_querying_job_status(self):
++        bin_dir = self.root / "fake-lsf"
++        bin_dir.mkdir()
++        submitted, polled = self.root / "submitted", self.root / "polled"
++        for name, body in {
++            "bsub": 'cat >/dev/null\nprintf "accepted\\n" >> "$TEST_SUBMITTED"\necho "Job <12345> is submitted to queue <33>."\n',
++            "bjobs": 'touch "$TEST_POLLED"\nexit 1\n',
++        }.items():
++            executable = bin_dir / name
++            executable.write_text("#!/usr/bin/env bash\n" + body)
++            executable.chmod(0o755)
++        env = dict(self.env, PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], SUBMIT_WAIT="FALSE",
++                   TEST_SUBMITTED=str(submitted), TEST_POLLED=str(polled))
++        result = subprocess.run(["bash", str(GRID / "1.pca.sh"), "--submit", "hpc",
++            "--analysis-root", str(self.root / "submit")], env=env, capture_output=True, text=True, timeout=15)
++        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
++        self.assertIn('"status": "SUBMITTED"', result.stdout)
++        self.assertEqual(submitted.read_text(), "accepted\n")
++        self.assertFalse(polled.exists())
++
++    def test_missing_prerequisite_is_printed_before_any_plan_or_submission(self):
++        output = self.root / "missing-output"
++        pca = self.root / "missing.pca.tsv.gz"
++        scores = self.root / "missing-scores"
++        bin_dir = self.root / "blocked-lsf"
++        bin_dir.mkdir()
++        submitted = self.root / "unexpected-submission"
++        bsub = bin_dir / "bsub"
++        bsub.write_text('#!/usr/bin/env bash\ntouch "$TEST_SUBMITTED"\nexit 1\n')
++        bsub.chmod(0o755)
++        env = dict(self.env, GRID_PCA_FILE=str(pca), GRID_SCORE_DIR=str(scores),
++                   GRID_ANCESTRY_FILE=str(self.root / "missing.ancestry.tsv.gz"), SUBMIT_WAIT="FALSE",
++                   PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], TEST_SUBMITTED=str(submitted))
++        result = subprocess.run(["bash", str(GRID / "3.disco.sh"), "--traits", "height",
++            "--submit", "hpc", "--analysis-root", str(output)], env=env,
++            capture_output=True, text=True, timeout=15)
++        self.assertEqual(result.returncode, 2, result.stdout+result.stderr)
++        self.assertIn("[MISSING] " + str(pca), result.stderr)
++        self.assertIn(str(scores / "height/1csx.scores.rds"), result.stderr)
++        self.assertIn("bash 1.pca.sh", result.stderr)
++        self.assertIn("bash 2.csx.sh", result.stderr)
++        self.assertNotIn("[SUBMITTED]", result.stdout)
++        self.assertFalse(submitted.exists())
++        self.assertFalse((output / "jobs").exists())
++
+     def test_real_public_local_count_pipeline_completes_all_five_workers(self):
+         from test_count_abm import exported_fixture
+         manifest, trait = exported_fixture(self.root/"input", maps=1)
+--- a/grid/2test/test_prsformer_cache.py
++++ b/grid/2test/test_prsformer_cache.py
+@@ -27,6 +27,18 @@
+ 
+ 
+ class SharedCacheTests(unittest.TestCase):
++    def test_genotype_directory_does_not_replace_the_shared_data_root(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp) / "gen"
++            target = root / "ukb/37/typ"
++            with patch.dict(os.environ, DIR_GEN=str(root), GRID_TARGET_DIR=str(target),
++                            GRID_ANCESTRY_FILE="", GRID_REMOVE=""):
++                prepare = commands("prsformer.sh", ["--mode", "prepare"])[0]
++            self.assertEqual(prepare[prepare.index("--dir-gen") + 1], str(target))
++            self.assertEqual(prepare[prepare.index("--ancestry-file") + 1],
++                             str(root / "ukb/pca_proj/ukb.ancestry.auto.tsv.gz"))
++            self.assertEqual(prepare[prepare.index("--remove") + 1], "none")
++
+     def test_phenotype_only_refresh_preserves_frozen_cache(self):
+         from types import SimpleNamespace
+         with tempfile.TemporaryDirectory() as tmp:
+--- /dev/null
++++ b/grid/2test/test_rds_score_inputs.py
+@@ -0,0 +1,43 @@
++"""Published RDS provenance must not prevent downstream score consumption."""
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++import tempfile
++import unittest
++
++import numpy as np
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "f"))
++from shared_cohort import table
++from twin import read_table
++
++RSCRIPT = shutil.which("Rscript") or str(Path(sys.prefix) / "bin/Rscript")
++
++
++@unittest.skipUnless(Path(RSCRIPT).is_file(), "Native Rscript is required for RDS provenance")
++class RdsScoreInputsTests(unittest.TestCase):
++    def test_raw_provenance_preserves_identifiers_scores_and_missing_values(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            path = root / "scores.rds"
++            script = root / "write.R"
++            script.write_text('''args <- commandArgs(TRUE)
++x <- data.frame(eid=c("001", "002"), csx.EUR=c(0.25, NA_real_),
++                group=c("01", "02"), check.names=FALSE)
++attr(x, "table_exchange") <- list(bytes=charToRaw("source table bytes"))
++saveRDS(x, args[1])
++''')
++            subprocess.run([RSCRIPT, "--vanilla", str(script), str(path)], check=True,
++                           capture_output=True, text=True)
++            native = read_table(path)
++            self.assertEqual(native.eid.tolist(), ["001", "002"])
++            self.assertEqual(native.group.tolist(), ["01", "02"])
++            self.assertEqual(native["csx.EUR"].iloc[0], .25)
++            self.assertTrue(np.isnan(native["csx.EUR"].iloc[1]))
++            self.assertEqual(table(path).id.tolist(), ["001", "002"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- a/grid/2test/test_shared_benchmark_inputs.py
++++ b/grid/2test/test_shared_benchmark_inputs.py
+@@ -11,7 +11,7 @@
+ sys.path.insert(0,str(ROOT/'f'))
+ import prsformer
+ from grid_paths import read_config
+-from shared_cohort import prepare_frozen_roster, load_cohort, preparation_options
++from shared_cohort import prepare_frozen_roster, load_cohort, preparation_options, align_projected_cohort
+ 
+ 
+ def test_portable_builtin_paths_honor_explicit_analysis_root(tmp_path,monkeypatch):
+@@ -29,7 +29,7 @@
+     assert c['prsformer_cache']==str(tmp_path/'other/prsformer/cache')
+ 
+ 
+-def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_path):
++def test_raw_grouped_roster_uses_relationship_components_without_any_scores(tmp_path, monkeypatch):
+     n=600; rng=np.random.default_rng(37)
+     gen=tmp_path/'gen';gen.mkdir()
+     (gen/'chr1.pgen').write_bytes(b'metadata-only-fixture')
+@@ -39,13 +39,17 @@
+         ldl=rng.normal(3,.3,n),t2dm=rng.binomial(1,.2,n),age=rng.normal(55,4,n),
+         sex=rng.integers(0,2,n),PC1=rng.normal(size=n),PC2=rng.normal(size=n),genetic_ancestry='EUR'))
+     pheno=tmp_path/'pheno.tsv';frame.to_csv(pheno,sep='\t',index=False)
++    pca=tmp_path/'pca.tsv'
++    pd.DataFrame({'IID':frame.eid.iloc[:-2], **{f'PC{i}':np.zeros(n-2) for i in range(1,11)}}).to_csv(pca,sep='\t',index=False)
++    monkeypatch.setenv('GRID_PCA_FILE',str(pca))
+     rel=tmp_path/'ukb_rel.dat'
+     # Include a path through an individual outside the genotype roster: the
+     # full relation graph, not just retained edges, defines family components.
+     pd.DataFrame(dict(ID1=['0','outside','2','4'],ID2=['outside','1','3','5'],Kinship=[.2]*4)).to_csv(rel,sep='\t',index=False)
+     root=tmp_path/'analysis';cache=root/'prsformer/cache'
+     args=prsformer.parser().parse_args(['prepare','--cache-dir',str(cache),'--dir-gen',str(gen),
+-        '--pheno-file',str(pheno),'--chrs','1','--t2dm-col','t2dm','--remove','none'])
++        '--pheno-file',str(pheno),'--chrs','1','--t2dm-col','t2dm'])
++    assert args.remove == 'none'
+     prepare_frozen_roster(args,root,rel)
+     groups=pd.read_csv(args.split_group_file,sep='\t',dtype=str).set_index('eid')
+     split=pd.read_csv(args.split_file,sep='\t',dtype=str).set_index('eid')
+@@ -53,7 +57,11 @@
+     joined=split.join(groups)
+     assert joined.groupby('group').split.nunique().max()==1
+     assert set(joined.split)=={'train','validation','test'}
+-    assert len(joined)==n
++    assert len(joined)==n-2
++    assert not {str(n-2), str(n-1)} & set(joined.index)
++    coverage=json.loads((root/'cache/shared_preparation/PCA_COHORT.json').read_text())
++    assert coverage['missing_pca_N']==2
++    assert coverage['retained_N']==n-2
+     assert args.require_shared_cohort is True
+     assert not (root/'csx').exists()
+     assert not (root/'cache/abm/prepared.joblib').exists()
+@@ -73,7 +81,28 @@
+         load_cohort(root,'height',cohort=path)
+ 
+ 
+-def test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores(tmp_path):
++def test_projected_pc_alignment_rejects_corruption_and_frozen_roster_changes(tmp_path, monkeypatch):
++    path=tmp_path/'pca.tsv'
++    monkeypatch.setenv('GRID_PCA_FILE',str(path))
++    frame=pd.DataFrame({'eid':['001','002','003'], 'height':[170.,np.nan,180.]})
++    with pytest.raises(FileNotFoundError,match='1.pca.sh'):
++        align_projected_cohort(frame,tmp_path)
++    pca=pd.DataFrame({'IID':['001','002'], **{f'PC{i}':[0.,1.] for i in range(1,11)}})
++    pca.to_csv(path,sep='\t',index=False)
++    selected=align_projected_cohort(frame,tmp_path)
++    assert selected.eid.tolist()==['001','002']
++    assert pd.isna(selected.height.iloc[1])
++    with pytest.raises(ValueError,match='Frozen shared cohort'):
++        align_projected_cohort(frame,tmp_path,frozen=True)
++    pca.loc[0,'PC10']=np.nan
++    pca.to_csv(path,sep='\t',index=False)
++    with pytest.raises(ValueError,match='nonfinite'):
++        align_projected_cohort(frame,tmp_path)
++
++
++def test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores(tmp_path, monkeypatch):
++    # A synthetic roster must never load the host's real UKB projection.
++    monkeypatch.setenv('GRID_PCA_FILE', str(tmp_path / 'absent.pca.tsv.gz'))
+     import joblib
+     from data import write_rds
+     from shared_cohort import complete_score_features, prepared_for_trait, sha256
+--- a/grid/f/0.common.py
++++ b/grid/f/0.common.py
+@@ -509,7 +509,7 @@
+ 	p.add_argument("method", choices=["csx", "disco"])
+ 	p.add_argument("input")
+ 	p.add_argument("output")
+-	p.add_argument("--remove", default=configured_path('DIR_FILES', 'ukb.exclude.id'))
++	p.add_argument("--remove", default="")
+ 	p.add_argument("--provenance", help="Named scoring source records generated by score-provenance")
+ 	a = p.parse_args()
+ 	provenance = json.loads(Path(a.provenance).read_text()) if a.provenance else None
+@@ -613,7 +613,7 @@
+ 	print(f"posterior variants: {len(d)}")
+ 
+ 
+-def disco_inputs(pca, centers, score_dir, outdir, npc, remove=configured_path('DIR_FILES', 'ukb.exclude.id')):
++def disco_inputs(pca, centers, score_dir, outdir, npc, remove=""):
+ 	if not 5 <= npc <= 20:
+ 		raise ValueError("Disco distance PCs must be 5..20")
+ 	pc = [f"PC{i}" for i in range(1, npc + 1)]
+--- a/grid/f/0.common.sh
++++ b/grid/f/0.common.sh
+@@ -147,11 +147,11 @@
+ 		fi
+ 	fi
+ 	GRID_IMP_DIR=${GRID_IMP_DIR:-${DIR_GEN}/ukb/37/imp}
+-	GRID_PHE_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/phe.rds}
++	GRID_PHE_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/all.rds}
+ 	GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}
+ 	export GRID_CSX_BACKEND=${GRID_CSX_BACKEND:-cpu} GRID_CSX_GPU=${GRID_CSX_GPU:-0}
+ 	GRID_KEEP=${GRID_KEEP:-}
+-	GRID_REMOVE=${GRID_REMOVE:-${DIR_FILES}/ukb.exclude.id}
++	GRID_REMOVE=${GRID_REMOVE:-}
+ 	GRID_N_GWAS=${GRID_N_GWAS:-}
+ 
+ 	# PRS-CSx.
+--- a/grid/f/data.py
++++ b/grid/f/data.py
+@@ -251,7 +251,7 @@
+ 
+ def filter_ids(data, args):
+ 	keep = id_list(option(args, "keep"))
+-	remove = id_list(option(args, "remove", configured_path('DIR_FILES', 'ukb.exclude.id')))
++	remove = id_list(option(args, "remove"))
+ 	mask = ~data.eid.str.startswith("-")
+ 	if keep is not None:
+ 		mask &= data.eid.isin(keep)
+--- a/grid/f/hpc_workflow.py
++++ b/grid/f/hpc_workflow.py
+@@ -18,7 +18,7 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT.parent / "0f"))
+-from workflow_jobs import Job, resources, run_plan, write_plan
++from workflow_jobs import Job, load_plan, resources, run_plan, write_plan
+ 
+ ENTRIES = {"grid": "grid.sh", "pca": "1.pca.sh", "csx": "2.csx.sh", "disco": "3.disco.sh", "prsformer": "4.prsformer.sh", "install": "install.sh"}
+ IDENTITY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+@@ -180,12 +180,15 @@
+         "GRID_PHE_FILE": {"--pheno-file", "--phe-file", "--phe"},
+         "GRID_TARGET_DIR": {"--dir-gen"}, "GRID_CSX_SNPINFO": {"--snpinfo", "--csx-snpinfo"},
+         "GRID_ANCESTRY_FILE": {"--ancestry-file"}, "GRID_GROUP_FILE": {"--group-file", "--split-group-file"},
++        "GRID_PCA_FILE": {"--pca-file"},
+         "GRID_REL_FILE": {"--relationship-file"}, "GRID_SCORE_DIR": {"--score-dir", "--dir-score"},
+         "GRID_GWAS_DIR": {"--dir-gwas"}, "GRID_REMOVE": {"--remove", "--exclude-ids"},
+     }.items():
+         value = option(extra, names)
+         if value is not None:
+             base_env[key] = value
++    if base_env.get("GRID_PCA_FILE") and not base_env.get("GRID_ANCESTRY_FILE"):
++        base_env["GRID_ANCESTRY_FILE"] = str(Path(base_env["GRID_PCA_FILE"]).parent / "ukb.ancestry.auto.tsv.gz")
+     local = os.getenv("submit", "local") == "local"
+     jobs = []
+     def add(key, stage, entry, module, selected, depends=(), passed=None, device=False):
+@@ -348,6 +351,162 @@
+     return jobs
+ 
+ 
++def check_upstream_files(jobs):
++    """Check external stage outputs before submission, without polling any jobs.
++
++    Outputs of ancestors in this invocation may not exist yet. Their ordinary
++    scheduler dependencies still order the workers. Scientific validation stays
++    in those workers; this check only stats files and reads small path metadata.
++    """
++    from grid_paths import read_config
++
++    by_key = {job.key: job for job in jobs}
++    parents = {}
++    def ancestors(key):
++        if key not in parents:
++            parents[key] = set(by_key[key].depends)
++            for parent in by_key[key].depends:
++                parents[key].update(ancestors(parent))
++        return parents[key]
++
++    required, produced = [], {}
++    def path(job, value):
++        value = Path(value).expanduser()
++        return (value if value.is_absolute() else Path(job.cwd or Path.cwd()) / value).resolve()
++
++    def need(job, value, hint):
++        required.append((job.key, path(job, value), hint))
++
++    def output(job, value):
++        produced.setdefault(path(job, value), set()).add(job.key)
++
++    for job in jobs:
++        tokens = job.argv[2:]
++        entry = Path(job.argv[1]).name
++        module = tokens[0] if tokens and not tokens[0].startswith("-") else "all"
++        env = {**os.environ, **job.env}
++        root = path(job, env["GRID_OUTPUT_ROOT"])
++        traits = (option(tokens, {"--traits", "--trait"}) or "height,ldl,t2dm").split(",")
++        pca = option(tokens, {"--pca-file"}) or env.get("GRID_PCA_FILE") or configured_path("DIR_GEN", "ukb/pca_proj/ukb.discodivas.pca.tsv.gz")
++        ancestry = option(tokens, {"--ancestry-file"}) or env.get("GRID_ANCESTRY_FILE") or str(Path(pca).parent / "ukb.ancestry.auto.tsv.gz")
++        score_root = option(tokens, {"--dir-score", "--score-dir"}) or env.get("GRID_SCORE_DIR") or configured_path("DIR_GEN", "ukb/pgs")
++
++        def projection():
++            need(job, pca, "bash 1.pca.sh")
++            if str(ancestry).lower() not in {"", "none"}:
++                need(job, ancestry, "bash 1.pca.sh")
++
++        def block_config():
++            source = option(tokens, {"--block-config"})
++            if not source:
++                config_file = option(tokens, {"--config"})
++                if entry == "2.csx.sh" and module.startswith("block"):
++                    source = config_file or ROOT / "config/abm.blocks.json"
++                else:
++                    config = read_config(path(job, config_file or ROOT / "config/abm.json"), root)
++                    source = config["block_config"]
++            source = path(job, source)
++            config = read_config(source, root)
++            # read_config normally sees the worker environment. During planning
++            # an explicit --dir-score lives in job.env, not os.environ yet.
++            from workflow_paths import relocate_defaults
++            raw = json.loads(source.read_text())
++            if relocate_defaults(raw.get("score_root")) == configured_path("DIR_GEN", "ukb/pgs") and env.get("GRID_SCORE_DIR"):
++                config["score_root"] = env["GRID_SCORE_DIR"]
++            return config
++
++        # Explicit standalone inputs are external even when a default producer
++        # is in the plan. Honor relative paths and per-trait filename templates.
++        external_cohort = option(tokens, {"--cohort", "--prepared"})
++        for names in ({"--cohort"}, {"--prepared"}, {"--input-manifest"}):
++            explicit = option(tokens, names)
++            if explicit:
++                for trait in traits:
++                    need(job, explicit.format(trait=trait), "provide the requested input file")
++
++        if job.key == "shared.prepare":
++            projection()
++            cache = Path(block_config()["prsformer_cache"])
++            output(job, cache / "data.tsv.gz")
++
++        if entry == "2.csx.sh" and module in {"weights", "score", "all"}:
++            subset_name = score_subset(tokens)
++            for trait in traits:
++                if module in {"score", "all"}:
++                    output(job, Path(score_root) / trait / subset_name / "1csx.scores.rds")
++                if module == "score" and not any(k.endswith(".weights") for k in ancestors(job.key)):
++                    gwas_root = path(job, option(tokens, {"--dir-gwas"}) or env.get("GRID_GWAS_DIR") or configured_path("DIR_GWAS", "4grid/common"))
++                    for pop in ("AFR", "EAS", "EUR", "SAS"):
++                        tag = f"{trait.lower()}.{pop}"
++                        choices = [gwas_root / tag / "gwas" / (tag + ".gz")]
++                        if trait.lower() == "t2dm" and pop == "AFR":
++                            choices.append(gwas_root / "t2dm.AFA/gwas/t2dm.AFA.gz")
++                        if gwas_root.is_dir():
++                            choices.extend(p for p in gwas_root.iterdir() if p.name.lower() == tag.lower() + ".gz")
++                        source = next((p for p in choices if p.is_file()), choices[0])
++                        weights = str(source).removesuffix(".gz") + ("." + subset_name if subset_name else "") + ".csx.gz"
++                        need(job, weights, "bash 2.csx.sh weights")
++                        need(job, weights + ".signature", "bash 2.csx.sh weights")
++
++        if entry == "3.disco.sh" and module in {"all", "score"}:
++            need(job, pca, "bash 1.pca.sh")
++            for trait in traits:
++                need(job, Path(score_root) / trait / score_subset(tokens) / "1csx.scores.rds", "bash 2.csx.sh")
++
++        if (entry == "2.csx.sh" and module == "targetfit") or (entry == "3.disco.sh" and module == "evaluate"):
++            filename = "1csx.scores.rds" if entry == "2.csx.sh" else "2disco.scores.rds"
++            explicit = option(tokens, {"--scores", "--score-file"})
++            for trait in traits:
++                score = explicit.format(trait=trait) if explicit else Path(score_root) / trait / (option(tokens, {"--score-subset"}) or "") / filename
++                need(job, score, "bash " + entry)
++            if not external_cohort:
++                cache_data = path(job, Path(block_config()["prsformer_cache"]) / "data.tsv.gz")
++                if not cache_data.is_file() and "shared.prepare" not in ancestors(job.key):
++                    projection()  # This standalone evaluator prepares missing inputs itself.
++
++        if entry == "2.csx.sh" and module == "blockprepare":
++            config = block_config()
++            for trait in traits:
++                score_dir = option(tokens, {"--score-dir"}) or config["score_root"]
++                need(job, Path(score_dir) / trait / "1csx.scores.rds", "bash 2.csx.sh")
++                provenance = path(job, Path(config["csx_analysis_root"]) / trait / "provenance.json")
++                need(job, provenance, "bash 2.csx.sh")
++                if provenance.is_file():
++                    models = json.loads(provenance.read_text()).get("models", {})
++                    for pop in ("AFR", "EAS", "EUR", "SAS"):
++                        weights = models.get("csx." + pop, {}).get("weights_file")
++                        if weights:
++                            need(job, weights, "bash 2.csx.sh weights")
++
++        if entry == "4.prsformer.sh" and module in {"prsformer", "prsformer2"} and "shared.prepare" not in ancestors(job.key):
++            cache = path(job, block_config()["prsformer_cache"])
++            if not all((cache / name).is_file() for name in ("prepare.json", "data.tsv.gz", "variants.tsv.gz")):
++                projection()
++
++        if entry == "grid.sh" and module in {"prepare", "twins", "evaluate", "architecture"}:
++            for trait in traits:
++                folder = root / "count_abm" / trait
++                if module == "twins":
++                    need(job, folder / "PREPARE_COMPLETE.json", "bash grid.sh prepare")
++                elif module == "evaluate":
++                    need(job, folder / "TWINS_COMPLETE.json", "bash grid.sh twins")
++                elif module == "architecture":
++                    need(job, folder / "PREPARE_COMPLETE.json", "bash grid.sh prepare")
++                if module != "architecture":
++                    output(job, folder / (module.upper() + "_COMPLETE.json"))
++
++    missing = {}
++    for key, file, hint in required:
++        if not (produced.get(file, set()) & ancestors(key)) and not file.is_file():
++            missing.setdefault((file, hint), set()).add(key)
++    if missing:
++        lines = ["Missing prerequisite files; no jobs were submitted:"]
++        for (file, hint), consumers in missing.items():
++            lines.extend([f"  [MISSING] {file}", f"    Required by: {', '.join(sorted(consumers))}; first: {hint}"])
++        lines.append("Run this command again after the required files are available.")
++        raise ValueError("\n".join(lines))
++
++
+ def parser():
+     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+     p.add_argument("--entry", choices=ENTRIES, required=True)
+@@ -385,6 +544,7 @@
+     args, extra = p.parse_known_args(tokens)
+     try:
+         mode = os.getenv("submit", "local")
++        preview = args.plan_only or args.dry_run == "TRUE"
+         if args.entry == "csx":
+             legacy_stage = option(extra, {"--stage"})
+             if legacy_stage:
+@@ -400,10 +560,14 @@
+                 extra = without(extra, {"--backend"})
+         if args.resume_plan:
+             path = args.resume_plan.resolve()
++            if not preview:
++                _, plan = load_plan(path)
++                check_upstream_files([Job(**job) for job in plan["jobs"]])
+         else:
+             jobs = build_jobs(args, extra)
++            if not preview:
++                check_upstream_files(jobs)
+             path = write_plan(jobs, args.job_dir or Path(args.analysis_root) / "jobs", mode=mode, name=f"grid-{args.entry}")
+-        preview = args.plan_only or args.dry_run == "TRUE"
+         if not preview:
+             import shutil
+             if not shutil.which(os.getenv("WORKFLOW_PYTHON", "python3")):
+--- a/grid/f/main.py
++++ b/grid/f/main.py
+@@ -1133,7 +1133,7 @@
+ 	p.add_argument("--split-file")
+ 	p.add_argument("--split-group-file")
+ 	p.add_argument("--keep")
+-	p.add_argument("--remove", default = configured_path('DIR_FILES', 'ukb.exclude.id'))
++	p.add_argument("--remove", default = "none")
+ 	p.add_argument("--covariates", default = "age,sex,PC1,PC2")
+ 	p.add_argument("--distance-pcs", type = int, default = 10)
+ 	p.add_argument("--height-col", default = "height")
+--- a/grid/f/prsformer.py
++++ b/grid/f/prsformer.py
+@@ -2002,7 +2002,7 @@
+ 	a.add_argument("--snp-list", default = configured_path('DIR_LD', 'csx/snpinfo_mult_1kg_hm3'))
+ 	a.add_argument("--chrs", default = "1-22")
+ 	a.add_argument("--keep", default = "none")
+-	a.add_argument("--remove", default = configured_path('DIR_FILES', 'ukb.exclude.id'))
++	a.add_argument("--remove", default = "none")
+ 	a.add_argument("--split-file", default = "none")
+ 	a.add_argument("--split-group-file", default = "none")
+ 	a.add_argument("--require-shared-cohort", action="store_true")
+--- a/grid/f/prsformer.sh
++++ b/grid/f/prsformer.sh
+@@ -43,8 +43,8 @@
+ UPSTREAM_DIR=${PRSFORMER_UPSTREAM_DIR:-${DIR_SOFTWARE:-${DIR_SOFTWARE}}/PRSformer}
+ MODE=all
+ TRAITS=height,ldl,t2dm
+-DIR_GEN=${GRID_TARGET_DIR:-${DIR_GEN}/ukb/37/hap}
+-PHENO_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/phe.rds}
++GENOTYPE_DIR=${GRID_TARGET_DIR:-${DIR_GEN}/ukb/37/hap}
++PHENO_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/all.rds}
+ ANCESTRY_FILE=${GRID_ANCESTRY_FILE:-${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz}
+ GROUP_COL=genetic_ancestry
+ COVARIATES=age,sex,PC1,PC2
+@@ -54,7 +54,7 @@
+ SNP_LIST=${GRID_CSX_SNPINFO:-${GRID_CSX_REF_DIR:-${DIR_LD}/csx}/snpinfo_mult_1kg_hm3}
+ CHRS=1-22
+ KEEP=none
+-REMOVE=${GRID_REMOVE:-${DIR_FILES}/ukb.exclude.id}
++REMOVE=${GRID_REMOVE:-none}
+ SPLIT_FILE=none
+ SPLIT_GROUP_FILE=none
+ REQUIRE_SHARED_COHORT=FALSE
+@@ -127,7 +127,7 @@
+ 				--trait | --traits) TRAITS=$2 ;;
+ 				--python) PYTHON=$2; PYTHON_EXPLICIT=TRUE ;;
+ 				--upstream-dir) UPSTREAM_DIR=$2 ;;
+-				--dir-gen) DIR_GEN=$2 ;;
++				--dir-gen) GENOTYPE_DIR=$2 ;;
+ 				--pheno-file | --phe-file) PHENO_FILE=$2 ;;
+ 				--ancestry-file) ANCESTRY_FILE=$2 ;;
+ 				--group-col) GROUP_COL=$2 ;;
+@@ -198,7 +198,7 @@
+ 
+ # 🚩 The helper interface is shared by standalone and combined modes
+ PREPARE=("$PYTHON" "$ROOT/f/prsformer.py" prepare
+-	--dir-gen "$DIR_GEN" --pheno-file "$PHENO_FILE" --ancestry-file "$ANCESTRY_FILE"
++	--dir-gen "$GENOTYPE_DIR" --pheno-file "$PHENO_FILE" --ancestry-file "$ANCESTRY_FILE"
+ 	--group-col "$GROUP_COL" --traits "$PREPARE_TRAITS" --covariates "$COVARIATES"
+ 	--height-col "$HEIGHT_COL" --ldl-col "$LDL_COL" --t2dm-col "$T2DM_COL"
+ 	--snp-list "$SNP_LIST" --chrs "$CHRS" --keep "$KEEP" --remove "$REMOVE"
+--- a/grid/f/prsformer_resume_compatibility.json
++++ b/grid/f/prsformer_resume_compatibility.json
+@@ -64,6 +64,16 @@
+       "from": "eea44e6c9132d1275dd2e1b6558a82f1aad177305904fb725eb6009200c180cb",
+       "to": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+       "reason": "Reviewed 2026-11-02 runtime/path compatibility: allow official torch 2.12.0 / NATTEN 0.21.7 cu126 or cu130 with compiled extension and device checks; bind active kinship lookup to explicit analysis root rather than deriving it from an external cache path. Named AST changes are listed in review_20261102. Model, loss, optimizer and sampling unchanged. A changed active correction still changes the canonical cohort/input identity and fails the existing exact resume-signature check. Python 3.11/3.12 empty type_params AST representations are enumerated explicitly. Earlier reviewed runtime updates retain all effective-batch and schedule guards."
++    },
++    {
++      "from": "bbabe630d0ad3d98a2c6a1d197cb7139528ec8c40b90b5e1697a1095c26bcfcf",
++      "to": "80daa93849fb83c77be272ce0837b4b753e33288a23d1c361d9322e9a04554cb",
++      "reason": "Reviewed 2026-11-05 Python 3.12: parser default for --remove changes from an implicit ukb.exclude.id file to none. Exact source comparison changes only this parser default. Training/model/loss/optimizer code is unchanged. Existing resume validation still requires identical prepared data, IDs, splits, preprocessing, architecture and training schedule; this does not authorize reuse with a changed cohort."
++    },
++    {
++      "from": "c04e17406397334501012a4aa419d6fd97b0a7983f6ad836616a2305a7cef970",
++      "to": "66e297eecd7bd655c572a5a428674d5f278682f715dc2b8a63876789fe5eb62c",
++      "reason": "Reviewed 2026-11-05 Python 3.11: parser default for --remove changes from an implicit ukb.exclude.id file to none. Exact source comparison changes only this parser default. Training/model/loss/optimizer code is unchanged. Existing resume validation still requires identical prepared data, IDs, splits, preprocessing, architecture and training schedule; this does not authorize reuse with a changed cohort."
+     }
+   ],
+   "review_20261102": {
+@@ -81,5 +91,23 @@
+     "baseline_ast_py312": "eb3075f614986ece5a865d185496b75f507460e649305679d30d730abf939d3a",
+     "current_ast_py311": "dd638d390cde0b2a45816930f5e15a9765cd30bb4ee581c6fe6956f10234539a",
+     "current_ast_py312": "707c9f56b34c1c249988e1372e47f186b02a7e4b51dc4d12ca93fa852ad18da6"
++  },
++  "review_20261105": {
++    "changed_ast_nodes": [
++      "parser"
++    ],
++    "change": "Sample exclusion is opt-in; no implicit ID list",
++    "ast_pairs": [
++      {
++        "python": "3.12",
++        "from": "bbabe630d0ad3d98a2c6a1d197cb7139528ec8c40b90b5e1697a1095c26bcfcf",
++        "to": "80daa93849fb83c77be272ce0837b4b753e33288a23d1c361d9322e9a04554cb"
++      },
++      {
++        "python": "3.11",
++        "from": "c04e17406397334501012a4aa419d6fd97b0a7983f6ad836616a2305a7cef970",
++        "to": "66e297eecd7bd655c572a5a428674d5f278682f715dc2b8a63876789fe5eb62c"
++      }
++    ]
+   }
+ }
+--- a/grid/f/shared_cohort.py
++++ b/grid/f/shared_cohort.py
+@@ -212,7 +212,7 @@
+             if isinstance(value, str):
+                 setattr(options, key, relocate(value, root))
+         options.train_fraction, options.validation_fraction = .4, .1
+-        options.pheno_file = os.environ.get("GRID_PHE_FILE", configured_path("DIR_UKB", "Rdata", "phe.rds"))
++        options.pheno_file = os.environ.get("GRID_PHE_FILE", configured_path("DIR_UKB", "Rdata", "all.rds"))
+         options.dir_gen = os.environ.get("GRID_TARGET_DIR", relocate(configured_path('DIR_GEN', 'ukb/37/typ'), root))
+         options.ancestry_file = os.environ.get("GRID_ANCESTRY_FILE", options.ancestry_file)
+         options.snp_list = os.environ.get("GRID_CSX_SNPINFO", options.snp_list)
+@@ -247,11 +247,46 @@
+     return command
+ 
+ 
++def align_projected_cohort(frame, analysis_root, *, frozen=False):
++    """Bind shared IDs to usable reference PCs before any family split is frozen."""
++    path = Path(os.environ.get("GRID_PCA_FILE") or
++                configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz'))
++    if not path.is_file():
++        raise FileNotFoundError(f"Shared preparation requires projected PCs: {path}; run 1.pca.sh first")
++    pca = table(path)
++    pcs = [f"PC{i}" for i in range(1, 11)]
++    if not set(pcs) <= set(pca):
++        raise ValueError("Shared preparation requires projected PC1-PC10")
++    if not np.isfinite(pca[pcs].apply(pd.to_numeric, errors="raise").to_numpy(float)).all():
++        raise ValueError("Projected PCs contain nonfinite values; rebuild the PCA input")
++    ids = identified(frame).id
++    keep = ids.isin(pca.id).to_numpy()
++    missing = int((~keep).sum())
++    if frozen:
++        if missing:
++            raise ValueError(f"Frozen shared cohort lacks projected PCs for {missing} participants; "
++                             "use a new analysis root to rebuild a common roster")
++        return frame
++    if not keep.any():
++        raise ValueError("No shared participants have projected PCs")
++    selected = frame.loc[keep].copy()
++    atomic_json(Path(analysis_root) / "cache/shared_preparation/PCA_COHORT.json", dict(
++        schema="grid.shared_pca_cohort.1", source=str(path.resolve()), source_sha256=sha256(path),
++        required_pcs=pcs, input_N=len(frame), retained_N=len(selected), missing_pca_N=missing,
++        selected_ids_sha256=hashlib.sha256("\n".join(ids[keep]).encode()).hexdigest(),
++        rule="intersect available projected PCs before freezing family-based splits",
++        uses_score_or_outcome_values=False))
++    print(f"[shared inputs] PCA coverage: {len(frame):,} -> {len(selected):,}; "
++          f"missing projected PCs: {missing:,}", flush=True)
++    return selected
++
++
+ def prepare_frozen_roster(options, analysis_root, relationship_file=None):
+     """On a fresh run freeze IDs/families without reading any score or model."""
+     import prsformer
+     root, cache = Path(analysis_root), Path(options.cache_dir)
+     if (cache / "prepare.json").is_file():
++        align_projected_cohort(table(cache / "data.tsv.gz"), root, frozen=True)
+         return  # Existing preparation already owns its exact input identities.
+     outer = root / "cache/abm/split.rds"
+     legacy = root / "abm/grid.split.rds"
+@@ -281,6 +316,7 @@
+         initial = prsformer.make_cohort(options, genotype_sources)
+         if "group" not in initial:
+             raise ValueError("The declared family file was not carried into the raw cohort")
++        initial = align_projected_cohort(initial, root)
+         cohort = initial[["eid", "target", "group"]].rename(columns={"target": "ancestry", "group": "family_id"})
+         settings = SimpleNamespace(**{k:v for k,v in vars(options).items() if k not in {"func", "command"}})
+         settings.cache_dir = str(root / "cache/abm")
+@@ -293,6 +329,7 @@
+     roster = cache / "roster"
+     prsformer.shared_roster(SimpleNamespace(cache_dir=str(root / "cache/abm"), grid_split=str(legacy),
+         roster_dir=str(roster), seed=options.seed, check=False))
++    align_projected_cohort(table(roster / "prsformer.split.tsv.gz"), root, frozen=True)
+     options.keep = str(roster / "common.keep")
+     options.split_file = str(roster / "prsformer.split.tsv.gz")
+     options.split_group_file = str(roster / "families.tsv.gz")
+--- a/grid/f/twin.py
++++ b/grid/f/twin.py
+@@ -89,15 +89,10 @@
+ def read_table(path):
+     p=Path(path)
+     if p.suffix=='.rds':
+-        try:import rdata
+-        except ImportError as e:raise RuntimeError('RDS input needs rdata>=1.1; use the existing grid environment or supply a TSV') from e
+-        d=rdata.read_rds(p)
+-        if isinstance(d,dict):
+-            candidates=[x for x in d.values() if isinstance(x,pd.DataFrame)]
+-            if len(candidates)!=1:raise ValueError('Expected exactly one data.frame in RDS')
+-            d=candidates[0]
+-        if not isinstance(d,pd.DataFrame):raise ValueError('Expected a data.frame in RDS')
+-        return d
++        # Published score RDS files carry raw-byte provenance attributes which
++        # rdata cannot decode. Reuse the native R reader and its string-ID rules.
++        from data import read_table as read_rds_table
++        return read_rds_table(p)
+     if p.suffix=='.parquet':return pd.read_parquet(p)
+     sep=',' if '.csv' in p.name else '\t'
+     # Explicit string IDs preserve values such as 00012; pandas otherwise infers integers.

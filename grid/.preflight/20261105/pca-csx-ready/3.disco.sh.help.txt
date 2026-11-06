@@ -1,0 +1,49 @@
+Modules:
+    all/default  Pinned Disco interpolation -> small-validation calibration -> test metrics
+    score        Pinned interpolation only (independent scheduler stage)
+    evaluate     Calibrate existing Disco scores and evaluate untouched test
+    prepare      Shared cohort/genotype inputs only; no predictor training
+
+Default permanent paths (outside the analysis output directory):
+    READ CSx scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
+    WRITE Disco scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/2disco.scores.rds
+    WRITE coefficients: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/2disco.coefficients.xlsx
+    READ PCA: ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    READ centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
+    --dir-score changes the permanent destination; --dir-output-root alone does not.
+
+Main options:
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
+    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
+    --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    --distance-pcs N              10; reference and target use the same PCs (>=5).
+    --a-list A1,A2,A3,A4          Default 1,1,1,1, in AFR,EAS,EUR,SAS order.
+    --regress-pca TRUE|FALSE      Default TRUE (official recommendation).
+    --dir-score DIR               ${DIR_GEN}/ukb/pgs (input and permanent output).
+    --dir-output-root DIR             ${ANALYSIS_ROOT}/grid (result namespace).
+    --replace TRUE|FALSE          Default FALSE; reuse matching outputs.
+    --check                       Check prerequisite files/packages; no computation.
+    --dry-run TRUE                Same preflight/plan behavior.
+    -h, --help  Show options and examples below
+
+Example:
+    # After 1.pca.sh and all 2.csx.sh jobs are DONE:
+    cd /work/sph-huangj/scripts/grid
+    queueinfo
+    bash 3.disco.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+      --queue v4-3t --device cpu --traits height,ldl,t2dm --wait FALSE
+    # Admin's v4-3t / v3-6t queues allow exact CPU counts. The profile generates
+    # four jobs (shared.prepare, then one Disco job per trait), each with:
+    #   -q v4-3t -n 32 -W 120:00 -M 256GB
+    #   -R "span[hosts=1] rusage[mem=256GB/host]"
+    # Add --plan-only for a preview. The entry calls bsub with dependencies;
+    # do not wrap it in bsub. Wait for all four jobs to be DONE before step 4.
+
+    # Other input/check options:
+    ./3.disco.sh --traits height,ldl,t2dm --check
+    ./3.disco.sh --traits height,ldl,t2dm
+    ./3.disco.sh --trait height --a-list 1,1,1,1 --regress-pca TRUE
+
+    ./3.disco.sh --traits height
+    ./3.disco.sh  # Default workflow

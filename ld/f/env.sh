@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+export DATE_SCRATCH=${DATE_SCRATCH:-2026-11-05}
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 # Source this file. No conda activation or network installation is required.
 HPC_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export LD_CODE_DIR="$HPC_SCRIPT_DIR/f"
@@ -34,9 +44,17 @@ if [[ "$GRCH" == 38 ]]; then
 else
     export REFERENCE_COUNT_POLICY="${REFERENCE_COUNT_POLICY:-warn}"
 fi
-export DATE_SCRATCH="${DATE_SCRATCH:-2026-11-03}"
-export SCRATCH_ANALYSIS_ROOT="$ANALYSIS_ROOT"
-_os_default OUT "$SCRATCH_ANALYSIS_ROOT/ld/$GRCH"
+if [[ $submit == hpc ]]; then
+    export SCRATCH_ANALYSIS_ROOT="/scratch/$DATE_SCRATCH/$(id -un)/analysis"
+    if [[ $GRCH == 38 ]]; then
+        _os_default OUT "$SCRATCH_ANALYSIS_ROOT/ld"
+    else
+        _os_default OUT "$SCRATCH_ANALYSIS_ROOT/ld/$GRCH"
+    fi
+else
+    export SCRATCH_ANALYSIS_ROOT="$ANALYSIS_ROOT"
+    _os_default OUT "$SCRATCH_ANALYSIS_ROOT/ld/$GRCH"
+fi
 _os_default PFILE_DIR "$DIR_GEN/1kg/$GRCH/pfile"
 _os_default PANEL "$DIR_GEN/1kg/$GRCH/samples.txt"
 _os_default LD_TMP_DIR "$OUT/tmp"
@@ -49,7 +67,7 @@ export MEMORY_MB="${MEMORY_MB:-8192}"
 export PYTHONDONTWRITEBYTECODE=1
 # Reset obsolete canonical manifests inherited before the code directory moved.
 case "${LD_INPUT_MANIFEST:-}" in
-    /work/sph-huangj/scripts/ld/f/input_sizes.*.tsv|/work/sph-huangj/scripts/ld/hpc/input_sizes.*.tsv)
+    ${SCRIPTS_ROOT}/ld/f/input_sizes.*.tsv|${SCRIPTS_ROOT}/ld/hpc/input_sizes.*.tsv)
         unset LD_INPUT_MANIFEST ;;
 esac
 export LD_QUEUE="${LD_QUEUE:-${HPC_CPU_QUEUE:-33}}"

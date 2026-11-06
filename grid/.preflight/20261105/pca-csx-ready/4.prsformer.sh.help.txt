@@ -1,0 +1,60 @@
+4.prsformer.sh modules:
+  prepare     Prepare and RETAIN the shared cohort/genotype cache used by
+              PRSformer and, when required, GRID LD-block construction.
+              Does NOT train PRSformer.
+  prsformer   Run/resume PRSformer (independent traits).
+  prsformer2  Run/resume PRSformer2 exploratory with separate calibration.
+  all         prepare -> independent prsformer and prsformer2 jobs.
+
+Default module: all (prepare, then independent method/trait jobs).
+Scheduler: --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+Resources: --hpc-config FILE --queue NAME --gpu-queue NAME
+           --job-cores N --job-memory-gb N --job-hours N
+
+Examples:
+  # QiMing: run after the preceding steps have completed successfully.
+  cd /work/sph-huangj/scripts/grid
+  queueinfo
+  bash 4.prsformer.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+    --queue v4-3t --gpu-queue 8v100-32-sc --traits height,ldl,t2dm --wait FALSE
+  # CPU shared.prepare uses Admin's exact-core queue (v3-6t is an alternative):
+  #   -q v4-3t -n 32 -W 120:00 -M 256GB
+  #   -R "span[hosts=1] rusage[mem=256GB/host]"
+  # Six GPU training jobs use the separate GPU profile:
+  #   -q 8v100-32-sc -n 8 -W 120:00 -M 160GB
+  #   -R "span[hosts=1] rusage[mem=160GB/host]"
+  #   -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"
+  # 8v100-32-sc was Open and 4a100-40 Closed on 2026-11-05; recheck queueinfo.
+  # Add --plan-only to preview. The entry calls bsub with dependencies; do not
+  # add an outer bsub. Confirm all seven jobs are DONE before running grid.sh.
+  # CPU and GPU budgets differ; global --job-* overrides affect both.
+
+  # Other module options:
+  ./4.prsformer.sh --traits height,ldl,t2dm
+  ./4.prsformer.sh prepare --traits height,ldl,t2dm
+  ./4.prsformer.sh prsformer --traits height,ldl,t2dm --device cuda
+  ./4.prsformer.sh prsformer2 --traits height,ldl,t2dm --device cuda
+  ./4.prsformer.sh all --traits height,ldl,t2dm --device cuda
+
+Training runtime: GPU batch 16, gradient accumulation 4 (64 subjects/update),
+2 loader workers and 2 CPU threads. Existing runs resume from their last saved
+epoch, retaining the optimizer and 30-epoch learning-rate schedule.
+Override runtime with PRSFORMER_BATCH_SIZE, PRSFORMER_ACCUMULATION_STEPS,
+PRSFORMER_WORKERS and --threads; resume requires the same effective batch.
+30 epochs is a maximum; validation early stopping remains enabled (patience 3).
+
+Default permanent inputs (outside the analysis output directory):
+  READ genotypes: ${DIR_GEN}/ukb/37/hap
+  READ ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+  READ SNP reference: ${DIR_LD}/csx/snpinfo_mult_1kg_hm3
+  READ upstream software: ${DIR_SOFTWARE}/PRSformer (PRSFORMER_UPSTREAM_DIR override)
+  There is currently NO separate permanent F-drive model/genotype-cache output.
+  Prepared data, checkpoints and models remain under --analysis-root.
+  KEEP_GENOTYPES retains them there; it does not copy them to F:.
+  Deleting the analysis root therefore does not preserve these caches/models.
+
+Scientific boundary:
+  GRID blocknet/twin-count does NOT consume PRSformer or PRSformer2 predictions.
+  It may consume the shared preparation files retained by "prepare".
+  An active local/kinship/ACTIVE.json applies the verified family grouping
+  and excludes development relatives without copying the genotype matrix.

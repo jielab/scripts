@@ -1,0 +1,61 @@
+
+Job <4388790>, Job Name <grid-csx.height.all>, User <sph-huangj>, Project <defa
+                     ult>, Status <RUN>, Queue <v4-3t>, Command <#!/usr/bin/env
+                      bash;#BSUB -J grid-csx.height.all;#BSUB -q v4-3t;#BSUB -n
+                      32;#BSUB -W 120:00;#BSUB -M 256GB;#BSUB -R "span[hosts=1]
+                      rusage[mem=256GB/host]";#BSUB -o /work/sph-huangj/analysi
+                     s/grid/jobs/grid-csx-20261105T135616-90ad52ab/logs/height.
+                     all.%J.out;#BSUB -e /work/sph-huangj/analysis/grid/jobs/gr
+                     id-csx-20261105T135616-90ad52ab/logs/height.all.%J.err; se
+                     t -euo pipefail;umask 077;[[ -n "${LSB_JOBID:-}" ]] || { e
+                     cho "Submit this .cmd with bsub; do not run on a login nod
+                     e." >&2; exit 2; };[[ ${LSB_DJOB_NUMPROC:-0} -ge 32 ]] || 
+                     { echo "Insufficient allocated CPU slots" >&2; exit 2; };#
+                      Dependencies: (none);# Scientific command: bash /work/sph
+                     -huangj/scripts/grid/2.csx.sh all --traits height --output
+                     -root /work/sph-huangj/analysis/grid --jobs 4;exec /work/s
+                     ph-huangj/.conda/envs/py311/bin/python3 /work/sph-huangj/s
+                     cripts/0f/workflow_jobs.py worker --plan /work/sph-huangj/
+                     analysis/grid/jobs/grid-csx-20261105T135616-90ad52ab/plan.
+                     json --key height.all>, Share group charged </sph-huangj>
+Thu Nov  5 21:56:36: Submitted from host <b04u17l>, CWD <$HOME/scripts/grid>, O
+                     utput File </work/sph-huangj/analysis/grid/jobs/grid-csx-2
+                     0261105T135616-90ad52ab/logs/height.all.4388790.out>, Erro
+                     r File </work/sph-huangj/analysis/grid/jobs/grid-csx-20261
+                     105T135616-90ad52ab/logs/height.all.4388790.err>, 32 Task(
+                     s), Requested Resources <span[hosts=1] rusage[mem=262144.0
+                     0/host]>;
+Thu Nov  5 21:56:36: Started 32 Task(s) on Host(s) <32*b03u06s>, Allocated 32 S
+                     lot(s) on Host(s) <32*b03u06s>, Execution Home </work/sph-
+                     huangj>, Execution CWD </work/sph-huangj/scripts/grid>;
+Thu Nov  5 21:58:08: Resource usage collected.
+                     The CPU time used is 85 seconds.
+                     MEM: 120 Mbytes;  SWAP: 0 Mbytes;  NTHREAD: 13
+                     PGID: 3789951;  PIDs: 3789951 3789952 3789956 
+                     PGID: 3789957;  PIDs: 3789957 3789983 3789984 3790017 
+                     3790045 3790046 3790057 3790299 
+
+ RUNLIMIT                
+ 7200.0 min
+
+ MEMLIMIT
+    256 G 
+
+ MEMORY USAGE:
+ MAX MEM: 375 Mbytes;  AVG MEM: 143 Mbytes; MEM Efficiency: 0.14%
+
+ CPU USAGE:
+ CPU PEAK: 0.89 ;  CPU PEAK DURATION: 64 second(s)
+ CPU AVERAGE EFFICIENCY: 2.78% ;  CPU PEAK EFFICIENCY: 2.78%
+
+ SCHEDULING PARAMETERS:
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+ RESOURCE REQUIREMENT DETAILS:
+ Combined: select[type == local] order[r15s:pg] rusage[mem=262144.00/host] span
+                     [hosts=1]
+ Effective: select[type == local] order[r15s:pg] rusage[mem=262144.00/host] spa
+                     n[hosts=1] 
+

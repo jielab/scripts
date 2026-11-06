@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # EMS120 runtime helpers. This file uses base R only when sourced, so path and
 # dependency checks can run without loading the scientific analysis.
 ems120_env_path <- function(name, fallback = "") {
@@ -8,18 +25,19 @@ ems120_env_path <- function(name, fallback = "") {
 }
 
 ems120_init_paths <- function(main_file) {
+	os_paths_init()
 	mode <- tolower(Sys.getenv("submit", unset = Sys.getenv("SUBMIT", unset = "hpc")))
 	local <- identical(mode, "local")
 	windows <- identical(.Platform$OS.type, "windows")
-	dat_root <- ems120_env_path("DIR_DAT", if (local) if (windows) "D:/" else "/mnt/d" else "/work/sph-huangj")
-	work_root <- ems120_env_path("DIR_WORK", if (local) dat_root else "/work/sph-huangj")
+	dat_root <- ems120_env_path("DIR_DAT", if (local) if (windows) os_path("DIR_DAT") else os_path("DIR_DAT") else os_path("DIR_WORK"))
+	work_root <- ems120_env_path("DIR_WORK", if (local) dat_root else os_path("DIR_WORK"))
 	script_dir <- ems120_env_path("EMS120_SCRIPT_DIR", dirname(dirname(main_file)))
 	shared_dir <- ems120_env_path("EMS120_SHARED_DIR", file.path(script_dir, "..", "0f"))
-	analysis_root <- ems120_env_path("ANALYSIS_ROOT", file.path(dat_root, "analysis"))
+	analysis_root <- if (local) ems120_env_path("ANALYSIS_ROOT", file.path(dat_root, "analysis")) else ems120_env_path("PERSISTENT_ANALYSIS_ROOT", file.path(work_root, "analysis"))
 	list(
 		script = script_dir,
 		shared = shared_dir,
-		data = ems120_env_path("EMS120_DATA_DIR", file.path(dat_root, "ems120")),
+		data = ems120_env_path("EMS120_DATA_DIR", file.path(dat_root, if (local) "ems120" else "phe/ems120")),
 		analysis = ems120_env_path("EMS120_ANALYSIS_DIR", file.path(analysis_root, "ems120")),
 		files = ems120_env_path("EMS120_FILES_DIR", ems120_env_path("DIR_FILES", file.path(dat_root, "files")))
 	)

@@ -1,0 +1,81 @@
+Modules:
+    all      Weights -> scores -> small target-validation fit -> test accuracy (default)
+    weights  Joint four-population PRS-CSx
+    score    Apply saved SNP weights; select with --stage
+    prepare  Shared cohort/genotype preparation only; no model training
+    targetfit  Fit four population beta values on small validation; evaluate untouched test
+    blockprepare  Build outcome-free block PRSs (--blocks 1|4)
+    blockridge    Independent block regression extension and test performance
+    blocknet      Independent block Transformer extension and test performance
+
+Benchmark/block options: --analysis-root DIR --traits LIST --validation-n 5000
+    --cohort FILE (optional TSV: id,group_id,split,y/trait,covariates)
+    --covariates age,sex,PC1,PC2; --blocks 1|4 or --ld-block-files CSV
+    ./2.csx.sh targetfit --help and ./2.csx.sh blocknet --help list full options.
+
+Default permanent paths (outside the analysis output directory):
+    READ GWAS / WRITE final SNP weights: ${DIR_GWAS}/4grid/common
+      Weights beside each source GWAS: <GWAS-without-.gz><suffix>.csx.gz.
+    WRITE scores: ${DIR_GEN}/ukb/pgs/<trait>[/<suffix>]/1csx.scores.rds
+    READ LD references: ${DIR_LD}/csx
+    READ genotypes: ${DIR_GEN}/ukb/37/typ (fallback: ${DIR_GEN}/ukb/37/hap)
+    --dir-gwas / --dir-score change these permanent destinations.
+    Changing --dir-output-root alone does not relocate weights/scores.
+
+Main options:
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
+    --trait NAME / --traits LIST   Default: height,ldl,t2dm; one scheduled worker per trait.
+    --stage all|weights|score      Default: all.
+    --dir-gwas DIR                ${DIR_GWAS}/4grid/common
+    --dir-gen DIR                 ${DIR_GEN}/ukb/37/typ; falls back to hap when typ is absent.
+    --bim-prefix PREFIX           Optional existing BIM; default: --dir-gen/ukb_array, built from chr*.pvar/.bim.
+    --memory-cap-gb N             16 GiB RAM for the entire invocation, including all parallel jobs.
+    --jobs N / --threads N        Parallel chromosomes / scoring threads per job (4 / 8).
+    --dir-score DIR              Default: ${DIR_GEN}/ukb/pgs for both CPU and CUDA.
+    --backend MODE               auto (default): detect CUDA, otherwise use CPU.
+    --dir-output-root DIR            ${ANALYSIS_ROOT}/grid; inference/logs/reports go into csx/.
+    --replace TRUE|FALSE         Default FALSE; reuse only matching saved results.
+    --check                      Validate inputs and prepare target SNP metadata; no inference/scoring.
+    --dry-run TRUE               Same preflight/plan behavior; no completion markers.
+    -h, --help  Show options and examples below
+
+Example:
+    # After 1.pca.sh is DONE: full CPU workflow on QiMing.
+    cd /work/sph-huangj/scripts/grid
+    queueinfo
+    bash 2.csx.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+      --queue v4-3t --device cpu --traits height,ldl,t2dm \
+      --jobs 4 --threads 8 --wait FALSE
+    # Admin recommends v4-3t / v3-6t for exact CPU counts; either may be used
+    # after queueinfo. Keep the profile's per-stage RAM and time budgets:
+    #   weights, score, shared.prepare (7 jobs):
+    #     -q v4-3t -n 32 -W 120:00 -M 256GB
+    #     -R "span[hosts=1] rusage[mem=256GB/host]"
+    #   targetfit (3 jobs):
+    #     -q v4-3t -n 8 -W 24:00 -M 32GB
+    #     -R "span[hosts=1] rusage[mem=32GB/host]"
+    # Four chromosome jobs x eight scoring threads fit 32 cores per worker.
+    # These are configured budgets, not measured CSx peak usage. The full
+    # 256-GiB workflow exceeds a 33 node's 192 GiB; do not change only --queue
+    # to 33. A separately sized 160-GiB CPU job on 33 must reserve -n 40.
+    # Add --plan-only to preview without submitting. This entry generates
+    # .cmd files and calls bsub with dependencies; do not add an outer bsub.
+    # --wait FALSE returns after submission. Confirm all 10 jobs are DONE
+    # before running 3.disco.sh. PCA/ancestry, GWAS, LD and genotype paths above
+    # are the shared permanent inputs; --dir-output-root does not move them.
+
+    # Other input/check options:
+    ./2.csx.sh --trait height --chrs 22 --check
+    ./2.csx.sh --traits height,ldl,t2dm --check
+    ./2.csx.sh --traits height,ldl,t2dm --jobs 4 --threads 4
+
+    # The full run above enables --posterior TRUE by default.
+    # Optional: append only auto/meta scores (does not generate individual posterior scores).
+    ./2.csx.sh --traits height,ldl,t2dm --models auto,meta --jobs 4 --threads 4
+    # Optional: run inference and scoring separately; retain the inference directory.
+    ./2.csx.sh --trait height --stage weights --jobs 4 --threads 4
+    ./2.csx.sh --trait height --stage score --jobs 4 --threads 4
+
+    ./2.csx.sh --traits height --threads 4
+    ./2.csx.sh  # Default: weights and scoring

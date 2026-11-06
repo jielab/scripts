@@ -1,0 +1,2 @@
+GROUP_NAME    USERS                     
+u-sph-huangj sph-huangj sph-maipl sph-zhaor 

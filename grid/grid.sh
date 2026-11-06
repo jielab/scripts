@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 # GRID transparent agent/reference counting; fitted benchmarks have separate entries.
 set -euo pipefail
 umask 077
@@ -24,9 +38,31 @@ GRID transparent count ABM:
   cleanup       Existing cache maintenance utility (preview by default).
 
 Examples:
-    source /work/sph-huangj/scripts/0f/0os.sh
+  # QiMing: run after the preceding steps have completed successfully.
+  cd /work/sph-huangj/scripts/grid
+  queueinfo
+  bash grid.sh all --submit hpc --hpc-config config/hpc.qiming.json \
+    --queue v4-3t --gpu-queue 8v100-32-sc --traits height,ldl,t2dm --wait FALSE
+  # Preserve stage budgets; Admin's v4-3t / v3-6t queues allow exact CPU counts.
+  # CPU shared.prepare/blockprepare:
+  #   -q v4-3t -n 32 -W 120:00 -M 256GB
+  #   -R "span[hosts=1] rusage[mem=256GB/host]"
+  # CPU evaluate: -q v4-3t -n 8 -W 24:00 -M 32GB
+  #   -R "span[hosts=1] rusage[mem=32GB/host]"
+  # CPU architecture/final: -q v4-3t -n 4 -W 24:00 -M 16GB
+  #   -R "span[hosts=1] rusage[mem=16GB/host]"
+  # GPU count preparation/twins:
+  #   -q 8v100-32-sc -n 8 -W 120:00 -M 160GB
+  #   -R "span[hosts=1] rusage[mem=160GB/host]"
+  #   -gpu "num=1/host:mode=exclusive_process:j_exclusive=yes"
+  # Recheck queueinfo (4a100-40 was Closed on 2026-11-05). Global --job-*
+  # overrides affect CPU and GPU stages, so retain their separate profiles.
+  # Add --plan-only to preview the 15-job DAG. The entry calls bsub with
+  # dependencies; do not add an outer bsub. Submission is not completion.
+  # Required: CSx scores, posterior/provenance outputs and shared PCA/ancestry.
+
+  # Other module options:
   ./grid.sh all --submit local --traits height,ldl,t2dm --plan-only
-  ./grid.sh all --submit hpc --traits height,ldl,t2dm --plan-only
   ./grid.sh all --traits height,ldl,t2dm --device auto
   ./grid.sh prepare --traits height --ld-block-files ALL.37.bed
   ./grid.sh twins --traits height --device cpu
@@ -36,7 +72,7 @@ Examples:
 
 Common options:
   --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
-  --hpc-config FILE --queue NAME --gpu-queue NAME --job-cores N --job-memory-gb N
+  --hpc-config FILE --queue NAME --gpu-queue NAME --job-cores N --job-memory-gb N --job-hours N
   --traits CSV          Default: height,ldl,t2dm
   --analysis-root DIR   Default: ${ANALYSIS_ROOT}/grid
   --config FILE_OR_DIR  Default: config/count_abm.json
@@ -62,6 +98,12 @@ Fitted methods remain separate: 2.csx.sh blockprepare/blockridge/blocknet for
 block regression; 1.pca.sh, 3.disco.sh and 4.prsformer.sh for their benchmarks.
 This entry does not fit blocknet, PRSformer, CountHeads or an error regression.
 Historical abm/ and final/ outputs are not used by the count_abm final report.
+HPC allocations:
+  CPU shared/block preparation -> CPU geometry -> GPU radius + twins -> CPU reports.
+  --device cuda affects radius/twins only; geometry and reports stay on CPU.
+  CPU: --queue --job-cores --job-memory-gb --job-hours
+  GPU: --gpu-queue --gpu-cores --gpu-memory-gb --gpu-hours --gpu-threads
+  Each dependent stage starts only after successful upstream completion.
 HELP
 }
 
@@ -77,7 +119,7 @@ export PYTHONPATH="$ROOT/f${PYTHONPATH:+:$PYTHONPATH}"
 module=all
 if [[ $# -gt 0 && $1 != -* ]]; then module=$1; shift; fi
 case "$module" in
-  prepare|twins|evaluate|architecture|final|all)
+  prepare|geometry|radius|radius_twins|twins|evaluate|architecture|final|all)
     exec "$PYTHON_PATH" "$ROOT/f/count_abm.py" "$module" "$@"
     ;;
   assess|abm)

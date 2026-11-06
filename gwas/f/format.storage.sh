@@ -40,14 +40,14 @@ gwas_storage_configure() {
 	eaf_cache="$project_work/eaf"
 	lead_ref_cache="$project_work/$category/lead_reference"
 	[[ "$local_io" == TRUE ]] || return 0
-	local_cache_root=$(realpath -m "${local_cache_arg:-/tmp/gwas-cache-$UID/format}")
+	local_cache_root=$(realpath -m "${local_cache_arg:-${DIR_RUNTIME_TMP}/gwas-cache-$UID/format}")
 	eaf_cache="$local_cache_root/references/eaf"
 	lead_ref_cache="$local_cache_root/references/lead"
 	# Full clump/COJO panels are staged lazily by workers, after build detection
 	# and candidate selection. This also handles --grch auto and empty traits.
 	key=$(printf '%s\n%s\n' "$(realpath -m "$dir_out")" "$category" | sha256sum | cut -c1-20)
 	local_project_cache="$local_cache_root/projects/$key"
-	: "${GWAS_POST_TMP_BASE:=/tmp/gwas-post-$UID/$key/$step_key}"
+	: "${GWAS_POST_TMP_BASE:=${DIR_RUNTIME_TMP}/gwas-post-$UID/$key/$step_key}"
 	GWAS_POST_TMP_BASE=$(realpath -m "$GWAS_POST_TMP_BASE")
 	legacy_rsid_cache=""
 	if [[ "$rsid_cache_explicit" == FALSE ]]; then

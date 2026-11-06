@@ -1,4 +1,27 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --cores 40 --memory-gb 160 --hours 24 --plan-only
+# New HPC plans auto-round slots. Keep tool threads within the allocated total.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
 
 # Resolve paths and dispatch before any scientific work or input discovery.
 GWAS_ENTRY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -14,50 +37,82 @@ set +H
 # Independent GWAS modules. Statistical/data conversion helpers live in f/;
 # parameter parsing, genotype selection and analysis commands are defined here.
 usage() {
-	cat <<'HELP'
+	cat <<HELP
 Modules:
-    sparseGRM  Prune typed genotypes and build a sparse relatedness matrix
-    acount     Compute imputed allele counts and variant extraction lists
-    regenie    Run REGENIE model fitting and association
+    sparseGRM  Prepare the pruned typed panel (add --sparse-grm FALSE for REGENIE only)
+    acount     Prepare shared imputed allele counts and variant lists
+    regenie    REGENIE Step 1 + Step 2; HPC submission is the default
+
+Defaults from 0f/0os.sh:
+    phenotype: $GWAS_PHENOTYPE_FILE
+    continuous covariates: age,sex,PC1,PC2,PC3,PC4
+    typed/imputed: $DIR_GEN/ukb/37/typ and $DIR_GEN/ukb/37/imp
+    output: $GWAS_ANALYSIS_ROOT/self/common
+    HPC queue: 33; per phenotype: 6 workers x 4 threads, 160 GiB RAM (40 reserved slots)
 
 Main options:
-    --grch 37|38  Genome build
-    --threads N --jobs N  Threads per process / concurrent chromosomes (traits run sequentially)
-    --step2-threads N  REGENIE Step 2 threads (default: --threads); preserves Step 1 settings
-    --pheno-name CSV  Phenotypes
-    --continuous-covariate-file FILE  Continuous covariates (FID, IID + columns)
-    --categorical-covariate-file FILE  Categorical covariates (FID, IID + columns)
-    --covariates CSV  Continuous columns (all columns in an explicit continuous file)
-    --categorical-covariates CSV  Categorical columns (all columns in an explicit categorical file)
-    --covariate-file FILE  Shared fallback for both types (default: phenotype file)
-    Without separate files: continuous=age,sex,tdi,PC1,PC2,PC3,PC4; categorical=none.
-    --sparse-grm TRUE|FALSE  Sparse relatedness matrix
-    -h, --help  Show options and examples below
+    --grch 37|38                  Build; also sets REGENIE PAR boundaries
+    --pheno FILE --pheno-name CSV Phenotype table (FID IID plus named columns)
+    --type auto|qt|ordinal|bt|t2e  ordinal = linear trend on numeric ordered scores,
+                                 via --qt --force-qt; NOT ordinal logistic regression
+    --event-col NAME              Event indicator for t2e (0=censored, 1=event)
+    --sex all|male|female         Genotype-sex restriction in BOTH REGENIE steps
+    --covariates CSV              Continuous covariates; default listed above
+    --categorical-covariates CSV  Dummy-coded categorical covariates; default none
+    --covariate-file FILE         Shared covariate table; default phenotype table
+    --continuous-covariate-file FILE  Explicit file: all non-ID columns by default
+    --categorical-covariate-file FILE Explicit file: all non-ID columns by default
+    --chr CSV                    REGENIE default 1-22,X; subsets require explicit --chr
+    --threads N --jobs N          Threads/process and concurrent Step 2 chromosomes [4 / 6]
+    --step2-threads N             Step 2 threads; defaults to --threads
+    --pheno-jobs N               HPC: concurrent phenotype jobs [all requested]
+                                 Names: regenie.[type].[pheno]
+    --dir-output DIR              Use separate output roots for different models
+    --replace TRUE               Recompute changed settings in an existing result folder
+    --run-cmd FALSE               Write internal commands without running them
+    --plan-only                  Write HPC submission plan; do not submit
+    -h, --help                    Show copyable commands for the current path table
 
-Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
-    cd /work/sph-huangj/scripts/gwas
+Examples (run from this copied scripts tree; default: submit to HPC):
+    cd "$GWAS_ENTRY_ROOT"
 
-    # Quantitative traits with explicitly selected covariates.
-    ./gwas.sh regenie --grch 37 \
-        --pheno ${DIR_GWAS}/self/cimt.phe \
-        --pheno-name phe1,phe2 --type qt \
-        --continuous-covariate-file ${DIR_GWAS}/self/cimt.cont.cov \
-        --categorical-covariate-file ${DIR_GWAS}/self/cimt.cat.cov \
-        --covariates age,PC1,PC2,PC3,PC4 \
-        --categorical-covariates sex \
-        --dir-output ${DIR_GWAS}/self/raw \
-        --threads 4 --jobs 1
+    # Only if typ.prune.bed/bim/fam have not already been generated:
+    bash gwas.sh sparseGRM --grch 37 --chr 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22 --sparse-grm FALSE --wait TRUE
 
-    # Requires ${DIR_UKB}/common/ukb.phe; phenotype preparation: ../ukb/phe.sh -h.
-    ./gwas.sh sparseGRM --grch 37 --sparse-grm TRUE --threads 4 --jobs 8
-    ./gwas.sh acount --grch 37 --threads 4 --jobs 8
-    ./gwas.sh regenie --grch 37 --pheno-name height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu --threads 4 --jobs 8
+    # Three independent HPC jobs; covariates age,sex,PC1-PC4.
+    bash gwas.sh regenie --grch 37 --pheno-name bmi,height,ldl --type qt --dir-output "$GWAS_ANALYSIS_ROOT/ukb_regenie"
 
-    ./gwas.sh sparseGRM --grch 37
-    ./gwas.sh regenie --grch 37 --pheno-name height --jobs 2
-    ./gwas.sh regenie --grch 37 --pheno-name height \
-        --continuous-covariate-file continuous.tsv --categorical-covariate-file categorical.tsv
+    # Ordered bald scores: male-only linear trend across scores 1-4.
+    bash gwas.sh regenie --grch 37 --pheno-name bald --type ordinal --sex male --dir-output "$GWAS_ANALYSIS_ROOT/ukb_regenie"
+
+    # Binary contrasts: 0/1, logistic GWAS with approximate Firth correction.
+    bash gwas.sh regenie --grch 37 --pheno-name bald12,bald13,bald14 --type bt --sex male --dir-output "$GWAS_ANALYSIS_ROOT/ukb_regenie"
+
+    # Time to event: positive duration + cvd_cad.Yt2e (0=censored, 1=event).
+    bash gwas.sh regenie --grch 37 --pheno-name cvd_cad.t2e --type t2e --event-col cvd_cad.Yt2e --dir-output "$GWAS_ANALYSIS_ROOT/ukb_regenie"
+
+    # Add continuous tdi and categorical center; separate output for this model.
+    bash gwas.sh regenie --grch 37 --pheno-name bmi,height,ldl --type qt \\
+        --covariates age,sex,PC1,PC2,PC3,PC4,tdi --categorical-covariates center \\
+        --dir-output "$GWAS_ANALYSIS_ROOT/ukb_center_tdi"
+
+    # Three separate CIMT files; use ALL continuous and categorical columns in them.
+    # Current headers: phe1,phe2; age,PC1-PC10; sex,batch.
+    bash gwas.sh regenie --grch 37 --pheno "$DIR_UKB/cimt.phe" --pheno-name phe1,phe2 --type qt \\
+        --continuous-covariate-file "$DIR_UKB/cimt.cont.cov" \\
+        --categorical-covariate-file "$DIR_UKB/cimt.cat.cov" \\
+        --dir-output "$GWAS_ANALYSIS_ROOT/cimt"
+
+chrX contract:
+    Reads the same imputed chrX.pgen/pvar/psam prefix; never substitutes a male-only copy.
+    Uses PLINK sex (1=male, 2=female), build-specific PAR boundaries, and default
+    REGENIE dosage compensation (male non-PAR dosage on the 0-2 scale).
+    No --skip-dosage-comp, genotype recoding, or automatic PAR removal is applied.
+    The X metadata audit checks selected samples, sex concordance and chromosome labels.
+    Valid PGEN dosage/hardcall encoding is an input requirement; this audit does not
+    inspect or repair genotypes. Existing results with different settings require
+    a separate --dir-output or --replace TRUE.
+
 HELP
 	gwas_runtime_usage
 }
@@ -96,7 +151,7 @@ case "$module" in
 	sparseGRM | acount | run_plink2 | regenie | run_saige) shift ;;
 	*) die "Unknown module: $module (see --help)" ;;
 esac
-grch=37 threads=4 memory=24000 min_mac=100 jobs=8
+grch=37 threads=4 memory=24000 min_mac=100 jobs=6
 step2_threads=''
 global_maf=1e-4
 [[ "$module" != regenie ]] || min_mac=5
@@ -104,8 +159,9 @@ typed_dir=''
 imputed_dir='' phenotype_file=$GWAS_PHENOTYPE_FILE covariate_file=''
 continuous_covariate_file='' categorical_covariate_file=''
 covariates_set=FALSE categorical_covariates_set=FALSE
-phenotypes=height,bald,bald12,cvd_cad.Yt2e,cvd_cad.t2e,cvd_cad.adu
-type=auto event_col='' covariates=age,sex,tdi,PC1,PC2,PC3,PC4 categorical_covariates=''
+phenotypes=height
+type=auto event_col='' covariates=age,sex,PC1,PC2,PC3,PC4 categorical_covariates=''
+sex=all
 output_dir=$GWAS_ANALYSIS_ROOT/self/common
 chromosomes=''
 extract='' keep='' sparse_grm=TRUE run=TRUE replace=FALSE
@@ -138,6 +194,7 @@ while (($#)); do
 	case "$1" in
 		--grch) grch=$2 ;; --threads) threads=$2 ;; --memory) memory=$2 ;;
 		--step2-threads) step2_threads=$2 ;;
+		--sex) sex=$2 ;;
 		--typ-dir) typed_dir=$2 ;; --imputed-dir) imputed_dir=$2 ;;
 		--jobs) jobs=$2 ;;
 		--pheno | --phenotype-file) phenotype_file=$2 ;;
@@ -161,6 +218,8 @@ while (($#)); do
 done
 [[ "$grch" == 37 || "$grch" == 38 ]] || die '--grch must be 37 or 38'
 case "$type" in auto | qt | ordinal | bt | t2e) ;; *) die 'Invalid --type' ;; esac
+case "$sex" in all|male|female) ;; *) die '--sex must be all, male or female' ;; esac
+[[ $module == regenie || $sex == all ]] || die '--sex is supported by the regenie module'
 step2_threads=${step2_threads:-$threads}
 for number in threads step2_threads memory min_mac jobs; do
 	[[ ${!number} =~ ^[0-9]+$ ]] || die "Invalid --${number//_/-}"
@@ -174,8 +233,8 @@ try:
 except (ValueError, AssertionError):
     sys.exit('ERROR: --global-maf must be > 0 and <= 0.5')
 PY
-typed_dir=${typed_dir:-$GWAS_DATA_ROOT/gen/ukb/$grch/typ}
-imputed_dir=${imputed_dir:-$GWAS_DATA_ROOT/gen/ukb/$grch/imp}
+typed_dir=${typed_dir:-$DIR_GEN/ukb/$grch/typ}
+imputed_dir=${imputed_dir:-$DIR_GEN/ukb/$grch/imp}
 selection_dir="$imputed_dir/.${module}"
 input_dir="$imputed_dir"
 if [[ "$module" == sparseGRM ]]; then
@@ -186,10 +245,15 @@ elif [[ "$module" == regenie || "$module" == run_* ]]; then
 fi
 mkdir -p "$selection_dir"
 selection_log="$selection_dir/chromosomes.log"
+[[ $module != regenie ]] || selection_log="$selection_dir/chromosomes.${LSB_JOBID:-$$}.log"
 printf 'CHR\tSTATUS\tREASON\n' >"$selection_log"
+# Genome-wide REGENIE must not silently omit chromosomes still being transferred.
+if [[ $module == regenie && ( -z "$chromosomes" || "$chromosomes" == all ) ]]; then
+	chromosomes=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,X
+fi
 if [[ -z "$chromosomes" || "$chromosomes" == all ]]; then
 	selected=()
-	for chr in {1..22} X Y; do
+	for chr in {1..22} X; do
 		if [[ -e "$input_dir/chr$chr.pgen" || -e "$input_dir/chr$chr.pvar" || -e "$input_dir/chr$chr.psam" ]]; then
 			selected+=("$chr")
 		else
@@ -226,6 +290,38 @@ if [[ -n "$categorical_covariate_file" && "$categorical_covariates_set" == FALSE
 [[ "$phenotypes" != ,* && "$phenotypes" != *, && "$phenotypes" != *,,* ]] || die 'Empty trait name in --pheno-name'
 
 
+# Validate the complete request before counts/model fitting. Outer HPC planning
+# still does no data reads; this executes on the allocated worker only.
+if [[ $run == TRUE ]]; then
+	required_inputs=()
+	for chr in "${chrs[@]}"; do
+		for ext in pgen pvar psam; do required_inputs+=("$input_dir/chr$chr.$ext"); done
+	done
+	if [[ $module == regenie ]]; then
+		required_inputs+=("$typed_dir/typ.prune.bed" "$typed_dir/typ.prune.bim" "$typed_dir/typ.prune.fam" "$phenotype_file"
+			"${continuous_covariate_file:-$covariate_file}")
+		[[ -z $categorical_covariates ]] || required_inputs+=("${categorical_covariate_file:-$covariate_file}")
+		[[ -z $keep ]] || required_inputs+=("$keep")
+		[[ -z $extract ]] || required_inputs+=("$extract")
+	fi
+	missing_inputs=0
+	declare -A checked_inputs=()
+	for required_input in "${required_inputs[@]}"; do
+		[[ ! ${checked_inputs[$required_input]+yes} ]] || continue
+		checked_inputs[$required_input]=1
+		if [[ ! -r $required_input || ! -s $required_input ]]; then
+			printf 'INPUT_MISSING_OR_EMPTY: %s\n' "$required_input" >&2
+			missing_inputs=$((missing_inputs + 1))
+		fi
+		if [[ -e $required_input.filepart ]]; then
+			printf 'INPUT_TRANSFER_IN_PROGRESS: %s.filepart\n' "$required_input" >&2
+			missing_inputs=$((missing_inputs + 1))
+		fi
+	done
+	((missing_inputs == 0)) || die "Input preflight failed ($missing_inputs problems). Finish syncing the matching .pgen/.pvar/.psam files before resubmitting. For an intentional subset, specify --chr. No GWAS tools were started."
+fi
+
+
 # 🚩 Command-plan utilities. The Python helper only handles JSON/checkpoints,
 # logged execution, and PGEN file views; it does not define GWAS commands.
 jobs_file=$(mktemp)
@@ -239,7 +335,7 @@ save_jobs() {
 	local key config=()
 	for key in module grch threads memory jobs typed_dir imputed_dir phenotype_file covariate_file \
 		continuous_covariate_file categorical_covariate_file \
-		phenotypes type event_col covariates categorical_covariates output_dir chromosomes \
+		phenotypes type event_col covariates categorical_covariates sex output_dir chromosomes \
 		extract keep min_mac global_maf plink2 plink regenie rscript saige_rscript saige_dir sparse_grm run replace; do
 		config+=("$key=${!key}")
 	done
@@ -302,12 +398,18 @@ sparseGRM() {
 # Shared imputed counts are independent of phenotypes and association --keep.
 # Reuse existing counts, including those produced before checkpoint tracking.
 # Only an explicit acount --replace TRUE may rebuild shared counts.
-acount() {
+acount() (
 	local replace=$replace
 	[[ "$module" != regenie ]] || replace=FALSE
 	local module=acount cache="$imputed_dir/.regenie-filter" chr prefix
 	local -a cmd inputs outputs pfile_args geno_inputs
 	mkdir -p "$cache"
+	# Lock before inspecting/writing the shared plan and counts. Phenotype jobs
+	# wait only for preparation, then run their models independently. The subshell
+	# closes the descriptor before REGENIE Step 1 starts (also on failure).
+	local acount_lock
+	exec {acount_lock}>"$cache/prepare.lock"
+	flock -x "$acount_lock"
 	: >"$jobs_file"
 	for chr in "${chrs[@]}"; do
 		prefix="$imputed_dir/chr$chr"
@@ -339,7 +441,7 @@ acount() {
 		add_job "chr$chr.extract"
 	done
 	save_jobs "$cache"
-}
+)
 
 
 # 🚩 Shared phenotype setup and output collection
@@ -350,8 +452,8 @@ setup_trait() {
 	[[ -n "$trait" && "$trait" != . && "$trait" != .. && "$trait" != *[/\\]* && "$trait" != *$'\n'* && "$trait" != *$'\r'* ]] || die 'Invalid trait name'
 	if [[ "$trait_type" == auto ]]; then
 		case "$trait" in
-			height | *.adu) trait_type=qt ;; bald) trait_type=ordinal ;;
-			bald12 | cvd_cad.Yt2e) trait_type=bt ;; cvd_cad.t2e) trait_type=t2e ;;
+			bmi | height | ldl | *.adu) trait_type=qt ;; bald) trait_type=ordinal ;;
+			bald12 | bald13 | bald14 | cvd_cad.Yt2e) trait_type=bt ;; cvd_cad.t2e) trait_type=t2e ;;
 			*) die "Specify --type for $trait" ;;
 		esac
 	fi
@@ -445,22 +547,36 @@ regenie() {
 	for trait in "${trait_list[@]}"; do
 		setup_trait "$trait"
 		[[ "$skip_trait" != TRUE ]] || continue
+		# Validate sex metadata before fitting any model; never rewrite genotypes.
+		cmd=(python3 "$here/f/gwas.audit.py" --phe "$phe" --fam "$pruned.fam"
+			--build "$grch" --sex "$sex" --output "$work/genotype.qc.json")
+		inputs=("${common_inputs[@]}" "$pruned.fam" "$here/f/gwas.audit.py")
+		if [[ ${seen_chr[X]+yes} ]]; then
+			cmd+=(--psam "$imputed_dir/chrX.psam" --pvar "$imputed_dir/chrX.pvar")
+			inputs+=("$imputed_dir/chrX.psam" "$imputed_dir/chrX.pvar")
+		fi
+		[[ -z "$keep" ]] || cmd+=(--keep "$keep")
+		outputs=("$work/genotype.qc.json")
+		add_job genotype-audit
 		flags=(--qt)
 		phflags=(--phenoCol "$trait")
 		case "$trait_type" in
 			bt) flags=(--bt) ;;
+			ordinal) flags=(--qt --force-qt) ;;
 			t2e)
 				flags=(--t2e)
 				phflags=(--phenoColList "$trait" --eventColList "$event")
 				;;
 		esac
-		common=("$regenie" --threads "$threads" --bsize 1000 --phenoFile "$phe" "${phflags[@]}" "${flags[@]}" "${keep_args[@]}")
+		common=("$regenie" --threads "$threads" --bsize 1000 --phenoFile "$phe" "${phflags[@]}" "${flags[@]}" --strict --par-region "b$grch" "${keep_args[@]}")
+		[[ $sex == all ]] || common+=(--sex-specific "$sex")
 		step1="$work/step1"
 		cmd=("${common[@]}" --step 1 --bed "$pruned" --lowmem --lowmem-prefix "$work/tmp" --out "$step1")
 		inputs=("${common_inputs[@]}" "$pruned.bed" "$pruned.bim" "$pruned.fam")
 		outputs=("${step1}_pred.list" "${step1}_1.loco")
 		add_job null-model "$covars" "$method"
-		common=("$regenie" --threads "$step2_threads" --bsize 1000 --phenoFile "$phe" "${phflags[@]}" "${flags[@]}" "${keep_args[@]}")
+		common=("$regenie" --threads "$step2_threads" --bsize 1000 --phenoFile "$phe" "${phflags[@]}" "${flags[@]}" --strict --par-region "b$grch" "${keep_args[@]}")
+		[[ $sex == all ]] || common+=(--sex-specific "$sex")
 		for chr in "${chrs[@]}"; do
 			prefix="$imputed_dir/chr$chr"
 			dest="$work/chr$chr"
@@ -477,7 +593,7 @@ regenie() {
 			inputs+=("${step1}_pred.list" "${step1}_1.loco" "$shared_extract")
 			cmd=("${common[@]}" --step 2 --pgen "$prefix" --pred "${step1}_pred.list" --minMAC "$min_mac" --out "$dest" --extract "$shared_extract")
 			[[ "$trait_type" != bt ]] || cmd+=(--firth --approx --pThresh 0.01)
-			[[ "$chr" != X ]] || cmd+=(--par-region "b$grch")
+
 			result="${dest}_$trait.regenie"
 			outputs=("$result")
 			add_job "chr$chr.association" "$covars" "$method"

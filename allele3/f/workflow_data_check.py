@@ -5,6 +5,13 @@ Bounded header/reference checks do not certify a complete dataset or silently
 convert genome builds. Module-specific allele harmonization remains mandatory.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 import glob
 import os
@@ -37,8 +44,8 @@ def actual_sources(workflow, argv, registry):
         if kind is not None: e['type'] = kind
         e['id'] += suffix
         chosen.append(e)
-    fasta37 = opt.get('--fasta37', os.environ.get('ALLELE_FASTA37', '/mnt/f/gen/1hgp/37/GRCH37.fasta.gz'))
-    fasta38 = opt.get('--fasta38', os.environ.get('ALLELE_FASTA', '/mnt/f/gen/1hgp/38/GRCH38.fasta.gz'))
+    fasta37 = opt.get('--fasta37', os.environ.get('ALLELE_FASTA37', configured_path('DIR_GEN', '1hgp/37/GRCH37.fasta.gz')))
+    fasta38 = opt.get('--fasta38', os.environ.get('ALLELE_FASTA', configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz')))
     ordinary = {'pipeline','primary','archaic','summary','spatial','windows','alleles','time','selection','candidates','genotypes','ld','report'}
     if workflow in ordinary:
         import herv_pipeline
@@ -72,14 +79,14 @@ def actual_sources(workflow, argv, registry):
         elif command in {'render','atlas','centroid','centroids'}:
             print('[dataset] PCA render/atlas uses frozen coordinates; original genotype identities are checked by the PCA contract', flush=True)
         elif command == 'project':
-            pattern = opt.get('--target-glob', os.environ.get('PCA3D_PROJECT_TARGET_GLOB', '/mnt/f/gen/ukb/37/imp/chr[0-9]*.pgen'))
+            pattern = opt.get('--target-glob', os.environ.get('PCA3D_PROJECT_TARGET_GLOB', configured_path('DIR_GEN', 'ukb/37/imp/chr[0-9]*.pgen')))
             files = sorted(glob.glob(pattern))
             if files:
                 for i, path in enumerate(files): add('ukb_imputed', path[:-5] if path.endswith('.pgen') else path, suffix=f':{i+1}')
             else: add('ukb_imputed', pattern)
             print('[build-check] UKB projection requires exact shared markers, allele orientation and matched INFO; MFI is imputation quality, not WGS allele counts', flush=True)
         else:
-            prefix = opt.get('--pgen-prefix', os.environ.get('PCA3D_PGEN_PREFIX', '/mnt/f/gen/ancient/AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes'))
+            prefix = opt.get('--pgen-prefix', os.environ.get('PCA3D_PGEN_PREFIX', configured_path('DIR_GEN', 'ancient/AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes')))
             add('ancient_pgen', prefix)
     elif workflow == 'pca-trajectory':
         print('[dataset] PCA trajectory uses frozen PC coordinates and dated metadata; age is supplied metadata, not PC3', flush=True)
@@ -88,7 +95,7 @@ def actual_sources(workflow, argv, registry):
         # Audit inside that selection, never block on an unused alternative.
         print('[dataset] HERV census will audit its selected PGEN/VCF source after resolving auto/resume; this is a variant-conditioned sequence model', flush=True)
     elif workflow == 'scan-run':
-        source = opt.get('--vcf', opt.get('--vcf-dir', opt.get('--dir-vcf', os.environ.get('ALLELE_VCF_DIR', '/mnt/f/annot/gnomad/sites'))))
+        source = opt.get('--vcf', opt.get('--vcf-dir', opt.get('--dir-vcf', os.environ.get('ALLELE_VCF_DIR', configured_path('DIR_ANNOT', 'allele3/gnomad/sites')))))
         build = opt.get('--build', 'GRCh38')
         add('gnomad_sites', source, build, 'vcf' if '--vcf' in opt else 'vcf_directory')
         if '--fasta' in opt:

@@ -7,6 +7,13 @@ validator. Sample batches are separate frequency-estimation cohorts.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import contextlib
 import csv
@@ -31,7 +38,7 @@ from typing import Iterator
 VERSION = "gu-2026-lsf-v1"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / "0f"))
-from qiming_resources import cpu_queue
+from qiming_resources import cpu_queue, cpu_slots
 SOURCE_SUFFIXES = {".sh", ".py", ".R", ".cc", ".cu", ".h", ".yml", ".env"}
 LIVE_STATES = {"PEND", "RUN", "WAIT", "PSUSP", "USUSP", "SSUSP", "UNKWN"}
 
@@ -261,7 +268,7 @@ def common_gu(plan: dict, output: str, selection: str | None = None) -> list[str
 def plan_run(args) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", args.target):
         die("Target must be a plain dataset name.")
-    analysis = Path(os.environ.get("GU_ANALYSIS_BASE", str(Path(os.environ.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis")) / "gu")))
+    analysis = Path(os.environ.get("GU_ANALYSIS_BASE", str(Path(os.environ.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT'))) / "gu")))
     default_run = analysis / args.target / args.grch / args.method if args.method == "ibdmix" else analysis / args.target / args.method
     run = persistent_path(args.run_dir or str(default_run))
     if run.exists() and any(run.iterdir()):
@@ -317,7 +324,7 @@ def plan_run(args) -> None:
             "cpu_queue": os.getenv("HPC_CPU_QUEUE", "33"),
             "phyml_timeout_seconds": args.phyml_timeout_seconds,
             "phyml_retry_timeouts": args.phyml_retry_timeouts,
-            "dir_map": str(Path(args.dir_map or f"/work/sph-huangj/data/gen/hm3/{args.grch}/gmap").resolve()),
+            "dir_map": str(Path(args.dir_map or Path(configured_path('DIR_GEN')) / 'hm3' / args.grch / 'gmap').resolve()),
             "threads": args.threads, "slots": args.threads + 1,
             "memory_gb": args.memory_gb, "walltime": args.walltime,
             "max_running": args.max_running, "array_size": args.array_size,
@@ -472,7 +479,7 @@ def runtime_environment(plan: dict) -> dict[str, str]:
     env = dict(os.environ)
     if plan.get("date_scratch"):
         env["DATE_SCRATCH"] = plan["date_scratch"]
-        env.setdefault("SCRATCH_ANALYSIS_ROOT", env.get("ANALYSIS_ROOT", "/work/sph-huangj/analysis"))
+        env.setdefault("SCRATCH_ANALYSIS_ROOT", env.get("ANALYSIS_ROOT", configured_path('ANALYSIS_ROOT')))
     # A request must not inherit a previous gu.sh invocation's resolved roots,
     # sample selectors, output overrides, or GPU routing.
     for key in ("GU_CMD_WORKER", "GU_UKB_DIRECT", "GU_UKB_PGEN_PREPARED", "GU_FILTERED_TARGET",
@@ -828,11 +835,14 @@ def bsub_args(plan: dict, stage: str, name: str, dependency: str | None, count: 
     if plan["queue"] == "short":
         slots = max(40, slots)
     memory = (4 if stage in {"prepare", "merge"} else plan["memory_gb"]) * 1024
+    use_gpu = plan.get("gpu", False) and stage == "worker"
+    queue = plan.get("cpu_queue", plan["queue"]) if plan.get("gpu", False) and not use_gpu else plan["queue"]
+    if not use_gpu:
+        hours, minutes = map(int, plan["walltime"].split(':'))
+        queue, slots = cpu_slots(queue, slots, memory / 1024, hours + minutes / 60)
     reservation = math.ceil(memory / slots) if plan["rusage_memory_mode"] == "per-slot" else memory
     reservation = str(reservation) + {"host": "MB/host", "per-slot": "MB/task", "per-job": "MB/job"}[plan["rusage_memory_mode"]]
     job_name = name + (f"[1-{count}]%{cap}" if count else "")
-    use_gpu = plan.get("gpu", False) and stage == "worker"
-    queue = plan.get("cpu_queue", plan["queue"]) if plan.get("gpu", False) and not use_gpu else plan["queue"]
     args = ["bsub", "-q", queue, "-n", str(slots), "-R", f"span[hosts=1] rusage[mem={reservation}]",
             "-M", str(memory // 1024) + "GB",
             "-W", plan["walltime"], "-J", job_name,

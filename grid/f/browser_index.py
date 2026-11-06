@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """GRID FINAL aggregate browser; no model fitting or participant-level imports."""
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse,json,os,re,sqlite3,tempfile,html,hashlib
 from pathlib import Path
 import pandas as pd
@@ -195,7 +202,7 @@ class Index:
 
 
 def main():
-    a=argparse.ArgumentParser(description=__doc__);a.add_argument('--analysis-root',default='/mnt/d/analysis/grid');a.add_argument('--out');a.add_argument('--traits',default='height,ldl,t2dm');a.add_argument('--max-table-mb',type=int,default=128);a.add_argument('--summary-only',action='store_true',help='Accepted; indexing never refits models')
+    a=argparse.ArgumentParser(description=__doc__);a.add_argument('--analysis-root',default=configured_path('ANALYSIS_ROOT', 'grid'));a.add_argument('--out');a.add_argument('--traits',default='height,ldl,t2dm');a.add_argument('--max-table-mb',type=int,default=128);a.add_argument('--summary-only',action='store_true',help='Accepted; indexing never refits models')
     x=a.parse_args()
     if x.max_table_mb<=0:a.error('Positive size cap required')
     print(json.dumps(Index(x.analysis_root,x.out or str(Path(x.analysis_root)/'final'),x.max_table_mb).run(x.traits.split(','))))

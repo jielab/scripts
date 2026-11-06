@@ -1,0 +1,32 @@
+[
+  {
+    "entry": "1.pca",
+    "jobs": 1,
+    "status": "PASS",
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/1.pca/grid-pca-20261105T013823-e2954a32/plan.json"
+  },
+  {
+    "entry": "2.csx",
+    "jobs": 10,
+    "status": "PASS",
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/2.csx/grid-csx-20261105T013824-d1bff12b/plan.json"
+  },
+  {
+    "entry": "3.disco",
+    "jobs": 4,
+    "status": "PASS",
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/3.disco/grid-disco-20261105T013824-7e5d604b/plan.json"
+  },
+  {
+    "entry": "4.prsformer",
+    "jobs": 7,
+    "status": "PASS",
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/4.prsformer/grid-prsformer-20261105T013825-60524e0e/plan.json"
+  },
+  {
+    "entry": "grid",
+    "jobs": 15,
+    "status": "PASS",
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/final-plans/grid/grid-grid-20261105T013825-7ed15c63/plan.json"
+  }
+]

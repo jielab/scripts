@@ -8,6 +8,13 @@ phasing is performed here. IBDmix calling code is not modified.
 
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from collections import Counter
 from contextlib import contextmanager, nullcontext
@@ -910,11 +917,17 @@ def export_vcf(args):
 			quality_filtered = stage / "quality_filtered"
 			quality_args = ([] if args.existing_pgen else ["--geno", args.ukb_max_missing])
 			if args.existing_pgen and chrom == 'X':
-				quality_args += ['--missing', 'sample-only', 'scols=maybefid,nmiss,nobs,hethap', '--set-invalid-haploid-missing']
+				# PLINK requires haploid correction to run without other commands.
+				# Record the original missing/heterozygous calls before modifying them.
+				ploidy_before = stage / 'ploidy_before'
+				run(['plink2', '--pfile', filtered, '--missing', 'sample-only',
+					'scols=maybefid,nmiss,nobs,hethap', '--threads', args.ukb_threads,
+					'--memory', args.ukb_memory_mb, '--out', ploidy_before], stage / 'ploidy_before.command.txt')
+				quality_args += ['--set-invalid-haploid-missing']
 			run(["plink2", "--pfile", filtered, *quality_args, "--threads", args.ukb_threads, "--memory", args.ukb_memory_mb, "--make-pgen", "--out", quality_filtered], stage / "missing_filter.command.txt")
 			ploidy_qc = {}
 			if args.existing_pgen and chrom == 'X':
-				with Path(str(quality_filtered) + '.smiss').open() as handle:
+				with Path(str(ploidy_before) + '.smiss').open() as handle:
 					before = list(csv.DictReader(handle, delimiter='\t'))
 				ploidy_qc = {'input_missing_genotypes': sum(int(row['MISSING_CT']) for row in before),
 					'invalid_haploid_genotypes_set_missing': sum(int(row['HETHAP_CT']) for row in before)}
@@ -1505,7 +1518,7 @@ def psam_chunk(value):
 		total_samples=len(samples), first_sample=start + 1, last_sample=start + len(selected),
 		chunk_samples=len(selected), selection_order='PSAM rows, then optional --keep-males')
 	key = hashlib.sha256(json.dumps(info, sort_keys=True).encode()).hexdigest()[:24]
-	work = Path('/tmp/gu-psam-chunks') / key
+	work = Path(configured_path('DIR_RUNTIME_TMP', 'gu-psam-chunks')) / key
 	work.mkdir(parents=True, exist_ok=True)
 	for name, content in [('chunk.keep', '#FID\tIID\n' + ''.join(s['fid'] + '\t' + s['sample'] + '\n' for s in selected)),
 		('chunk.json', json.dumps(info, indent=2, sort_keys=True) + '\n')]:
@@ -1538,7 +1551,7 @@ def context(prefix, keep=None, male=False, panel=None, dataset="ukb"):
 	cohort = validate_cohort(samples, argparse.Namespace(sample_panel=panel)) if dataset == "ukb" else {"sample_metadata_sha256": cohort_hash(samples)}
 	identity = {'male_only': male, 'cohort': cohort['sample_metadata_sha256'], 'keep_sha256': hashlib.sha256(Path(keep).read_bytes()).hexdigest() if keep else None}
 	key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
-	work = Path('/tmp/gu-cohorts') / key
+	work = Path(configured_path('DIR_RUNTIME_TMP', 'gu-cohorts')) / key
 	work.mkdir(parents=True, exist_ok=True)
 	write_panel(work / 'samples.txt', samples)
 	ids = '#IID\n' + ''.join(s['sample'] + '\n' for s in samples)
@@ -1629,7 +1642,7 @@ def main(argv = None):
 	args = parser().parse_args(argv)
 	args.chroms = chromosomes(args.chr)
 	args.root = (args.ukb_pgen_root or runtime_directory("GU_REF_ROOT") / f"ukb/{args.grch}/{args.ukb_source}").expanduser().resolve()
-	args.work = temporary_path(args.ukb_work or Path("/tmp/gu-ukb") / args.ukb_source)
+	args.work = temporary_path(args.ukb_work or Path(configured_path('DIR_RUNTIME_TMP', 'gu-ukb')) / args.ukb_source)
 	for name in ["ukb_threads", "ukb_memory_mb", "ukb_pilot_n", "ukb_max_export_samples"]:
 		if getattr(args, name) <= 0:
 			fail(f"{name} must be positive")

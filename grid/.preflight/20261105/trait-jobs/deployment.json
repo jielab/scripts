@@ -1,0 +1,47 @@
+[
+  {
+    "path": "f/hpc_workflow.py",
+    "before_sha256": "df3f853052a9a91ee7368a5c636a4f5f12a1feb799ff90b642ef2a08619e93da",
+    "after_sha256": "5e8d942d1d6db00c988e5d11d554ee7d06f7d8602aa58419ae87db3d26382af7"
+  },
+  {
+    "path": "f/workflow_entry.sh",
+    "before_sha256": "36559f41b1f755c48a127ae185c8cbb40cc0c052bdd31cbd4722ffd338082ceb",
+    "after_sha256": "7a05b7d321bb059c3ddeae6cbf4dca77a963f53710260bd6a3613523265e3324"
+  },
+  {
+    "path": "2.csx.sh",
+    "before_sha256": "9f8cb5ed9c3bbd306d818ae34fedb4524ea8592c6c0463f0ff448d44ef8d3771",
+    "after_sha256": "04dfe742dd8377498341c3b1bc13484b847e7e3ebc48162c8b0dcd36d4f5c04b"
+  },
+  {
+    "path": "3.disco.sh",
+    "before_sha256": "d57e1e30625572756f3f9a4486e5dd6c73d85d9f9dcff8968ca793105bc66f35",
+    "after_sha256": "8d7c2dae8910b319fc6e99ebb876ccb450b7b30ff661721711f64c7e4597f77b"
+  },
+  {
+    "path": "4.prsformer.sh",
+    "before_sha256": "861588bd03258856d5eb47d7c6e08dfc2c1d0795b1b9d25132a3b1b607b83474",
+    "after_sha256": "426be8d54ea986267ed3c24f2779dafb4548dbacf3a711a4983947a5e95ea8b8"
+  },
+  {
+    "path": "2test/test_hpc_workflow.py",
+    "before_sha256": "eb4b2bcc526f57b648892cd70ad5bb7736d8c7028e11dd13c8f60c01ab502a78",
+    "after_sha256": "a7781d6e9026edb54c5cb695de269b7ebbbe5413f6c1e85310db09a6649ff57d"
+  },
+  {
+    "path": "f/shared_cohort.py",
+    "before_sha256": "f74a48718556becaeb6e42e76f3675a177bfe6440846bd26b83737f955ad0cbb",
+    "after_sha256": "a5ee676d66f9e37d4170ce6394e31bdfa6bb309b72b8f5b95a064a5079e90544"
+  },
+  {
+    "path": "f/trait_workflow.py",
+    "before_sha256": null,
+    "after_sha256": "a73a47b5a300279a00e7e6d110c178400d1b4f3c79308cfeb985106641fb6464"
+  },
+  {
+    "path": "2test/test_trait_workflow.py",
+    "before_sha256": null,
+    "after_sha256": "a5a1868020924ed41211d0663608e1eaf496b4a5199e37841862a9e9de9bb9c9"
+  }
+]

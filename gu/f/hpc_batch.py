@@ -6,6 +6,13 @@ and all scientific processing. No genotype preparation runs on the login node.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import json
 import os
@@ -21,7 +28,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent / '0f'))
 import submit_jobs
-from qiming_resources import cpu_queue
+from qiming_resources import cpu_queue, cpu_slots
 
 
 def expand(value):
@@ -149,7 +156,7 @@ def result_base(args):
     if explicit:
         return Path(explicit).expanduser().resolve()
     target, build = get(args, '--target', '1kg'), get(args, '--grch', '37')
-    analysis = Path(os.environ.get('GU_ANALYSIS_BASE', str(Path(os.environ.get('ANALYSIS_ROOT', '/work/sph-huangj/analysis')) / 'gu')))
+    analysis = Path(os.environ.get('GU_ANALYSIS_BASE', str(Path(os.environ.get('ANALYSIS_ROOT', configured_path('ANALYSIS_ROOT'))) / 'gu')))
     base = analysis / target / build
     # Cohorts share the analysis build directory without writing beside inputs.
     if get(args, '--postfix'):
@@ -169,7 +176,7 @@ def preflight_inputs(args):
 
 
 def preflight_publication():
-    interpreter = os.environ.get('GU_RESULTS_RSCRIPT', str(Path(os.environ.get('GU_ENV_PREFIX', '/work/sph-huangj/.conda/envs/gu')) / 'bin/Rscript'))
+    interpreter = os.environ.get('GU_RESULTS_RSCRIPT', str(Path(os.environ.get('GU_ENV_PREFIX', configured_path('DIR_WORK', '.conda/envs/gu'))) / 'bin/Rscript'))
     if not Path(interpreter).is_file() or not os.access(interpreter, os.X_OK):
         raise ValueError(f'missing {interpreter}; run gu/install.sh before submitting')
     for name in ('ukb_prepare.py', 'ibdmix.py', 'ibdmix.sh', '0.common.py', '0.common.R', 'results.R', 'results.py'):
@@ -240,7 +247,7 @@ def main(argv=None):
         raise ValueError('HPC --memory-cap must be a positive integer in G, e.g. 32G')
     if mode == 'hpc' and not use_gpu:
         hours, minutes = map(int, opts.walltime.split(':'))
-        opts.queue = cpu_queue(opts.queue, opts.slots, int(m[1]), hours + minutes / 60)
+        opts.queue, opts.slots = cpu_slots(opts.queue, opts.slots, int(m[1]), hours + minutes / 60)
     jobs = int(get(args, '--jobs', '1'))
     if jobs < 1 or jobs > opts.slots:
         raise ValueError('--jobs must be between 1 and --slots')

@@ -1,0 +1,390 @@
+--- a/f/hpc_workflow.py
++++ b/f/hpc_workflow.py
+@@ -18,7 +18,7 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT.parent / "0f"))
+-from workflow_jobs import Job, resources, run_plan, write_plan
++from workflow_jobs import Job, load_plan, resources, run_plan, write_plan
+ 
+ ENTRIES = {"grid": "grid.sh", "pca": "1.pca.sh", "csx": "2.csx.sh", "disco": "3.disco.sh", "prsformer": "4.prsformer.sh", "install": "install.sh"}
+ IDENTITY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+@@ -180,12 +180,15 @@
+         "GRID_PHE_FILE": {"--pheno-file", "--phe-file", "--phe"},
+         "GRID_TARGET_DIR": {"--dir-gen"}, "GRID_CSX_SNPINFO": {"--snpinfo", "--csx-snpinfo"},
+         "GRID_ANCESTRY_FILE": {"--ancestry-file"}, "GRID_GROUP_FILE": {"--group-file", "--split-group-file"},
++        "GRID_PCA_FILE": {"--pca-file"},
+         "GRID_REL_FILE": {"--relationship-file"}, "GRID_SCORE_DIR": {"--score-dir", "--dir-score"},
+         "GRID_GWAS_DIR": {"--dir-gwas"}, "GRID_REMOVE": {"--remove", "--exclude-ids"},
+     }.items():
+         value = option(extra, names)
+         if value is not None:
+             base_env[key] = value
++    if base_env.get("GRID_PCA_FILE") and not base_env.get("GRID_ANCESTRY_FILE"):
++        base_env["GRID_ANCESTRY_FILE"] = str(Path(base_env["GRID_PCA_FILE"]).parent / "ukb.ancestry.auto.tsv.gz")
+     local = os.getenv("submit", "local") == "local"
+     jobs = []
+     def add(key, stage, entry, module, selected, depends=(), passed=None, device=False):
+@@ -348,6 +351,162 @@
+     return jobs
+ 
+ 
++def check_upstream_files(jobs):
++    """Check external stage outputs before submission, without polling any jobs.
++
++    Outputs of ancestors in this invocation may not exist yet. Their ordinary
++    scheduler dependencies still order the workers. Scientific validation stays
++    in those workers; this check only stats files and reads small path metadata.
++    """
++    from grid_paths import read_config
++
++    by_key = {job.key: job for job in jobs}
++    parents = {}
++    def ancestors(key):
++        if key not in parents:
++            parents[key] = set(by_key[key].depends)
++            for parent in by_key[key].depends:
++                parents[key].update(ancestors(parent))
++        return parents[key]
++
++    required, produced = [], {}
++    def path(job, value):
++        value = Path(value).expanduser()
++        return (value if value.is_absolute() else Path(job.cwd or Path.cwd()) / value).resolve()
++
++    def need(job, value, hint):
++        required.append((job.key, path(job, value), hint))
++
++    def output(job, value):
++        produced.setdefault(path(job, value), set()).add(job.key)
++
++    for job in jobs:
++        tokens = job.argv[2:]
++        entry = Path(job.argv[1]).name
++        module = tokens[0] if tokens and not tokens[0].startswith("-") else "all"
++        env = {**os.environ, **job.env}
++        root = path(job, env["GRID_OUTPUT_ROOT"])
++        traits = (option(tokens, {"--traits", "--trait"}) or "height,ldl,t2dm").split(",")
++        pca = option(tokens, {"--pca-file"}) or env.get("GRID_PCA_FILE") or configured_path("DIR_GEN", "ukb/pca_proj/ukb.discodivas.pca.tsv.gz")
++        ancestry = option(tokens, {"--ancestry-file"}) or env.get("GRID_ANCESTRY_FILE") or str(Path(pca).parent / "ukb.ancestry.auto.tsv.gz")
++        score_root = option(tokens, {"--dir-score", "--score-dir"}) or env.get("GRID_SCORE_DIR") or configured_path("DIR_GEN", "ukb/pgs")
++
++        def projection():
++            need(job, pca, "bash 1.pca.sh")
++            if str(ancestry).lower() not in {"", "none"}:
++                need(job, ancestry, "bash 1.pca.sh")
++
++        def block_config():
++            source = option(tokens, {"--block-config"})
++            if not source:
++                config_file = option(tokens, {"--config"})
++                if entry == "2.csx.sh" and module.startswith("block"):
++                    source = config_file or ROOT / "config/abm.blocks.json"
++                else:
++                    config = read_config(path(job, config_file or ROOT / "config/abm.json"), root)
++                    source = config["block_config"]
++            source = path(job, source)
++            config = read_config(source, root)
++            # read_config normally sees the worker environment. During planning
++            # an explicit --dir-score lives in job.env, not os.environ yet.
++            from workflow_paths import relocate_defaults
++            raw = json.loads(source.read_text())
++            if relocate_defaults(raw.get("score_root")) == configured_path("DIR_GEN", "ukb/pgs") and env.get("GRID_SCORE_DIR"):
++                config["score_root"] = env["GRID_SCORE_DIR"]
++            return config
++
++        # Explicit standalone inputs are external even when a default producer
++        # is in the plan. Honor relative paths and per-trait filename templates.
++        external_cohort = option(tokens, {"--cohort", "--prepared"})
++        for names in ({"--cohort"}, {"--prepared"}, {"--input-manifest"}):
++            explicit = option(tokens, names)
++            if explicit:
++                for trait in traits:
++                    need(job, explicit.format(trait=trait), "provide the requested input file")
++
++        if job.key == "shared.prepare":
++            projection()
++            cache = Path(block_config()["prsformer_cache"])
++            output(job, cache / "data.tsv.gz")
++
++        if entry == "2.csx.sh" and module in {"weights", "score", "all"}:
++            subset_name = score_subset(tokens)
++            for trait in traits:
++                if module in {"score", "all"}:
++                    output(job, Path(score_root) / trait / subset_name / "1csx.scores.rds")
++                if module == "score" and not any(k.endswith(".weights") for k in ancestors(job.key)):
++                    gwas_root = path(job, option(tokens, {"--dir-gwas"}) or env.get("GRID_GWAS_DIR") or configured_path("DIR_GWAS", "4grid/common"))
++                    for pop in ("AFR", "EAS", "EUR", "SAS"):
++                        tag = f"{trait.lower()}.{pop}"
++                        choices = [gwas_root / tag / "gwas" / (tag + ".gz")]
++                        if trait.lower() == "t2dm" and pop == "AFR":
++                            choices.append(gwas_root / "t2dm.AFA/gwas/t2dm.AFA.gz")
++                        if gwas_root.is_dir():
++                            choices.extend(p for p in gwas_root.iterdir() if p.name.lower() == tag.lower() + ".gz")
++                        source = next((p for p in choices if p.is_file()), choices[0])
++                        weights = str(source).removesuffix(".gz") + ("." + subset_name if subset_name else "") + ".csx.gz"
++                        need(job, weights, "bash 2.csx.sh weights")
++                        need(job, weights + ".signature", "bash 2.csx.sh weights")
++
++        if entry == "3.disco.sh" and module in {"all", "score"}:
++            need(job, pca, "bash 1.pca.sh")
++            for trait in traits:
++                need(job, Path(score_root) / trait / score_subset(tokens) / "1csx.scores.rds", "bash 2.csx.sh")
++
++        if (entry == "2.csx.sh" and module == "targetfit") or (entry == "3.disco.sh" and module == "evaluate"):
++            filename = "1csx.scores.rds" if entry == "2.csx.sh" else "2disco.scores.rds"
++            explicit = option(tokens, {"--scores", "--score-file"})
++            for trait in traits:
++                score = explicit.format(trait=trait) if explicit else Path(score_root) / trait / (option(tokens, {"--score-subset"}) or "") / filename
++                need(job, score, "bash " + entry)
++            if not external_cohort:
++                cache_data = path(job, Path(block_config()["prsformer_cache"]) / "data.tsv.gz")
++                if not cache_data.is_file() and "shared.prepare" not in ancestors(job.key):
++                    projection()  # This standalone evaluator prepares missing inputs itself.
++
++        if entry == "2.csx.sh" and module == "blockprepare":
++            config = block_config()
++            for trait in traits:
++                score_dir = option(tokens, {"--score-dir"}) or config["score_root"]
++                need(job, Path(score_dir) / trait / "1csx.scores.rds", "bash 2.csx.sh")
++                provenance = path(job, Path(config["csx_analysis_root"]) / trait / "provenance.json")
++                need(job, provenance, "bash 2.csx.sh")
++                if provenance.is_file():
++                    models = json.loads(provenance.read_text()).get("models", {})
++                    for pop in ("AFR", "EAS", "EUR", "SAS"):
++                        weights = models.get("csx." + pop, {}).get("weights_file")
++                        if weights:
++                            need(job, weights, "bash 2.csx.sh weights")
++
++        if entry == "4.prsformer.sh" and module in {"prsformer", "prsformer2"} and "shared.prepare" not in ancestors(job.key):
++            cache = path(job, block_config()["prsformer_cache"])
++            if not all((cache / name).is_file() for name in ("prepare.json", "data.tsv.gz", "variants.tsv.gz")):
++                projection()
++
++        if entry == "grid.sh" and module in {"prepare", "twins", "evaluate", "architecture"}:
++            for trait in traits:
++                folder = root / "count_abm" / trait
++                if module == "twins":
++                    need(job, folder / "PREPARE_COMPLETE.json", "bash grid.sh prepare")
++                elif module == "evaluate":
++                    need(job, folder / "TWINS_COMPLETE.json", "bash grid.sh twins")
++                elif module == "architecture":
++                    need(job, folder / "PREPARE_COMPLETE.json", "bash grid.sh prepare")
++                if module != "architecture":
++                    output(job, folder / (module.upper() + "_COMPLETE.json"))
++
++    missing = {}
++    for key, file, hint in required:
++        if not (produced.get(file, set()) & ancestors(key)) and not file.is_file():
++            missing.setdefault((file, hint), set()).add(key)
++    if missing:
++        lines = ["Missing prerequisite files; no jobs were submitted:"]
++        for (file, hint), consumers in missing.items():
++            lines.extend([f"  [MISSING] {file}", f"    Required by: {', '.join(sorted(consumers))}; first: {hint}"])
++        lines.append("Run this command again after the required files are available.")
++        raise ValueError("\n".join(lines))
++
++
+ def parser():
+     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+     p.add_argument("--entry", choices=ENTRIES, required=True)
+@@ -385,6 +544,7 @@
+     args, extra = p.parse_known_args(tokens)
+     try:
+         mode = os.getenv("submit", "local")
++        preview = args.plan_only or args.dry_run == "TRUE"
+         if args.entry == "csx":
+             legacy_stage = option(extra, {"--stage"})
+             if legacy_stage:
+@@ -400,10 +560,14 @@
+                 extra = without(extra, {"--backend"})
+         if args.resume_plan:
+             path = args.resume_plan.resolve()
++            if not preview:
++                _, plan = load_plan(path)
++                check_upstream_files([Job(**job) for job in plan["jobs"]])
+         else:
+             jobs = build_jobs(args, extra)
++            if not preview:
++                check_upstream_files(jobs)
+             path = write_plan(jobs, args.job_dir or Path(args.analysis_root) / "jobs", mode=mode, name=f"grid-{args.entry}")
+-        preview = args.plan_only or args.dry_run == "TRUE"
+         if not preview:
+             import shutil
+             if not shutil.which(os.getenv("WORKFLOW_PYTHON", "python3")):
+--- a/2test/test_hpc_workflow.py
++++ b/2test/test_hpc_workflow.py
+@@ -158,6 +158,121 @@
+         self.assertEqual(check.argv, ["bash", str(GRID/"install.sh"), "--check"])
+ 
+ 
++class UpstreamFileTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(prefix="grid prerequisites ")
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.pca = self.root / "projection/pca.tsv.gz"
++        self.ancestry = self.root / "projection/ancestry.tsv.gz"
++        self.scores = self.root / "scores"
++        environment = patch.dict(os.environ, {
++            "submit": "hpc", "GRID_PCA_FILE": str(self.pca),
++            "GRID_ANCESTRY_FILE": str(self.ancestry), "GRID_SCORE_DIR": str(self.scores),
++            "GRID_GWAS_DIR": str(self.root / "gwas"), "GRID_CHRS": "1-22",
++        })
++        environment.start()
++        self.addCleanup(environment.stop)
++
++    def touch(self, path):
++        path = Path(path)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text("exists\n")  # Only existence is checked on the submission host.
++        return path
++
++    def jobs(self, entry, module="all", extra=()):
++        args = planner.parser().parse_args(["--entry", entry, "--workflow-module", module,
++            "--analysis-root", str(self.root / "analysis"), "--traits", "height"])
++        return planner.build_jobs(args, list(extra))
++
++    def projection(self):
++        self.touch(self.pca)
++        self.touch(self.ancestry)
++
++    def test_csx_all_checks_pca_but_allows_its_own_future_scores(self):
++        jobs = self.jobs("csx")
++        with self.assertRaisesRegex(ValueError, "Missing prerequisite files; no jobs were submitted") as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(self.pca), str(error.exception))
++        self.assertIn("bash 1.pca.sh", str(error.exception))
++        self.projection()
++        planner.check_upstream_files(jobs)
++        self.assertFalse((self.scores / "height/1csx.scores.rds").exists())
++
++    def test_disco_respects_explicit_paths_and_lists_missing_csx(self):
++        pca = self.touch(self.root / "custom/pca.gz")
++        ancestry = self.touch(self.root / "custom/ancestry.gz")
++        scores = self.root / "custom/scores"
++        jobs = self.jobs("disco", extra=["--pca-file", str(pca), "--ancestry-file", str(ancestry),
++                                        "--dir-score", str(scores)])
++        self.assertEqual(jobs[0].env["GRID_PCA_FILE"], str(pca))
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        score = scores / "height/1csx.scores.rds"
++        self.assertIn(str(score), str(error.exception))
++        self.assertIn("bash 2.csx.sh", str(error.exception))
++        self.touch(score)
++        planner.check_upstream_files(jobs)
++
++    def test_prsformer_all_needs_projection_without_other_methods_outputs(self):
++        jobs = self.jobs("prsformer")
++        with self.assertRaises(ValueError):
++            planner.check_upstream_files(jobs)
++        self.projection()
++        planner.check_upstream_files(jobs)
++        self.assertFalse(self.scores.exists())
++
++    def test_grid_checks_score_provenance_and_referenced_weight_files(self):
++        self.projection()
++        self.touch(self.scores / "height/1csx.scores.rds")
++        jobs = self.jobs("grid")
++        provenance = self.root / "analysis/csx/height/provenance.json"
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(provenance), str(error.exception))
++        weights = {p: self.root / "weights" / (p + ".gz") for p in ("AFR", "EAS", "EUR", "SAS")}
++        provenance.parent.mkdir(parents=True, exist_ok=True)
++        provenance.write_text(json.dumps({"models": {"csx."+p: {"weights_file": str(w)} for p,w in weights.items()}}))
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        for weight in weights.values():
++            self.assertIn(str(weight), str(error.exception))
++            self.touch(weight)
++        planner.check_upstream_files(jobs)
++        self.assertFalse((self.root / "analysis/prsformer/cache/data.tsv.gz").exists())
++
++    def test_score_only_needs_existing_weights_and_signatures(self):
++        for pop in ("AFR", "EAS", "EUR", "SAS"):
++            self.touch(self.root / "gwas" / f"height.{pop}.gz")
++        jobs = self.jobs("csx", "score", ["--chrs", "22"])
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn("height.AFR.chr22.csx.gz", str(error.exception))
++        for pop in ("AFR", "EAS", "EUR", "SAS"):
++            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz")
++            self.touch(self.root / "gwas" / f"height.{pop}.chr22.csx.gz.signature")
++        planner.check_upstream_files(jobs)
++
++    def test_standalone_count_stage_reports_the_producing_command(self):
++        jobs = self.jobs("grid", "twins")
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        receipt = self.root / "analysis/count_abm/height/PREPARE_COMPLETE.json"
++        self.assertIn(str(receipt), str(error.exception))
++        self.assertIn("bash grid.sh prepare", str(error.exception))
++        self.touch(receipt)
++        planner.check_upstream_files(jobs)
++
++    def test_external_manifest_is_checked_and_internal_stages_are_not_blocked(self):
++        manifest = self.root / "input/height.json"
++        jobs = self.jobs("grid", extra=["--input-manifest", str(manifest.parent / "{trait}.json")])
++        with self.assertRaises(ValueError) as error:
++            planner.check_upstream_files(jobs)
++        self.assertIn(str(manifest), str(error.exception))
++        self.touch(manifest)
++        planner.check_upstream_files(jobs)
++
++
+ class PublicEntryTests(unittest.TestCase):
+     def setUp(self):
+         self.temp = tempfile.TemporaryDirectory(prefix="grid scheduler ")
+@@ -217,6 +332,51 @@
+         self.assertIn(str(GRID / "environment.hpc.yml"), result.stdout)
+         self.assertFalse((self.root / "env").exists())
+ 
++    def test_default_hpc_submission_returns_without_querying_job_status(self):
++        bin_dir = self.root / "fake-lsf"
++        bin_dir.mkdir()
++        submitted, polled = self.root / "submitted", self.root / "polled"
++        for name, body in {
++            "bsub": 'cat >/dev/null\nprintf "accepted\\n" >> "$TEST_SUBMITTED"\necho "Job <12345> is submitted to queue <33>."\n',
++            "bjobs": 'touch "$TEST_POLLED"\nexit 1\n',
++        }.items():
++            executable = bin_dir / name
++            executable.write_text("#!/usr/bin/env bash\n" + body)
++            executable.chmod(0o755)
++        env = dict(self.env, PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], SUBMIT_WAIT="FALSE",
++                   TEST_SUBMITTED=str(submitted), TEST_POLLED=str(polled))
++        result = subprocess.run(["bash", str(GRID / "1.pca.sh"), "--submit", "hpc",
++            "--analysis-root", str(self.root / "submit")], env=env, capture_output=True, text=True, timeout=15)
++        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
++        self.assertIn('"status": "SUBMITTED"', result.stdout)
++        self.assertEqual(submitted.read_text(), "accepted\n")
++        self.assertFalse(polled.exists())
++
++    def test_missing_prerequisite_is_printed_before_any_plan_or_submission(self):
++        output = self.root / "missing-output"
++        pca = self.root / "missing.pca.tsv.gz"
++        scores = self.root / "missing-scores"
++        bin_dir = self.root / "blocked-lsf"
++        bin_dir.mkdir()
++        submitted = self.root / "unexpected-submission"
++        bsub = bin_dir / "bsub"
++        bsub.write_text('#!/usr/bin/env bash\ntouch "$TEST_SUBMITTED"\nexit 1\n')
++        bsub.chmod(0o755)
++        env = dict(self.env, GRID_PCA_FILE=str(pca), GRID_SCORE_DIR=str(scores),
++                   GRID_ANCESTRY_FILE=str(self.root / "missing.ancestry.tsv.gz"), SUBMIT_WAIT="FALSE",
++                   PATH=str(bin_dir)+os.pathsep+os.environ["PATH"], TEST_SUBMITTED=str(submitted))
++        result = subprocess.run(["bash", str(GRID / "3.disco.sh"), "--traits", "height",
++            "--submit", "hpc", "--analysis-root", str(output)], env=env,
++            capture_output=True, text=True, timeout=15)
++        self.assertEqual(result.returncode, 2, result.stdout+result.stderr)
++        self.assertIn("[MISSING] " + str(pca), result.stderr)
++        self.assertIn(str(scores / "height/1csx.scores.rds"), result.stderr)
++        self.assertIn("bash 1.pca.sh", result.stderr)
++        self.assertIn("bash 2.csx.sh", result.stderr)
++        self.assertNotIn("[SUBMITTED]", result.stdout)
++        self.assertFalse(submitted.exists())
++        self.assertFalse((output / "jobs").exists())
++
+     def test_real_public_local_count_pipeline_completes_all_five_workers(self):
+         from test_count_abm import exported_fixture
+         manifest, trait = exported_fixture(self.root/"input", maps=1)

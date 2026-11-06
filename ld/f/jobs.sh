@@ -6,7 +6,10 @@ root="$OUT"
 read -r -a chroms <<< "$("$PYTHON" -c 'import os,sys; sys.path.insert(0,sys.argv[1]); from ld_pipeline import parse_chroms; print(*parse_chroms(os.environ["CHRS"]))' "$script_dir/f")"
 mkdir -p "$root"
 queue="${LD_QUEUE:-${HPC_CPU_QUEUE:-33}}"
-slots=$((THREADS + 1))
+[[ $THREADS =~ ^[1-9][0-9]*$ ]] || { echo 'THREADS must be a positive integer.' >&2; exit 2; }
+slots=${LD_SLOTS:-$((THREADS + 1))}
+[[ $slots =~ ^[1-9][0-9]*$ ]] || { echo 'LD_SLOTS must be a positive integer.' >&2; exit 2; }
+(( slots >= THREADS + 1 )) || { echo 'LD_SLOTS must cover THREADS plus one LD compressor slot.' >&2; exit 2; }
 [[ $LD_MEMORY_GIB =~ ^[1-9][0-9]*$ && $LD_WALLTIME =~ ^[1-9][0-9]*:[0-5][0-9]$ ]] || {
     echo 'LD_MEMORY_GIB must be positive integer GiB; LD_WALLTIME must be HHH:MM.' >&2; exit 2;
 }
@@ -14,17 +17,19 @@ slots=$((THREADS + 1))
     echo 'PLINK MEMORY_MB exceeds the total LD_MEMORY_GIB allocation.' >&2; exit 2;
 }
 if [[ $submit == hpc ]]; then
-    queue=$("$PYTHON" - "$script_dir/../0f" "$queue" "$slots" "$LD_MEMORY_GIB" "$LD_WALLTIME" <<'PY'
+    # Apply the shared Admin CPU/RAM allocation policy before writing jobs.
+    resources=$("$PYTHON" - "$script_dir/../0f" "$queue" "$slots" "$LD_MEMORY_GIB" "$LD_WALLTIME" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
-from qiming_resources import cpu_queue
+from qiming_resources import cpu_slots
 hours, minutes = map(int, sys.argv[5].split(':'))
 try:
-    print(cpu_queue(sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), hours + minutes / 60))
+    print(*cpu_slots(sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), hours + minutes / 60))
 except ValueError as exc:
     raise SystemExit(str(exc))
 PY
     )
+    read -r queue slots <<< "$resources"
 fi
 
 write_header() {
@@ -32,6 +37,13 @@ write_header() {
     # Merge reads the completed BED/JSON outputs; it does not compute LD.
     if [[ ${task_label:-merge} == merge ]]; then
         header_slots=1; header_memory=4; header_wall=1:00
+    fi
+    if [[ $submit == hpc ]]; then
+        local recommended
+        recommended=$("$PYTHON" "$script_dir/../0f/qiming_resources.py" --queue "$queue" \
+            --cores "$header_slots" --memory-gib "$header_memory" \
+            --walltime "$header_wall" --format shell) || return
+        read -r queue header_slots <<< "$recommended"
     fi
     printf '#!/bin/bash -l\n'
     printf '#BSUB -q %s\n#BSUB -n %s\n#BSUB -W %s\n' "$queue" "$header_slots" "$header_wall"

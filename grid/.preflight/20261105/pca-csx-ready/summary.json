@@ -1,0 +1,24 @@
+{
+  "pca_job": "4386976",
+  "pca_status": "DONE",
+  "pca_returncode": 0,
+  "pca_completed_beijing": "2026-11-05 11:00:37 +08:00",
+  "pca_samples": 487409,
+  "pca_output_validation": "PASS",
+  "csx_inputs": "PASS",
+  "csx_gwas_files": 12,
+  "csx_ld_files": 88,
+  "csx_genotype_files": 66,
+  "runtime_checks": "PASS",
+  "example_plan_checks": "PASS",
+  "changed_scripts": [
+    "1.pca.sh",
+    "2.csx.sh",
+    "3.disco.sh",
+    "4.prsformer.sh",
+    "grid.sh"
+  ],
+  "changes": "usage only; local and HPC synchronized",
+  "production_jobs_submitted": 0,
+  "quota_available_gib_after_in_doubt": 6493.26
+}

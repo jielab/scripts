@@ -1,0 +1,42 @@
+[SUBMITTED] height.all 4388790
+[SUBMITTED] ldl.all 4388791
+[SUBMITTED] t2dm.all 4388792
+{
+  "status": "SUBMITTED",
+  "jobs": {
+    "height.all": {
+      "status": "submitted",
+      "argv": [
+        "bsub"
+      ],
+      "submitted": "2026-11-05T13:56:35.928437+00:00",
+      "returncode": 0,
+      "stdout": "Job <4388790> is submitted to queue <v4-3t>.\n",
+      "stderr": "",
+      "job_id": "4388790"
+    },
+    "ldl.all": {
+      "status": "submitted",
+      "argv": [
+        "bsub"
+      ],
+      "submitted": "2026-11-05T13:56:36.087577+00:00",
+      "returncode": 0,
+      "stdout": "Job <4388791> is submitted to queue <v4-3t>.\n",
+      "stderr": "",
+      "job_id": "4388791"
+    },
+    "t2dm.all": {
+      "status": "submitted",
+      "argv": [
+        "bsub"
+      ],
+      "submitted": "2026-11-05T13:56:36.231914+00:00",
+      "returncode": 0,
+      "stdout": "Job <4388792> is submitted to queue <v4-3t>.\n",
+      "stderr": "",
+      "job_id": "4388792"
+    }
+  },
+  "plan": "/work/sph-huangj/analysis/grid/jobs/grid-csx-20261105T135616-90ad52ab/plan.json"
+}

@@ -14,6 +14,13 @@ conflicts; unrelated missing datasets do not make the audit fail.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from collections import Counter
 from contextlib import contextmanager
@@ -39,7 +46,7 @@ AUTOSOMES = tuple(str(c) for c in range(1, 23))
 def default_fasta(build):
     """Honor shared shell defaults, while keeping explicit CLI paths untouched."""
     key = "ALLELE_FASTA37" if build == "37" else "ALLELE_FASTA"
-    return os.environ.get(key) or str(Path(os.environ.get("DIR_DATA") or "/mnt/f")/
+    return os.environ.get(key) or str(Path(os.environ.get("DIR_DATA") or configured_path('DIR_BIG'))/
                                       "gen"/"1hgp"/build/f"GRCH{build}.fasta.gz")
 
 
@@ -47,9 +54,9 @@ DEFAULT_FASTA37 = default_fasta("37")
 DEFAULT_FASTA38 = default_fasta("38")
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1]/"config/data_sources.tsv"
 MAX_LINE_BYTES = 16 * 1024 * 1024
-ROOT_ENV = {"dir_data": ("DIR_DATA", "/mnt/f"),
-            "dir_work": ("DIR_WORK", "/mnt/d"),
-            "analysis_root": ("ANALYSIS_ROOT", "/mnt/d/analysis")}
+ROOT_ENV = {"dir_data": ("DIR_DATA", "DIR_BIG"),
+            "dir_work": ("DIR_WORK", "DIR_DAT"),
+            "analysis_root": ("ANALYSIS_ROOT", "ANALYSIS_ROOT")}
 ALLOFUS_COLUMNS = ["Chr", "Start", "End", "Ref", "Alt", "gvs_all_af", "gvs_max_af",
                    "gvs_afr_af", "gvs_amr_af", "gvs_eas_af", "gvs_eur_af",
                    "gvs_mid_af", "gvs_oth_af", "gvs_sas_af"]
@@ -138,7 +145,7 @@ def expand_registry_path(value):
     # Preserve old concrete paths exactly; only root-bearing templates expand.
     if not any(field in ROOT_ENV for _, field, _, _ in parts):
         return path
-    roots = {key: os.environ.get(env) or default for key, (env, default) in ROOT_ENV.items()}
+    roots = {key: os.environ.get(env) or configured_path(default) for key, (env, default) in ROOT_ENV.items()}
     if any("{" in value or "}" in value for value in roots.values()):
         raise ValueError("Registry root environment values must be concrete paths, without brace placeholders")
     return "".join(literal + ("{chrom}" if field == "chrom" else roots[field] if field else "")

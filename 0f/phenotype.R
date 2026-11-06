@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 source(file.path(dirname(normalizePath(tail(Filter(Negate(is.null), lapply(sys.frames(), function(frame) frame$ofile)), 1)[[1]])), "png_output.R"), local = TRUE)
 
 date_follow_end <- as.Date("2023-04-01")
@@ -937,7 +954,7 @@ get_icd_fast <- function(ver, dat.code = NA, dat.date = NA, fn,
 get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 	new_col_name <- paste0("fod_ref_", label.this)
 	if (new_col_name %in% names(dat.this)) return(dat.this)
-	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(file.path(Sys.getenv("DIR_UKB", Sys.getenv("UKB_PHE", if (.Platform$OS.type == "windows") "F:/ukb" else "/mnt/f/ukb")), "Rdata/fod.date0.rds"))
+	if (!is.data.frame(dat.fod)) dat.fod <- readRDS(file.path(Sys.getenv("UKB_PHE", os_path("DIR_UKB")), "Rdata/fod.date0.rds"))
 	if (!"eid" %in% names(dat.fod) || !"eid" %in% names(dat.this) || anyNA(dat.fod$eid) ||
 		anyNA(dat.this$eid) || anyDuplicated(dat.fod$eid) || anyDuplicated(dat.this$eid))
 		stop("FOD tables require unique non-missing eid values.", call. = FALSE)
@@ -962,7 +979,7 @@ get_fod <- function(dat.fod, dat.this, code.this, label.this) {
 
 # 🚩 Relatedness filtering
 rel_seek <- function(eid, cutoff = 0.0882, id1_col = "ID1", id2_col = "ID2", kin_col = "Kinship") {
-	gen_dir <- Sys.getenv("GEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") "F:/gen/ukb/37" else "/mnt/f/gen/ukb/37")
+	gen_dir <- Sys.getenv("GEN_DIR", unset = if (Sys.info()[["sysname"]] == "Windows") file.path(os_path("DIR_GEN"), "ukb/37") else file.path(os_path("DIR_GEN"), "ukb/37"))
 	rel <- read.table(file.path(gen_dir, "typ/ukb_rel.dat"), header = TRUE)
 	rel_sub <- rel[rel[[kin_col]] > cutoff & rel[[id1_col]] %in% eid & rel[[id2_col]] %in% eid, c(id1_col, id2_col, kin_col)]
 	rel_sub$rowid <- seq_len(nrow(rel_sub))

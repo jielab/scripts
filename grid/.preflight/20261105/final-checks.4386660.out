@@ -1,0 +1,45 @@
+data-contracts	1
+self-check	0
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@r13n34>
+Subject: Job 4386660: <grid-preflight-final> in cluster <qmhpc> Done
+
+Job <grid-preflight-final> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:27:11 2026
+Job was executed on host(s) <4*r13n34>, in queue <33>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:27:13 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj/scripts/grid> was used as the working directory.
+Started at Thu Nov  5 09:27:13 2026
+Terminated at Thu Nov  5 09:31:55 2026
+Results reported at Thu Nov  5 09:31:55 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+bash /work/sph-huangj/scripts/grid/.preflight/20261105/final-checks.cmd
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   138.79 sec.
+    Max Memory :                                 816 MB
+    Average Memory :                             491.40 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               15568.00 MB
+    Max Swap :                                   -
+    Max Processes :                              9
+    Max Threads :                                27
+    Run time :                                   281 sec.
+    Turnaround time :                            284 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/grid/.preflight/20261105/final-checks.4386660.err> for stderr output of this job.
+

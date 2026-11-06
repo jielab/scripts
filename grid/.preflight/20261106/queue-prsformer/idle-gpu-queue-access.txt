@@ -1,0 +1,166 @@
+
+QUEUE: 4-4080-mae-wanglp
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -     0     0     0     0     0    0     0
+Interval for a host to accept two jobs is 0 seconds
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+USERS: u-ccse/ u-mae-wanglp/   
+HOSTS:  hg_4-4080-mae-wanglp/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+
+-------------------------------------------------------------------------------
+
+QUEUE: 4a6000-mae-wanglp
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -     1     0     1     0     0    0     0
+Interval for a host to accept two jobs is 0 seconds
+ RUNLIMIT                
+ 20160.0 min
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: 4a6000-mae-wanglp/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+phy-weigw       1       0.333      0        0         0.0        0       0.000             0
+mae-yangx       1       0.333      0        0        14.3       12       0.000            12
+mae-youjx       1       0.024      1        0      9314.0   174722       0.000        174722
+
+USERS: u-ccse/ u-mae-wanglp/   
+HOSTS:  hg_4a6000-mae-wanglp/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+
+-------------------------------------------------------------------------------
+
+QUEUE: gpu-aais-didier
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -   350   200   150     0     0    0    10
+Interval for a host to accept two jobs is 0 seconds
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: gpu-aais-didier/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+aais-hany       1       0.001    150        0    289662.8   937321       0.000       3658879
+
+USERS: u-aais-didier/ u-ccse/   
+HOSTS:  hg_gpu-aais-didier/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+
+-------------------------------------------------------------------------------
+
+QUEUE: gpu-eee-shenp
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -     0     0     0     0     0    0     0
+Interval for a host to accept two jobs is 0 seconds
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: gpu-eee-shenp/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+eee-huangyx     1       0.298      0        0      1661.8      147       0.000           588
+
+USERS: u-eee-shenp/ u-ccse/   
+HOSTS:  hg_gpu-eee-shenp/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+
+-------------------------------------------------------------------------------
+
+QUEUE: gpu-bme-zhangb
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -     0     0     0     0     0    0     0
+Interval for a host to accept two jobs is 0 seconds
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: gpu-bme-zhangb/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+bme-zhaosk      1       0.244      0        0      1729.2     3955       0.000          7874
+
+USERS: u-ccse/ u-bme-zhangb/   
+HOSTS:  hg_gpu-bme-zhangb/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=exclusive_process:mps=yes:j_exclusive=yes"
+
+-------------------------------------------------------------------------------
+
+QUEUE: gpu-sme-wangzr
+  -- gpu jobs.
+
+PARAMETERS/STATISTICS
+PRIO NICE STATUS          MAX JL/U JL/P JL/H NJOBS  PEND   RUN SSUSP USUSP  RSV PJOBS 
+ 30    0  Open:Active       -    -    -    -   284   148   136     0     0    0    34
+Interval for a host to accept two jobs is 0 seconds
+
+SCHEDULING PARAMETERS
+           r15s   r1m  r15m   ut      pg    io   ls    it    tmp    swp    mem
+ loadSched   -     -     -     -       -     -    -     -     -      -      -  
+ loadStop    -     -     -     -       -     -    -     -     -      -      -  
+
+SCHEDULING POLICIES:  FAIRSHARE
+USER_SHARES:  [default, 1] 
+
+SHARE_INFO_FOR: gpu-sme-wangzr/
+ USER/GROUP   SHARES  PRIORITY  STARTED  RESERVED  CPU_TIME  RUN_TIME   ADJUST  GPU_RUN_TIME
+sme-weicq       1       0.333      0        0         0.0        0       0.000             0
+sme-xieyh       1       0.333      0        0         0.0        0       0.000             0
+sme-yangjx      1       0.132      0        0      9870.4    13603       0.000         13603
+sme-want        1       0.007     32        0     56271.1   163351       0.000        653404
+sme-wangr       1       0.003     40        0     44082.6  1225179       0.000       1225179
+sme-amr         1       0.002     64        0    130218.2   962945       0.000       7703560
+
+USERS: u-ccse/ u-sme-wangzr/   
+HOSTS:  hg_gpu-sme-wangzr/ 
+RES_REQ:  affinity[core(1)]
+GPU_REQ:  "num=1:mode=shared:mps=yes:j_exclusive=no"
+

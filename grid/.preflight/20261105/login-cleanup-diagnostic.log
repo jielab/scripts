@@ -1,0 +1,15 @@
+test_existing_ld_and_merged_scores_preview_release_and_active_locks (test_cache_cleanup.CacheCleanupTests.test_existing_ld_and_merged_scores_preview_release_and_active_locks) ... [GRID cleanup] CSx candidates: 0.00 GiB
+FAIL
+
+======================================================================
+FAIL: test_existing_ld_and_merged_scores_preview_release_and_active_locks (test_cache_cleanup.CacheCleanupTests.test_existing_ld_and_merged_scores_preview_release_and_active_locks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/sph-huangj/scripts/grid/2test/test_cache_cleanup.py", line 51, in test_existing_ld_and_merged_scores_preview_release_and_active_locks
+    self.assertEqual(clean_csx(root), size)
+AssertionError: 0 != 35
+
+----------------------------------------------------------------------
+Ran 1 test in 7.468s
+
+FAILED (failures=1)

@@ -7,6 +7,13 @@ the eligible denominator from the cached multi-ALT-only table.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from collections import Counter, defaultdict
 import csv
@@ -16,6 +23,7 @@ import gzip
 import itertools
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -548,7 +556,7 @@ def run(args):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gu-root", default="/mnt/d/analysis/gu")
+    p.add_argument("--gu-root", default=configured_path('ANALYSIS_ROOT', 'gu'))
     p.add_argument("--datasets", default="auto")
     p.add_argument("--references", default=",".join(DEFAULT_REFERENCES), help="Comma-separated tested references; historical .2013 references require explicit selection")
     p.add_argument("--module", choices=("auto", "ibdmix", "ibdmix-GPU"), default="auto")
@@ -556,8 +564,8 @@ def parser():
     p.add_argument("--modern-dir", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--cache-dir", required=True)
-    p.add_argument("--chain", default="/mnt/f/gen/chains/hg19ToHg38.over.chain.gz")
-    p.add_argument("--liftover", default="/mnt/d/software/bin/liftOver")
+    p.add_argument("--chain", default=os.environ.get('ALLELE_CHAIN37TO38', configured_path('DIR_FILES', 'liftOver/hg19ToHg38.over.chain.gz')))
+    p.add_argument("--liftover", default=configured_path('DIR_SOFTWARE', 'bin/liftOver'))
     p.add_argument("--bcftools", default="bcftools")
     p.add_argument("--min-lod", type=float, default=4.)
     p.add_argument("--min-length", type=int, default=50000)

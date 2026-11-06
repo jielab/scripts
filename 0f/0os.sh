@@ -133,8 +133,8 @@ if [[ $submit == hpc ]]; then
     _os_default HPC_WALLTIME 120:00
     _os_default ALLELE_JOB_QUEUE "$HPC_CPU_QUEUE"
     _os_default GU_QUEUE "$HPC_CPU_QUEUE"
-    # dispatch.py selects a CPU queue that fits the summed worker budget.
-    _os_default GWAS_QUEUE auto
+    # GWAS stays on queue 33 by default; larger requests need an explicit override.
+    _os_default GWAS_QUEUE "$HPC_CPU_QUEUE"
     _os_default LD_QUEUE "$HPC_CPU_QUEUE"
     _os_default LE8_QUEUE "$HPC_CPU_QUEUE"
     _os_default LE8_GPU_QUEUE "$HPC_GPU_QUEUE"

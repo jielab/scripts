@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# Add to the analysis command below for a 160-GiB job:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --job-hours 24 --write-cmd
+# New HPC plans auto-round slots; remove --write-cmd to submit the reviewed scope.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 # Standalone fixed-basis PCA and PC1/PC2/age visualization.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -44,16 +58,30 @@ Execution (shared with ld/metag 0f/0os.sh):
   --retry-failed        Explicit EXIT retry with pending dependency repair
 
 Examples:
-    source /work/sph-huangj/scripts/0f/0os.sh
+    source "${SCRIPTS_ROOT}/0f/0os.sh"
   ./1.pca3D.sh [render|run|plan|atlas|prepare-basis|project|project-plan|trajectory|trajectory-plan]
   ./1.pca3D.sh --out ${DIR_GEN}/ancient/allele3/pca3d/
+
+  # Qiming HPC: ancient + EUR1KG PCA (copy this complete command).
+  # A new job directory avoids frozen-plan conflicts; FALSE resumes valid checkpoints.
+  cd /work/sph-huangj/scripts/allele3
+  bash 1.pca3D.sh run --submit hpc \
+    --pgen-prefix /work/sph-huangj/data/gen/ancient/AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes \
+    --hq-variants /work/sph-huangj/data/gen/ancient/HighQualityVariants.tsv \
+    --supplement-xlsx /work/sph-huangj/data/gen/ancient/41586_2026_10358_MOESM3_ESM.xlsx \
+    --out /work/sph-huangj/data/gen/ancient/allele3/pca3d \
+    --replace FALSE \
+    --pca-threads 4 --pca-memory-mb 16384 \
+    --job-dir "/work/sph-huangj/analysis/allele3/jobs/pca3d_$(date +%Y%m%d_%H%M%S)" \
+    --queue 38 --job-cores 16 --job-memory-gb 32 --job-hours 24 \
+    --wait FALSE
 HELP
 }
 
 main() {
     local arg
     for arg in "$@"; do
-        case "$arg" in -h|--help|help) usage; return 0 ;; --help-full) "$(workflow_python "${PCA3D_PYTHON:-}" /home/huangj/anaconda3/envs/allele3-evolution/bin/python3)" "$ROOT/f/0.pca3D.py" --help; return 0 ;; esac
+        case "$arg" in -h|--help|help) usage; return 0 ;; --help-full) "$(workflow_python "${PCA3D_PYTHON:-}" ${DIR_HOME}/anaconda3/envs/allele3-evolution/bin/python3)" "$ROOT/f/0.pca3D.py" --help; return 0 ;; esac
     done
     if [[ ${PCA3D_CONFIG+x} && ! -f $PCA3D_CONFIG ]]; then fail "Explicit PCA3D_CONFIG does not exist: $PCA3D_CONFIG"; fi
     local config=${PCA3D_CONFIG:-"$ROOT/pca3d.env"}
@@ -69,8 +97,8 @@ main() {
         pca-plan) command=plan ;; pca-time) command=render ;;
         run|plan|render|atlas|prepare-basis|project-plan|project|trajectory-plan|trajectory) ;; *) fail "Unknown command: $command" ;;
     esac
-    local analysis_root=${PCA3D_ANALYSIS_ROOT:-/mnt/d/analysis/allele3} out=${PCA3D_OUT:-}
-    local ancient=${PCA3D_ANCIENT_DIR:-/mnt/f/gen/ancient} cache=${PCA3D_PGEN_CACHE_DIR:-}
+    local analysis_root=${PCA3D_ANALYSIS_ROOT:-${ANALYSIS_ROOT}/allele3} out=${PCA3D_OUT:-}
+    local ancient=${PCA3D_ANCIENT_DIR:-${DIR_GEN}/ancient} cache=${PCA3D_PGEN_CACHE_DIR:-}
     local python=${PCA3D_PYTHON:-${ALLELE_PYTHON:-}} memory=${PCA3D_MEMORY_LIMIT_GB:-${ALLELE_MEMORY_LIMIT_GB:-16}}
     local threads=${PCA3D_THREADS:-4} pca_memory=${PCA3D_MEMORY_MB:-8192}
     local interval=${PCA3D_SCREEN_LOG_INTERVAL:-300} verbose=0 dry_run=0 full_help=0
@@ -115,7 +143,7 @@ main() {
     ((pca_memory >= 640)) || fail 'PLINK needs at least 640 MiB; increase --memory-limit-gb / --pca-memory-mb'
     local conda_root=${PCA3D_CONDA_ROOT:-$HOME/anaconda3}
     python=$(workflow_python "$python" "$conda_root/envs/pca3d/bin/python" \
-        "$conda_root/envs/allele3-evolution/bin/python" /home/huangj/anaconda3/envs/allele3-evolution/bin/python3)
+        "$conda_root/envs/allele3-evolution/bin/python" ${DIR_HOME}/anaconda3/envs/allele3-evolution/bin/python3)
     # Add defaults only after recording explicit input modes. CLI values always win.
     local temporal=0 key value
     [[ $command != trajectory && $command != trajectory-plan ]] || temporal=1

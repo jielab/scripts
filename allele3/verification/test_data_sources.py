@@ -80,10 +80,10 @@ class DataSources(unittest.TestCase):
             self.assertEqual(entries[0]["role"], "Retain {dir_data} in non-path descriptions")
 
     def test_registry_local_defaults_and_correct_actual_gnomad_location(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"submit": "local"}, clear=True):
             entries = {r["id"]: r for r in ds.load_config(ROOT/"config/data_sources.tsv")}
-        self.assertEqual(entries["gnomad_scan"]["path"], "/mnt/f/annot/gnomad/allele3")
-        self.assertEqual(entries["gnomad_sites"]["path"], "/mnt/f/annot/gnomad/sites")
+        self.assertEqual(entries["gnomad_scan"]["path"], "/mnt/d/analysis/allele3/stores/gnomad_scan")
+        self.assertEqual(entries["gnomad_sites"]["path"], "/mnt/f/annot/allele3/gnomad/sites")
         self.assertEqual(entries["allofus"]["path"], "/mnt/f/annot/allele3/allofus/hg38_allofus.txt.gz")
         self.assertEqual(entries["gu_1kg"]["path"], "/mnt/f/analysis/gu/1kg")
         self.assertEqual(entries["allofus"]["evidence"], "aggregate_frequencies")

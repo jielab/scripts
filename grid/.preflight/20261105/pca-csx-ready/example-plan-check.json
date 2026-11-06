@@ -1,0 +1,52 @@
+[
+  {
+    "script": "1.pca.sh",
+    "status": "PASS",
+    "jobs": 1,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/1.pca.sh/grid-pca-20261105T112913-090d4d60/plan.json",
+    "resources": {
+      "('33', 10, 32.0, 24.0, 0)": 1
+    }
+  },
+  {
+    "script": "2.csx.sh",
+    "status": "PASS",
+    "jobs": 10,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/2.csx.sh/grid-csx-20261105T112915-d733e99d/plan.json",
+    "resources": {
+      "('v4-3t', 32, 256.0, 120.0, 0)": 7,
+      "('v4-3t', 8, 32.0, 24.0, 0)": 3
+    }
+  },
+  {
+    "script": "3.disco.sh",
+    "status": "PASS",
+    "jobs": 4,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/3.disco.sh/grid-disco-20261105T112916-3e859fcf/plan.json",
+    "resources": {
+      "('v4-3t', 32, 256.0, 120.0, 0)": 4
+    }
+  },
+  {
+    "script": "4.prsformer.sh",
+    "status": "PASS",
+    "jobs": 7,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/4.prsformer.sh/grid-prsformer-20261105T112917-d7bd76f2/plan.json",
+    "resources": {
+      "('v4-3t', 32, 256.0, 120.0, 0)": 1,
+      "('8v100-32-sc', 8, 160.0, 120.0, 1)": 6
+    }
+  },
+  {
+    "script": "grid.sh",
+    "status": "PASS",
+    "jobs": 15,
+    "plan": "/work/sph-huangj/scripts/grid/.preflight/20261105/pca-csx-ready/plans/grid.sh/grid-grid-20261105T112917-ca2ed628/plan.json",
+    "resources": {
+      "('v4-3t', 32, 256.0, 120.0, 0)": 4,
+      "('8v100-32-sc', 8, 160.0, 120.0, 1)": 6,
+      "('v4-3t', 8, 32.0, 24.0, 0)": 3,
+      "('v4-3t', 4, 16.0, 24.0, 0)": 2
+    }
+  }
+]

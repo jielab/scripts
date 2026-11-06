@@ -33,8 +33,8 @@ fi
 
 # 🚩 grid_activate_environment
 grid_activate_environment() {
-	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/python-cache
-	export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
+	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=${DIR_RUNTIME_TMP}/python-cache
+	export TMPDIR="$DIR_RUNTIME_TMP" TMP="$DIR_RUNTIME_TMP" TEMP="$DIR_RUNTIME_TMP"
 	# Make the supported environment usable for non-interactive GRID calls without
 	# requiring `conda activate` first.
 	GRID_CONDA_ENV=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -130,7 +130,7 @@ grid_configure() {
 	GRID_ORIGINAL_ARGS=("$@")
 
 	# Core defaults.
-	GRID_DATA_ROOT=${GRID_DATA_ROOT:-/mnt/d}
+	GRID_DATA_ROOT=${GRID_DATA_ROOT:-${DIR_DAT}}
 	GRID_TRAIT=${GRID_TRAIT:-height}
 	GRID_TRAITS=${GRID_TRAITS:-height,ldl,t2dm}
 	GRID_POPS=${GRID_POPS:-AFR,EAS,EUR,SAS}
@@ -803,7 +803,7 @@ grid_enable_logging() {
 		local src=$1 dst=$2 previous
 		need "$src"
 		mkdir -p "$(dirname -- "$dst")"
-		previous=$(mktemp /tmp/grid-publish.XXXXXX)
+		previous=$(mktemp "${DIR_RUNTIME_TMP}/grid-publish.XXXXXX")
 		if [[ -f $dst ]]; then cp -p -- "$dst" "$previous"; fi
 		if ! cp -- "$src" "$dst" || ! cmp -s -- "$src" "$dst"; then
 			if [[ -s $previous ]]; then cp -p -- "$previous" "$dst"; else rm -f -- "$dst"; fi
@@ -913,7 +913,7 @@ grid_pipeline() (
 		# per-block CUDA policy when it starts subsequent chromosomes.
 		export GRID_CSX_GPU_MIN_BLOCK=${GRID_CSX_GPU_MIN_BLOCK:-2048}
 		export GRID_CSX_BLAS_THREADS=${GRID_CSX_BLAS_THREADS:-1}
-		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-${ANALYSIS_ROOT:-/work/sph-huangj/analysis}/gu/cache}/csx-ld"}
+		export GRID_CSX_LD_CACHE=${GRID_CSX_LD_CACHE-"${GRID_CACHE_ROOT:-${ANALYSIS_ROOT:-${ANALYSIS_ROOT}}/gu/cache}/csx-ld"}
 		export GRID_CSX_LD_CACHE_GIB=${GRID_CSX_LD_CACHE_GIB:-16}
 		[[ $GRID_CSX_GPU_MIN_BLOCK =~ ^[0-9]+$ ]] || _grid_die 'GRID_CSX_GPU_MIN_BLOCK must be a nonnegative integer'
 		[[ $GRID_CSX_BLAS_THREADS =~ ^[1-9][0-9]*$ ]] || _grid_die 'GRID_CSX_BLAS_THREADS must be a positive integer'

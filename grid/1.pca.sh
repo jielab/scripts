@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
+# Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
+# rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.
+# Example for a 24-core, 160-GiB CPU worker:
+#   bsub -q 33 -n 40 -W 24:00 -M 160GB -R "span[hosts=1] rusage[mem=160GB/host]" ...
+# A small <=10-core, <=48-GiB job uses -q 33 -n 10; request its actual RAM.
+# For exact CPU counts, use Admin-suggested v4-3t or v3-6t after queueinfo.
+# The examples are allocation guidance, not measured peak RAM for every stage.
+# CPU planning flags for the analysis command below:
+#   --submit hpc --queue 33 --job-cores 40 --job-memory-gb 160 --plan-only
+# New CPU plans auto-round slots. GPU stages keep their separate --gpu-queue resources.
+# Details and queue limits: ../0f/HPC_SUBMISSION_POLICY.md
+# END QIMING RESOURCE EXAMPLES
+
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -27,7 +41,7 @@ Default permanent paths (outside the analysis output directory):
 
 Main options:
     --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
-    --queue / --gpu-queue / --job-cores / --job-memory-gb / --hpc-config
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
     --dir-imp DIR                 ${DIR_GEN}/ukb/37/imp (chr*.pgen/pvar/psam)
     --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
     --cov-pcs N / --distance-pcs N 20 / 10; require 5 <= distance <= covariate PCs.
@@ -39,8 +53,23 @@ Main options:
     -h, --help  Show options and examples below
 
 Example:
-    source /work/sph-huangj/scripts/0f/0os.sh
+    # QiMing submission (Admin resource policy, 2026-11-05).
     cd /work/sph-huangj/scripts/grid
+    queueinfo
+    bash 1.pca.sh --submit hpc --queue 33 \
+      --job-cores 10 --job-memory-gb 32 --job-hours 24 \
+      --jobs 4 --threads 1 --wait FALSE
+    # Generated bsub resources:
+    #   -q 33 -n 10 -W 24:00 -M 32GB
+    #   -R "span[hosts=1] rusage[mem=32GB/host]"
+    # Four one-thread projections, <=16 GiB PLINK workspace; 32 GiB job budget.
+    # Admin's quarter-node rule reserves 10 slots for this CPU/RAM request.
+    # Add --plan-only to preview without submitting. The entry submits its DAG;
+    # do not wrap it in another bsub. --wait FALSE returns after submission.
+    # Confirm this job is DONE before submitting 2.csx.sh; existing PCA files
+    # alone do not prove that the latest run completed.
+
+    # Other input/check options:
     ./1.pca.sh --check
     ./1.pca.sh --dir-imp ${DIR_GEN}/ukb/37/imp --jobs 4
     ./1.pca.sh --replace TRUE --jobs 4

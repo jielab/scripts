@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Portable dispatcher for the retained, explicitly labelled PRSformer adapters."""
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 import hashlib
 import json
@@ -20,6 +27,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--analysis-root", "--output-root", default=analysis_default())
     p.add_argument("--config", default=str(GRID / "config/abm.json"))
+    p.add_argument("--workflow-stage", choices=("all", "model", "report"), default="all")
     known, forwarded = p.parse_known_args(argv)
     root = Path(known.analysis_root)
     if "--help" in forwarded or "-h" in forwarded:
@@ -46,9 +54,16 @@ def main(argv=None):
         if not path.is_file():
             atomic_json(path, config)
     if module == "prsformer2" and "--upstream-dir" not in forwarded:
-        forwarded += ["--upstream-dir", os.environ.get("PRSFORMER_UPSTREAM_DIR", relocate("/mnt/d/software/PRSformer"))]
+        forwarded += ["--upstream-dir", os.environ.get("PRSFORMER_UPSTREAM_DIR", relocate(configured_path('DIR_SOFTWARE', 'PRSformer')))]
     cache = Path(block["prsformer_cache"])
-    if "--check" not in forwarded and not all((cache / name).is_file() for name in
+    if known.workflow_stage == "model" and not (cache / "genotypes.npy").is_file():
+        raise FileNotFoundError("GPU model stage requires the CPU-prepared genotype cache")
+    if known.workflow_stage == "report":
+        from prsformer_stages import frozen_model
+        traits = forwarded[forwarded.index("--traits")+1] if "--traits" in forwarded else "height,ldl,t2dm"
+        for trait in traits.split(","):
+            frozen_model(root, module, trait, cache)
+    if known.workflow_stage == "all" and "--check" not in forwarded and not all((cache / name).is_file() for name in
             ("prepare.json", "data.tsv.gz", "variants.tsv.gz")):
         from shared_cohort import ensure_inputs
         from types import SimpleNamespace
@@ -56,9 +71,9 @@ def main(argv=None):
         ensure_inputs(SimpleNamespace(analysis_root=str(root), config=str(path), block_config=str(block_path),
             traits="height,ldl,t2dm", threads=threads, complete_features=False, dry_run=False), config)
     command = [sys.executable, str(GRID / "f/twin.py"), module, "--analysis-root", str(root),
-               "--config", str(path), *forwarded]
+               "--config", str(path), "--workflow-stage", known.workflow_stage, *forwarded]
     subprocess.run(command, check=True, env=dict(os.environ, GRID_WORKFLOW_ANALYSIS_ROOT=str(root)))
-    if "--check" not in forwarded:
+    if known.workflow_stage != "model" and "--check" not in forwarded:
         from prsformer_benchmark import publish
         traits = forwarded[forwarded.index("--traits")+1] if "--traits" in forwarded else "height,ldl,t2dm"
         for trait in traits.split(","):

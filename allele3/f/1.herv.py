@@ -2,6 +2,13 @@
 """Independent HERV assembly, PGEN preparation, cohort analysis and plots."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # The shared utility filename is sorted first; use a stable import name in Python.
 import importlib.util as _common_import
 import sys as _common_sys
@@ -766,7 +773,7 @@ def main_assembly():
     prep.add_argument('--chromosomes',default=','.join('chr'+str(i) for i in range(1,23)))
     prep.add_argument('--uncertain-flank',type=int,default=1000)
     prep.add_argument('--jobs',type=int,default=2)
-    prep.add_argument('--vcf-scratch',type=Path,default=Path('/tmp/metag-herv-vcf'))
+    prep.add_argument('--vcf-scratch',type=Path,default=Path(configured_path('DIR_RUNTIME_TMP', 'metag-herv-vcf')))
     prep.add_argument('--out',type=Path,required=True)
     ann = sub.add_parser('run')
     ann.add_argument('--fasta',type=Path,required=True)
@@ -775,7 +782,7 @@ def main_assembly():
     ann.add_argument('--chunk-bp',type=int,default=5000000)
     ann.add_argument('--halo',type=int,default=20000)
     ann.add_argument('--jobs',type=int,default=3)
-    ann.add_argument('--scratch',type=Path,default=Path('/tmp/metag-herv-assembly'))
+    ann.add_argument('--scratch',type=Path,default=Path(configured_path('DIR_RUNTIME_TMP', 'metag-herv-assembly')))
     ann.add_argument('--out',type=Path,required=True)
     summary = sub.add_parser('summarize')
     summary.add_argument('--out',type=Path,required=True)
@@ -1026,7 +1033,7 @@ def main_pgen():
     p.add_argument('--chromosomes', default=','.join('chr'+str(i) for i in range(1,23)))
     p.add_argument('--jobs', type=int, default=2)
     p.add_argument('--uncertain-flank', type=int, default=1000)
-    p.add_argument('--scratch', type=Path, default=Path('/tmp/metag-herv-pgen'))
+    p.add_argument('--scratch', type=Path, default=Path(configured_path('DIR_RUNTIME_TMP', 'metag-herv-pgen')))
     args = p.parse_args()
     args.chromosomes = args.chromosomes.split(',')
     if args.jobs < 1 or args.uncertain_flank < 0 or len(set(args.chromosomes)) != len(args.chromosomes) or \
@@ -1105,22 +1112,22 @@ def parser():
                'python f/1.herv.py assembly {prepare,run,summarize} --help.')
     p.add_argument('--out','--dir-out',type=Path,
         help='Override results directory; otherwise /mnt/d/analysis/allele3/herv/<gen>/<sample>')
-    p.add_argument('--fasta',type=Path,default=Path('/mnt/f/gen/1hgp/38/GRCH38.fasta.gz'),help='Indexed reference FASTA')
-    p.add_argument('--library',type=Path,default=Path('/mnt/f/annot/allele3/dfam_4.0_human/human.curated.fa'),help='Repeat library')
+    p.add_argument('--fasta',type=Path,default=Path(configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz')),help='Indexed reference FASTA')
+    p.add_argument('--library',type=Path,default=Path(configured_path('DIR_ANNOT', 'allele3/dfam_4.0_human/human.curated.fa')),help='Repeat library')
     p.add_argument('--repeatmasker',type=Path,
         help='RepeatMasker executable; reuse checkpoint path, then discover allele3-repeatmasker or legacy metag-repeatmasker')
     p.add_argument('--gen',type=component,default='1kg',help='Dataset name used in the default output directory')
     p.add_argument('--sample',type=component,default='HG00096',help='VCF sample or PGEN IID; scope is chr1-22')
     p.add_argument('--input-format',choices=['auto','vcf','pgen'],default='auto',
         help='Reuse the prepared source; for a new sample auto prefers a complete PGEN fileset and available reader')
-    p.add_argument('--vcf-dir','--dir-vcf',type=Path,default=Path('/mnt/f/gen/1kg/38/vcf'),help='VCFs used if preparation is missing')
-    p.add_argument('--pfile-dir','--dir-pfile',type=Path,default=Path('/mnt/f/gen/1kg/38/pfile'),help='Chromosome PGEN/PVAR/PSAM filesets')
+    p.add_argument('--vcf-dir','--dir-vcf',type=Path,default=Path(configured_path('DIR_GEN', '1kg/38/vcf')),help='VCFs used if preparation is missing')
+    p.add_argument('--pfile-dir','--dir-pfile',type=Path,default=Path(configured_path('DIR_GEN', '1kg/38/pfile')),help='Chromosome PGEN/PVAR/PSAM filesets')
     p.add_argument('--pgen-python',type=Path,help='Python with numpy, pgenlib and zstandard; autodetected when omitted')
     p.add_argument('--jobs',type=positive,default=8,help='Concurrent RepeatMasker chunks')
     p.add_argument('--cores',type=positive,default=16,help='Limit CPU affinity to the first available CPUs')
     p.add_argument('--chunk-bp',type=positive,default=5000000,help='Reference core chunk length')
     p.add_argument('--halo',type=int,default=20000,help='Minimum flanking context in bp')
-    p.add_argument('--scratch','--dir-scratch',type=Path,default=Path('/tmp/allele3-herv-assembly'),help='Temporary chunk directory')
+    p.add_argument('--scratch','--dir-scratch',type=Path,default=Path(configured_path('DIR_RUNTIME_TMP', 'allele3-herv-assembly')),help='Temporary chunk directory')
     p.add_argument('--dry-run',action='store_true',help='Print commands without writing files or running analysis')
     return p
 
@@ -1222,7 +1229,7 @@ def main_job():
         p.error('--reuse-from requires --replace FALSE')
     if args.replace == 'TRUE' and not args.dry_run:
         from fresh_run import output_run
-        protected = [os.environ.get('HERV_REUSE_DIR','/mnt/f/gen/1kg/38/allele3/herv/HG00096'),args.fasta,args.vcf_dir,args.pfile_dir,args.library]
+        protected = [os.environ.get('HERV_REUSE_DIR',configured_path('DIR_GEN', '1kg/38/allele3/herv/HG00096')),args.fasta,args.vcf_dir,args.pfile_dir,args.library]
         with output_run(args.out, True, protected):
             return run_job(args, p)
     return run_job(args, p)
@@ -1231,7 +1238,7 @@ def main_job():
 def run_job(args, p):
     if args.halo < 0:
         p.error('--halo must be nonnegative')
-    args.out=(args.out or Path('/mnt/d/analysis/allele3/herv')/args.gen/args.sample).resolve()
+    args.out=(args.out or Path(configured_path('ANALYSIS_ROOT', 'allele3/herv'))/args.gen/args.sample).resolve()
     if args.reuse_from and args.dry_run:
         print(f'[HERV] planned completed-cache reuse: {args.reuse_from}; new reports: {args.out}; no files written')
         return
@@ -1249,8 +1256,8 @@ def run_job(args, p):
         return
     audit_census_source(args)
     require_library(args.library)
-    legacy=Path('/mnt/d/analysis/metag/herv')/args.gen/args.sample
-    if args.out == Path('/mnt/d/analysis/allele3/herv')/args.gen/args.sample and not (args.out/'prepared.json').exists() and (legacy/'prepared.json').exists():
+    legacy=Path(configured_path('ANALYSIS_ROOT', 'metag/herv'))/args.gen/args.sample
+    if args.out == Path(configured_path('ANALYSIS_ROOT', 'allele3/herv'))/args.gen/args.sample and not (args.out/'prepared.json').exists() and (legacy/'prepared.json').exists():
         p.error(f'Existing results are still at {legacy}; move the entire sample directory to {args.out}, '
                 f'or use --out {legacy} to resume in place. See 0.README.md.')
     args.out.mkdir(parents=True,exist_ok=True)
@@ -1340,8 +1347,8 @@ def audit_census_source(args):
               'full FASTA SHA/model receipts remain checked by the assembly engine', flush=True)
     finally:
         reference.close()
-    fasta37 = str(args.fasta) if build == '37' else os.environ.get('ALLELE_FASTA37', '/mnt/f/gen/1hgp/37/GRCH37.fasta.gz')
-    fasta38 = str(args.fasta) if build == '38' else os.environ.get('ALLELE_FASTA', '/mnt/f/gen/1hgp/38/GRCH38.fasta.gz')
+    fasta37 = str(args.fasta) if build == '37' else os.environ.get('ALLELE_FASTA37', configured_path('DIR_GEN', '1hgp/37/GRCH37.fasta.gz'))
+    fasta38 = str(args.fasta) if build == '38' else os.environ.get('ALLELE_FASTA', configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz'))
     print(f'[dataset] HERV selected input={args.effective_input}; prepared={prepared is not None}; declared build={build}; FASTA={args.fasta}', flush=True)
     if not entries:
         print('[dataset] HERV prepared model: no identity-matching original metadata to sample; original-source audit deferred', flush=True)

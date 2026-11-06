@@ -14,6 +14,10 @@ grid_workflow_entry() {
             echo 'HPC scientific workers require an allocated workflow .cmd job; no calculation was started.' >&2
             return 2
         fi
+        if [[ -n ${GRID_TRAIT_STEPS:-} ]]; then
+            "${WORKFLOW_PYTHON:-python3}" "$helper_root/f/trait_workflow.py"
+            exit $?
+        fi
         return 0
     fi
     for token in "${GRID_ENTRY_ARGS[@]}"; do

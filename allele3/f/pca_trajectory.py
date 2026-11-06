@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Temporal structure in frozen shared projected PCA coordinates; never fits PCA."""
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 from collections import Counter, defaultdict
 import gzip
@@ -486,7 +493,7 @@ def parser():
     p.add_argument('command',choices=['trajectory-plan','trajectory'])
     p.add_argument('--coordinates','--eigenvec',dest='coordinates',required=True)
     p.add_argument('--metadata',required=True)
-    p.add_argument('--out',default='/mnt/d/analysis/allele3/pca3d/temporal')
+    p.add_argument('--out',default=configured_path('ANALYSIS_ROOT', 'allele3/pca3d/temporal'))
     for name in ('basis-dir','coordinate-receipt','provenance-manifest','training-ids','supplement-metadata','date-distributions'):p.add_argument('--'+name)
     p.add_argument('--pcs',type=int,default=None,help='Default PC1/2 primary plus available 5/10 supplements; explicit K requires every PC')
     for name,value in [('bin-years',1000),('max-age-bp',10000),('min-samples',20),('bootstrap',500),('seed',20261028),('display-limit',20000),('date-draws',100)]:p.add_argument('--'+name,type=int,default=value)

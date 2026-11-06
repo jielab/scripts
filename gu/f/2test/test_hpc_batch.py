@@ -77,7 +77,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([p for p, _ in batch.cohorts(args)], ['001', '003'])
 
     def run_main(self, args, fake):
-        with patch.object(batch, 'ROOT', self.root), patch.dict(os.environ, {'GU_ANALYSIS_BASE': str(self.root)}), patch.object(batch.subprocess, 'run', fake), patch.object(batch, 'preflight_axt'), patch.object(batch, 'preflight_inputs'), patch.object(batch, 'preflight_publication'), patch.object(batch, 'snapshot_code', return_value=self.root):
+        with patch.object(batch, 'ROOT', self.root), patch.dict(os.environ, {'GU_ANALYSIS_BASE': str(self.root)}), patch.object(batch.submit_jobs, 'bsub_process', fake), patch.object(batch, 'preflight_axt'), patch.object(batch, 'preflight_inputs'), patch.object(batch, 'preflight_publication'), patch.object(batch, 'snapshot_code', return_value=self.root):
             return batch.main(args)
 
     def test_dry_run_never_submits_and_worker_runs(self):
@@ -98,7 +98,7 @@ class BatchTests(unittest.TestCase):
         fake = Mock(side_effect=[subprocess.CompletedProcess([], 0, f'Job <{n}> is submitted', '') for n in (11, 12, 13)])
         self.run_main(self.args, fake)
         self.assertEqual(fake.call_count, 3)
-        self.assertTrue(all(call.args == (['bsub'],) for call in fake.call_args_list))
+        self.assertTrue(all(call.args[0] == ['bsub'] for call in fake.call_args_list))
 
     def test_explicit_gpu_plan_requests_one_gpu_without_probing_login_node(self):
         with patch.dict(os.environ, {'submit':'hpc', 'GU_GPU_QUEUE':'4a100-40', 'GU_GPU_MEMORY_GIB':'160'}), patch.object(batch.subprocess, 'run') as fake:

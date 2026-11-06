@@ -33,8 +33,8 @@ fi
 
 # 🚩 grid_activate_environment
 grid_activate_environment() {
-	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/python-cache
-	export TMPDIR=${TMPDIR:-/tmp} TMP=${TMP:-${TMPDIR:-/tmp}} TEMP=${TEMP:-${TMPDIR:-/tmp}}
+	export PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=${DIR_RUNTIME_TMP}/python-cache
+	export TMPDIR=${TMPDIR:-$DIR_RUNTIME_TMP} TMP=${TMP:-${TMPDIR:-$DIR_RUNTIME_TMP}} TEMP=${TEMP:-${TMPDIR:-$DIR_RUNTIME_TMP}}
 	# Make the supported environment usable for non-interactive GRID calls without
 	# requiring `conda activate` first.
 	GRID_CONDA_ENV=${GRID_CONDA_ENV:-$HOME/miniforge3/envs/grid}
@@ -130,7 +130,7 @@ grid_configure() {
 	GRID_ORIGINAL_ARGS=("$@")
 
 	# Core defaults.
-	GRID_DATA_ROOT=${GRID_DATA_ROOT:-/mnt/d}
+	GRID_DATA_ROOT=${GRID_DATA_ROOT:-${DIR_DAT}}
 	GRID_TRAIT=${GRID_TRAIT:-height}
 	GRID_TRAITS=${GRID_TRAITS:-height,ldl,t2dm}
 	GRID_POPS=${GRID_POPS:-AFR,EAS,EUR,SAS}
@@ -147,11 +147,11 @@ grid_configure() {
 		fi
 	fi
 	GRID_IMP_DIR=${GRID_IMP_DIR:-${DIR_GEN}/ukb/37/imp}
-	GRID_PHE_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/phe.rds}
+	GRID_PHE_FILE=${GRID_PHE_FILE:-${DIR_UKB}/Rdata/all.rds}
 	GRID_OUTPUT_ROOT=${GRID_OUTPUT_ROOT:-${ANALYSIS_ROOT}/grid}
 	export GRID_CSX_BACKEND=${GRID_CSX_BACKEND:-cpu} GRID_CSX_GPU=${GRID_CSX_GPU:-0}
 	GRID_KEEP=${GRID_KEEP:-}
-	GRID_REMOVE=${GRID_REMOVE:-${DIR_FILES}/ukb.exclude.id}
+	GRID_REMOVE=${GRID_REMOVE:-}
 	GRID_N_GWAS=${GRID_N_GWAS:-}
 
 	# PRS-CSx.
@@ -803,7 +803,7 @@ grid_enable_logging() {
 		local src=$1 dst=$2 previous
 		need "$src"
 		mkdir -p "$(dirname -- "$dst")"
-		previous=$(mktemp /tmp/grid-publish.XXXXXX)
+		previous=$(mktemp "${DIR_RUNTIME_TMP}/grid-publish.XXXXXX")
 		if [[ -f $dst ]]; then cp -p -- "$dst" "$previous"; fi
 		if ! cp -- "$src" "$dst" || ! cmp -s -- "$src" "$dst"; then
 			if [[ -s $previous ]]; then cp -p -- "$previous" "$dst"; else rm -f -- "$dst"; fi

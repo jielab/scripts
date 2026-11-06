@@ -1,0 +1,72 @@
+{
+  "paths": {
+    "dir_gen": "/work/sph-huangj/data/gen/ukb/37/typ",
+    "pheno_file": "/work/sph-huangj/phe/ukb/Rdata/all.rds",
+    "ancestry_file": "/work/sph-huangj/data/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz",
+    "snp_list": "/work/sph-huangj/data/LD/csx/snpinfo_mult_1kg_hm3",
+    "remove": "",
+    "cache_dir": "/work/sph-huangj/analysis/grid/prsformer/cache",
+    "score_root": "/work/sph-huangj/data/gen/ukb/pgs",
+    "csx_analysis_root": "/work/sph-huangj/analysis/grid/csx",
+    "output_root": "/work/sph-huangj/analysis/grid/csx_blocks/features",
+    "cpu_abm_prepared": "/work/sph-huangj/analysis/grid/cache/abm/prepared.joblib",
+    "dosage_supplement_dir": "/work/sph-huangj/data/gen/ukb/37/typ",
+    "ld_block_dir": "/work/sph-huangj/data/LD/block"
+  },
+  "scores": [
+    {
+      "trait": "height",
+      "rows": 488130,
+      "columns": [
+        "eid",
+        "csx.meta",
+        "csx.auto",
+        "csx.AFR",
+        "csx.EAS",
+        "csx.EUR",
+        "csx.SAS"
+      ],
+      "missing_target_ids": 0,
+      "extra_score_ids": 0,
+      "scores_without_pca": 968,
+      "roster_matches_new_scores": true,
+      "scores_without_new_projection_input": 968
+    },
+    {
+      "trait": "ldl",
+      "rows": 488130,
+      "columns": [
+        "eid",
+        "csx.meta",
+        "csx.auto",
+        "csx.AFR",
+        "csx.EAS",
+        "csx.EUR",
+        "csx.SAS"
+      ],
+      "missing_target_ids": 0,
+      "extra_score_ids": 0,
+      "scores_without_pca": 968,
+      "roster_matches_new_scores": true,
+      "scores_without_new_projection_input": 968
+    },
+    {
+      "trait": "t2dm",
+      "rows": 488130,
+      "columns": [
+        "eid",
+        "csx.meta",
+        "csx.auto",
+        "csx.AFR",
+        "csx.EAS",
+        "csx.EUR",
+        "csx.SAS"
+      ],
+      "missing_target_ids": 0,
+      "extra_score_ids": 0,
+      "scores_without_pca": 968,
+      "roster_matches_new_scores": true,
+      "scores_without_new_projection_input": 968
+    }
+  ]
+}

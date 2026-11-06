@@ -1,0 +1,49 @@
+{
+  "old_jobs": [
+    4388005,
+    4388006,
+    4388007,
+    4388008,
+    4388009,
+    4388010,
+    4388011,
+    4388012,
+    4388013,
+    4388014
+  ],
+  "old_jobs_terminated": true,
+  "new_jobs": {
+    "height": 4388790,
+    "ldl": 4388791,
+    "t2dm": 4388792
+  },
+  "jobs_per_trait": 1,
+  "cmd_files_per_trait": 1,
+  "csx_sequence": [
+    "weights",
+    "score",
+    "prepare",
+    "targetfit"
+  ],
+  "disco_sequence": [
+    "prepare",
+    "score_and_evaluate"
+  ],
+  "prsformer_sequence": [
+    "prepare",
+    "prsformer",
+    "prsformer2"
+  ],
+  "shared_cache": "blocking preparation lock; validated reuse uses read locks",
+  "hpc_full_tests_passed": 34,
+  "hpc_final_planner_tests_passed": 24,
+  "distinct_tests_passed": 36,
+  "deployed_files": 9,
+  "source_hash_verification": "PASS",
+  "submitted_entries": [
+    "2.csx.sh"
+  ],
+  "source_snapshot_local": "/tmp/grid-trait-jobs-20261105/scripts/grid",
+  "original_local_grid_directory_exists": false,
+  "plan": "/work/sph-huangj/analysis/grid/jobs/grid-csx-20261105T135616-90ad52ab/plan.json"
+}

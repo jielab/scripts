@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # 🚩 Named analysis results
 result_identifier_columns <- function(columns) {
 	names <- tolower(gsub('[^[:alnum:]]', '', columns))
@@ -62,7 +79,7 @@ result_stream_workbook <- function(tables, path, sources = character(), metadata
  }
  job <- file.path(directory, 'workbook.json')
  jsonlite::write_json(spec, job, auto_unbox = TRUE, null = 'null')
- code <- Sys.getenv('RESULTS_PY', '/mnt/d/scripts/0f/results.py')
+ code <- Sys.getenv('RESULTS_PY', file.path(os_path("SCRIPTS_ROOT"), "0f/results.py"))
  status <- system2(Sys.getenv('RESULTS_PYTHON', 'python3'), c(shQuote(code), 'stream-workbook', shQuote(job), shQuote(path)))
  if (status != 0L) stop('Workbook publication failed: ', path)
  invisible(path)
@@ -121,7 +138,7 @@ if (sys.nframe() == 0L) {
 		exchange <- attr(x, 'table_exchange')
 		target <- args[3]
 		if (dir.exists(target)) target <- file.path(target, if (!is.null(exchange)) exchange$name else sub('[.]rds$', '.tsv', basename(args[2])))
-		if (!startsWith(normalizePath(dirname(target), mustWork = TRUE), '/tmp/')) stop('Table exchanges must stay under /tmp')
+		if (!startsWith(normalizePath(dirname(target), mustWork = TRUE), paste0(os_path("DIR_RUNTIME_TMP"), "/"))) stop("Table exchanges must stay under ", os_path("DIR_RUNTIME_TMP"))
 		if (!is.null(exchange) && identical(basename(target), exchange$name)) {
 			if (!identical(digest::digest(exchange$bytes, algo = 'sha256', serialize = FALSE), exchange$sha256)) stop('Stored source checksum mismatch')
 			writeBin(exchange$bytes, target)

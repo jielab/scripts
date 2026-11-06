@@ -6,6 +6,7 @@ Reference-allele observation and longitudinal persistence are not inferred.
 """
 from __future__ import annotations
 from analysis_integrity import transactional
+from analysis_scope import boolean_option
 import argparse
 from bisect import bisect_left
 from collections import Counter, defaultdict
@@ -157,10 +158,10 @@ def archaic_label_reference(label):
 
 @transactional("summary_manifest.json")
 def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2000, seed=20261027,
-                             archaic_references=None):
+                             archaic_references=None, *, include_ibdmix=False):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    selected_references = scan.track_references(archaic_references)
+    selected_references = scan.track_references(archaic_references) if include_ibdmix else ()
     reference_set = set(selected_references)
     reference_audit = Counter()
     background = Background(architecture_paths(modern, "global"), minimum)
@@ -209,11 +210,12 @@ def summarize_common_support(modern, out, minimum=100, coverage=.99, bootstrap=2
         r["fdr"] = q
     write_rows(out / "common_support_enrichment.tsv", results)
     selection_rows = [dict(label=label, reference=reference, decision="retained" if selected else "excluded",
-                           reason="selected_reference" if selected else "reference_not_selected", counter_rows=count)
+                           reason="ibdmix_disabled" if not include_ibdmix else "selected_reference" if selected else "reference_not_selected", counter_rows=count)
                       for (label, reference, selected), count in sorted(reference_audit.items())]
     write_rows(out / "archaic_reference_selection.tsv", selection_rows,
                fields=["label", "reference", "decision", "reason", "counter_rows"])
     manifest = dict(schema=SCHEMA, status="complete", source=str(Path(modern).resolve()),
+                    ibdmix_enabled=include_ibdmix,
                     summary_definition_version="common-support-reference-selection-2",
                     selected_archaic_references=list(selected_references),
                     observed_archaic_references=sorted({reference for _, reference, _ in reference_audit}),
@@ -1450,6 +1452,7 @@ def parser():
     p.add_argument("--erv-joined")
     p.add_argument("--fasta")
     p.add_argument("--families", default="ERV1,ERVK")
+    p.add_argument("--ibdmix", type=boolean_option, default=False, metavar="TRUE|FALSE")
     p.add_argument("--archaic-references", default=",".join(scan.DEFAULT_ARCHAIC_REFERENCES),
                    help="Common-support summary reference selection; .2013 references require explicit selection; reads existing counters only")
     p.add_argument("--end-bp", type=int, default=200, help="Spatial head/tail length in aligned bases; records <= twice this length form the short-element part")
@@ -1478,7 +1481,7 @@ def main(argv=None):
         raise ValueError("Require 0 < min-support <=1 and positive training count")
     if a.command == "summary":
         return summarize_common_support(a.modern_dir, a.out, a.min_training_sites, a.min_support, a.bootstrap, a.seed,
-                                        a.archaic_references)
+                                        a.archaic_references, include_ibdmix=a.ibdmix)
     if not a.erv_joined:
         raise ValueError("--erv-joined required for targeted spatial/boundary scan")
     if a.command == "spatial":

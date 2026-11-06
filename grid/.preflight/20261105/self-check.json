@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "synthetic_only": true,
+  "tests": 240,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 2,
+  "passed": 238,
+  "skip_reasons": [
+    "No CUDA: execution parity not verified",
+    "No CUDA device; CUDA execution was not verified"
+  ],
+  "seconds": 248.582247027196
+}

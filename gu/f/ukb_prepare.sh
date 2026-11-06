@@ -205,7 +205,7 @@ PY
 			mkdir -p "$ODIR"
 			exec 8>"$ODIR/.prepare.lock"
 			flock -n 8 || die "another hap-vcf run uses $ODIR"
-			keep_tmp=$(mktemp "${TMPDIR:-/tmp}/gu-ukb-keep.XXXXXX")
+			keep_tmp=$(mktemp "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-ukb-keep.XXXXXX")
 			stage=$(mktemp -d "$ODIR/.export.XXXXXX")
 			trap 'rm -f "$keep_tmp"; rm -rf -- "$stage"' EXIT
 			trap 'exit 130' INT
@@ -366,7 +366,7 @@ USAGE
 		exit 1
 	}
 	mkdir -p "$(dirname "$OUT")"
-	TMP=$(mktemp -d "${TMPDIR:-/tmp}/gu-aa.XXXXXX")
+	TMP=$(mktemp -d "${TMPDIR:-$DIR_RUNTIME_TMP}/gu-aa.XXXXXX")
 	PART=${OUT%.vcf.gz}.part.$$.vcf.gz
 	cleanup() {
 		rm -rf -- "$TMP"

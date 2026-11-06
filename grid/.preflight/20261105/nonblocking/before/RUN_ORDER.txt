@@ -1,0 +1,21 @@
+HPC 顺序运行命令（2026-11-05 预检）
+
+cd /work/sph-huangj/scripts/grid
+bash 1.pca.sh --wait TRUE
+bash 2.csx.sh --wait TRUE
+bash 3.disco.sh --wait TRUE
+bash 4.prsformer.sh --wait TRUE --gpu-queue 8v100-32-sc
+bash grid.sh --wait TRUE --gpu-queue 8v100-32-sc
+
+每一步成功完成后再执行下一步。--wait TRUE 等待本入口提交的所有作业完成；默认不等待。
+4a100-40 在检查时处于 Closed:Active。8v100-32-sc 已通过实际 V100 GPU 运行验证。
+这些命令会开始正式计算。本次预检没有执行正式 MCMC、全量 PCA 或模型训练。
+
+共享表型：/work/sph-huangj/phe/ukb/Rdata/all.rds
+默认不读取 ukb.exclude.id，不需要排除名单。
+共享分析队列在冻结家系划分前与可用投影 PCA 取交集。
+分析目录：/work/sph-huangj/analysis/grid
+永久 CSx / Disco 得分目录：/work/sph-huangj/data/gen/ukb/pgs
+GPU 模型文件和共享基因型缓存保存在分析目录。
+
+账户达到等待作业上限时，bsub 可能等待配额释放；这与脚本输入检查是两回事。

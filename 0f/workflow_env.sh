@@ -32,10 +32,11 @@ workflow_init() {
             export GRID_TARGET_DIR
         fi
         export GRID_IMP_DIR=${GRID_IMP_DIR:-$DIR_GEN/ukb/37/imp}
-        export GRID_PHE_FILE=${GRID_PHE_FILE:-$DIR_UKB/Rdata/phe.rds}
+        export GRID_PHE_FILE=${GRID_PHE_FILE:-$DIR_UKB/Rdata/all.rds}
         export GRID_SCORE_DIR=${GRID_SCORE_DIR:-$DIR_GEN/ukb/pgs}
         export GRID_CSX_REF_DIR=${GRID_CSX_REF_DIR:-$DIR_LD/csx}
-        export GRID_REMOVE=${GRID_REMOVE:-$OS_FILES_ROOT/ukb.exclude.id}
+        # Sample exclusion is opt-in; no default withdrawal/ID file is required.
+        export GRID_REMOVE=${GRID_REMOVE:-}
         export GRID_REL_FILE=${GRID_REL_FILE:-$DIR_GEN/ukb/37/typ/ukb_rel.dat}
         export GRID_MED_FILE=${GRID_MED_FILE:-$OS_FILES_ROOT/DiscoDivas/med.g1000.4pop.tsv}
         export GRID_PCA_WEIGHT=${GRID_PCA_WEIGHT:-$OS_FILES_ROOT/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight}

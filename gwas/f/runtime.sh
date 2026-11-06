@@ -30,7 +30,7 @@ gwas_runtime_init() {
         token=$1
         case "$token" in
             --plan-only) export GWAS_PLAN_ONLY=TRUE; shift ;;
-            --queue|--cores|--memory-gb|--hours|--runtime-env|--plan-dir|--memory-scope|--tool-threads|--tool-memory-mb)
+            --queue|--cores|--memory-gb|--hours|--runtime-env|--plan-dir|--memory-scope|--tool-threads|--tool-memory-mb|--pheno-jobs)
                 [[ $# -ge 2 && -n $2 && $2 != --* ]] || { echo "$1 requires a value" >&2; return 2; }
                 value=$2
                 case "$token" in
@@ -43,6 +43,7 @@ gwas_runtime_init() {
                     --memory-scope) export GWAS_MEMORY_SCOPE=$value ;;
                     --tool-threads) export GWAS_TOOL_THREADS=$value ;;
                     --tool-memory-mb) export GWAS_PLINK_MEMORY_MB=$value ;;
+                    --pheno-jobs) export GWAS_PHENO_JOBS=$value ;;
                 esac
                 shift 2 ;;
             --data-root)
@@ -60,7 +61,7 @@ gwas_runtime_init() {
     export GWAS_SOFTWARE_ROOT=${GWAS_SOFTWARE_ROOT:-${legacy_root:+$legacy_root/software}}
     export GWAS_SOFTWARE_ROOT=${GWAS_SOFTWARE_ROOT:-$DIR_SOFTWARE}
     export GWAS_ANALYSIS_ROOT=${GWAS_ANALYSIS_ROOT:-$ANALYSIS_ROOT/gwas}
-    export GWAS_PHENOTYPE_FILE=${GWAS_PHENOTYPE_FILE:-${OS_SNP_LIST%/*}/ukb.phe}
+    export GWAS_PHENOTYPE_FILE=${GWAS_PHENOTYPE_FILE:-$DIR_UKB/ukb.phe}
     export CHECK_GRCH_SNP_LIST=${CHECK_GRCH_SNP_LIST:-${legacy_root:+$legacy_root/ukb/common/snp.lst}}
     export CHECK_GRCH_SNP_LIST=${CHECK_GRCH_SNP_LIST:-$OS_SNP_LIST}
     export GWAS_TOOL_THREADS=${GWAS_TOOL_THREADS:-2} GWAS_PLINK_MEMORY_MB=${GWAS_PLINK_MEMORY_MB:-8192}
@@ -96,18 +97,21 @@ Local/HPC execution (all three entry points):
     --submit auto|local|hpc       Default hpc; explicit auto detects LSF
     --plan-only                  Write .cmd/plan.json without scanning data or running
     --run-cmd TRUE|FALSE          Execute or only prepare (format/gwas)
-    --queue NAME|auto --cores N   LSF queue/CPU allocation [auto / derived from workers]
-                                 QiMing auto fits summed RAM and cores on one node
+    --queue NAME|auto --cores N   LSF queue/CPU allocation [33 / derived from workers]
+                                 Queue 33 by default; explicit auto selects a larger node if needed
     --memory-gb N --hours N       Total job RAM GiB / walltime hours [derived / 120]
     --tool-threads N --tool-memory-mb N  format PLINK/GCTA threads and PLINK RAM MiB [2/8192]
     --runtime-env FILE            Optional compute-node environment setup script
     --plan-dir DIR --wait TRUE|FALSE  Plan location / wait for successful completion
+    --pheno-jobs N               REGENIE HPC: cap concurrent phenotype jobs [all requested]
     --date-scratch YYYY-MM-DD     Shared scratch date; reuse the same date when resuming
     --memory-scope site_host|host|task  LSF memory reservation convention [site_host]
     DIR_WORK, DIR_DATA, DIR_SCRATCH and GWAS_* exports override default paths.
     --jobs is within-job parallelism; --threads is per GWAS process.
-    HPC keeps each requested pipeline in one allocation and preserves its internal
-    dependencies/checkpoints. Explicitly activate the scientific environment or
+    HPC REGENIE uses one allocation per phenotype; local/existing allocations
+    retain serial phenotype execution. Other pipelines use one allocation.
+    Each allocation preserves internal dependencies/checkpoints and uses its own
+    resource budget above. Explicitly activate the scientific environment or
     supply --runtime-env; no software is installed automatically.
 HELP
 }

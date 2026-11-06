@@ -6,6 +6,13 @@ remain compatible. This module also supplies the browser's numeric IO helpers.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 import datetime
 import hashlib
@@ -82,15 +89,10 @@ def json_write(path,value):
 def read_table(path):
     p=Path(path)
     if p.suffix=='.rds':
-        try:import rdata
-        except ImportError as e:raise RuntimeError('RDS input needs rdata>=1.1; use the existing grid environment or supply a TSV') from e
-        d=rdata.read_rds(p)
-        if isinstance(d,dict):
-            candidates=[x for x in d.values() if isinstance(x,pd.DataFrame)]
-            if len(candidates)!=1:raise ValueError('Expected exactly one data.frame in RDS')
-            d=candidates[0]
-        if not isinstance(d,pd.DataFrame):raise ValueError('Expected a data.frame in RDS')
-        return d
+        # Published score RDS files carry raw-byte provenance attributes which
+        # rdata cannot decode. Reuse the native R reader and its string-ID rules.
+        from data import read_table as read_rds_table
+        return read_rds_table(p)
     if p.suffix=='.parquet':return pd.read_parquet(p)
     sep=',' if '.csv' in p.name else '\t'
     # Explicit string IDs preserve values such as 00012; pandas otherwise infers integers.
@@ -758,7 +760,7 @@ def run(args):
     require_comparators=getattr(args,'require_comparators',False) or route_cfg.publication_mode
     if args.analysis_root and require_comparators:
         command=[sys.executable,str(ROOT/'f/check_comparators.py'),'--analysis-root',args.analysis_root,
-                 '--prsformer-upstream',os.getenv('GRID_PRSFORMER_UPSTREAM','/mnt/d/software/PRSformer'),
+                 '--prsformer-upstream',os.getenv('GRID_PRSFORMER_UPSTREAM',configured_path('DIR_SOFTWARE', 'PRSformer')),
                  '--traits',args.traits,'--strict']
         receipt=subprocess.run(command,capture_output=True,text=True)
         if receipt.returncode:
@@ -824,11 +826,11 @@ def demo(args):
 
 def analysis_main(argv=None):
     a=argparse.ArgumentParser(description='GRID twin: run/fit/project/evaluate/demo with separated outcome access.');sp=a.add_subparsers(dest='command',required=True)
-    r=sp.add_parser('abm');r.add_argument('--traits',default='height,ldl,t2dm');r.add_argument('--cache-dir',default='/mnt/d/analysis/grid/cache/abm');r.add_argument('--prepared');r.add_argument('--data-file');r.add_argument('--schema');r.add_argument('--roles-file')
+    r=sp.add_parser('abm');r.add_argument('--traits',default='height,ldl,t2dm');r.add_argument('--cache-dir',default=configured_path('ANALYSIS_ROOT', 'grid/cache/abm'));r.add_argument('--prepared');r.add_argument('--data-file');r.add_argument('--schema');r.add_argument('--roles-file')
     r.add_argument('--require-comparators',action='store_true',help='Require completed, verified PRSformer comparisons before fitting (also enabled by publication_mode)')
     r.add_argument('--prepare',action='store_true',help='Prepare ABM features from the frozen preparation roster, without waiting for PRSformer results')
     r.add_argument('--prepare-config',help='JSON input path/covariate overrides for ABM preparation')
-    r.add_argument('--config',default=str(DEFAULT_CONFIG),help='Configuration JSON (default: config/twin.json beside grid.sh)');r.add_argument('--out-root',default='/mnt/d/analysis/grid/abm');r.add_argument('--analysis-root',default='/mnt/d/analysis/grid');r.add_argument('--run-id');r.add_argument('--new-run',action='store_true',help='Explicitly fit a new ABM run instead of resuming verified work');r.add_argument('--check',action='store_true');r.add_argument('--endpoint');r.add_argument('--comparators');r.add_argument('--bootstrap',type=int);r.add_argument('--threads',type=int,default=4,help='Numeric worker threads (default: 4)')
+    r.add_argument('--config',default=str(DEFAULT_CONFIG),help='Configuration JSON (default: config/twin.json beside grid.sh)');r.add_argument('--out-root',default=configured_path('ANALYSIS_ROOT', 'grid/abm'));r.add_argument('--analysis-root',default=configured_path('ANALYSIS_ROOT', 'grid'));r.add_argument('--run-id');r.add_argument('--new-run',action='store_true',help='Explicitly fit a new ABM run instead of resuming verified work');r.add_argument('--check',action='store_true');r.add_argument('--endpoint');r.add_argument('--comparators');r.add_argument('--bootstrap',type=int);r.add_argument('--threads',type=int,default=4,help='Numeric worker threads (default: 4)')
     f=sp.add_parser('fit');f.add_argument('--data',required=True);f.add_argument('--config',required=True);f.add_argument('--output',required=True);f.add_argument('--threads',type=int,default=4)
     p=sp.add_parser('project');p.add_argument('--model',required=True);p.add_argument('--data',required=True);p.add_argument('--output',required=True);p.add_argument('--threads',type=int,default=4)
     e=sp.add_parser('evaluate');e.add_argument('--model',required=True);e.add_argument('--predictions',required=True);e.add_argument('--truth',required=True);e.add_argument('--output',required=True);e.add_argument('--comparators');e.add_argument('--endpoint',required=True);e.add_argument('--bootstrap',type=int);e.add_argument('--threads',type=int,default=4)
@@ -941,7 +943,8 @@ def main(argv=None):
         benchmark_config(options)
         os.environ.setdefault('GRID_CACHE_ROOT', str(Path(options.analysis_root) / 'cache'))
         from automatic_check import ensure_self_check
-        ensure_self_check()
+        if getattr(options, "workflow_stage", "all") == "all":
+            ensure_self_check()
     if command=='prsformer':
         from prsformer_resume import dispatch
         dispatch(ROOT, args, dry=dry)
@@ -966,7 +969,7 @@ def main(argv=None):
     elif command=='final':cmd=[sys.executable,str(ROOT/'f/final_dispatch.py'),*args]
     elif command=='shiny':
         import argparse
-        p=argparse.ArgumentParser();p.add_argument('--analysis-root',default='/mnt/d/analysis/grid');p.add_argument('--db');p.add_argument('--traits',default='height,ldl,t2dm');p.add_argument('--port',type=int,default=3839);p.add_argument('--host',default='127.0.0.1');p.add_argument('--r-bin');p.add_argument('--review',action='store_true');p.add_argument('--reindex',action='store_true')
+        p=argparse.ArgumentParser();p.add_argument('--analysis-root',default=configured_path('ANALYSIS_ROOT', 'grid'));p.add_argument('--db');p.add_argument('--traits',default='height,ldl,t2dm');p.add_argument('--port',type=int,default=3839);p.add_argument('--host',default='127.0.0.1');p.add_argument('--r-bin');p.add_argument('--review',action='store_true');p.add_argument('--reindex',action='store_true')
         a=p.parse_args(args);db=Path(a.db or str(Path(a.analysis_root)/'final/evidence.sqlite'))
         if not 1024<=a.port<=65535:raise ValueError('Invalid port')
         if a.host not in ('127.0.0.1','::1','localhost') and os.getenv('GRID_SHINY_ALLOW_NETWORK')!='TRUE':raise ValueError('Network binding requires GRID_SHINY_ALLOW_NETWORK=TRUE and your own authentication')

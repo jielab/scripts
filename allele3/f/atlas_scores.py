@@ -9,6 +9,13 @@ It performs local CPU-only indexed reads; it never downloads or scans the atlas.
 """
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 import argparse
 from collections import Counter
 from contextlib import ExitStack
@@ -283,14 +290,25 @@ def index_metadata(path, spec):
             raise ValueError(f"Not a TBI/CSI Tabix index: {path}")
     if fmt & 0x10000:
         raise ValueError(f"Resource {spec['resource_id']}: index uses 0-based coordinates; expected a 1-based SNV index")
-    if fmt != 0:
-        raise ValueError(f"Resource {spec['resource_id']}: expected generic TSV Tabix format, got preset {fmt}")
+    if fmt not in {0, 2}:
+        raise ValueError(f"Resource {spec['resource_id']}: expected generic TSV or SNV-compatible VCF Tabix format, got preset {fmt}")
+    if fmt == 2:
+        # Official AVI/splicing SNV downloads use TBX_VCF indexes over the
+        # CHROM,POS,REF,ALT score table. The fourth field is a one-base ALT,
+        # so HTSlib's VCF interval decoder still yields a one-base interval.
+        # Do not generalize this to reordered schemas or non-SNV records;
+        # query() also checks the exact returned coordinate and REF/ALT bases.
+        columns = [spec[key + "_column"] for key in ("chrom", "pos", "ref", "alt")]
+        if spec["column_names"][:4] != columns or (seq, begin, end) != (1, 2, 0):
+            raise ValueError(f"Resource {spec['resource_id']}: VCF-preset SNV index requires leading CHROM,POS,REF,ALT and index columns (1,2,0)")
     expected_seq, expected_pos = spec["column_indices"]["chrom"] + 1, spec["column_indices"]["pos"] + 1
     if seq != expected_seq or begin != expected_pos or end not in {0, expected_pos}:
         raise ValueError(f"Resource {spec['resource_id']}: Tabix index columns {(seq, begin, end)} conflict with SNV schema {(expected_seq, expected_pos, expected_pos)}")
     if skip < 0 or name_bytes < 1:
         raise ValueError(f"Resource {spec['resource_id']}: invalid Tabix metadata")
-    return dict(format=kind, coordinate_system="1-based", chrom_column=seq, start_column=begin, end_column=end, meta_character=meta, skip_lines=skip)
+    return dict(format=kind, preset="vcf_snv" if fmt == 2 else "generic",
+                coordinate_system="1-based", chrom_column=seq, start_column=begin, end_column=end,
+                meta_character=meta, skip_lines=skip)
 
 
 def normalized_column(value):
@@ -553,7 +571,7 @@ def parser():
     p.add_argument("--avi-file", help="Official local six-column BGZF TSV; override the configured AVI path")
     p.add_argument("--avi-index", help="Explicit index paired with --avi-file (.tbi or .csi); required if both siblings exist")
     p.add_argument("--resources", default=str(DEFAULT_RESOURCES), help="Explicit local resource schema TSV; optional metrics can remain disabled/missing")
-    p.add_argument("--dir-data", default=os.environ.get("DIR_DATA", "/mnt/f"), help="Expand {dir_data}; defaults to the shared local/HPC data root")
+    p.add_argument("--dir-data", default=os.environ.get("DIR_DATA", configured_path('DIR_BIG')), help="Expand {dir_data}; defaults to the shared local/HPC data root")
     p.add_argument("--source-version", help="User-declared AVI release identifier from the download portal or receipt; never guessed from filename")
     p.add_argument("--chromosomes", default="all", help="Filter targets, e.g. 1-22,X,Y or chr1; does not scan chromosomes")
     p.add_argument("--region", help="Filter targets with 1-based closed chr:start-end; does not scan the region")

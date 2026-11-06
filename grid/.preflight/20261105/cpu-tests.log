@@ -1,0 +1,173 @@
+...............................F......FFFFF..............        [100%]
+=================================== FAILURES ===================================
+__ test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores __
+
+tmp_path = PosixPath('/tmp/pytest-of-sph-huangj/pytest-0/test_trait_feature_preparation0')
+
+    def test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores(tmp_path):
+        import joblib
+        from data import write_rds
+        from shared_cohort import complete_score_features, prepared_for_trait, sha256
+        from twin import load_source
+        cache=tmp_path/'prsformer/cache';cache.mkdir(parents=True)
+        n=40
+        d=pd.DataFrame(dict(eid=[str(i) for i in range(n)], group=[f'g{i//2}' for i in range(n)],
+            split=['train']*20+['test']*20, height=np.arange(n,dtype=float), ldl=np.arange(n,dtype=float)+3,
+            age=np.arange(n,dtype=float),sex=np.arange(n)%2,PC1=np.arange(n)/2,PC2=np.arange(n)/3))
+        d.loc[[2,30],'height']=np.nan
+        d.to_csv(cache/'data.tsv.gz',sep='\t',index=False)
+        (cache/'prepare.json').write_text(json.dumps(dict(options=dict(covariates='age,sex,PC1,PC2'))))
+        cfg=json.loads((ROOT/'config/abm.blocks.json').read_text())
+        cfg.update(prsformer_cache=str(cache),score_root=str(tmp_path/'scores'))
+        config=tmp_path/'blocks.json';config.write_text(json.dumps(cfg))
+        score=pd.DataFrame({'eid':d.eid,**{'csx.'+p:np.arange(n)*(i+1.) for i,p in enumerate(['AFR','EAS','EUR','SAS'])}})
+        target=tmp_path/'scores/height';target.mkdir(parents=True)
+        write_rds(score,target/'1csx.scores.rds')
+        args=SimpleNamespace(analysis_root=str(tmp_path),traits='height',block_config=str(config))
+>       result=complete_score_features(args,{})
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+2test/test_shared_benchmark_inputs.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = namespace(analysis_root='/tmp/pytest-of-sph-huangj/pytest-0/test_trait_feature_preparation0', traits='height', block_config='/tmp/pytest-of-sph-huangj/pytest-0/test_trait_feature_preparation0/blocks.json')
+config = {}
+
+    def complete_score_features(args, config=None):
+        """Join only requested scores onto frozen IDs, retaining missing outcomes.
+    
+        Unlike historical raw_tables, this does not intersect traits or create a
+        new cohort. It requires no other trait's CSx score and no fitted model.
+        Existing complete legacy caches are read-only; new caches are per trait.
+        """
+        import joblib
+        from resume import run_lock
+        from twin import load_source
+        root = Path(args.analysis_root)
+        config = config or {}
+        block_path = getattr(args, "block_config", None) or config.get("block_config", GRID / "config/abm.blocks.json")
+        block = read_config(block_path, root)
+        cache = Path(block["prsformer_cache"])
+        source = cache / "data.tsv.gz"
+        preparation = json.loads((cache / "prepare.json").read_text())
+        covariate_text = preparation.get("options", {}).get("covariates", "age,sex,PC1,PC2")
+        covariates = [] if covariate_text in {"none", ""} else covariate_text.split(",")
+        requested = getattr(args, "traits", "height,ldl,t2dm")
+        traits = requested.split(",") if isinstance(requested, str) else list(requested)
+        results = {}
+        for trait in traits:
+            target = prepared_for_trait(root, trait)
+            if target == root / "cache/abm/prepared.joblib":
+                load_source(target, trait)  # validate every existing source stamp
+                results[trait] = target
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with run_lock(target.parent):
+                frame, metadata = load_cohort(root, trait, cohort=source)
+                score_path = Path(block["score_root"]) / trait / "1csx.scores.rds"
+                scores = table(score_path).set_index("id")
+                if not set(frame.id) <= set(scores.index):
+                    raise ValueError(f"{trait} scores do not cover every fixed cohort ID")
+                features = []
+                for pop in ("AFR", "EAS", "EUR", "SAS"):
+                    column = next((c for c in (f"csx.{pop}", f"CSX_{pop}", f"csx_{pop}") if c in scores), None)
+                    if column is None:
+                        raise ValueError(f"Missing {trait} population score {pop}")
+                    name = f"csx.{pop}"
+                    frame[name] = pd.to_numeric(scores.loc[frame.id, column], errors="raise").to_numpy(float)
+                    features.append(name)
+                if not np.isfinite(frame[features].to_numpy(float)).all():
+                    raise ValueError("Nonfinite score in fixed cohort")
+                paths = [source, cache / "prepare.json", score_path]
+                match_pcs = []
+                pca_path = Path(os.environ.get("GRID_PCA_FILE", relocate(configured_path('DIR_GEN', 'ukb/pca_proj/ukb.discodivas.pca.tsv.gz'))))
+                if pca_path.is_file():
+                    pca = table(pca_path).set_index("id")
+                    if not set(frame.id) <= set(pca.index):
+>                       raise ValueError("Projected PC table does not cover the fixed cohort")
+E                       ValueError: Projected PC table does not cover the fixed cohort
+
+f/shared_cohort.py:367: ValueError
+_ ResumeRuntimeTests.test_changes_to_scientific_inputs_and_schedule_still_fail _
+
+self = <test_prsformer_runtime.ResumeRuntimeTests testMethod=test_changes_to_scientific_inputs_and_schedule_still_fail>
+
+    def setUp(self):
+        self.current_source = hashlib.sha256(ast.dump(ast.parse(
+            Path(p.__file__).read_text()), include_attributes=False).encode()).hexdigest()
+        transitions = json.loads((ROOT / 'f/prsformer_resume_compatibility.json').read_text())['transitions']
+        # Python 3.12 adds empty type_params AST fields. Only explicitly
+        # reviewed source pairs for this interpreter may pass the resume gate.
+>       transition = next(row for row in transitions if row['to'] == self.current_source)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+2test/test_prsformer_runtime.py:30: StopIteration
+__ ResumeRuntimeTests.test_effective_batch_and_unreviewed_source_changes_fail __
+
+self = <test_prsformer_runtime.ResumeRuntimeTests testMethod=test_effective_batch_and_unreviewed_source_changes_fail>
+
+    def setUp(self):
+        self.current_source = hashlib.sha256(ast.dump(ast.parse(
+            Path(p.__file__).read_text()), include_attributes=False).encode()).hexdigest()
+        transitions = json.loads((ROOT / 'f/prsformer_resume_compatibility.json').read_text())['transitions']
+        # Python 3.12 adds empty type_params AST fields. Only explicitly
+        # reviewed source pairs for this interpreter may pass the resume gate.
+>       transition = next(row for row in transitions if row['to'] == self.current_source)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+2test/test_prsformer_runtime.py:30: StopIteration
+_ ResumeRuntimeTests.test_reviewed_upgrade_preserves_effective_batch_and_patience _
+
+self = <test_prsformer_runtime.ResumeRuntimeTests testMethod=test_reviewed_upgrade_preserves_effective_batch_and_patience>
+
+    def setUp(self):
+        self.current_source = hashlib.sha256(ast.dump(ast.parse(
+            Path(p.__file__).read_text()), include_attributes=False).encode()).hexdigest()
+        transitions = json.loads((ROOT / 'f/prsformer_resume_compatibility.json').read_text())['transitions']
+        # Python 3.12 adds empty type_params AST fields. Only explicitly
+        # reviewed source pairs for this interpreter may pass the resume gate.
+>       transition = next(row for row in transitions if row['to'] == self.current_source)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+2test/test_prsformer_runtime.py:30: StopIteration
+_ ResumeRuntimeTests.test_same_source_resume_works_and_invalid_signature_fails _
+
+self = <test_prsformer_runtime.ResumeRuntimeTests testMethod=test_same_source_resume_works_and_invalid_signature_fails>
+
+    def setUp(self):
+        self.current_source = hashlib.sha256(ast.dump(ast.parse(
+            Path(p.__file__).read_text()), include_attributes=False).encode()).hexdigest()
+        transitions = json.loads((ROOT / 'f/prsformer_resume_compatibility.json').read_text())['transitions']
+        # Python 3.12 adds empty type_params AST fields. Only explicitly
+        # reviewed source pairs for this interpreter may pass the resume gate.
+>       transition = next(row for row in transitions if row['to'] == self.current_source)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+2test/test_prsformer_runtime.py:30: StopIteration
+_______ ResumeRuntimeTests.test_wrapper_default_and_low_memory_override ________
+
+self = <test_prsformer_runtime.ResumeRuntimeTests testMethod=test_wrapper_default_and_low_memory_override>
+
+    def setUp(self):
+        self.current_source = hashlib.sha256(ast.dump(ast.parse(
+            Path(p.__file__).read_text()), include_attributes=False).encode()).hexdigest()
+        transitions = json.loads((ROOT / 'f/prsformer_resume_compatibility.json').read_text())['transitions']
+        # Python 3.12 adds empty type_params AST fields. Only explicitly
+        # reviewed source pairs for this interpreter may pass the resume gate.
+>       transition = next(row for row in transitions if row['to'] == self.current_source)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+2test/test_prsformer_runtime.py:30: StopIteration
+=========================== short test summary info ============================
+FAILED 2test/test_shared_benchmark_inputs.py::test_trait_feature_preparation_keeps_missing_y_without_other_traits_scores
+FAILED 2test/test_prsformer_runtime.py::ResumeRuntimeTests::test_changes_to_scientific_inputs_and_schedule_still_fail
+FAILED 2test/test_prsformer_runtime.py::ResumeRuntimeTests::test_effective_batch_and_unreviewed_source_changes_fail
+FAILED 2test/test_prsformer_runtime.py::ResumeRuntimeTests::test_reviewed_upgrade_preserves_effective_batch_and_patience
+FAILED 2test/test_prsformer_runtime.py::ResumeRuntimeTests::test_same_source_resume_works_and_invalid_signature_fails
+FAILED 2test/test_prsformer_runtime.py::ResumeRuntimeTests::test_wrapper_default_and_low_memory_override
+6 failed, 51 passed, 8 subtests passed in 239.55s (0:03:59)

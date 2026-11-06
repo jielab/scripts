@@ -100,7 +100,7 @@ def path_identity(path, full=False):
     return result
 
 
-def normalize_resources(raw, plan):
+def normalize_resources(raw, plan, mode="hpc"):
     resource = dict(plan.get("resources", {})); resource.update(raw or {})
     queue = text_value(resource.get("queue", os.environ.get("HPC_CPU_QUEUE", "33")), "queue")
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*", queue): raise ValueError("Invalid queue")
@@ -109,6 +109,10 @@ def normalize_resources(raw, plan):
     memory = positive(resource.get("memory_gib", 16), "memory_gib")
     minutes = int((positive(resource.get("hours", 24), "hours")*60).to_integral_value(rounding=ROUND_CEILING))
     gpu = integer(resource.get("gpu", 0), "gpu", minimum=0)
+    if mode == "hpc" and not gpu:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "0f"))
+        from qiming_resources import cpu_slots
+        queue, cores = cpu_slots(queue, cores, memory, Decimal(minutes) / 60)
     scope = plan.get("lsf_memory_scope", "host")
     per_task = plan.get("lsf_resource_reserve_per_task")
     if scope == "host": unit = "GB/host"; amount = memory
@@ -147,7 +151,7 @@ def normalize_plan(plan, mode):
         outputs = raw.get("outputs", [])
         if not isinstance(outputs, list): raise ValueError("outputs must be a list of completed files")
         normalized.append(dict(id=job_id, argv=argv, deps=deps, cwd=absolute(raw.get("cwd", os.getcwd()), "cwd"),
-            env=env, resources=normalize_resources(raw.get("resources"), plan),
+            env=env, resources=normalize_resources(raw.get("resources"), plan, mode),
             outputs=[absolute(p,"output") for p in outputs]))
     lookup = {j["id"]:j for j in normalized}
     if len(lookup) != len(normalized): raise ValueError("Duplicate job IDs")

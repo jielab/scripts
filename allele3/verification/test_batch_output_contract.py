@@ -73,6 +73,10 @@ class BatchOutputContract(unittest.TestCase):
                     _, _, out = self.plan("3.scan.sh", [action])
                     self.assertEqual(str(out), "/data/test/existing-scan")
 
+    def test_scan_verification_defaults_to_persistent_analysis_store(self):
+        _, _, out = self.plan("3.scan.sh", ["verify"])
+        self.assertEqual(str(out), "/scratch/test/analysis/allele3/stores/gnomad_scan")
+
     def test_cohort_plan_and_summary_keep_separate_default_directories(self):
         outputs = []
         for action in ("plan", "summarize"):

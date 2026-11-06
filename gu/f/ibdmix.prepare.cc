@@ -36,16 +36,31 @@ struct Reader {
     int capacity = 0, samples = 0;
     int64_t pos = 0, previous = -1;
     uint64_t records = 0;
-    bool valid = false;
+    bool valid = false, legacy_annotations = false;
     char ref = '.', alt = '.';
 
     Reader(const std::string& file, const std::string& region, const std::string& chr,
-           const Intervals& allowed) : path(file), chrom(chr), intervals(allowed) {
+           const Intervals& allowed, bool legacy = false) : path(file), chrom(chr), intervals(allowed), legacy_annotations(legacy) {
         require(bool(sr), "Cannot allocate VCF reader");
         if (!region.empty()) require(bcf_sr_set_regions(sr.get(), region.c_str(), 0) == 0,
                                      "Invalid region: " + region);
         require(bcf_sr_add_reader(sr.get(), file.c_str()) == 1,
                 "Cannot open " + file + ": " + bcf_sr_strerror(sr->errnum));
+        // The 2013 releases can use LowQual without declaring its FILTER
+        // header. Define that annotation before decoding; FILTER does not
+        // participate in the upstream genotype merge. Keep all record/GT
+        // validation. Legacy INFO/FILTER annotations are not scoring inputs.
+        if (legacy_annotations) {
+            int gt_id = bcf_hdr_id2int(header(), BCF_DT_ID, "GT");
+            require(gt_id >= 0 && bcf_hdr_idinfo_exists(header(), BCF_HL_FMT, gt_id)
+                    && bcf_hdr_id2type(header(), BCF_HL_FMT, gt_id) == BCF_HT_STR,
+                    "Missing/invalid GT declaration in " + file);
+            int id = bcf_hdr_id2int(header(), BCF_DT_ID, "LowQual");
+            if (id < 0 || !bcf_hdr_idinfo_exists(header(), BCF_HL_FLT, id)) {
+                require(bcf_hdr_append(header(), "##FILTER=<ID=LowQual,Description=\"Low quality (legacy VCF annotation)\">") == 0
+                        && bcf_hdr_sync(header()) == 0, "Cannot register legacy LowQual FILTER in " + file);
+            }
+        }
         samples = bcf_hdr_nsamples(header());
         require(samples > 0, "No samples in " + file);
         genotypes.resize(2 * samples);
@@ -61,7 +76,12 @@ struct Reader {
     bool next(bool archaic = false) {
         while (bcf_sr_next_line(sr.get())) {
             auto* r = bcf_sr_get_line(sr.get(), 0);
-            require(r && !r->errcode, "Invalid VCF record in " + path);
+            // The 2013 files also contain INFO placeholders such as '.;RM'.
+            // HTSlib can decode GT while reporting an undefined annotation.
+            // Only those legacy metadata warnings are tolerated; malformed
+            // records, coordinates, alleles and GT remain fatal below.
+            require(r && !(r->errcode & ~(legacy_annotations ? BCF_ERR_TAG_UNDEF : 0)),
+                    "Invalid VCF record in " + path);
             require(chrom_name(bcf_hdr_id2name(header(), r->rid)) == chrom,
                     "Unexpected chromosome in " + path);
             pos = r->pos + 1;
@@ -121,7 +141,8 @@ struct Output {
 
     Output(const std::string& label, const std::string& path, const std::string& region,
            const std::string& chr, const Intervals& intervals, const std::string& stem,
-           Reader& modern, hts_tpool* pool) : archaic(path, region, chr, intervals), name(label), base(stem) {
+           Reader& modern, hts_tpool* pool) : archaic(path, region, chr, intervals,
+               label == "Altai.2013" || label == "Denisova.2013"), name(label), base(stem) {
         require(archaic.samples == 1, "Expected exactly one archaic sample: " + path);
         std::set<std::string> ids;
         std::string header = "chrom\tpos\tref\talt";
@@ -210,7 +231,7 @@ int main(int argc, char** argv) try {
     auto value = [&](int& i) { require(i + 1 < argc, "Missing argument value"); return std::string(argv[++i]); };
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "--version") { std::cout << "ibdmix-prepare shared-hts-v1\n"; return 0; }
+        if (a == "--version") { std::cout << "ibdmix-prepare shared-hts-v3\n"; return 0; }
         else if (a == "--modern") modern_file = value(i);
         else if (a == "--modern-region") modern_region = value(i);
         else if (a == "--out") outdir = value(i);

@@ -1,0 +1,44 @@
+shared-cohort-all	0
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@r13n26>
+Subject: Job 4386642: <grid-preflight-phenotype> in cluster <qmhpc> Done
+
+Job <grid-preflight-phenotype> was submitted from host <b04u17l> by user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:23:54 2026
+Job was executed on host(s) <2*r13n26>, in queue <33>, as user <sph-huangj> in cluster <qmhpc> at Thu Nov  5 09:23:54 2026
+</work/sph-huangj> was used as the home directory.
+</work/sph-huangj/scripts/grid> was used as the working directory.
+Started at Thu Nov  5 09:23:54 2026
+Terminated at Thu Nov  5 09:26:40 2026
+Results reported at Thu Nov  5 09:26:40 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+bash /work/sph-huangj/scripts/grid/.preflight/20261105/phenotype-check.cmd
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   146.94 sec.
+    Max Memory :                                 5753 MB
+    Average Memory :                             1858.65 MB
+    Total Requested Memory :                     16384.00 MB
+    Delta Memory :                               10631.00 MB
+    Max Swap :                                   -
+    Max Processes :                              5
+    Max Threads :                                7
+    Run time :                                   169 sec.
+    Turnaround time :                            166 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file </work/sph-huangj/scripts/grid/.preflight/20261105/phenotype-check.4386642.err> for stderr output of this job.
+

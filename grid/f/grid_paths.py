@@ -14,47 +14,28 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 GRID = REPOSITORY / "grid"
 
 
+# Use the shared adapter; this module only adds GRID's analysis-root override.
+import sys as _paths_sys
+_paths_sys.path.insert(0, str(REPOSITORY / "0f"))
+from workflow_paths import configured_path, relocate_defaults
+
+
 def analysis_default():
-    return os.environ.get("GRID_OUTPUT_ROOT", str(Path(os.environ["ANALYSIS_ROOT"]) / "grid")
-                          if os.environ.get("ANALYSIS_ROOT") else "/mnt/d/analysis/grid")
+    return os.environ.get("GRID_OUTPUT_ROOT", configured_path("ANALYSIS_ROOT", "grid"))
 
 
 def relocate(value, analysis_root=None):
-    helper = REPOSITORY / "0f/workflow_paths.py"
-    platform = lambda item: item
-    if helper.is_file():
-        spec = importlib.util.spec_from_file_location("grid_workflow_paths", helper)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        platform = module.relocate_defaults
-    mappings = [("/mnt/d/scripts", str(REPOSITORY)),
-                ("/mnt/d/analysis/grid", str(analysis_root or analysis_default()))]
-    if os.environ.get("DIR_DATA"):
-        mappings.append(("/mnt/f", os.environ["DIR_DATA"]))
-    if os.environ.get("DIR_WORK"):
-        mappings.append(("/mnt/d/data", str(Path(os.environ["DIR_WORK"]) / "data")))
-    if os.environ.get("OS_FILES_ROOT"):
-        mappings.append(("/mnt/d/files", os.environ["OS_FILES_ROOT"]))
-
-    def walk(item):
-        if isinstance(item, dict):
-            return {key: walk(val) for key, val in item.items()}
-        if isinstance(item, list):
-            return [walk(val) for val in item]
-        if isinstance(item, str):
-            # Explicit/current analysis roots take priority over generic HPC
-            # relocation; do not remap them a second time.
-            for old, new in mappings[:2]:
-                if item == old or item.startswith(old + "/"):
-                    return new.rstrip("/") + item[len(old):]
-            relocated = platform(item)
-            if relocated != item:
-                return relocated
-            for old, new in mappings[2:]:
-                if item == old or item.startswith(old + "/"):
-                    return new.rstrip("/") + item[len(old):]
-        return item
-    return walk(value)
+    if isinstance(value, dict):
+        return {key: relocate(item, analysis_root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [relocate(item, analysis_root) for item in value]
+    if not isinstance(value, str):
+        return value
+    resolved = relocate_defaults(value)
+    base = configured_path("ANALYSIS_ROOT", "grid")
+    if resolved == base or resolved.startswith(base + "/"):
+        return str(analysis_root or analysis_default()).rstrip("/") + resolved[len(base):]
+    return resolved
 
 
 def read_config(path, analysis_root=None):
@@ -62,10 +43,10 @@ def read_config(path, analysis_root=None):
     raw = json.loads(source.read_text())
     value = relocate(raw, analysis_root)
     # Only replace known repository defaults. Custom config values remain exact.
-    aliases = {"score_root": ("GRID_SCORE_DIR", "/mnt/f/gen/ukb/pgs"),
-               "ld_block_dir": ("GRID_LD_BLOCK_DIR", "/mnt/f/LD/block"),
-               "dosage_supplement_dir": ("GRID_TARGET_DIR", "/mnt/f/gen/ukb/37/typ")}
+    aliases = {"score_root": ("GRID_SCORE_DIR", configured_path("DIR_GEN", "ukb/pgs")),
+               "ld_block_dir": ("GRID_LD_BLOCK_DIR", configured_path("DIR_LD", "block")),
+               "dosage_supplement_dir": ("GRID_TARGET_DIR", configured_path("DIR_GEN", "ukb/37/typ"))}
     for key, (env, default) in aliases.items():
-        if raw.get(key) == default and os.environ.get(env):
+        if relocate_defaults(raw.get(key)) == default and os.environ.get(env):
             value[key] = os.environ[env]
     return value

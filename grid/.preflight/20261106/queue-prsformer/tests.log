@@ -1,0 +1,9 @@
+.........................[shared inputs] READY: frozen cohort and genotype cache; no model trained
+[shared inputs] READY: frozen cohort and genotype cache; no model trained
+...[shared inputs] REUSE verified prepared cache: /tmp/grid trait worker 1c7dqx42/shared-cache
+[shared inputs] READY: frozen cohort and genotype cache; no model trained
+.
+----------------------------------------------------------------------
+Ran 29 tests in 6.286s
+
+OK

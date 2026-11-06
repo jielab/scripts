@@ -1,0 +1,103 @@
+[csx] work directory: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx
+[csx] command file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/cmd/csx.20261105T092233.963927.sh
+[csx] log file: /work/sph-huangj/scripts/grid/.preflight/20261105/native/csx/log/csx.20261105T092233.963927.log
+[csx] Target BIM generated: 765067 SNPs; excluded 19189 unusable variants; /work/sph-huangj/data/gen/ukb/37/typ/ukb_array.bim
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.gz
+  GRCh37 coordinate sample: 90531/90532; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.gz
+  GRCh37 coordinate sample: 90907/90908; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.gz
+  GRCh37 coordinate sample: 90569/90570; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.gz
+  GRCh37 coordinate sample: 91087/91087; N is median of usable HM3 variants (override: --n-gwas)
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.csx.gz
+output score files: /work/sph-huangj/data/gen/ukb/pgs/height/1csx.scores.rds
+CSx: joint AFR,EAS,EUR,SAS; phi=1e-2; iter/burnin/thin=4000/2000/5; seed=20260904; chromosomes=1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22
+CHECK/PLAN complete; no inference or scoring executed
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.gz
+  GRCh37 coordinate sample: 90531/90532; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.gz
+  GRCh37 coordinate sample: 90907/90908; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.gz
+  GRCh37 coordinate sample: 90569/90570; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.gz
+  GRCh37 coordinate sample: 91087/91087; N is median of usable HM3 variants (override: --n-gwas)
+CSx auto: phi=auto; joint run=auto
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.AFR/gwas/height.AFR.gz
+  GRCh37 coordinate sample: 90531/90532; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EAS/gwas/height.EAS.gz
+  GRCh37 coordinate sample: 90907/90908; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.EUR/gwas/height.EUR.gz
+  GRCh37 coordinate sample: 90569/90570; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/height.SAS/gwas/height.SAS.gz
+  GRCh37 coordinate sample: 91087/91087; N is median of usable HM3 variants (override: --n-gwas)
+CSx meta: phi=1e-2; joint run=phi-1e-2
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.gz
+  GRCh37 coordinate sample: 3728/3728; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.gz
+  GRCh37 coordinate sample: 7182/7183; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.gz
+  GRCh37 coordinate sample: 3124/3124; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.gz
+  GRCh37 coordinate sample: 7925/7925; N is median of usable HM3 variants (override: --n-gwas)
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.csx.gz
+output score files: /work/sph-huangj/data/gen/ukb/pgs/ldl/1csx.scores.rds
+CSx: joint AFR,EAS,EUR,SAS; phi=1e-2; iter/burnin/thin=4000/2000/5; seed=20260904; chromosomes=1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22
+CHECK/PLAN complete; no inference or scoring executed
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.gz
+  GRCh37 coordinate sample: 3728/3728; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.gz
+  GRCh37 coordinate sample: 7182/7183; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.gz
+  GRCh37 coordinate sample: 3124/3124; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.gz
+  GRCh37 coordinate sample: 7925/7925; N is median of usable HM3 variants (override: --n-gwas)
+CSx auto: phi=auto; joint run=auto
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.AFR/gwas/ldl.AFR.gz
+  GRCh37 coordinate sample: 3728/3728; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EAS/gwas/ldl.EAS.gz
+  GRCh37 coordinate sample: 7182/7183; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.EUR/gwas/ldl.EUR.gz
+  GRCh37 coordinate sample: 3124/3124; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/ldl.SAS/gwas/ldl.SAS.gz
+  GRCh37 coordinate sample: 7925/7925; N is median of usable HM3 variants (override: --n-gwas)
+CSx meta: phi=1e-2; joint run=phi-1e-2
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.gz
+  GRCh37 coordinate sample: 6323/6323; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.gz
+  GRCh37 coordinate sample: 7013/7013; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.gz
+  GRCh37 coordinate sample: 6283/6283; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.gz
+  GRCh37 coordinate sample: 7929/7929; N is median of usable HM3 variants (override: --n-gwas)
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.csx.gz
+output SNP weights: /work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.csx.gz
+output score files: /work/sph-huangj/data/gen/ukb/pgs/t2dm/1csx.scores.rds
+CSx: joint AFR,EAS,EUR,SAS; phi=1e-2; iter/burnin/thin=4000/2000/5; seed=20260904; chromosomes=1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22
+CHECK/PLAN complete; no inference or scoring executed
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.gz
+  GRCh37 coordinate sample: 6323/6323; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.gz
+  GRCh37 coordinate sample: 7013/7013; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.gz
+  GRCh37 coordinate sample: 6283/6283; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.gz
+  GRCh37 coordinate sample: 7929/7929; N is median of usable HM3 variants (override: --n-gwas)
+CSx auto: phi=auto; joint run=auto
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.AFA/gwas/t2dm.AFA.gz
+  GRCh37 coordinate sample: 6323/6323; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EAS/gwas/t2dm.EAS.gz
+  GRCh37 coordinate sample: 7013/7013; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.EUR/gwas/t2dm.EUR.gz
+  GRCh37 coordinate sample: 6283/6283; N is median of usable HM3 variants (override: --n-gwas)
+input GWAS: /work/sph-huangj/data/gwas/4grid/common/t2dm.SAS/gwas/t2dm.SAS.gz
+  GRCh37 coordinate sample: 7929/7929; N is median of usable HM3 variants (override: --n-gwas)
+CSx meta: phi=1e-2; joint run=phi-1e-2

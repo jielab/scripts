@@ -8,11 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 SHARED = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SHARED))
-from workflow_jobs import Job, normalized, resources, run_plan, write_plan
+from workflow_jobs import _submit_bsub, Job, normalized, resources, run_plan, write_plan
 from workflow_paths import relocate_defaults
 
 
@@ -95,10 +95,16 @@ class WorkflowTests(unittest.TestCase):
         plan = write_plan([job], self.root)
         cmd = (plan.parent / "commands/parallel.cmd").read_text()
         self.assertIn("#BSUB -M 160GB", cmd)
-        self.assertIn("rusage[mem=20480MB/task]", cmd)
+        self.assertIn("#BSUB -n 40", cmd)
+        self.assertIn("rusage[mem=4096MB/task]", cmd)
         job.resources['cores'] = 39
         plan = write_plan([job], self.root)
         cmd = (plan.parent / "commands/parallel.cmd").read_text()
+        self.assertIn("rusage[mem=4096MB/task]", cmd)
+        job.resources['queue'] = 'v3-6t'
+        plan = write_plan([job], self.root)
+        cmd = (plan.parent / "commands/parallel.cmd").read_text()
+        self.assertIn("#BSUB -n 39", cmd)
         self.assertIn("rusage[mem=4202MB/task]", cmd)
 
     def test_resource_and_label_injection_rejected(self):
@@ -115,7 +121,7 @@ class WorkflowTests(unittest.TestCase):
         def fake(argv, **kwargs):
             calls.append(argv)
             return subprocess.CompletedProcess(argv, 0, f"Job <{100+len(calls)}> is submitted to queue <ser>.\n", "")
-        with patch("workflow_jobs.subprocess.run", side_effect=fake):
+        with patch("workflow_jobs._submit_bsub", side_effect=fake):
             run_plan(plan, submit="hpc", jobs=2)
             run_plan(plan, submit="hpc", jobs=2)
         self.assertEqual(len(calls), 3)
@@ -129,16 +135,110 @@ class WorkflowTests(unittest.TestCase):
 
     def test_unknown_submission_not_retried(self):
         plan = write_plan([self.job("x", "pass")], self.root)
-        with patch("workflow_jobs.subprocess.run", return_value=subprocess.CompletedProcess([], 1, "", "transport failed")) as call:
+        with patch("workflow_jobs._submit_bsub", return_value=subprocess.CompletedProcess([], 1, "", "transport failed")) as call:
             with self.assertRaises(RuntimeError):
                 run_plan(plan)
             with self.assertRaises(RuntimeError):
                 run_plan(plan)
             self.assertEqual(call.call_count, 1)
 
+    def test_resume_restores_submission_order_for_concurrency_lanes(self):
+        plan = write_plan([self.job("z", "pass"), self.job("a", "pass"),
+                           self.job("last", "pass")], self.root)
+        saved = {"plan": str(plan), "jobs": {
+            "z": {"status": "submitted", "job_id": "101"},
+            "a": {"status": "submitted", "job_id": "102"},
+        }}
+        (plan.parent / "submission.json").write_text(json.dumps(saved, sort_keys=True))
+        with patch("workflow_jobs._submit_bsub", return_value=
+                   subprocess.CompletedProcess([], 0, "Job <103> is submitted", "")) as call:
+            run_plan(plan, jobs=1)
+        self.assertEqual(call.call_args.args[0], ["bsub", "-w", "ended(102)"])
+
+    def test_submission_acknowledgement_timeout_is_configurable(self):
+        for configured, expected in ((None, 300), ("420", 420)):
+            with self.subTest(configured=configured):
+                plan = write_plan([self.job("x", "pass")], self.root)
+                with patch.dict(os.environ):
+                    os.environ.pop("WORKFLOW_BSUB_TIMEOUT_SECONDS", None)
+                    if configured is not None:
+                        os.environ["WORKFLOW_BSUB_TIMEOUT_SECONDS"] = configured
+                    with patch("workflow_jobs._submit_bsub", return_value=
+                               subprocess.CompletedProcess([], 0, "Job <123> is submitted", "")) as call:
+                        run_plan(plan)
+                    self.assertEqual(call.call_args.kwargs["timeout"], expected)
+
+    def test_timed_out_submission_preserves_evidence_and_is_not_retried(self):
+        plan = write_plan([self.job("x", "pass"), self.job("y", "pass", ["x"])], self.root)
+        error = subprocess.TimeoutExpired(["bsub"], 300,
+                                           output=b"waiting for controller", stderr=b"slow response")
+        with patch("workflow_jobs._submit_bsub", side_effect=error) as call:
+            with self.assertRaisesRegex(RuntimeError, "acceptance is unknown"):
+                run_plan(plan)
+            with self.assertRaisesRegex(RuntimeError, "earlier bsub result is unknown"):
+                run_plan(plan)
+            self.assertEqual(call.call_count, 1)
+        receipts = json.loads((plan.parent / "submission.json").read_text())["jobs"]
+        self.assertEqual(receipts["x"]["status"], "submitting")
+        self.assertEqual(receipts["x"]["stdout"], "waiting for controller")
+        self.assertEqual(receipts["x"]["stderr"], "slow response")
+        self.assertNotIn("y", receipts)
+
+    def test_invalid_submission_timeout_does_not_submit(self):
+        for value in ("0", "-1", "nan", "inf", "invalid"):
+            with self.subTest(value=value):
+                plan = write_plan([self.job("x", "pass")], self.root)
+                with patch.dict(os.environ, {"WORKFLOW_BSUB_TIMEOUT_SECONDS": value}), \
+                     patch("workflow_jobs._submit_bsub") as call:
+                    with self.assertRaises(ValueError):
+                        run_plan(plan)
+                    call.assert_not_called()
+                self.assertFalse((plan.parent / "submission.json").exists())
+
+    def test_bsub_capacity_wait_keeps_one_process_alive(self):
+        message = b"Group <example>: Pending job threshold reached. Retrying in 60 seconds...\n"
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.returncode = 0
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["bsub"], 300, stderr=message),
+            subprocess.TimeoutExpired(["bsub"], 300, stderr=message * 2),
+            ("Job <123> is submitted", message.decode() * 2),
+        ]
+        with patch("workflow_jobs.subprocess.Popen", return_value=process) as spawn:
+            result = _submit_bsub(["bsub"], stdin=None, timeout=300, env={})
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Job <123>", result.stdout)
+        spawn.assert_called_once()
+        process.kill.assert_not_called()
+        self.assertEqual(process.communicate.call_count, 3)
+
+    def test_bsub_stalled_capacity_wait_still_times_out(self):
+        message = b"Group <example>: Pending job threshold reached. Retrying in 60 seconds...\n"
+        error = subprocess.TimeoutExpired(["bsub"], 300, stderr=message)
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.communicate.side_effect = [error, error, ("", message.decode())]
+        with patch("workflow_jobs.subprocess.Popen", return_value=process) as spawn:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                _submit_bsub(["bsub"], stdin=None, timeout=300, env={})
+        spawn.assert_called_once()
+        process.kill.assert_called_once()
+
+    def test_bsub_unresponsive_client_is_not_retried(self):
+        error = subprocess.TimeoutExpired(["bsub"], 300, stderr=b"transport stalled")
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.communicate.side_effect = [error, ("", "transport stalled")]
+        with patch("workflow_jobs.subprocess.Popen", return_value=process) as spawn:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                _submit_bsub(["bsub"], stdin=None, timeout=300, env={})
+        spawn.assert_called_once()
+        process.kill.assert_called_once()
+
     def test_preview_never_calls_bsub(self):
         plan = write_plan([self.job("x", "pass")], self.root)
-        with patch("workflow_jobs.subprocess.run", side_effect=AssertionError("should not execute")):
+        with patch("workflow_jobs._submit_bsub", side_effect=AssertionError("should not execute")):
             self.assertEqual(run_plan(plan, dry_run=True)["status"], "PLANNED")
 
     def test_portable_directory_alias(self):

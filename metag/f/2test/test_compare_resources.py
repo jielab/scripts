@@ -50,6 +50,7 @@ class CompareResourcesTests(unittest.TestCase):
         cfg.update(work_dir=str(self.root / f"work-{self.number}"), compare_placement="production",
                    database_layout="single", build_kunpeng=False, legacy_library_dir=None, legacy_metadata_dir=None,
                    classify_queue="smp", classify_memory_gib=4096, classify_hours=168,
+                   kunpeng_full_queue="smp", kunpeng_full_memory_gib=4096, kunpeng_full_hours=168,
                    lsf_memory_scope="site_host", lsf_resource_reserve_per_task=False)
         cfg.update(overrides or {})
 
@@ -112,7 +113,11 @@ class CompareResourcesTests(unittest.TestCase):
         context = plan["context"]
         previous = {}
         all_roles = []
-        for group in context["groups"]:
+        # atomic_json sorts object keys. Dependency order is the command list's
+        # submission order, not the serialized resource-hash dictionary order.
+        groups = dict.fromkeys(c["role"].removeprefix("compare_")
+                               for c in plan["commands"] if c["role"] != "compare_summary")
+        for group in groups:
             cohort = context["group_resources"][group]["cohort"]
             role = "compare_" + group
             commands = [c for c in plan["commands"] if c["role"] == role]

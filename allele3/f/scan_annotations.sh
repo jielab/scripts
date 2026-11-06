@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared all-repeat joined annotation. Atomic publication; safe concurrent reuse.
 set -euo pipefail
-OUT=${1:-/mnt/f/annot/allele3/repeats/hg38}
+OUT=${1:-${DIR_ANNOT}/allele3/repeats/hg38}
 mkdir -p "$OUT"
 exec 9>"$OUT/.joined-download.lock"
 flock -x 9

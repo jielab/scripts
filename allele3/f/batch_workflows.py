@@ -5,6 +5,13 @@ The shell loads the repository's shared 0f/0os.sh before this module. This modul
 uses only the standard library during planning. Genomic reads belong to jobs.
 """
 from __future__ import annotations
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import argparse
 import csv
 import hashlib
@@ -13,11 +20,10 @@ import os
 from pathlib import Path
 import re
 import sys
+from analysis_scope import STAGES, boolean_option, select_stages
 
 ROOT = Path(__file__).resolve().parents[1]
 F = ROOT / 'f'
-STAGES = ('primary','archaic','summary','spatial','windows','alleles','time',
-          'selection','candidates','genotypes','ld','report')
 
 
 def absolute(path):
@@ -47,8 +53,8 @@ def remove_options(argv, names, flags=()):
 
 
 def env_paths():
-    data=os.environ.get('DIR_DATA','/mnt/f')
-    work=os.environ.get('DIR_WORK','/mnt/d')
+    data=os.environ.get('DIR_DATA',configured_path('DIR_BIG'))
+    work=os.environ.get('DIR_WORK',configured_path('DIR_DAT'))
     analysis=os.environ.get('ALLELE_ANALYSIS_ROOT',os.environ.get('ANALYSIS_ROOT',work+'/analysis')+'/allele3')
     return data,work,analysis
 
@@ -278,25 +284,25 @@ def pipeline_plan(argv,mode,out,python):
     argv=remove_options(argv,('--python','--memory-limit-gb','--screen-log-interval'),('--verbose-screen',))
     if not argv or argv[0].startswith('-'): argv=['pipeline',*argv]
     requested=option(argv,'--stages')
-    names=[s.strip() for s in requested.split(',') if s.strip()] if requested else list(STAGES) if argv[0]=='pipeline' else [argv[0]]
-    if len(set(names))!=len(names) or not names or set(names)-set(STAGES): raise ValueError('Invalid pipeline stage selection')
-    names=[s for s in STAGES if s in names]
+    ibdmix=boolean_option(option(argv,'--ibdmix',default=False))
+    names=select_stages(argv[0],requested,ibdmix)
+    argv=remove_options(argv,('--ibdmix',))+['--ibdmix','TRUE' if ibdmix else 'FALSE']
     argv=remove_options(argv,('--out','--dir-out'))+['--out',str(out)]
     if not option(argv,'--metadata') and os.environ.get('ALLELE_METADATA'): argv+=['--metadata',os.environ['ALLELE_METADATA']]
     if not option(argv,'--coordinates') and os.environ.get('ALLELE_COORDINATES'): argv+=['--coordinates',os.environ['ALLELE_COORDINATES']]
     key=hashlib.sha256(json.dumps(dict(argv=argv,names=names,source=(F/'batch_pipeline.py').read_text()),sort_keys=True).encode()).hexdigest()
     plan=base_plan('pipeline',mode)
-    dependencies={'summary':['archaic'],'time':['alleles'],'selection':['alleles'],'genotypes':['candidates']}
-    for name in names:
-        deps=[s for s in dependencies.get(name,[]) if s in names]
-        if name=='report': deps=[s for s in names if s!='report']
-        # Native stage plans and genomic audits are deliberately deferred to the worker.
-        cmd=[python,F/'batch_pipeline.py','--stage',name,'--selected',','.join(names),
-             '--batch-id',key,'--args-json',json.dumps(argv,ensure_ascii=False)]
-        add_job(plan,name,cmd,python,deps=deps,
-                resource=resources(4,64 if mode=='hpc' else 16,72),
-                outputs=[out/'.batch_stage_status'/key/(name+'.json')])
-    plan['provenance'].update(selected=names,batch_id=key)
+    # One command file and one allocation for every selected main module.
+    # Native stage planning, audits, reuse and failure checks stay in compute.
+    mode_args=['--all-stages'] if len(names)>1 else ['--stage',names[0]]
+    cmd=[python,F/'batch_pipeline.py',*mode_args,'--selected',','.join(names),
+         '--batch-id',key,'--args-json',json.dumps(argv,ensure_ascii=False)]
+    add_job(plan,'all' if len(names)>1 else names[0],cmd,python,
+            resource=resources(4,64 if mode=='hpc' else 16,72),
+            outputs=[out/'.batch_stage_status'/key/(name+'.json') for name in names])
+    plan['provenance'].update(selected=names,batch_id=key,ibdmix_enabled=ibdmix,
+        disabled_stages=[] if ibdmix else ['archaic'],
+        execution_order='sequential_success',scheduling='one job; selected modules run sequentially inside one allocation')
     return plan,[]
 
 
@@ -334,7 +340,7 @@ def single_plan(entry,argv,mode,python):
                 if selected_root: out=selected_root+'/herv/'+dataset+'/'+sample
                 elif mode=='hpc': out=os.environ.get('DIR_SCRATCH',work)+'/allele3/herv/'+dataset+'/'+build+'/'+sample
                 else: out=data+'/gen/'+dataset+'/'+build+'/herv/'+sample
-        elif name=='3.scan.sh': out=os.environ.get('ALLELE_SCAN_STORE',data+'/annot/gnomad/allele3')
+        elif name=='3.scan.sh': out=os.environ.get('ALLELE_SCAN_STORE',analysis+'/stores/gnomad_scan')
         elif argv[:1]==['research']:
             out=analysis+'/research/'+(argv[1] if len(argv)>1 else 'unknown')
             if len(argv)>2 and argv[1]=='cohort' and argv[2] in {'plan','summarize'}: out+='/'+argv[2]

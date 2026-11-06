@@ -2,6 +2,13 @@
 """Ancient metadata, trajectories, PCA and optional Atlas analysis."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # The shared utility filename is sorted first; use a stable import name in Python.
 import importlib.util as _common_import
 import sys as _common_sys
@@ -3826,7 +3833,7 @@ import time
 from allele_common import VERSION, dump_json, fingerprint
 
 PREFIX = "AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes"
-DEFAULT_ANCIENT = "/mnt/f/gen/ancient"
+DEFAULT_ANCIENT = configured_path('DIR_GEN', 'ancient')
 
 
 def parser():
@@ -3835,9 +3842,9 @@ def parser():
     p.add_argument("command", choices=["evolve", "prepare-ancient", "join-selection", "select-candidates",
                    "panel-index", "trajectories", "atlas-plan", "atlas-query", "atlas-summarize",
                    "compare-functions", "pca-plan", "pca-time", "report-evolution", "audit-ancient", "audit-counts"])
-    p.add_argument("--out", "--dir-out", default="/mnt/d/analysis/allele3/evolution")
+    p.add_argument("--out", "--dir-out", default=configured_path('ANALYSIS_ROOT', 'allele3/evolution'))
     p.add_argument("--ancient-dir", default=DEFAULT_ANCIENT)
-    p.add_argument("--modern-out", default="/mnt/d/analysis/allele3/gnomad_local")
+    p.add_argument("--modern-out", default=configured_path('ANALYSIS_ROOT', 'allele3/gnomad_local'))
     p.add_argument("--pgen-prefix", help="Default: ANCIENT_DIR/AncientDNA_plus_EUR1KG_AllVariants_NoQC_GRCh37_autosomes")
     p.add_argument("--selection")
     p.add_argument("--join-strategy", choices=["selection-first", "modern-first"], default="selection-first",
@@ -3849,7 +3856,7 @@ def parser():
     p.add_argument("--qpadm", help="Optional one verified 3way or 4way TSV; no basis mixing")
     p.add_argument("--ancestry-model", choices=["3way", "4way"])
     p.add_argument("--metadata", help="Canonical metadata from prepare-ancient; otherwise prepare automatically for evolve")
-    p.add_argument("--fasta38", default=os.environ.get("ALLELE_FASTA", "/mnt/f/gen/1hgp/38/GRCH38.fasta.gz"))
+    p.add_argument("--fasta38", default=os.environ.get("ALLELE_FASTA", configured_path('DIR_GEN', '1hgp/38/GRCH38.fasta.gz')))
     p.add_argument("--fasta37", help="GRCh37 / hs37d5 FASTA with existing .fai; required for join")
     p.add_argument("--chain38to37", help="Local hg38ToHg19.over.chain.gz")
     p.add_argument("--chain37to38", help="Local hg19ToHg38.over.chain.gz")
@@ -3906,9 +3913,9 @@ def parser():
     p.add_argument("--u1-sites", type=int, default=20000)
     p.add_argument("--u3-sites", type=int, default=3000)
     p.add_argument("--controls-per-case", type=int, default=4)
-    p.add_argument("--ld-block-dir", default="/mnt/f/LD/block")
+    p.add_argument("--ld-block-dir", default=configured_path('DIR_LD', 'block'))
     p.add_argument("--with-ukb", action="store_true")
-    p.add_argument("--ukb-mfi-dir", default="/mnt/f/gen/ukb/37/imp_mfi")
+    p.add_argument("--ukb-mfi-dir", default=configured_path('DIR_GEN', 'ukb/37/imp_mfi'))
     p.add_argument("--metag-census", help="Completed metag genome census JSON, reused read-only")
     p.add_argument("--version", action="version", version=VERSION)
     return p

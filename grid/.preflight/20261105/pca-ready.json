@@ -1,0 +1,627 @@
+{
+  "status": "PASS",
+  "data_files": 69,
+  "total_files": 85,
+  "missing": [],
+  "outputs": [
+    {
+      "output": "/work/sph-huangj/data/gen/ukb/pca_proj",
+      "existing_parent": "/work/sph-huangj/data/gen/ukb/pca_proj",
+      "writable": true
+    },
+    {
+      "output": "/work/sph-huangj/analysis/grid",
+      "existing_parent": "/work/sph-huangj/analysis/grid",
+      "writable": true
+    }
+  ],
+  "submit": "hpc",
+  "wait": "FALSE",
+  "resources": {
+    "queue": "38",
+    "cores": 32,
+    "memory_gib": 256.0,
+    "hours": 120.0,
+    "gpus": 0,
+    "memory_scope": "host"
+  },
+  "bsub": "/opt/ibm/lsfsuite/lsf/10.1/linux2.6-glibc2.3-x86_64/bin/bsub",
+  "workflow_python": "/work/sph-huangj/.conda/envs/py311/bin/python3",
+  "records": [
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 208294858279
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr1.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 205092238
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 212759782566
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr2.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 225568634
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 175449294969
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr3.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 184899546
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 181223057044
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr4.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 180913946
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 158443852900
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr5.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 167478984
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 161796630148
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr6.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 158285233
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 153205024418
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr7.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 148490434
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 137795939704
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr8.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 144502017
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 122226498808
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr9.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 111634265
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 128830500549
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr10.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 129612556
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 122688976791
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr11.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 131412680
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 123756074376
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr12.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 125964939
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 91777383288
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr13.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 92842167
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 89740834006
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr14.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 86070724
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 86317106219
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr15.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 78255297
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 89386532087
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr16.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 86566902
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 79698629966
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr17.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 74722727
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 73989440485
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr18.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 72931394
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 69863237746
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr19.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 58516955
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 58989386383
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr20.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 58318794
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 44698741098
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr21.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 35581648
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.pgen",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 44624101464
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.psam",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 8771924
+    },
+    {
+      "path": "/work/sph-huangj/data/gen/ukb/37/imp/chr22.pvar",
+      "kind": "genotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 35423723
+    },
+    {
+      "path": "/work/sph-huangj/files/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight",
+      "kind": "reference_or_phenotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 12566305
+    },
+    {
+      "path": "/work/sph-huangj/files/DiscoDivas/med.g1000.4pop.tsv",
+      "kind": "reference_or_phenotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 402
+    },
+    {
+      "path": "/work/sph-huangj/phe/ukb/Rdata/all.rds",
+      "kind": "reference_or_phenotype",
+      "exists": true,
+      "readable": true,
+      "bytes": 551583754
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/1.pca.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 9641
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/1.pca.R",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 28467
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/1.pca.py",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 6001
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/0.common.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 38891
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/0.common.py",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 40208
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/workflow_entry.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 1399
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/f/hpc_workflow.py",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 30845
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/workflow_env.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 2927
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/workflow_jobs.py",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 22395
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/results.py",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 21228
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/results.R",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 7580
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/0os.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 9386
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/0os.R",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 2476
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/cli_dirs.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 5565
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/../0f/memory_cap.sh",
+      "kind": "code",
+      "exists": true,
+      "readable": true,
+      "bytes": 7205
+    },
+    {
+      "path": "/work/sph-huangj/scripts/grid/config/hpc.qiming.json",
+      "kind": "configuration",
+      "exists": true,
+      "readable": true,
+      "bytes": 1375
+    }
+  ]
+}

@@ -1,4 +1,11 @@
 """Fail-closed scientific checks, cached by source/config and runtime identity."""
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 import hashlib
 import json
 import os
@@ -31,7 +38,7 @@ def fingerprint(root=ROOT):
 
 def ensure_self_check(root=ROOT,cache=None):
     digest=fingerprint(root)
-    cache=Path(cache or Path(os.environ.get('GRID_CACHE_ROOT','/mnt/d/analysis/grid/cache'))/'self_check')
+    cache=Path(cache or Path(os.environ.get('GRID_CACHE_ROOT',configured_path('ANALYSIS_ROOT', 'grid/cache')))/'self_check')
     cache.mkdir(parents=True,exist_ok=True,mode=0o700)
     receipt=cache/'self-check.json'
     if receipt.is_file():

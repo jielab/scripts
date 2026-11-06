@@ -1,4 +1,11 @@
 """Fresh output preparation without deleting previous calculations or inputs."""
+
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
 from contextlib import contextmanager
 import datetime
 import fcntl
@@ -16,7 +23,7 @@ def boolean(value):
 @contextmanager
 def output_run(output, replace, protected=()):
     output=Path(output).expanduser().resolve()
-    analysis=Path(os.environ.get('ALLELE_ANALYSIS_ROOT','/mnt/d/analysis/allele3')).resolve()
+    analysis=Path(os.environ.get('ALLELE_ANALYSIS_ROOT',configured_path('ANALYSIS_ROOT', 'allele3'))).resolve()
     if output==analysis or output in analysis.parents:raise ValueError('Choose a separate task output, not the analysis root or its parent')
     for original in protected:
         if not original:continue

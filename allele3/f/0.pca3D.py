@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path
+
 # The shared utility filename is sorted first; use a stable import name in Python.
 import importlib.util as _common_import
 import sys as _common_sys
@@ -155,9 +162,9 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("command", choices=("run", "plan", "render", "atlas", "prepare-basis", "project-plan", "project"), nargs="?", default="run")
-    p.add_argument("--out", "--dir-out", type=Path, default=Path("/mnt/f/gen/ancient/allele3/pca3d"))
+    p.add_argument("--out", "--dir-out", type=Path, default=Path(configured_path('DIR_GEN', 'ancient/allele3/pca3d')))
     p.add_argument("--replace", choices=("TRUE", "FALSE"), default="TRUE", help="For run: recalculate from scratch, or resume verified results")
-    p.add_argument("--ancient-dir", "--dir-ancient", type=Path, default=Path("/mnt/f/gen/ancient"))
+    p.add_argument("--ancient-dir", "--dir-ancient", type=Path, default=Path(configured_path('DIR_GEN', 'ancient')))
     p.add_argument("--pgen-prefix", type=Path)
     p.add_argument("--metadata", type=Path, help="Canonical TSV; required for custom panels / render")
     p.add_argument("--hq-variants", type=Path, help="GRCh37 background variant TSV")
@@ -197,7 +204,7 @@ def parser():
     p.add_argument("--simulated", action="store_true")
     p.add_argument("--basis-dir", type=Path, help="Completed frozen PCA directory for external projection")
     p.add_argument("--reuse-basis-dir", type=Path, help="Verify a completed basis before rendering its existing coordinates")
-    p.add_argument("--target-glob", default="/mnt/f/gen/ukb/37/imp/chr[0-9]*.pgen")
+    p.add_argument("--target-glob", default=configured_path('DIR_GEN', 'ukb/37/imp/chr[0-9]*.pgen'))
     p.add_argument("--project-out", type=Path)
     p.add_argument("--reference-metadata", type=Path, help="External projection reference metadata")
     p.add_argument("--target-metadata", type=Path, help="Optional external target metadata snapshot")

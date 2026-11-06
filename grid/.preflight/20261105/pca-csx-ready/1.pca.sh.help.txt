@@ -1,0 +1,50 @@
+Modules:
+    projection -> distance -> ancestry  Automatic pipeline stages
+
+Default permanent paths (outside the analysis output directory):
+    WRITE PCA: ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    WRITE distances: ${DIR_GEN}/ukb/pca_proj/ukb_reference_distances.tsv.gz
+    WRITE ancestry: ${DIR_GEN}/ukb/pca_proj/ukb.ancestry.auto.tsv.gz
+    READ genotypes: ${DIR_GEN}/ukb/37/imp
+    READ weights: ${DIR_FILES}/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+    READ centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
+    --pca-file changes the PCA/distance directory; --ancestry-file overrides ancestry.
+    Changing --dir-output-root alone does not relocate these permanent files.
+
+Main options:
+    --submit local|hpc --jobs-N N --wait TRUE|FALSE --plan-only
+    --queue / --gpu-queue / --job-cores / --job-memory-gb / --job-hours / --hpc-config
+    --dir-imp DIR                 ${DIR_GEN}/ukb/37/imp (chr*.pgen/pvar/psam)
+    --pca-file FILE               ${DIR_GEN}/ukb/pca_proj/ukb.discodivas.pca.tsv.gz
+    --cov-pcs N / --distance-pcs N 20 / 10; require 5 <= distance <= covariate PCs.
+    --jobs N                     At most 4 concurrent chromosomes, memory-limited.
+    --dir-output-root DIR             ${ANALYSIS_ROOT}/grid (reports and projection cache).
+    --replace TRUE|FALSE          Default FALSE. TRUE rebuilds projection and QC.
+    --check                       Validate existing projection or genotype inputs.
+    --dry-run TRUE                Same preflight/plan behavior; no analysis.
+    -h, --help  Show options and examples below
+
+Example:
+    # QiMing submission (Admin resource policy, 2026-11-05).
+    cd /work/sph-huangj/scripts/grid
+    queueinfo
+    bash 1.pca.sh --submit hpc --queue 33 \
+      --job-cores 10 --job-memory-gb 32 --job-hours 24 \
+      --jobs 4 --threads 1 --wait FALSE
+    # Generated bsub resources:
+    #   -q 33 -n 10 -W 24:00 -M 32GB
+    #   -R "span[hosts=1] rusage[mem=32GB/host]"
+    # Four one-thread projections, <=16 GiB PLINK workspace; 32 GiB job budget.
+    # Admin's quarter-node rule reserves 10 slots for this CPU/RAM request.
+    # Add --plan-only to preview without submitting. The entry submits its DAG;
+    # do not wrap it in another bsub. --wait FALSE returns after submission.
+    # Confirm this job is DONE before submitting 2.csx.sh; existing PCA files
+    # alone do not prove that the latest run completed.
+
+    # Other input/check options:
+    ./1.pca.sh --check
+    ./1.pca.sh --dir-imp ${DIR_GEN}/ukb/37/imp --jobs 4
+    ./1.pca.sh --replace TRUE --jobs 4
+
+    ./1.pca.sh --jobs 2
+    ./1.pca.sh  # Default workflow

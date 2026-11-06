@@ -57,23 +57,24 @@ sys.exit(94)
         path.chmod(0o755)
         return path
 
-    def call(self, *args, check=True, env=None):
+    def call(self, *args, check=True, env=None, workflow="single"):
         command = ["bash", str(ENTRY), "--dir-jobs", str(self.jobs),
                    "--conda-exe", str(self.fail_conda), "--rscript", str(self.fail_r), *map(str, args)]
+        if workflow is not None:
+            command.extend(["--workflow", workflow])
         proc = subprocess.run(command, env=env or self.env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         if check:
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return proc
 
-    def plan(self, *args):
+    def plan(self, *args, workflow="single"):
         before = set(self.jobs.glob("*/plan.json"))
-        result = self.call(*args, "--plan-only")
+        result = self.call(*args, "--plan-only", workflow=workflow)
         after = set(self.jobs.glob("*/plan.json"))
         self.assertEqual(len(after - before), 1, result.stdout + result.stderr)
         path = (after - before).pop()
         data = json.loads(path.read_text())
-        self.assertEqual(len(data["jobs"]), 1)
         return path, data, data["jobs"][0]
 
     def assert_no_runtime(self):
@@ -92,6 +93,7 @@ sys.exit(94)
         self.env["EMS_TEST_R_LOG"] = str(self.root / "r-calls.jsonl")
         self.env["EMS_TEST_FAIL_RUNTIME"] = "1" if fail_runtime else "0"
         self.env["EMS120_DATA_DIR"] = str(self.root / "raw inputs")
+        self.env["EMS120_ANALYSIS_DIR"] = str(self.root / "worker analysis")
         (Path(self.env["EMS120_DATA_DIR"]) / "clean").mkdir(parents=True)
         profile.write_text('''conda() {
   if [[ "$1" != activate ]]; then return 2; fi
@@ -113,27 +115,28 @@ fi
 import json, os, pathlib, sys
 names = ('RETICULATE_PYTHON', 'EMS120_ANALYSIS_DIR', 'EMS120_DATA_DIR',
          'EMS120_BASE_MODEL_DIR', 'EMS120_MODEL_DIR', 'WORKFLOW_CORES',
-         'CUDA_VISIBLE_DEVICES', 'PNG_PYTHON', 'TMPDIR', 'TMP', 'TEMP')
+         'CUDA_VISIBLE_DEVICES', 'PNG_PYTHON', 'TMPDIR', 'TMP', 'TEMP',
+         'LC_ALL', 'EMS120_PHASE', 'EMS120_CORES', 'EMS120_REQUIRE_GPU', 'EMS120_PHONE_GPU')
 with pathlib.Path(os.environ['EMS_TEST_R_LOG']).open('a') as out:
     out.write(json.dumps({'argv': sys.argv[1:], 'env': {k: os.environ.get(k) for k in names}}) + '\\n')
-if os.environ.get('EMS_TEST_FAIL_RUNTIME') == '1':
+if os.environ.get('EMS_TEST_FAIL_RUNTIME') == '1' and any(x.endswith('/check_runtime.R') for x in sys.argv):
     print('Synthetic R/reticulate CUDA failure', file=sys.stderr)
     sys.exit(42)
 print('Synthetic R runtime passed')
 ''')
         return prefix
 
-    def test_default_hpc_plan_uses_gpu_and_persistent_analysis(self):
+    def test_single_hpc_plan_uses_gpu_and_persistent_analysis(self):
         self.env["CUDA_VISIBLE_DEVICES"] = "7"
         path, plan, job = self.plan()
         self.assertEqual(plan["mode"], "hpc")
-        self.assertEqual(job["resources"]["queue"], "4a100-40")
+        self.assertEqual(job["resources"]["queue"], "2v100-32-sc")
         self.assertEqual(job["resources"]["cores"], 8)
         self.assertEqual(job["resources"]["memory_gib"], 96)
         self.assertEqual(job["resources"]["hours"], 120)
         self.assertEqual(job["resources"]["gpus"], 1)
         self.assertEqual(Path(job["env"]["EMS120_ANALYSIS_DIR"]), self.root / "work/analysis/ems120")
-        self.assertEqual(Path(job["env"]["EMS120_DATA_DIR"]), self.root / "work/ems120")
+        self.assertEqual(Path(job["env"]["EMS120_DATA_DIR"]), self.root / "work/phe/ems120")
         self.assertEqual(Path(job["env"]["EMS120_BASE_MODEL_DIR"]), self.root / "work/data/AI_model/hfl")
         self.assertEqual(Path(job["env"]["EMS120_SCRIPT_DIR"]), PROJECT)
         self.assertNotIn("CUDA_VISIBLE_DEVICES", job["env"])
@@ -183,6 +186,17 @@ print('Synthetic R runtime passed')
         self.assertEqual(job["key"], "check_gpu")
         self.assertEqual(job["resources"]["gpus"], 1)
         self.assert_no_runtime()
+
+    def test_preflight_checks_inputs_without_running_production_analysis(self):
+        self.fake_worker_environment()
+        self.env["LC_ALL"] = "C"
+        result = self.call("--submit", "local", "--preflight", "--dir-analysis", self.root / "analysis")
+        records = [json.loads(line) for line in Path(self.env["EMS_TEST_R_LOG"]).read_text().splitlines()]
+        self.assertEqual([Path(r["argv"][1]).name for r in records], ["check_runtime.R", "preflight.R"])
+        self.assertRegex(records[0]["env"]["LC_ALL"], r"(?i)utf-?8")
+        plan = json.loads(next(self.jobs.glob("*/plan.json")).read_text())
+        self.assertEqual(plan["jobs"][0]["key"], "preflight")
+        self.assertEqual(plan["jobs"][0]["resources"]["hours"], 1)
 
     def test_analysis_batch_and_renderer_settings_are_saved_in_plan(self):
         settings = {
@@ -285,7 +299,7 @@ print('Job <837120> is submitted to queue <4a100-40>.')
         plans = list(self.jobs.glob("*/plan.json"))
         self.assertEqual(len(plans), 1)
         self.assertEqual(json.loads(plans[0].read_text())["jobs"][0]["env"]["CUDA_VISIBLE_DEVICES"], "4")
-        expected_temporary = scratch / "ems120" / plans[0].parent.name / "analysis"
+        expected_temporary = analysis / "tmp" / plans[0].parent.name / "analysis"
         for name in ("TMPDIR", "TMP", "TEMP"):
             self.assertEqual(Path(env[name]), expected_temporary)
         self.assertTrue(expected_temporary.is_dir())
@@ -331,6 +345,124 @@ print('Job <837120> is submitted to queue <4a100-40>.')
                 self.assertNotEqual(result.returncode, 0)
                 errors = "\n".join(p.read_text() for p in self.jobs.glob("*/logs/*.err"))
                 self.assertIn("Another EMS120 job is using " + which + " directory", errors)
+        self.assert_no_runtime()
+
+
+    def test_default_split_resources_names_and_dependencies(self):
+        self.env["CUDA_VISIBLE_DEVICES"] = "9"
+        path, plan, _ = self.plan(workflow=None)
+        prep, ml, report = plan["jobs"]
+        self.assertEqual([j["key"] for j in plan["jobs"]],
+                         ["data.cpu_prepare", "ml_phone_geo_dx.gpu_ml", "statistics.cpu_report"])
+        self.assertEqual([j["depends"] for j in plan["jobs"]], [[], [prep["key"]], [ml["key"]]])
+        self.assertEqual(len({j["env"]["EMS120_HANDOFF_DIR"] for j in plan["jobs"]}), 1)
+        for j in (prep, report):
+            self.assertEqual(j["resources"]["gpus"], 0)
+            self.assertEqual(j["resources"]["queue"], "33")
+            self.assertEqual(j["resources"]["cores"], 20)
+            self.assertEqual(j["env"]["EMS120_CORES"], "8")
+            self.assertEqual(j["env"]["CUDA_VISIBLE_DEVICES"], "")
+            self.assertEqual(j["env"]["EMS120_REQUIRE_GPU"], "0")
+            self.assertNotIn("#BSUB -gpu", (path.parent / "commands" / (j["key"] + ".cmd")).read_text())
+        self.assertEqual(ml["resources"]["gpus"], 1)
+        self.assertEqual(ml["env"]["EMS120_PHONE_GPU"], "required")
+        self.assertNotIn("CUDA_VISIBLE_DEVICES", ml["env"])
+        self.assert_no_runtime()
+
+    def test_gpu_upgrade_does_not_change_cpu_or_scientific_settings(self):
+        _, plan, _ = self.plan("--gpu-queue", "2h100-80", "--gpu-model", "H100",
+                               "--gpu-cores", "16", "--gpu-memory-gb", "192", "--gpu-hours", "200", workflow="split")
+        prep, ml, report = plan["jobs"]
+        self.assertEqual(ml["resources"]["gpu_model"], "H100")
+        self.assertEqual(ml["resources"]["cores"], 16)
+        self.assertEqual(ml["resources"]["memory_gib"], 192)
+        self.assertEqual(ml["resources"]["hours"], 200)
+        self.assertEqual(prep["resources"], report["resources"])
+        self.assertEqual(prep["resources"]["cores"], 20)
+        self.assertEqual(prep["env"]["EMS120_CORES"], "8")
+        self.assertEqual(ml["env"]["EMS120_RUN_DX_CV"], "1")
+        self.assertNotIn("EMS120_DX_BATCH_SIZE", ml["env"])
+        self.assert_no_runtime()
+
+    def test_report_plan_and_worker_skip_gpu_check_and_raw_inputs(self):
+        self.fake_worker_environment()
+        self.env["CUDA_VISIBLE_DEVICES"] = "4"
+        self.env["EMS_TEST_FAIL_RUNTIME"] = "1"  # CPU report must never call it.
+        analysis = self.root / "reports"
+        (analysis / "dat").mkdir(parents=True)
+        (analysis / "dat/dat.list.rds").write_bytes(b"synthetic R stub fixture")
+        (Path(self.env["EMS120_DATA_DIR"]) / "clean").rmdir()
+        self.call("--submit", "local", "--dir-analysis", analysis, workflow="report")
+        records = [json.loads(s) for s in Path(self.env["EMS_TEST_R_LOG"]).read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertTrue(any(x.endswith("/ems120.R") for x in records[0]["argv"]))
+        self.assertEqual(records[0]["env"]["CUDA_VISIBLE_DEVICES"], "")
+        self.assertEqual(records[0]["env"]["EMS120_PHASE"], "cpu_report")
+        _, plan, job = self.plan(workflow="report")
+        self.assertEqual(len(plan["jobs"]), 1)
+        self.assertEqual(job["resources"]["gpus"], 0)
+        self.assertEqual(job["depends"], [])
+
+    def test_missing_report_cache_never_initializes_ml(self):
+        self.fake_worker_environment()
+        result = self.call("--submit", "local", "--dir-analysis", self.root / "absent", workflow="report", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(Path(self.env["EMS_TEST_R_LOG"]).exists())
+
+    def test_gpu_failure_blocks_cpu_report_in_split_chain(self):
+        self.fake_worker_environment(fail_runtime=True)
+        result = self.call("--submit", "local", "--dir-analysis", self.root / "split", workflow="split", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        records = [json.loads(s) for s in Path(self.env["EMS_TEST_R_LOG"]).read_text().splitlines()]
+        self.assertEqual([r["env"]["EMS120_PHASE"] for r in records], ["cpu_prepare", "gpu_ml"])
+        self.assertEqual(records[0]["env"]["CUDA_VISIBLE_DEVICES"], "")
+        states = {p.stem: json.loads(p.read_text())["status"] for p in self.jobs.glob("*/status/*.json")}
+        self.assertEqual(states["data.cpu_prepare"], "DONE")
+        self.assertEqual(states["ml_phone_geo_dx.gpu_ml"], "EXIT")
+        self.assertNotIn("statistics.cpu_report", states)
+
+    def test_split_workers_hide_cuda_only_on_cpu_and_keep_requested_threads(self):
+        self.fake_worker_environment()
+        self.env["CUDA_VISIBLE_DEVICES"] = "4"
+        analysis = self.root / "successful split"
+        (analysis / "dat").mkdir(parents=True)
+        (analysis / "dat/dat.list.rds").write_bytes(b"R stub fixture")
+        self.call("--submit", "local", "--dir-analysis", analysis, "--gpu-cores", "3",
+                  "--cpu-cores", "4", "--cpu-threads", "2", workflow="split")
+        records = [json.loads(s) for s in Path(self.env["EMS_TEST_R_LOG"]).read_text().splitlines()]
+        main = [r for r in records if any(x.endswith("/ems120.R") for x in r["argv"])]
+        self.assertEqual([r["env"]["EMS120_PHASE"] for r in main], ["cpu_prepare", "gpu_ml", "cpu_report"])
+        self.assertEqual([r["env"]["CUDA_VISIBLE_DEVICES"] for r in main], ["", "4", ""])
+        self.assertEqual([r["env"]["EMS120_CORES"] for r in main], ["2", "3", "2"])
+        self.assertEqual(sum(any(x.endswith("/check_runtime.R") for x in r["argv"]) for r in records), 1)
+
+    def test_cpu_queue_capacity_and_gpu_separation_are_validated(self):
+        for args in (("--cpu-cores", "8"), ("--cpu-cores", "10", "--cpu-memory-gb", "96"),
+                     ("--cpu-threads", "21"), ("--cpu-queue", "2v100-32-sc")):
+            with self.subTest(args=args):
+                result = self.call(*args, "--plan-only", workflow="split", check=False)
+                self.assertNotEqual(result.returncode, 0)
+        self.assert_no_runtime()
+
+    def test_lsf_split_submission_uses_success_dependencies(self):
+        capture = self.root / "submissions.jsonl"
+        self.env["EMS_TEST_BSUB_CAPTURE"] = str(capture)
+        self._executable("bsub", """#!/usr/bin/env python3
+import json, os, pathlib, sys
+p = pathlib.Path(os.environ['EMS_TEST_BSUB_CAPTURE'])
+n = len(p.read_text().splitlines()) if p.exists() else 0
+with p.open('a') as f:
+    f.write(json.dumps({'args': sys.argv[1:], 'cmd': sys.stdin.read()}) + '\\n')
+print('Job <%d> is submitted to queue <test>.' % (91000 + n))
+""")
+        self.call(workflow="split")
+        records = [json.loads(s) for s in capture.read_text().splitlines()]
+        self.assertEqual(len(records), 3)
+        self.assertNotIn("-w", records[0]["args"])
+        self.assertEqual(records[1]["args"], ["-w", "done(91000) && ended(91000)"])
+        self.assertEqual(records[2]["args"], ["-w", "done(91001) && ended(91001)"])
+        self.assertIn("#BSUB -gpu", records[1]["cmd"])
+        self.assertNotIn("#BSUB -gpu", records[0]["cmd"] + records[2]["cmd"])
         self.assert_no_runtime()
 
 

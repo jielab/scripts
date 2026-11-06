@@ -1,6 +1,13 @@
 """Production GRID FINAL ABM: seven content-addressed, independently resumable phases."""
 from __future__ import annotations
 
+# Shared root defaults come from 0f/0os.sh.
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.insert(0, str(_paths_root / "0f"))
+from workflow_paths import configured_path, relocate_defaults
+
 import argparse
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -297,7 +304,7 @@ def run_trait(args, config, trait, device):
                 max_rss_gib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2)]),
                 run / "runtime.tsv")
         stop = PHASES.index(args.through)
-        cfg = json.loads(Path(config["block_config"]).read_text()) if needs_blocks else {}
+        cfg = relocate_defaults(json.loads(Path(config["block_config"]).read_text())) if needs_blocks else {}
         cfg.update(config.get("predictors", {}), _binary=trait == "t2dm", seed=config["head_options"]["seed"])
         if args.smoke:
             cfg.update(epochs=1, patience=1, d_model=16, heads=2, latent_tokens=4, layers=1,
@@ -553,7 +560,7 @@ def parser():
     p.add_argument("--representation", choices=["csx_ldblocks_fixed", "csx_scores"], default="csx_ldblocks_fixed")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     p.add_argument("--config", default=str(ROOT / "config/abm.json"))
-    p.add_argument("--analysis-root", default="/mnt/d/analysis/grid")
+    p.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
     p.add_argument("--output-root")
     p.add_argument("--prepared")
     p.add_argument("--ld-block-files")
@@ -576,7 +583,7 @@ def configuration(args):
     if path.is_dir():
         path /= "abm.json"
     args.config = str(path)
-    config = json.loads(path.read_text())
+    config = relocate_defaults(json.loads(path.read_text()))
     if config["coverages"] != list(COVERAGES) or config["primary_coverage"] != .5:
         raise ValueError("ABM freezes six coverages and primary coverage 0.50")
     if config["calibration_fit_partition_by_group"] != dict(prediction_calibration=.5, head_calibration=.25, policy_calibration=.25):

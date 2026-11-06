@@ -1,3 +1,20 @@
+# Load the shared path table relative to this script (also supports source()).
+local({
+    files <- Filter(Negate(is.null), lapply(sys.frames(), function(x) x$ofile))
+    entry <- if (length(files)) tail(files, 1L)[[1L]] else sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))[1L]
+    if (is.na(entry)) stop("Cannot locate this script; use source() or Rscript")
+    directory <- dirname(normalizePath(entry, winslash = "/"))
+    repeat {
+        adapter <- file.path(directory, "0f", "0os.R")
+        if (file.exists(adapter)) break
+        parent <- dirname(directory)
+        if (parent == directory) stop("Cannot locate 0f/0os.R")
+        directory <- parent
+    }
+    source(adapter, local = parent.env(environment()))
+    os_paths_init(default_mode = "hpc")
+})
+
 # Aggregate publication for PCA/CSx/Disco and the final -> Shiny data contract.
 # Only aggregate tables and figures enter the dashboard; no individual IDs/models.
 suppressPackageStartupMessages({library(data.table); library(openxlsx); library(ggplot2)})
@@ -283,10 +300,10 @@ results_main <- function(args) {
   if(length(args) %% 2L) stop("Options require values")
   if(length(args)) for(i in seq(1,length(args),2)) opt[[sub("^--","",args[i])]] <- args[i+1]
   get <- function(n,default) if(is.null(opt[[n]])) default else opt[[n]]
-  root <- get("analysis-root","/mnt/d/analysis/grid")
+  root <- get("analysis-root",file.path(os_path("ANALYSIS_ROOT"), "grid"))
   traits <- strsplit(get("traits","height,ldl,t2dm"),",",fixed=TRUE)[[1]]
-  common <- list(analysis_root=root,score_dir=get("score-dir","/mnt/f/gen/ukb/pgs"),
-    pca_dir=get("pca-dir","/mnt/f/gen/ukb/pca_proj"),ancestry_file=get("ancestry-file","/mnt/f/gen/ukb/pca_proj/ukb.ancestry.auto.tsv.gz"),traits=traits)
+  common <- list(analysis_root=root,score_dir=get("score-dir",file.path(os_path("DIR_GEN"), "ukb/pgs")),
+    pca_dir=get("pca-dir",file.path(os_path("DIR_GEN"), "ukb/pca_proj")),ancestry_file=get("ancestry-file",file.path(os_path("DIR_GEN"), "ukb/pca_proj/ukb.ancestry.auto.tsv.gz")),traits=traits)
   if(mode=="summary") do.call(build_dashboard,c(common,list(final_root=get("final-root",file.path(root,"final")),
     grid_root=get("grid-root",file.path(root,"abm")),prs_root=get("prsformer-root",root))))
   else if(mode %in% c("pca","csx","disco")) do.call(publish_module,c(list(module=mode),common,list(subset=get("subset",""))))
