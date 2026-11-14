@@ -1,0 +1,24 @@
+# Python 3.11 is the supplied environment baseline. These are compatibility
+# bounds, not the unavailable software lockfile from the original manuscripts.
+# Core scoring/association uses R; these packages cover final/web, ML and signatures.
+numpy>=1.26,<2
+pandas>=2.1,<3
+scipy>=1.11,<2
+scikit-learn>=1.4,<1.6
+matplotlib>=3.8,<4
+Pillow>=10,<13
+PyMuPDF>=1.24,<2
+joblib>=1.3,<2
+threadpoolctl>=3.2,<4
+lightgbm>=4,<5
+xgboost>=2,<3
+catboost>=1.2,<2
+shap>=0.45,<0.47
+packaging>=23
+
+# MRI rendering dependencies used by the full workflow.
+nibabel>=5.2,<6
+nilearn>=0.10,<0.13
+scikit-image>=0.22,<0.26
+vtk>=9.4,<10
+enigmatoolbox @ https://api.github.com/repos/MICA-MNI/ENIGMA/tarball/b08974b55243060cbc1fad12c87048037446e8f7

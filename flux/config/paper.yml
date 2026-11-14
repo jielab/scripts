@@ -1,0 +1,21 @@
+# Published v3 optimizer budget applied to this INDEPENDENT numeric/EHR core.
+# Source: medRxiv DOI 10.64898/2026.09.19.26363460v3, optimization Methods.
+# This does not supply official splits, EHR initialization or raw 3D MRI weights.
+# Paper used six GPUs. Here one GPU + accumulation gives effective batch 3072.
+# For 2 GPUs use accumulation_steps:48; for 4 GPUs use 24; for 6 GPUs use 16.
+train:
+  batch_size: 32
+  accumulation_steps: 96
+  epochs: 100
+  max_steps: 2000
+  learning_rate: 0.0006
+  weight_decay: 0.01
+  warmup_steps: 100
+  schedule_steps: 2000
+  final_lr_ratio: 0.1
+  gradient_clip: 1.0
+  validate_every: 50
+  validation_batches: 0
+  patience: 1000          # Do not early-stop before the fixed 2000-step budget.
+resources:
+  gpus: 1

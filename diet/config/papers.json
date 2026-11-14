@@ -1,0 +1,74 @@
+{
+  "maha": [
+    {
+      "id": "Fig1",
+      "title": "UKB MAHA and DASH phenome-wide associations",
+      "file": "Fig1.ukb.phewas.png",
+      "cohort": "ukb",
+      "stage": "assoc ukb --study maha"
+    },
+    {
+      "id": "Fig2",
+      "title": "UKB prospective associations, precision and near-null evidence",
+      "file": "Fig2.ukb.precision.png",
+      "cohort": "ukb",
+      "stage": "assoc ukb + bayes ukb + final"
+    },
+    {
+      "id": "Fig3",
+      "title": "NHANES mortality associations and evidence",
+      "file": "Fig3.nhanes.mortality.png",
+      "cohort": "nhanes",
+      "stage": "assoc nhanes + bayes nhanes + final"
+    },
+    {
+      "id": "Fig4",
+      "title": "CHNS fixed-wave and cumulative-average mortality",
+      "file": "Fig4.chns.mortality.png",
+      "cohort": "chns",
+      "stage": "assoc chns + bayes chns + final"
+    },
+    {
+      "id": "Fig5",
+      "title": "UKB geographical distributions and regional associations",
+      "file": "Fig5.ukb.geography.png",
+      "cohort": "ukb",
+      "stage": "assoc ukb --study maha + final",
+      "detail": "Requires source geography inputs and the original map/tile resources."
+    }
+  ],
+  "dose": [
+    {
+      "id": "Fig1",
+      "title": "DOSE study overview and computed cohort counts",
+      "file": "Fig1.DOSE.overview.png",
+      "stage": "ukb + nhanes + foodwas",
+      "detail": "Reconstructed overview from actual stage counts; no manuscript sample size is hardcoded."
+    },
+    {
+      "id": "Fig2",
+      "title": "Food group associations and dose-response patterns",
+      "file": "Fig2.DOSE.foodwas.png",
+      "stage": "foodwas"
+    },
+    {
+      "id": "Fig3",
+      "title": "DOSE construction, dietary patterns and stroke associations",
+      "file": "Fig3.DOSE.score.png",
+      "stage": "ml + assoc ukb + assoc nhanes + final",
+      "detail": "UKB incident-stroke HR and NHANES prevalent-stroke OR are shown separately."
+    },
+    {
+      "id": "Fig4",
+      "title": "DOSE outcome-wide disease associations",
+      "file": "Fig4.DOSE.outcomes.png",
+      "stage": "assoc ukb --study dose"
+    },
+    {
+      "id": "Fig5",
+      "title": "Metabolomic, inflammatory, proteomic and brain correlates",
+      "file": "Fig5.DOSE.mechanisms.png",
+      "stage": "mechanism + signature + final"
+    }
+  ]
+}

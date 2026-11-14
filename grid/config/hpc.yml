@@ -1,0 +1,72 @@
+schema_version: 1
+site: QiMing resource examples; current queues and quotas must be available to this
+  account
+defaults:
+  queue: '38'
+  cores: 32
+  memory_gib: 256
+  hours: 120
+  gpus: 0
+  memory_scope: host
+gpu:
+  queue: 2v100-32-sc
+  cores: 8
+  memory_gib: 160
+  hours: 120
+  gpus: 1
+prsformer_gpu:
+  queue: 4v100-16-e5
+  cores: 8
+  memory_gib: 48
+  hours: 120
+  gpus: 1
+stages:
+  prepare:
+    cores: 32
+    memory_gib: 256
+  weights:
+    cores: 32
+    memory_gib: 256
+  score:
+    cores: 32
+    memory_gib: 256
+  targetfit:
+    cores: 8
+    memory_gib: 32
+    hours: 24
+  blockprepare:
+    cores: 32
+    memory_gib: 256
+  blockridge:
+    cores: 32
+    memory_gib: 256
+  blocknet:
+    gpus: 0
+  prsformer:
+    gpus: 0
+  prsformer2:
+    gpus: 0
+  twins:
+    cores: 32
+    memory_gib: 256
+    gpus: 0
+  evaluate:
+    cores: 8
+    memory_gib: 32
+    hours: 24
+  architecture:
+    cores: 4
+    memory_gib: 16
+    hours: 24
+  final:
+    cores: 4
+    memory_gib: 16
+    hours: 24
+  countprepare:
+    cores: 32
+    memory_gib: 256
+    gpus: 0
+  countgeometry:
+    cores: 32
+    memory_gib: 256
+    gpus: 0

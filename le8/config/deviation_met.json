@@ -1,0 +1,23 @@
+{
+  "seed": 12345,
+  "folds": 5,
+  "reference_min_n": 100,
+  "min_class_n": 20,
+  "sample_missing": 0.2,
+  "ridge_alpha": 1.0,
+  "c_grid": [
+    0.01,
+    0.1,
+    1.0
+  ],
+  "max_iter": 3000,
+  "bootstrap": 500,
+  "target_specificity": 0.95,
+  "clinical_release": false,
+  "task": "objective_plaque",
+  "trait": "cvd_cad",
+  "layer": "met",
+  "max_objective_lag_days": 90,
+  "gwas_overlap": "unknown",
+  "omic_transform": "identity"
+}

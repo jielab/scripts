@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "source_commit": "971a61b44b84500ab46e2f5592478505a0eae50e",
+  "paths": {
+    "nhanes": "${DIR_DAT}/phe/nhanes",
+    "chns": "${DIR_DAT}/phe/chns",
+    "nhanes_dose": "${DIR_FILES}/diet"
+  },
+  "bayes": {
+    "prior_95_ratios": [
+      1.05,
+      1.1,
+      1.2
+    ],
+    "equivalence_ratios": [
+      1.05,
+      1.075,
+      1.1
+    ]
+  },
+  "extensions": {}
+}

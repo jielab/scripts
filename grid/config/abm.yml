@@ -1,0 +1,27 @@
+schema_version: grid.abm.config.1
+traits:
+- height
+- ldl
+- t2dm
+block_config: abm.blocks.yml
+seed: 20261102
+donor_fraction: 0.8
+radius_k_ref: 64
+radius_quantile: 0.9
+sd_floor_quantile: 0.1
+min_count: 20
+min_group_ess: 15.0
+query_batch: 64
+donor_batch: 2048
+coverages:
+- 0.2
+- 0.4
+- 0.5
+- 0.6
+- 0.8
+- 1.0
+heterogeneity_quantile: 0.9
+bootstrap_replicates: 200
+validation_status: exploratory_previously_inspected_test
+prediction_rule: all_in_radius_equal_weight_mean
+unsupported_rule: abstain_with_explicit_global_donor_mean_for_population_evaluation

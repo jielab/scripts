@@ -1,0 +1,25 @@
+template<typename Cell>
+void CompactHashTable<Cell>::WriteTable(const char *filename) {
+  // This private executable always writes a new generation. Never truncate an
+  // existing snapshot. All short writes and the final fsync/close are checked.
+  int fd = open(filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0664);
+  if (fd < 0) err(EX_IOERR, "cannot create checkpoint %s", filename);
+  auto write_all = [fd, filename](const void *buffer, size_t bytes) {
+    const char *p = static_cast<const char *>(buffer);
+    while (bytes) {
+      size_t chunk = bytes < (size_t(64) << 20) ? bytes : (size_t(64) << 20);
+      ssize_t n = write(fd, p, chunk);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) err(EX_IOERR, "cannot write checkpoint %s", filename);
+      p += n;
+      bytes -= (size_t) n;
+    }
+  };
+  write_all(&capacity_, sizeof(capacity_));
+  write_all(&size_, sizeof(size_));
+  write_all(&key_bits_, sizeof(key_bits_));
+  write_all(&value_bits_, sizeof(value_bits_));
+  write_all(table_, sizeof(*table_) * capacity_);
+  if (fsync(fd) != 0) err(EX_IOERR, "cannot fsync checkpoint %s", filename);
+  if (close(fd) != 0) err(EX_IOERR, "cannot close checkpoint %s", filename);
+}

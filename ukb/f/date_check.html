@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>__TITLE__ · 日期一致性与记录轨迹</title>
+<style>
+:root{--ink:#18332f;--muted:#667a75;--teal:#177f75;--teal-dark:#126257;--teal-pale:#e7f3ef;--blue:#527d9d;--orange:#c27a4c;--orange-pale:#fbf1e8;--line:#dce6e0;--paper:#fff;--bg:#f4f6f2;--gray:#b8c5bd;--font:Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:22px}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.6;font-variant-numeric:tabular-nums}button,select{font:inherit}a{color:inherit}button,select{color:var(--ink)}button{cursor:pointer}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #81bdae;outline-offset:3px}button:disabled{cursor:default}
+.masthead{max-width:1400px;margin:auto;padding:38px 28px 24px}.eyebrow{display:flex;align-items:center;gap:10px;color:var(--teal-dark);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase}.mark{width:21px;height:21px;border:1px solid var(--teal);border-radius:50%;display:inline-grid;place-items:center;font-size:14px;letter-spacing:0}.heading-row{display:flex;justify-content:space-between;gap:28px;align-items:flex-end;margin-top:12px}h1{font-size:clamp(25px,3vw,40px);line-height:1.2;letter-spacing:-1px;margin:0;font-weight:670}h1 .trait{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em;letter-spacing:-1px;color:var(--teal-dark);display:block;margin-bottom:9px}header p{margin:12px 0 0;color:var(--muted);font-size:14px}.report-meta{text-align:right;color:var(--muted);font-size:12px;white-space:nowrap;padding-bottom:3px}.report-meta strong{color:var(--ink);font-weight:600;display:block}.demo{border:1px solid #e0c7a2;background:#fff5e3;color:#7e5b23;padding:12px 18px;margin:0 0 22px;border-radius:9px;font-size:13px}.demo strong{font-weight:700}
+main{max-width:1400px;padding:0 28px 38px;margin:auto}.nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:15px 0 23px;border-top:1px solid var(--line)}.nav a{text-decoration:none;font-size:12px;color:#45625a;padding:7px 11px;border-radius:5px}.nav a:hover{background:#e7eee7}.nav b{font-size:11px;color:#7a9287;margin-right:7px;font-weight:600}.nav-note{margin-left:auto;font-size:11px;color:#829186}
+.section{background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:26px 28px;margin-bottom:20px;box-shadow:0 4px 20px #17352b03}.section-head{display:flex;align-items:flex-start;gap:17px;margin-bottom:20px}.section-no{font-size:28px;font-weight:350;line-height:1.2;color:#a4b9aa;letter-spacing:-1px;min-width:39px}.section-head h2{font-size:20px;margin:0;line-height:1.45;font-weight:650;letter-spacing:-.25px}.section-head p{color:var(--muted);font-size:12px;margin:5px 0 0;max-width:1020px}.section-head .right-tag{margin-left:auto;white-space:nowrap;color:var(--muted);font-size:11px;padding-top:5px}
+.kpis{display:grid;grid-template-columns:1.04fr 1fr 1fr 1.04fr;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:22px}.kpi{padding:19px 21px;background:#fbfcf9;min-width:0}.kpi+.kpi{border-left:1px solid var(--line)}.kpi.feature{background:#eaf3ec}.kpi .label{font-size:12px;color:#526b60;font-weight:550;display:block}.kpi .value{font-size:35px;line-height:1.18;letter-spacing:-1.3px;font-weight:650;display:block;margin:7px 0 7px;color:#244a3a}.kpi .value .unit{font-size:15px;letter-spacing:0;margin-left:4px;font-weight:500}.kpi .detail{font-size:11px;color:#6b7f73;line-height:1.6;display:block}.kpi .value.good{color:var(--teal-dark)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:24px}.three{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}.subhead{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:11px}.subhead h3{font-size:14px;font-weight:650;margin:0}.subhead .aside{margin-left:auto;color:var(--muted);font-size:11px}.labelcode{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.96em;font-weight:650}.subtle{font-size:11px;color:var(--muted);line-height:1.7}.note{font-size:12px;color:var(--muted);line-height:1.8;margin:10px 0 0}.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;background:#f0f4ee;border:1px solid #dfe7dc;border-radius:4px;padding:2px 7px;color:#62745f}.tag.teal{color:#226d5f;background:#e9f4ee;border-color:#d7e9de}.coverage-box{padding:17px 19px;border:1px solid var(--line);border-radius:9px}.stacked{width:100%;height:26px;display:flex;border-radius:5px;overflow:hidden;background:#edf0eb;gap:2px;margin:12px 0}.stacked .segment{min-width:0;display:block;position:relative}.stacked .segment span{font-size:10px;color:white;white-space:nowrap;position:absolute;inset:0;display:grid;place-items:center;font-weight:600}.coverage-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.coverage-legend .category{font-size:10px;color:#6a7b70}.coverage-legend .count{font-size:17px;font-weight:650;letter-spacing:-.3px;display:block;line-height:1.5}.coverage-legend .pc{font-size:11px;color:#78877b}.swatch{display:inline-block;width:8px;height:8px;border-radius:2px;vertical-align:middle;margin-right:5px;flex-shrink:0}.gap-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-top:1px solid #e9eee7;margin-top:13px;padding-top:11px;font-size:11px;color:#718171}.gap-row strong{color:#395946;font-size:12px;font-weight:600}.gap-breakdown{display:flex;flex-wrap:wrap;gap:5px 16px;font-size:10px;line-height:1.8;margin-top:6px;color:#7a877a}.gap-breakdown b{font-weight:650;color:#4e634f}.common{margin-top:18px;background:#f6f8f2;border:1px solid #e0e8d7;border-radius:8px;padding:16px 18px;display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:22px;align-items:center}.common-title{font-size:12px;font-weight:650;margin-bottom:3px}.common-compare{display:flex;gap:12px;align-items:center;justify-content:center}.common-compare .percent{font-size:23px;color:#31563e;letter-spacing:-.5px;line-height:1.3}.common-compare .caption{display:block;font-size:10px;color:#809078;text-align:center}.common-compare .arrow{font-size:20px;font-weight:300;color:#9aa991}.gain-loss{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:10px;color:#74816c}.gain-loss b{display:block;font-size:20px;line-height:1.3;color:#247365;font-weight:600}.gain-loss .loss b{color:#b57649}
+.rule-line{font-size:11px;color:#768475;margin-top:14px;line-height:1.8}.rule-line .labelcode{color:#536c5a}.rule-line .sep{color:#b4bfb1;padding:0 8px}
+.inline-stats{display:flex;flex-wrap:wrap;gap:14px 27px;border-top:1px solid #ebf0e7;border-bottom:1px solid #ebf0e7;padding:13px 0;margin:0 0 20px}.inline-stats span{font-size:11px;color:#7a8978}.inline-stats strong{font-size:16px;font-weight:650;color:#416046;margin-right:4px}.control-row{display:flex;gap:12px 18px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}.control-row label{display:flex;flex-direction:column;gap:5px;font-size:10px;color:#798778;font-weight:550}.control-row select{border:1px solid #cbd8c9;background:#fff;border-radius:5px;padding:6px 28px 6px 9px;font-size:12px;min-width:132px;max-width:100%;line-height:1.5}.control-row .chart-meta{margin-left:auto;max-width:520px;text-align:right;font-size:11px;color:#7b8977;line-height:1.8}.chart-wrap{position:relative;width:100%}.chart{width:100%;display:block;overflow:visible}.chart text{font-family:var(--font);font-variant-numeric:tabular-nums}.legend{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;font-size:11px;color:#698068;margin:6px 0 9px}.legend .line{display:inline-block;width:21px;border-top:3px solid var(--teal);margin-right:6px;vertical-align:middle}.legend .line.dashed{border-top:2px dashed var(--orange)}.legend .baseline-key{height:13px;display:inline-block;border-left:1px dashed #596b5b;margin-right:6px;vertical-align:middle}.tails{display:flex;gap:15px;justify-content:space-between;flex-wrap:wrap;color:#81917b;font-size:10px;margin-top:3px}.callout{background:#f4f7f1;border-left:3px solid #b6cbb0;padding:10px 13px;font-size:11px;color:#65765e;line-height:1.8;margin-top:14px}.divider{height:1px;background:var(--line);border:0;margin:23px 0}.window-block{border:1px solid var(--line);border-radius:9px;padding:17px 19px}.paired{display:grid;grid-template-columns:1fr 1fr;gap:24px}.paired .side{padding:10px 0 2px}.paired .side+.side{border-left:1px solid var(--line);padding-left:24px}.paired .side-label{font-size:12px;color:#70816d}.paired .number{font-size:29px;line-height:1.3;letter-spacing:-.8px;font-weight:600;color:#547c95;margin:5px 0}.paired .after .number{color:#177f75}.paired .bar{height:7px;background:#edf1e8;border-radius:2px;overflow:hidden;margin:11px 0 8px}.paired .bar i{height:100%;display:block;background:#7e9db1}.paired .after .bar i{background:#69a394}.paired .side-detail{font-size:10px;color:#7c8b76;line-height:1.8}.window-change{display:flex;gap:9px 20px;flex-wrap:wrap;margin-top:16px;padding-top:13px;border-top:1px solid #e5ecdf;font-size:11px;color:#7c8872}.window-change b{color:#4a6548;font-weight:600}.window-notes{display:flex;flex-direction:column;justify-content:center;padding:0 8px}.window-notes h3{font-size:15px;font-weight:600;margin:0 0 10px}.window-notes p{font-size:12px;color:#72816c;line-height:1.9;margin:0 0 12px}.window-notes .small{font-size:11px}
+.matrix-wrap{width:100%;overflow:auto;margin:2px 0 17px;border:1px solid var(--line);border-radius:8px}.matrix{width:100%;border-collapse:separate;border-spacing:3px;padding:5px;font-size:11px;table-layout:fixed;min-width:680px}.matrix th{font-weight:500;color:#6b7d67;padding:7px 4px;min-width:70px}.matrix th:first-child{width:96px;text-align:left;padding-left:10px}.matrix td{padding:0;text-align:center;border-radius:5px;height:52px}.matrix button{display:block;width:100%;height:100%;border:2px solid transparent;background:transparent;border-radius:5px;padding:5px 3px;line-height:1.2;font-variant-numeric:tabular-nums}.matrix button:hover{border-color:#9bb7a5}.matrix button.active{border-color:#2e6d59;box-shadow:inset 0 0 0 1px white}.matrix .score{font-size:13px;font-weight:650;display:block;letter-spacing:-.2px}.matrix .shared{font-size:9px;display:block;margin-top:4px;opacity:.78}.matrix .diag{background:#f3f6ee;color:#7d8c75}.matrix .diag b{font-size:12px;font-weight:550;display:block}.matrix .diag span{font-size:9px}.matrix .na{color:#a9b2a1;font-size:12px;background:#f9faf7}.matrix-legend{display:flex;gap:10px;align-items:center;margin-top:-4px;font-size:10px;color:#8a9581}.color-ramp{height:7px;width:100px;background:linear-gradient(90deg,#f2f6ef,#b1d0bb,#12675a);border-radius:3px}.pair-detail{display:grid;grid-template-columns:0.85fr 1.6fr;gap:30px;align-items:start;margin-top:18px}.pair-kpis{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;margin:11px 0 14px}.pair-kpis .value{font-size:23px;line-height:1.3;font-weight:600;color:#315b45;display:block;letter-spacing:-.4px}.pair-kpis .label{font-size:10px;color:#7f8d76;display:block;margin-top:3px}.pair-kpis .small{font-size:10px;color:#8a9681;display:block;line-height:1.6;margin-top:3px}.pair-missing{font-size:11px;color:#8c9583;line-height:1.9;border-top:1px solid #e5ebdd;padding-top:10px}.pair-missing b{font-weight:600;color:#597251}.hist-caption{text-align:center;font-size:11px;color:#8b9581;margin-top:0}.empty{padding:35px 20px;text-align:center;background:#f7f9f3;border:1px dashed #dce6d5;border-radius:7px;color:#8a977d;font-size:12px;line-height:1.9}.empty b{display:block;color:#687e5a;font-size:13px;font-weight:550;margin-bottom:4px}.heat-wrap{overflow-x:auto;overflow-y:hidden;margin:13px 0 5px}.heat-chart{min-width:800px}.heat-key{display:flex;align-items:center;gap:7px;font-size:10px;color:#8c9783;justify-content:flex-end}.mini-value{display:flex;gap:8px;align-items:baseline;color:#7b8b72;font-size:11px;margin-top:10px}.mini-value strong{color:#416747;font-size:25px;font-weight:600;letter-spacing:-.4px}.smallcharts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:25px;margin-top:20px}.persistence-panels{display:grid;grid-template-columns:1.65fr 1fr;gap:26px;margin-top:22px;align-items:start}.smallchart h4{font-size:12px;font-weight:600;margin:0 0 6px}.smallchart p{font-size:10px;color:#84917a;margin:6px 0 0;line-height:1.7}.opcs{display:grid;grid-template-columns:0.8fr 1fr 1fr;gap:27px;align-items:start;border-top:1px solid var(--line);padding-top:23px;margin-top:24px}.opcs h3{font-size:14px;margin:0 0 8px;font-weight:650}.opcs h4{font-size:12px;font-weight:550;margin:0 0 7px}.opcs .n{font-size:28px;line-height:1.3;color:#5f7796;font-weight:600;letter-spacing:-.7px;display:block;margin:6px 0}.opcs .subtitle{color:#819077;font-size:11px;line-height:1.8}.rows{display:flex;flex-direction:column;gap:10px;margin:13px 0 0}.bar-row{display:grid;grid-template-columns:105px 1fr 45px;gap:9px;align-items:center;font-size:10px;color:#72836c}.bar-row .bar{height:9px;background:#edf1e8;border-radius:2px;overflow:hidden}.bar-row .bar i{display:block;height:100%;background:#a0b7c8;border-radius:2px}.bar-row b{text-align:right;color:#58734d;font-weight:550}.opcs-missing{grid-column:2/-1;align-self:center;text-align:left;padding:19px 22px}
+footer{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:7px 3px 0;color:#929c87;font-size:10px;line-height:1.8}footer p{margin:0;max-width:850px}footer .stamp{white-space:nowrap;color:#7e917a}.fatal{border:1px solid #dabfb1;border-radius:8px;padding:20px;background:#fff6f0;color:#8e5940;font-size:13px;line-height:1.8}.fatal p{margin:8px 0 0}.fatal pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 ui-monospace,monospace}.tip{position:fixed;background:#173d33;color:#f1f6ee;border:1px solid #457a60;box-shadow:0 6px 18px #183c2320;border-radius:5px;padding:8px 11px;font-size:11px;line-height:1.7;pointer-events:none;z-index:10;max-width:280px;display:none}.tip .muted{color:#bbd5b4}.loading{padding:40px;text-align:center;color:#74876d}.noscript{padding:20px;border:1px solid #e0cdad;background:#fff9e8;border-radius:8px;color:#7a633b}[hidden]{display:none!important}
+@media(max-width:1000px){.masthead{padding:29px 22px 19px}main{padding:0 18px 30px}.section{padding:22px}.kpi{padding:16px}.kpi .value{font-size:29px}.kpi .detail{font-size:10px}.common{gap:15px;grid-template-columns:1fr 1fr}.common>div:first-child{grid-column:1/-1}.common-compare{justify-content:flex-start}.nav-note{display:none}.coverage-legend{gap:6px}.coverage-legend .category{font-size:9px}.coverage-legend .count{font-size:16px}.opcs{grid-template-columns:1fr 1fr}.opcs>div:first-child{grid-column:1/-1}.opcs-missing{grid-column:1/-1}.pair-detail{grid-template-columns:0.9fr 1.25fr;gap:20px}.bar-row{grid-template-columns:90px 1fr 43px}}
+@media(max-width:730px){.masthead{padding:24px 18px 17px}.heading-row{display:block}.report-meta{margin-top:16px;text-align:left;font-size:10px;display:flex;gap:15px}.report-meta strong{display:inline;margin-right:5px}header p{font-size:12px}h1{font-size:29px}.nav{gap:1px;padding:11px 0 17px}.nav a{font-size:10px;padding:6px 7px}.nav b{margin-right:5px}main{padding:0 10px 24px}.section{padding:19px 16px;margin-bottom:13px;border-radius:9px}.section-head{gap:11px;margin-bottom:17px}.section-no{font-size:25px;min-width:30px}.section-head h2{font-size:18px}.section-head p{font-size:11px}.section-head .right-tag{display:none}.kpis{grid-template-columns:1fr 1fr}.kpi{padding:15px}.kpi:nth-child(3){border-left:0;border-top:1px solid var(--line)}.kpi:nth-child(4){border-top:1px solid var(--line)}.kpi .value{font-size:31px}.kpi .label{font-size:11px}.two,.three{grid-template-columns:1fr;gap:17px}.coverage-box{padding:15px}.coverage-legend .category{font-size:10px}.coverage-legend .count{font-size:17px}.coverage-legend{gap:9px}.coverage-box .subhead .aside{font-size:10px}.common{padding:15px;gap:14px}.common-compare .percent{font-size:21px}.gain-loss b{font-size:19px}.rule-line{font-size:10px}.inline-stats{gap:8px 15px}.inline-stats span{font-size:10px}.inline-stats strong{font-size:14px}.control-row{gap:10px 14px}.control-row .chart-meta{margin-left:0;text-align:left;width:100%;font-size:10px}.control-row label{font-size:10px}.control-row select{font-size:11px;min-width:122px}.legend{font-size:10px;gap:6px 14px}.window-notes{padding:0 1px}.window-notes h3{font-size:13px;margin-bottom:5px}.window-notes p{font-size:11px;margin-bottom:5px}.pair-detail{grid-template-columns:1fr;gap:12px}.pair-kpis{grid-template-columns:repeat(4,1fr);gap:10px}.pair-kpis .value{font-size:21px}.pair-kpis .label{font-size:9px}.pair-kpis .small{font-size:9px}.matrix th:first-child{width:85px}.persistence-panels{grid-template-columns:1fr;gap:22px}.smallcharts{grid-template-columns:1fr 1fr;gap:18px}.smallcharts>div:last-child{grid-column:1/-1;max-width:520px;width:100%}.opcs{grid-template-columns:1fr;gap:20px}.opcs>div:first-child{grid-column:auto}.opcs-missing{grid-column:auto}.opcs>div{min-width:0}.opcs .n{font-size:26px}.bar-row{grid-template-columns:105px 1fr 55px;font-size:11px}.opcs .rows{gap:12px}footer{display:block;padding:5px 5px 0;font-size:9px}footer .stamp{display:block;margin-top:9px}.demo{font-size:11px;padding:10px 13px}.tails{font-size:9px}.hist-caption{font-size:10px}}
+@media print{body{background:white}.masthead{padding-top:10px}.nav{display:none}.section{break-inside:avoid;box-shadow:none}.control-row select{appearance:none;border:0;padding-left:0}.tip{display:none}.matrix button{pointer-events:none}.heat-wrap{overflow:visible}.heat-chart{min-width:0}footer{padding-bottom:0}}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div id="demoNotice" class="demo" hidden><strong>合成数据示例 · 非真实分析结果</strong> · 本页仅演示新版图表与分母逻辑。</div>
+  <div class="eyebrow"><span class="mark" aria-hidden="true">+</span> UK Biobank · Disease timing</div>
+  <div class="heading-row">
+    <div><h1><span class="trait" id="trait">__TITLE__</span>日期一致性与记录轨迹</h1><p>看清比较分母，保留全部可用日期，以 baseline 对齐临床记录。</p></div>
+    <div class="report-meta"><div><strong id="reportDate"></strong>报告生成</div><div id="asOf"></div></div>
+  </div>
+</header>
+<main>
+  <noscript><div class="noscript">本报告的汇总图表需要 JavaScript。请在允许 JavaScript 的浏览器中打开本文件；无须联网。</div></noscript>
+  <div id="loading" class="loading">正在绘制汇总图表…</div>
+  <div id="fatal" class="fatal" hidden role="alert"></div>
+  <div id="dashboard" hidden>
+    <nav class="nav" aria-label="报告章节">
+      <a href="#coverage"><b>01</b>人数与分母</a>
+      <a href="#trajectory"><b>02</b>baseline 前后</a>
+      <a href="#agreement"><b>03</b>来源一致性</a>
+      <a href="#persistence"><b>04</b>持续性与手术</a>
+      <span class="nav-note">仅含群体汇总</span>
+    </nav>
+
+    <section class="section" id="coverage">
+      <div class="section-head"><span class="section-no">01</span><div><h2>从疾病证据并集，到可比较日期</h2><p>同日率的分母是两端都有有效日期的人数。下方将其与总人数完整对账；没有可用日期不等于没有疾病。</p></div></div>
+      <div id="dataAlerts" class="callout" style="margin:0 0 18px;background:#faf6ed;border-color:#ccb87e;color:#7c704d" hidden></div>
+      <div class="kpis" id="overviewKpis"></div>
+      <div class="two" id="coveragePanels"></div>
+      <div class="common" id="commonComparison"></div>
+      <div class="rule-line"><span class="labelcode">min1</span>：本地定义下各来源的最早日期，包含本地已定义手术来源。<span class="sep">|</span><span class="labelcode">min2</span>：按公开 UKB 映射与现有记录重建的日期。<span class="sep">|</span><span class="labelcode">ref</span>：UKB 首次发生日期。</div>
+    </section>
+
+    <section class="section" id="trajectory">
+      <div class="section-head"><span class="section-no">02</span><div><h2>记录是否集中在 baseline 附近？</h2><p>保留每人的多个日期，并将 baseline 设为 0。主图的临床记录来自 ICD 与 GP；自报和手术可单独切换。</p></div><span class="right-tag">每格 0.5 年 · baseline = 0</span></div>
+      <div class="inline-stats" id="trajectoryStats"></div>
+      <div class="control-row">
+        <label>日期来源<select id="trajectorySource" aria-label="选择轨迹日期来源"></select></label>
+        <label>纵轴含义<select id="trajectoryMetric" aria-label="选择轨迹纵轴"><option value="weighted">每人等权的日期分布</option><option value="days">不同记录日期的总数</option></select></label>
+        <div class="chart-meta" id="trajectoryMeta"></div>
+      </div>
+      <div class="legend" id="trajectoryLegend"></div>
+      <div class="chart-wrap" id="trajectoryChart"></div>
+      <div class="tails" id="trajectoryTails"></div>
+      <p class="note" id="trajectoryNote"></p>
+      <hr class="divider">
+      <div class="two">
+        <div class="window-block">
+          <div class="subhead"><h3>同一批人的基线前后</h3><span class="aside" id="windowN"></span></div>
+          <div class="control-row"><label>对称时间窗<select id="pairedWindow" aria-label="选择 baseline 前后比较窗口"></select></label></div>
+          <div id="pairedWindowChart"></div>
+          <div class="window-change" id="windowChange"></div>
+          <p class="subtle" id="windowDayZero"></p>
+        </div>
+        <div class="window-notes">
+          <h3>用重复日期补充 first date</h3>
+          <p>图中可区分：一次孤立记录、跨年反复记录、baseline 前已有记录，以及 baseline 后才出现的记录。“每人等权”让记录日期多的人不会单独主导整体分布。</p>
+          <p>去掉 baseline 前后 30 天后再看一次，可检查近基线的集中记录是否主导前后差异。</p>
+          <p class="small">这里比较的是可见的医疗记录。各来源的实际覆盖期、就医条件和记录习惯都可能影响曲线；不能仅凭 baseline 附近的变化认定疾病加重、治疗效果或真实健康断点。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="agreement">
+      <div class="section-head"><span class="section-no">03</span><div><h2>来源两两一致性</h2><p>每格上方为同日率，下方为共同分母 n。点击色块或选择两个来源，查看日期差与未进入比较的人数。</p></div></div>
+      <div class="matrix-wrap"><table class="matrix" id="pairMatrix" aria-label="不同来源首次日期同日率与共同分母"></table></div>
+      <div class="matrix-legend"><span>同日率</span><span>0%</span><span class="color-ramp"></span><span>100%</span><span>对角线为该来源有日期人数</span></div>
+      <div class="pair-detail">
+        <div>
+          <div class="control-row"><label>来源 A<select id="pairA" aria-label="一致性来源 A"></select></label><label>来源 B<select id="pairB" aria-label="一致性来源 B"></select></label></div>
+          <div class="pair-kpis" id="pairKpis"></div>
+          <div class="pair-missing" id="pairMissing"></div>
+        </div>
+        <div>
+          <div class="subhead"><h3 id="pairChartTitle">日期差分布</h3><span class="aside">同一人 A 日期 − B 日期</span></div>
+          <div id="pairHistogram"></div>
+          <div class="hist-caption" id="pairDirection"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="persistence">
+      <div class="section-head"><span class="section-no">04</span><div><h2>记录的持续性，以及手术时间</h2><p>先用可解释的时间分组呈现轨迹，再看记录日期数与跨年跨度。所有分组互斥，人数合计等于疾病证据并集。</p></div></div>
+      <div class="subhead"><h3>临床日期相对于 baseline 的分组</h3><span class="aside">色块 = 组内该半年有记录的人数占比</span></div>
+      <div class="heat-wrap" id="trajectoryHeatmap"></div>
+      <div class="heat-key"><span>0%</span><span class="color-ramp"></span><span>100%</span></div>
+      <div class="inline-stats" id="persistenceStats" style="margin:17px 0 0"></div>
+      <div class="persistence-panels">
+        <div class="smallchart"><h4>记录日期数 × 首末日期跨度</h4><div id="countSpanHeatmap"></div><p>每格为人数及占有临床日期者的比例。同样跨了多年，只有少数日期与反复记录可以在此区分；跨度不代表持续患病或持续可观察。</p></div>
+        <div class="smallchart"><h4>相邻记录通常间隔多久？</h4><div id="gapHistogram"></div><p>每位有重复日期者贡献一个相邻日期中位间隔，避免记录最多的人主导分布。仅有首次日期时无法判断重复就诊。</p></div>
+      </div>
+      <div class="opcs" id="procedures"></div>
+      <p class="note">这些图展示医疗记录的时间结构。记录多、跨度长或有手术，均不能单独作为疾病严重程度评分。</p>
+    </section>
+
+    <footer><p>AOD 为当前输入保留的发生日期；住院及手术汇总字段通常只有每个代码首次日期。逐条记录曲线仅在提供相应 GP／住院记录时出现。缺少日期或某来源记录，均不等于没有疾病或完整随访。</p><span class="stamp">群体汇总 · 日期按人去重</span></footer>
+  </div>
+</main>
+<div id="tooltip" class="tip" role="tooltip"></div>
+<script id="report-data" type="application/json">__AGGREGATE_JSON__</script>
+<script>
+(function(){
+"use strict";
+var S, T, pairNames = [], selectedPair = {a:"min1",b:"ref"};
+var labels = {min1:"min1",min2:"min2",ref:"ref",icd10:"ICD10",icd9:"ICD9",opcs4:"OPCS4",srd:"自报",gp:"GP",gp2:"Read2",gp3:"CTV3",death:"死亡登记",clinical:"ICD + GP",hospital:"ICD 住院"};
+var C = {teal:"#177f75",blue:"#527d9d",orange:"#c27a4c",gray:"#c4cdbf",ink:"#264836",muted:"#7d8e76",line:"#e5ebdf"};
+var $ = function(id){return document.getElementById(id);};
+var esc = function(v){return String(v == null ? "" : v).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch];});};
+var fmt = function(v){return v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("en-US",{maximumFractionDigits:0});};
+var dec = function(v,n){return v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("en-US",{minimumFractionDigits:n == null ? 1:n,maximumFractionDigits:n == null ? 1:n});};
+var pct = function(n,d,digits){return d > 0 ? dec(100*n/d,digits == null ? 1:digits)+"%" : "—";};
+var pnum = function(v,digits){return v == null ? "—" : dec(v,digits == null ? 1:digits)+"%";};
+var sourceLabel = function(k){return labels[k] || k;};
+var sum = function(a){return (a || []).reduce(function(s,x){return s+(Number(x)||0);},0);};
+var value = function(x,k,d){return x && x[k] != null ? x[k] : d;};
+var colorMix = function(hexA,hexB,t){
+  t=Math.max(0,Math.min(1,t)); var a=parseInt(hexA.slice(1),16),b=parseInt(hexB.slice(1),16),r=[];
+  for(var i=16;i>=0;i-=8)r.push(Math.round(((a>>i)&255)*(1-t)+((b>>i)&255)*t));
+  return "rgb("+r.join(",")+")";
+};
+var readableInk = function(rgb){
+ var channels=(rgb.match(/[0-9]+/g)||[]).slice(0,3).map(Number);
+ function lum(c){return c.map(function(v){v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce(function(s,v,i){return s+v*[.2126,.7152,.0722][i];},0);}
+ if(channels.length!==3)return "#17342a";
+ var bg=lum(channels),fg=lum([23,52,42]);
+ return 1.05/(bg+.05)>(bg+.05)/(fg+.05)?"#fff":"#17342a";
+};
+var empty = function(title,description){return '<div class="empty"><b>'+esc(title)+'</b>'+esc(description || "")+'</div>';};
+var tipAttr = function(text){return ' data-tip="'+esc(text)+'"';};
+function svgOpen(width,height,title,extra){
+ return '<svg class="chart '+(extra||"")+'" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="'+esc(title)+'"><title>'+esc(title)+'</title><rect width="'+width+'" height="'+height+'" fill="#fff"/>';
+}
+function textAt(x,y,text,attrs){return '<text x="'+x+'" y="'+y+'" '+(attrs||"")+'>'+esc(text)+'</text>';}
+function option(k,label){var o=document.createElement("option");o.value=k;o.textContent=label;return o;}
+function tickValue(x){if(x>=10000)return dec(x/1000,0)+"k";if(x>=1000)return dec(x/1000,1)+"k";if(x>=10)return dec(x,0);return dec(x,x>=1?1:2);}
+function niceMax(v){if(!(v>0))return 1;var mag=Math.pow(10,Math.floor(Math.log10(v))),k=v/mag;return (k<=1?1:k<=2?2:k<=4?4:k<=5?5:k<=8?8:10)*mag;}
+function safeSeries(arr,n){return Array.from({length:n},function(_,i){return Number(arr && arr[i])||0;});}
+
+function kpi(label,big,detail,css){
+ return '<div class="kpi '+(css||"")+'"><span class="label">'+label+'</span><span class="value">'+big+'</span><span class="detail">'+detail+'</span></div>';
+}
+function renderOverview(){
+ var a=(S.coverage||{}).min1||{}, b=(S.coverage||{}).min2||{}, c=S.common_comparison||{};
+ var alerts=Array.isArray(S.data_alerts)?S.data_alerts:[];
+ if(alerts.length){$("dataAlerts").hidden=false;$("dataAlerts").innerHTML=alerts.map(function(x){return "<div>"+esc(x)+"</div>";}).join("");}
+ var delta=c.delta_pct_points;
+ var deltaText=delta == null ? "—" : (delta>0?"+":"")+dec(delta,1)+'<span class="unit">百分点</span>';
+ $("overviewKpis").innerHTML=
+  kpi("有疾病相关证据",fmt(S.n_patients),"本地、ref 与映射证据的并集","feature")+
+  kpi('<span class="labelcode">min1 / ref</span> 同日率',pnum(a.same_day_pct),fmt(a.same_day)+" / "+fmt(a.both)+" 人，两端均有有效日期")+
+  kpi('<span class="labelcode">min2 / ref</span> 同日率',pnum(b.same_day_pct),fmt(b.same_day)+" / "+fmt(b.both)+" 人，两端均有有效日期")+
+  kpi("在同一批可比较人群中",deltaText,"共同分母 "+fmt(c.n)+" 人：min2 − min1");
+ $("coveragePanels").innerHTML=["min1","min2"].map(function(name){return coveragePanel(name,(S.coverage||{})[name]);}).join("");
+ if(!(c.n>0)){
+  $("commonComparison").innerHTML='<div style="grid-column:1/-1"><div class="common-title">同一人群中的比较</div><div class="subtle">没有 min1、min2 与 ref 三者均有有效日期的参与者，暂不能进行共同分母比较。</div></div>';
+ }else{
+  $("commonComparison").innerHTML=
+   '<div><div class="common-title">用同一个分母，再比较一次</div><div class="subtle">'+fmt(c.n)+' 人同时具备 min1、min2 与 ref 日期。上方两项同日率的分母可能不同，这里直接比较同一批人。</div></div>'+
+   '<div class="common-compare"><div><span class="percent">'+pnum(c.min1_same_day_pct)+'</span><span class="caption">min1 同日</span></div><span class="arrow" aria-hidden="true">→</span><div><span class="percent">'+pnum(c.min2_same_day_pct)+'</span><span class="caption">min2 同日</span></div></div>'+
+   '<div class="gain-loss"><div><b>'+fmt(c.gained)+'</b>由不一致变同日</div><div class="loss"><b>'+fmt(c.lost)+'</b>由同日变不一致</div></div>';
+ }
+}
+function coveragePanel(name,data){
+ if(!data)return '<div class="coverage-box">'+empty(name+" / ref 暂不可比较","未提供所需的汇总结果。")+'</div>';
+ var colors=[C.teal,C.blue,C.orange,C.gray], groups=data.four_way||[];
+ var fallbackLabels={"both":"两边有日期","a_only":"仅 "+name,"b_only":"仅 ref","neither":"两边无有效日期","neither_date":"两边无有效日期"};
+ var html='<div class="coverage-box"><div class="subhead"><h3><span class="labelcode">'+esc(name)+' / ref</span> 的分母</h3><span class="aside">总计 '+fmt(data.total||S.n_patients)+' 人</span></div>';
+ html+='<div class="stacked" role="img" aria-label="'+esc(name+" 与 ref 的日期覆盖分组")+'">';
+ groups.forEach(function(g,i){
+  var p=data.total>0?100*g.n/data.total:0;
+  html+='<span class="segment" style="width:'+p+'%;background:'+colors[i%colors.length]+'"'+tipAttr((g.label||fallbackLabels[g.key]||g.key)+" · "+fmt(g.n)+" 人 · "+pct(g.n,data.total))+'>'+(p>13?'<span>'+pnum(p,1)+'</span>':"")+'</span>';
+ });
+ html+='</div><div class="coverage-legend">';
+ groups.forEach(function(g,i){
+  var lab=fallbackLabels[g.key]||g.label||g.key;
+  html+='<div><span class="category"><i class="swatch" style="background:'+colors[i%colors.length]+'"></i>'+esc(lab)+'</span><span class="count">'+fmt(g.n)+'</span><span class="pc">'+pct(g.n,data.total)+'</span></div>';
+ });
+ html+='</div><div class="gap-row"><strong>未进入比较 '+fmt(data.excluded)+' 人</strong><span>占总人数 '+pct(data.excluded,data.total)+'</span></div>';
+ var reasons=(data.excluded_reasons||[]).filter(function(x){return x.n>0;});
+ if(reasons.length)html+='<div class="gap-breakdown">'+reasons.map(function(x){return '<span>'+esc(x.label||x.key)+' <b>'+fmt(x.n)+'</b></span>';}).join("")+'</div>';
+ html+='</div>';
+ return html;
+}
+
+function renderTrajectory(){
+ T=S.trajectory||{};
+ $("trajectoryStats").innerHTML=[
+  [T.n_baseline,"人有 baseline"],[T.n_clinical_people,"人有临床日期"],
+  [T.n_baseline_clinical,"人可对齐临床轨迹"],[T.n_raw_clinical_people,"人有逐条临床记录"],
+  [value(S.quality,"clinical_fod_fallback_people",0),"人的临床证据只有首次日期"]
+ ].map(function(x){return '<span><strong>'+fmt(x[0])+'</strong>'+esc(x[1])+'</span>';}).join("");
+ var series=T.series||[];
+ series.forEach(function(s){if(s.key==="clinical"||s.n_people>0||s.retained_input_available)$("trajectorySource").appendChild(option(s.key,s.label||sourceLabel(s.key)));});
+ if(!series.some(function(s){return s.key===$("trajectorySource").value;}))$("trajectorySource").value=series.length?series[0].key:"";
+ $("trajectorySource").addEventListener("change",renderDensity);
+ $("trajectoryMetric").addEventListener("change",renderDensity);
+ (T.paired_windows||[]).forEach(function(w){$("pairedWindow").appendChild(option(w.key,w.label));});
+ $("pairedWindow").addEventListener("change",renderPaired);
+ renderDensity();renderPaired();
+}
+function renderDensity(){
+ var s=(T.series||[]).find(function(x){return x.key===$("trajectorySource").value;});
+ var bins=T.bins||[],weighted=$("trajectoryMetric").value==="weighted";
+ if(!s||!bins.length||!(s.n_baseline_people>0)){
+  $("trajectoryChart").innerHTML=empty("没有可按 baseline 对齐的日期","需要同时具备有效 baseline 和该来源日期；其他日期覆盖与一致性结果仍可查看。");
+  $("trajectoryLegend").innerHTML="";$("trajectoryMeta").textContent="";$("trajectoryTails").innerHTML="";$("trajectoryNote").textContent="";return;
+ }
+ var v=safeSeries(weighted?s.patient_weighted_pct:s.retained_days,bins.length);
+ var rv=safeSeries(weighted?s.raw_record_patient_weighted_pct:s.raw_record_days,bins.length);
+ var rawAvailable=s.n_baseline_raw_people>0 && (!weighted||Array.isArray(s.raw_record_patient_weighted_pct));
+ var rawMissingNote=s.record_input_available?"逐条记录已提供，此来源没有可对齐的日期":"未提供该来源的逐条记录";
+ var ymax=niceMax(Math.max.apply(null,v.concat(rawAvailable?rv:[]))),W=1160,H=300,L=65,R=22,TOP=31,BOTTOM=44;
+ var plotW=W-L-R,plotH=H-TOP-BOTTOM,xmin=bins[0].lo,xmax=bins[bins.length-1].hi;
+ var x=function(t){return L+(t-xmin)/(xmax-xmin)*plotW;},y=function(t){return TOP+plotH*(1-t/ymax);};
+ var out=svgOpen(W,H,(s.label||sourceLabel(s.key))+"相对 baseline 的日期分布");
+ if(xmin<=0&&xmax>=0)out+='<rect x="'+x(-.5)+'" y="'+TOP+'" width="'+(x(.5)-x(-.5))+'" height="'+plotH+'" fill="#eff5eb"/>';
+ for(var k=0;k<=4;k++){
+  var tv=ymax*k/4,yy=y(tv);
+  out+='<line x1="'+L+'" y1="'+yy+'" x2="'+(W-R)+'" y2="'+yy+'" stroke="'+C.line+'" stroke-width="1"/>';
+  out+=textAt(L-11,yy+4,tickValue(tv),'text-anchor="end" fill="'+C.muted+'" font-size="11"');
+ }
+ out+=textAt(L,14,weighted?"日期权重（%）":"不同记录日期数",'fill="'+C.muted+'" font-size="11"');
+ [-10,-5,0,5,10].filter(function(t){return t>=xmin&&t<=xmax;}).forEach(function(t){
+  var xx=x(t);out+='<line x1="'+xx+'" y1="'+(H-BOTTOM)+'" x2="'+xx+'" y2="'+(H-BOTTOM+4)+'" stroke="#b8c7b0"/>';
+  out+=textAt(xx,H-21,t===0?"0 / baseline":(t>0?"+":"")+t+" 年",'text-anchor="middle" fill="'+(t===0?"#365d3e":C.muted)+'" font-size="'+(t===0?12:11)+'" font-weight="'+(t===0?600:400)+'"');
+ });
+ var pts=v.map(function(z,i){return x(bins[i].mid)+","+y(z);});
+ if(pts.length)out+='<path d="M '+x(bins[0].mid)+' '+y(0)+' L '+pts.join(" L ")+' L '+x(bins[bins.length-1].mid)+' '+y(0)+' Z" fill="#c9e2d1" opacity=".36"/>';
+ out+='<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+C.teal+'" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>';
+ if(rawAvailable)out+='<polyline points="'+rv.map(function(z,i){return x(bins[i].mid)+","+y(z);}).join(" ")+'" fill="none" stroke="'+C.orange+'" stroke-width="2.1" stroke-dasharray="6 4" stroke-linejoin="round" stroke-linecap="round"/>';
+ if(xmin<=0&&xmax>=0){
+  out+='<line x1="'+x(0)+'" y1="'+TOP+'" x2="'+x(0)+'" y2="'+(H-BOTTOM)+'" stroke="#6b7c61" stroke-width="1" stroke-dasharray="4 4"/>';
+  out+=textAt(x(0)+7,TOP+13,"baseline",'fill="#5d7452" font-size="11"');
+ }
+ bins.forEach(function(bin,i){
+  var lo=dec(bin.lo,1),hi=dec(bin.hi,1),head=lo+" 至 "+hi+" 年";
+  var tooltip=head+"\n全部保留日期："+(weighted?dec(v[i],2)+"%":fmt(v[i])+" 个日期")+"\n该时间段有记录："+fmt((s.retained_people||[])[i])+" 人";
+  if(rawAvailable)tooltip+="\n逐条记录："+(weighted?dec(rv[i],2)+"%":fmt(rv[i])+" 个日期");
+  out+='<rect x="'+x(bin.lo)+'" y="'+TOP+'" width="'+Math.max(1,x(bin.hi)-x(bin.lo))+'" height="'+plotH+'" fill="transparent"'+tipAttr(tooltip)+'/>';
+ });
+ out+='</svg>';
+ $("trajectoryChart").innerHTML=out;
+ $("trajectoryMeta").textContent="全部日期："+fmt(s.n_baseline_people)+" 人 / "+fmt(s.n_baseline_days)+" 个日期"+(rawAvailable?"　逐条记录："+fmt(s.n_baseline_raw_people)+" 人 / "+fmt(s.n_baseline_raw_days)+" 个日期":"　"+rawMissingNote);
+ $("trajectoryLegend").innerHTML='<span><i class="line"></i>全部保留日期</span>'+(rawAvailable?'<span><i class="line dashed"></i>仅逐条记录</span>':'<span class="subtle">'+esc(rawMissingNote)+'</span>')+'<span><i class="baseline-key"></i>baseline</span>';
+ var low=weighted?pnum(s.underflow_weight_pct,1):fmt(s.underflow_days)+" 个日期";
+ var high=weighted?pnum(s.overflow_weight_pct,1):fmt(s.overflow_days)+" 个日期";
+ $("trajectoryTails").innerHTML='<span>−10 年以前：'+low+'</span><span>+10 年及以后：'+high+' · 窗口外日期计入总体分布</span>';
+ $("trajectoryNote").textContent=weighted?
+  "每人先把全部日期的总权重归一为 1，再取人群平均；图内各格与窗口外合计 100%。两条曲线分别在各自有日期的人群中归一，仅比较记录时间的分布形状。":
+  "同一人同一天在当前来源内只计一次。全部保留日期含 AOD、每代码首次日期与必要的首次日期补充；逐条记录仅来自记录级 GP／住院数据。纵轴不是独立就诊次数或发病率。";
+}
+function renderPaired(){
+ var w=(T.paired_windows||[]).find(function(x){return x.key===$("pairedWindow").value;});
+ if(!w||w.available===false||!(w.eligible_n>0)){
+  var unavailable=w&&w.available===false,recordsOnly=w&&/^records/.test(w.key);
+  $("pairedWindowChart").innerHTML=empty(unavailable?(recordsOnly?"相应的逐条记录输入不可用":"没有可用临床日期"):"没有可比较的对称窗口",unavailable?"此结果为不可用，不解释为零记录。":"需要有效 baseline 及相应日期证据。");
+  $("windowN").textContent="";$("windowChange").innerHTML="";$("windowDayZero").textContent="";return;
+ }
+ $("windowN").textContent="共同分母 "+fmt(w.eligible_n)+" 人";
+ var before=w.before||{},after=w.after||{};
+ $("pairedWindowChart").innerHTML='<div class="paired">'+[[before,"基线前","before"],[after,"基线后","after"]].map(function(row){
+  var side=row[0],p=w.eligible_n>0?100*(side.people||0)/w.eligible_n:0;
+  return '<div class="side '+row[2]+'"><span class="side-label">'+row[1]+'</span><div class="number">'+fmt(side.people)+'</div><span class="subtle">至少有一个记录日期 · '+pct(side.people,w.eligible_n)+'</span><div class="bar"><i style="width:'+Math.min(100,p)+'%"></i></div><div class="side-detail">平均 '+dec(side.mean,2)+' 个日期 / 人<br>中位数 '+dec(side.median,1)+' 个日期 / 人</div></div>';
+ }).join("")+'</div>';
+ $("windowChange").innerHTML='<span>日期数增加 <b>'+fmt(w.increased)+'</b></span><span>不变 <b>'+fmt(w.equal)+'</b></span><span>减少 <b>'+fmt(w.decreased)+'</b></span>';
+ $("windowDayZero").textContent="baseline 当天记录单列："+fmt(w.baseline_day_people)+" 人；不计入前后窗口。共同人群须有 baseline，且已知死亡／失访或截至日期允许到 baseline 后 365 天；不假定完整来源覆盖。";
+}
+
+function renderAgreement(){
+ pairNames=(S.sources||[]).filter(function(k){return S.pairs&&S.pairs[k];});
+ if(!pairNames.length){
+  $("pairMatrix").innerHTML='<tr><td>暂无可比较来源</td></tr>';return;
+ }
+ var out='<thead><tr><th scope="col">日期来源</th>'+pairNames.map(function(k){return '<th scope="col">'+esc(sourceLabel(k))+'</th>';}).join("")+'</tr></thead><tbody>';
+ pairNames.forEach(function(a){
+  out+='<tr><th scope="row">'+esc(sourceLabel(a))+'</th>';
+  pairNames.forEach(function(b){
+   var p=(S.pairs[a]||{})[b];
+   if(a===b){
+    var ss=(S.source_stats||[]).find(function(x){return x.source===a;});
+    out+='<td class="diag"><b>'+fmt(ss?ss.dated_patients:(p?p.both:0))+'</b><span>有日期</span></td>';
+   }else if(!p||!p.both){
+    out+='<td class="na"><span aria-label="无共同可用日期">—</span></td>';
+   }else{
+    var ratio=(p.same_day_pct||0)/100,bg=colorMix("#f0f5ec","#166b58",ratio*.96),ink=readableInk(bg);
+    out+='<td style="background:'+bg+'"><button type="button" data-pair-a="'+esc(a)+'" data-pair-b="'+esc(b)+'" style="color:'+ink+'" aria-label="'+esc(sourceLabel(a)+" 与 "+sourceLabel(b)+" 同日率 "+pnum(p.same_day_pct)+"，共同分母 "+fmt(p.both)+" 人")+'"><span class="score">'+pnum(p.same_day_pct)+'</span><span class="shared">n = '+fmt(p.both)+'</span></button></td>';
+   }
+  });
+  out+='</tr>';
+ });
+ out+='</tbody>';$("pairMatrix").innerHTML=out;
+ ["pairA","pairB"].forEach(function(id){pairNames.forEach(function(k){$(id).appendChild(option(k,sourceLabel(k)));});});
+ if(pairNames.length<2){
+  $("pairA").disabled=true;$("pairB").disabled=true;
+  $("pairKpis").innerHTML='<div class="subtle" style="grid-column:1/-1">只有一个来源有有效日期，暂不能做来源间比较。</div>';
+  $("pairHistogram").innerHTML=empty("暂无两来源日期差","需要至少两个来源的共同有效日期。");return;
+ }
+ selectedPair={a:pairNames.includes("min1")?"min1":pairNames[0],b:pairNames.includes("ref")?"ref":pairNames[1]||pairNames[0]};
+ $("pairA").value=selectedPair.a;$("pairB").value=selectedPair.b;
+ $("pairMatrix").addEventListener("click",function(e){
+  var btn=e.target.closest("button[data-pair-a]");if(!btn)return;
+  $("pairA").value=btn.dataset.pairA;$("pairB").value=btn.dataset.pairB;renderPair();
+ });
+ $("pairA").addEventListener("change",function(){if($("pairA").value===$("pairB").value)$("pairB").value=pairNames.find(function(k){return k!==$("pairA").value;})||$("pairA").value;renderPair();});
+ $("pairB").addEventListener("change",function(){if($("pairA").value===$("pairB").value)$("pairA").value=pairNames.find(function(k){return k!==$("pairB").value;})||$("pairB").value;renderPair();});
+ renderPair();
+}
+function renderPair(){
+ var a=$("pairA").value,b=$("pairB").value,p=((S.pairs||{})[a]||{})[b];
+ $("pairMatrix").querySelectorAll("button[data-pair-a]").forEach(function(btn){
+  var active=btn.dataset.pairA===a&&btn.dataset.pairB===b||btn.dataset.pairA===b&&btn.dataset.pairB===a;
+  btn.classList.toggle("active",active);btn.setAttribute("aria-pressed",String(active));
+ });
+ $("pairChartTitle").textContent=sourceLabel(a)+" − "+sourceLabel(b)+"：日期差";
+ if(!p||!p.both){
+  $("pairKpis").innerHTML='<div class="subtle" style="grid-column:1/-1">这两个来源没有共同有效日期。</div>';
+  $("pairMissing").textContent=p?"仅 "+sourceLabel(a)+"："+fmt(p.a_only)+" 人；仅 "+sourceLabel(b)+"："+fmt(p.b_only)+" 人。":"";
+  $("pairHistogram").innerHTML=empty("暂无日期差分布","缺少共同有效日期时不计算同日率。");$("pairDirection").textContent="";return;
+ }
+ var items=[
+  [pnum(p.same_day_pct),"完全同日",fmt(p.same_day)+" / "+fmt(p.both)],
+  [pnum(p.within_30d_pct),"相差 ≤30 天",fmt(p.within_30d)+" / "+fmt(p.both)],
+  [pnum(p.within_365d_pct),"相差 ≤365 天",fmt(p.within_365d)+" / "+fmt(p.both)],
+  [(p.median_days>0?"+":"")+dec(p.median_days,0),"日期差中位数","天；负数表示 A 更早"]
+ ];
+ $("pairKpis").innerHTML=items.map(function(row){return '<div><span class="value">'+row[0]+'</span><span class="label">'+row[1]+'</span><span class="small">'+row[2]+'</span></div>';}).join("");
+ $("pairMissing").innerHTML='共同有效日期 <b>'+fmt(p.both)+'</b> 人（'+pct(p.both,S.n_patients)+'）<br>仅 '+esc(sourceLabel(a))+' 有日期 <b>'+fmt(p.a_only)+'</b> · 仅 '+esc(sourceLabel(b))+' 有日期 <b>'+fmt(p.b_only)+'</b><br>两边都无有效日期 <b>'+fmt(p.neither_date)+'</b> 人';
+ var hist=p.histogram||[],mid=Math.floor(hist.length/2);
+ var shortLabels=hist.length===11?["<−10y","−10…−5y","−5…−1y","−365…−31d","−30…−1d","0","1…30d","31…365d","1…5y","5…10y",">10y"]:null;
+ $("pairHistogram").innerHTML=barChart(hist,{width:830,height:246,colors:hist.map(function(_,i){return i<mid?"#7397b1":i===mid?C.teal:"#ca9169";}),labels:shortLabels,total:p.both,small:false,title:"共同有效日期人群的有符号日期差分布"});
+ $("pairDirection").textContent="左侧："+sourceLabel(a)+" 更早　·　0：同日　·　右侧："+sourceLabel(b)+" 更早（d = 天，y = 年）";
+}
+function barChart(items,opt){
+ opt=opt||{};items=items||[];
+ if(!items.length||!items.some(function(r){return r.n>0;}))return empty("暂无可用分布","");
+ var W=opt.width||400,H=opt.height||190,L=opt.small?29:42,R=10,TOP=opt.small?25:30,BOTTOM=opt.small?48:47;
+ var max=niceMax(Math.max.apply(null,items.map(function(r){return r.n||0;})));
+ var plotW=W-L-R,plotH=H-TOP-BOTTOM,step=plotW/items.length,bw=Math.max(2,step*.62);
+ var out=svgOpen(W,H,opt.title||"汇总分布");
+ for(var i=0;i<=2;i++){
+  var v=max*i/2,yy=TOP+plotH*(1-v/max);
+  out+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy+'" y2="'+yy+'" stroke="'+C.line+'"/>';
+  out+=textAt(L-6,yy+3,tickValue(v),'text-anchor="end" font-size="'+(opt.small?9:11)+'" fill="#8d9984"');
+ }
+ items.forEach(function(r,i){
+  var xx=L+step*(i+.5),hh=plotH*(r.n||0)/max,yy=TOP+plotH-hh,fill=(opt.colors||[])[i]||C.teal;
+  out+='<rect x="'+(xx-bw/2)+'" y="'+yy+'" width="'+bw+'" height="'+hh+'" rx="2" fill="'+fill+'"'+tipAttr((r.label||"")+"\n"+fmt(r.n)+" 人"+(opt.total>0?" · "+pct(r.n,opt.total):""))+'/>';
+  out+=textAt(xx,yy-7,fmt(r.n),'text-anchor="middle" font-size="'+(opt.small?10:11)+'" fill="#4c6b4d"');
+  var label=(opt.labels||[])[i]||r.label||"",parts=String(label).split("\n");
+  if(parts.length===1&&label.length>(opt.small?9:11)){
+   var marker=label.indexOf("–");if(marker>0){parts=[label.slice(0,marker+1),label.slice(marker+1)];}
+  }
+  parts.slice(0,2).forEach(function(part,j){out+=textAt(xx,H-BOTTOM+16+j*13,part,'text-anchor="middle" font-size="'+(opt.small?9:10)+'" fill="#819176"');});
+ });
+ return out+'</svg>';
+}
+
+function renderPersistence(){
+ var p=T.persistence||{},groups=T.groups||[],bins=T.bins||[];
+ $("persistenceStats").innerHTML=[
+  [fmt(p.n_people),"人有临床日期"],[fmt(p.n_repeated),"人有 ≥2 个不同日期"],
+  [dec(p.median_n_dates,1),"每人日期数中位数"],[dec(p.median_span_years,1),"年：重复记录者首末跨度中位数"]
+ ].map(function(row){return '<span><strong>'+row[0]+'</strong>'+esc(row[1])+'</span>';}).join("");
+ renderGroupHeatmap(groups,bins);
+ renderCountSpan(p.count_span,p.n_people);
+ $("gapHistogram").innerHTML=barChart(p.gaps,{small:true,total:p.n_repeated,title:"每位重复记录者典型相邻日期间隔",colors:["#9bb1c4","#8ba5be","#7896b2","#65859f","#54748e","#3d627f"]});
+ renderProcedures();
+}
+function renderCountSpan(grid,total){
+ if(!grid||!Array.isArray(grid.counts)||!(total>0)){
+  $("countSpanHeatmap").innerHTML=empty("暂无日期数与跨度分布","需要至少一个可用临床日期。");return;
+ }
+ var xs=grid.x_labels||[],ys=grid.y_labels||[],cells=grid.counts;
+ if(!xs.length||!ys.length){$("countSpanHeatmap").innerHTML=empty("暂无可用分布","");return;}
+ var W=690,H=285,L=83,R=12,TOP=25,BOTTOM=46,cw=(W-L-R)/xs.length,ch=(H-TOP-BOTTOM)/ys.length;
+ var maximum=Math.max(1,...cells.flat().map(function(v){return Number(v)||0;}));
+ var out=svgOpen(W,H,"不同临床记录日期数与首末日期跨度的联合分布");
+ out+=textAt(L,14,"颜色表示人数：浅 → 深 = 少 → 多",'font-size="11" fill="#819176"');
+ ys.slice().reverse().forEach(function(label,displayRow){
+  var original=ys.length-1-displayRow,y=TOP+displayRow*ch;
+  out+=textAt(L-10,y+ch/2+4,label,'text-anchor="end" font-size="12" fill="#657c59"');
+  xs.forEach(function(xlabel,j){
+   var n=Number((cells[original]||[])[j])||0,ratio=n/maximum,fill=n?colorMix("#e9f2e4","#176d59",Math.sqrt(ratio)*.94):"#f4f6ef",ink=n?readableInk(fill):"#476a3d",x=L+j*cw;
+   out+='<rect x="'+(x+2)+'" y="'+(y+2)+'" width="'+(cw-4)+'" height="'+(ch-4)+'" rx="4" fill="'+fill+'"'+tipAttr(xlabel+" 个日期 · "+label+"跨度\n"+fmt(n)+" 人 · "+pct(n,total))+'/>';
+   out+=textAt(x+cw/2,y+ch*.47,fmt(n),'text-anchor="middle" font-size="16" font-weight="600" fill="'+ink+'"');
+   out+=textAt(x+cw/2,y+ch*.75,pct(n,total),'text-anchor="middle" font-size="10" fill="'+ink+'" opacity=".8"');
+  });
+ });
+ xs.forEach(function(label,j){out+=textAt(L+(j+.5)*cw,H-BOTTOM+17,label,'text-anchor="middle" font-size="12" fill="#657c59"');});
+ out+=textAt(L+(W-L-R)/2,H-6,"每人不同的临床记录日期数",'text-anchor="middle" font-size="11" fill="#8a977f"');
+ $("countSpanHeatmap").innerHTML=out+'</svg>';
+}
+function renderGroupHeatmap(groups,bins){
+ if(!groups.length||!bins.length){
+  $("trajectoryHeatmap").innerHTML=empty("暂无轨迹分组","需要临床日期及 baseline 信息。");return;
+ }
+ var W=1160,L=175,R=100,TOP=29,rowH=40,H=TOP+groups.length*rowH+43,plotW=W-L-R;
+ var xmin=bins[0].lo,xmax=bins[bins.length-1].hi,x=function(v){return L+(v-xmin)/(xmax-xmin)*plotW;},cell=plotW/bins.length;
+ var out=svgOpen(W,H,"临床记录轨迹分组与基线前后时间分布","heat-chart");
+ out+=textAt(W-R+14,16,"人数 / 占全部",'font-size="11" fill="#819176"');
+ groups.forEach(function(g,gi){
+  var yy=TOP+gi*rowH;
+  out+=textAt(L-14,yy+22,g.label||g.key,'text-anchor="end" font-size="12" fill="#526c4a"');
+  out+=textAt(W-R+14,yy+18,fmt(g.n),'font-size="13" font-weight="600" fill="#42623c"');
+  out+=textAt(W-R+14,yy+32,pct(g.n,S.n_patients),'font-size="10" fill="#8c9783"');
+  var noTime=g.key==="no_dates"||g.key==="missing_baseline";
+  bins.forEach(function(bin,j){
+   var v=Number((g.heatmap||[])[j])||0,fill=noTime?"#f0f2ec":v?colorMix("#edf4e9","#176d59",Math.sqrt(v/100)):"#f5f7f1";
+   out+='<rect x="'+(x(bin.lo)+1)+'" y="'+yy+'" width="'+Math.max(1,cell-2)+'" height="32" rx="2" fill="'+fill+'"'+(!noTime?tipAttr((g.label||g.key)+"\n"+dec(bin.lo,1)+" 至 "+dec(bin.hi,1)+" 年\n组内有记录："+pnum(v,1)):"")+'/>';
+  });
+  if(noTime)out+=textAt(L+plotW/2,yy+21,g.key==="no_dates"?"没有可用临床日期":"缺少 baseline，暂不能对齐",'text-anchor="middle" font-size="11" fill="#a0ab93"');
+ });
+ if(xmin<=0&&xmax>=0)out+='<line x1="'+x(0)+'" y1="'+(TOP-6)+'" x2="'+x(0)+'" y2="'+(TOP+groups.length*rowH-6)+'" stroke="#6e855d" stroke-width="1.2" stroke-dasharray="3 3"/>';
+ [-10,-5,0,5,10].filter(function(t){return t>=xmin&&t<=xmax;}).forEach(function(t){out+=textAt(x(t),H-10,t===0?"baseline":(t>0?"+":"")+t+" 年",'text-anchor="middle" font-size="11" fill="'+(t===0?"#4a6b43":"#8b9781")+'"');});
+ $("trajectoryHeatmap").innerHTML=out+'</svg>';
+}
+function rowsChart(items,total,fill){
+ if(!items||!items.length)return '<p class="subtle">暂无配对日期。</p>';
+ var max=Math.max(1,...items.map(function(x){return x.n||0;}));
+ return '<div class="rows">'+items.map(function(row){
+  var label=row.label||row.key||"";
+  return '<div class="bar-row"'+tipAttr(label+"\n"+fmt(row.n)+" 人"+(total>0?" · "+pct(row.n,total):""))+'><span>'+esc(label)+'</span><span class="bar"><i style="width:'+(100*(row.n||0)/max)+'%;background:'+(fill||"#9cb3c7")+'"></i></span><b>'+fmt(row.n)+'</b></div>';
+ }).join("")+'</div>';
+}
+function renderProcedures(){
+ var p=S.procedures||{};
+ var intro='<div><h3>OPCS4 手术记录</h3><span class="n">'+fmt(p.n_people||0)+'</span><span class="subtitle">人有与本表型相关的手术日期</span>';
+ if(p.available&&p.n_people>0){
+  intro+='<p class="note">'+fmt(p.n_baseline_people)+' 人可对齐 baseline；'+fmt(p.n_with_diagnosis)+' 人同时有临床诊断日期。</p><p class="subtle">'+esc(p.definition_note||"汇总手术日期为住院起始日代理；逐条手术记录有实际手术日期时优先采用。")+'</p></div>';
+  $("procedures").innerHTML=intro+'<div><h4>首次手术相对于 baseline</h4>'+rowsChart(p.timing_baseline,p.n_baseline_people,"#91adc3")+'</div><div><h4>首次手术相对于首次临床日期</h4>'+rowsChart(p.timing_diagnosis,p.n_with_diagnosis,"#99b79c")+'</div>';
+ }else{
+  intro+='</div>';
+  $("procedures").innerHTML=intro+'<div class="empty opcs-missing"><b>暂不能形成手术时间分布</b>'+esc(p.definition_note||"当前输入没有匹配的可用手术日期；不能据此认为这些人未接受过手术。")+'</div>';
+ }
+}
+
+function bindTooltips(){
+ var tip=$("tooltip");
+ document.addEventListener("pointermove",function(e){
+  var el=e.target.closest("[data-tip]");
+  if(!el){tip.style.display="none";return;}
+  tip.textContent=el.dataset.tip;tip.style.whiteSpace="pre-line";tip.style.display="block";
+  var r=tip.getBoundingClientRect(),left=Math.min(e.clientX+14,window.innerWidth-r.width-12),top=Math.min(e.clientY+14,window.innerHeight-r.height-12);
+  tip.style.left=Math.max(8,left)+"px";tip.style.top=Math.max(8,top)+"px";
+ });
+ document.addEventListener("pointerleave",function(){tip.style.display="none";});
+ document.addEventListener("keydown",function(e){if(e.key==="Escape")tip.style.display="none";});
+ window.addEventListener("scroll",function(){tip.style.display="none";},{passive:true});
+}
+try{
+ S=JSON.parse($("report-data").textContent);
+ if(!S||typeof S!=="object"||Number(S.schema_version)!==2)throw new Error("报告数据格式不正确；请使用新版报告脚本重新生成。");
+ $("trait").textContent=S.Y||"disease";
+ var gd=String(S.generated_utc||"").slice(0,10);$("reportDate").textContent=gd||"—";
+ $("asOf").textContent=S.as_of?"日期检查截至 "+S.as_of:"";
+ if(S.is_demo){$("demoNotice").hidden=false;$("demoNotice").innerHTML='<strong>合成数据示例 · 非真实分析结果</strong> · 本页仅演示新版图表与分母逻辑，不代表真实 '+esc(S.Y||"UKB")+' 结果。';}
+ renderOverview();renderTrajectory();renderAgreement();renderPersistence();bindTooltips();
+ $("loading").hidden=true;$("dashboard").hidden=false;
+}catch(err){
+ $("loading").hidden=true;$("fatal").hidden=false;$("fatal").innerHTML='<strong>报告未能绘制。</strong><p>请重新运行 date-check，以生成与新版页面配套的汇总数据。</p><pre>'+esc(err&&err.message?err.message:err)+'</pre>';
+ if(window.console&&console.error)console.error(err);
+}
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,11 @@
+{
+  "version": "LE8-C1-current",
+  "description": "CPU glmnet, LightGBM and transparent molecular-neighbor ABM; explicitly select abm_deep when needed",
+  "methods": [
+    "glmnet",
+    "lightgbm",
+    "abm",
+    "abm_deep"
+  ],
+  "overrides": {}
+}

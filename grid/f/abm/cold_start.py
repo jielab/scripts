@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Prepare missing inputs from raw sources without training any predictor."""
+from __future__ import annotations
+
+# Cold start
+
+# Shared root defaults come from 0f/0os.sh.
+from settings import load_settings
+import sys as _paths_sys
+from pathlib import Path as _PathsPath
+_paths_root = next(p for p in _PathsPath(__file__).resolve().parents if (p / "0f" / "workflow_paths.py").is_file())
+_paths_sys.path.append(str(_paths_root / "0f"))
+from workflow_paths import configured_path
+from pathlib import Path
+import json
+import sys
+import argparse
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def benchmark_parser(name, description):
+    p = argparse.ArgumentParser(prog="./4.prsformer.sh " + name, description=description)
+    p.add_argument("--traits", default="height,ldl,t2dm",
+                   help="Comma-separated traits; train independent models sequentially in this order")
+    p.add_argument("--analysis-root", default=configured_path('ANALYSIS_ROOT', 'grid'))
+    p.add_argument("--config", default=str(ROOT / "config/benchmarks.yml"))
+    p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
+    p.add_argument("--threads", type=int, default=2 if name == "prsformer" else 4)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--workflow-stage", choices=("all", "model", "report"), default="all")
+    return p
+
+
+def benchmark_config(args):
+    from abm.pipeline import parser, configuration
+    options = parser().parse_args(["--config", args.config, "--traits", args.traits,
+                                   "--device", args.device, "--threads", str(args.threads)])
+    config = configuration(options)
+    args.config, args.traits = options.config, options.traits
+    return config
+
+
+def benchmark_device(device):
+    from abm.support import _backend
+    selected, _ = _backend(device)
+    if selected != "cuda":
+        raise ValueError("PRSformer neighborhood attention requires CUDA; "
+                         "use grid.sh for the CPU ABM method")
+    from prsformer import neighborhood_runtime
+    neighborhood_runtime()
+    return selected
+
+
+def preparation_command(args, config):
+    """Generate or reuse the shared roster inside the analysis directory."""
+    block_config = load_settings(config["block_config"])
+    analysis = Path(args.analysis_root)
+    return ["bash", str(ROOT / "f/prsformer.entry.sh"), "--python", sys.executable,
+            "--traits", "height,ldl,t2dm", "--prsformer-mode", "prepare", "--no-replace",
+            "--cache-dir", str(analysis / "tmp/cache/abm"), "--out-root", str(analysis / "tmp/abm"),
+            "--prsformer-root", str(analysis), "--prsformer-cache-dir", block_config["prsformer_cache"],
+            "--threads", str(args.threads), "--prsformer-threads", str(args.threads)]
+
+
+def ensure_inputs(args, config):
+    prepared = Path(getattr(args, "prepared", None) or
+                    Path(args.analysis_root) / "tmp/cache/abm/prepared.joblib")
+    needs_blocks = (getattr(args, "predictor", None) == "blocknet" or
+                    getattr(args, "representation", None) == "csx_ldblocks_fixed")
+    # An exported side-feature table is sufficient for score-only ABM and
+    # benchmark resume; individual benchmark adapters restore dosage if needed.
+    if prepared.is_file() and not needs_blocks:
+        return
+    block_config = load_settings(config["block_config"])
+    cache = Path(block_config["prsformer_cache"])
+    required = ("prepare.json", "data.tsv.gz", "variants.tsv.gz", "genotypes.npy")
+    if all((cache / name).is_file() for name in required):
+        return
+    if needs_blocks:
+        import block_inputs as b
+        bc = b.read_config(config["block_config"])
+        layout = b.resolve_block_files(getattr(args, "ld_block_dir", None) or bc["ld_block_dir"],
+                                       getattr(args, "ld_block_files", None) or bc["ld_block_files"])
+        if all(b.cache_paths(bc, layout, trait)[-1].is_file() for trait in args.traits.split(",")):
+            # Reuse the reviewed verifier; no block building or training here.
+            from abm.grid_inputs import locate_blocks
+            for trait in args.traits.split(","):
+                array, *_ = locate_blocks(config, trait, getattr(args, "ld_block_files", None),
+                                          getattr(args, "ld_block_dir", None), allow_build=False)
+                array._mmap.close()
+            return
+    if getattr(args, "smoke", False):
+        raise FileNotFoundError("SMOKE cannot prepare full inputs; missing " + str(prepared))
+    raise FileNotFoundError(
+        "GRID shared preparation is missing. Run:\n"
+        "  ./4.prsformer.sh prepare --traits height,ldl,t2dm\n"
+        "This prepares inputs only; it does not train PRSformer.\n"
+        f"Expected shared cache: {cache}; prepared features: {prepared}. "
+        "For a custom analysis root, also pass matching --analysis-root and --config.")

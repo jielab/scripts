@@ -1,0 +1,8 @@
+feature	source	column	type	transform	unit	reference	adjustment_exclude	lipid_block
+Diet_LE8	lifestyle	diet.pts	continuous	none	per_SD	NA	NA	FALSE
+Physical_activity_LE8	lifestyle	pa.pts	continuous	none	per_SD	NA	NA	FALSE
+Smoking_status	lifestyle	smoke.c	categorical	none	category	never	NA	FALSE
+Sleep_duration	lifestyle	sleep_duration	continuous	none	per_SD	NA	NA	FALSE
+Alcohol_status	lifestyle	alcohol.c	categorical	none	category	never	NA	FALSE
+All_proteins	prot	*	continuous	none	per_SD	NA	NA	FALSE
+All_metabolites	met	*	continuous	log1p	per_SD_log1p	NA	NA	FALSE

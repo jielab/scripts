@@ -1,0 +1,103 @@
+{
+  "version": "2026-11-13.v2",
+  "seed": 20261113,
+  "out_dir": "${ANALYSIS_ROOT}/ckm",
+  "threads": 4,
+  "exclude_met_lipid_block": false,
+  "domains": [
+    "lifestyle",
+    "prot",
+    "met"
+  ],
+  "paths": {
+    "ukb_dir": "${DIR_UKB}",
+    "phe": "${DIR_UKB}/Rdata/all.rds",
+    "biom": "/work/sph-huangj/phe/ukb/Rdata/bbc.rds",
+    "baseline": "${DIR_UKB}/Rdata/phe0.rds",
+    "raw_vip": "",
+    "components": "",
+    "censor": "",
+    "prot": "/work/sph-huangj/phe/ukb/Rdata/prot.rds",
+    "met": "/work/sph-huangj/phe/ukb/Rdata/met.rds",
+    "lifestyle": "",
+    "manifest": "exposures.tsv",
+    "groups": "",
+    "annotation": "",
+    "gmt": ""
+  },
+  "phenotype": {
+    "definition": "aha2026",
+    "stage3_method": "PREVENT",
+    "allow_standardized_input": false,
+    "trust_input_censor": false,
+    "event_sources": [
+      "icd10",
+      "icd9"
+    ],
+    "history_sources": [
+      "icd10",
+      "icd9",
+      "srd",
+      "gp",
+      "ref"
+    ]
+  },
+  "clock": {
+    "folds": 5,
+    "group_column": "center",
+    "horizon": 10,
+    "clinical_features": [
+      "bmi",
+      "sbp",
+      "hba1c",
+      "nonhdl",
+      "egfr",
+      "uacr"
+    ],
+    "transforms": {
+      "uacr": "log1p"
+    },
+    "max_missing": 0.4,
+    "max_omics": 10,
+    "max_correlation": 0.85,
+    "min_events": 100,
+    "events_per_parameter": 10,
+    "min_at_horizon": 50,
+    "integration_steps": 240,
+    "bootstrap": 100,
+    "joint": true
+  },
+  "association": {
+    "stages": [
+      1,
+      2,
+      3
+    ],
+    "stage_column": "stage",
+    "covariates": "vars.basic",
+    "min_n": 200,
+    "min_events": 20,
+    "fdr": 0.05,
+    "equivalence_hr": 1.2,
+    "lag_years": [
+      0,
+      2,
+      5
+    ],
+    "workers": 4,
+    "yang": true,
+    "yang_death": true
+  },
+  "markers": {
+    "reference_stage": 0,
+    "min_n": 200,
+    "min_stage_n": 50,
+    "covariates": "vars.basic"
+  },
+  "enrichment": {
+    "fdr": 0.05,
+    "min_size": 5,
+    "max_size": 500
+  },
+  "input_note": "User-selected cleaned bbc/prot/met inputs; may include cohort-wide imputation. Clock validation is not leakage-free raw-assay validation."
+}

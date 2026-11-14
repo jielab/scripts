@@ -1,0 +1,38 @@
+{
+  "version": "LE8-C1-reliability-paper-2026-10-26-v1",
+  "primary_layer": "prot",
+  "discovery_traits": [
+    "cvd_htn"
+  ],
+  "locked_replication_traits": [
+    "copd"
+  ],
+  "primary_risk_model": "glmnet",
+  "primary_contrast": "P1_incident_support_minus_P0_risk_only",
+  "secondary_contrast": "P2_incident_plus_prevalent_minus_P1_incident_support",
+  "primary_coverage": 0.5,
+  "coverage_grid": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "risk_bins": 50,
+  "primary_metrics": [
+    "IPCW_Brier_AURC",
+    "IPCW_LogLoss_AURC",
+    "risk_standardized_Brier_at_50pct",
+    "risk_standardized_LogLoss_at_50pct"
+  ],
+  "support_metrics": [
+    "log1p_eligible_match_count",
+    "log1p_family_ess"
+  ],
+  "bootstrap_unit": "family",
+  "bootstrap": 1000,
+  "no_test_tuning": true
+}

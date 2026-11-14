@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+# Display standalone help before loading runtimes or scheduling work.
+if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
+    cat <<'PUBLIC_ENTRY_HELP'
+Modules:
+    Default  Create/update the PFI Conda environment
+
+Main options:
+    --plan-only  Write a local/LSF .cmd without running
+    --job-cores N --job-memory-gb N --job-hours N --job-gpus N --queue NAME
+    Environment is detected automatically; --submit auto|local|hpc is optional.
+    PFI_CONDA_ENV_NAME  Conda environment [pfi]
+    -h, --help  Show help
+
+Examples:
+    ./01_create_conda_env.sh
+PUBLIC_ENTRY_HELP
+    exit 0
+fi
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+submit=${submit:-${SUBMIT:-auto}}
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
+
+# Resolve --dir-dat/--dir-big/--dir-tmp through the shared path table.
+source "$SCRIPTS_ROOT/0f/project_entry.sh"
+project_workflow_init "$@" || exit $?
+set -- "${WORKFLOW_ARGS[@]}"
+
+# Public directory options use --dir-XXX; legacy spellings remain compatible.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    source "${SCRIPTS_ROOT}/0f/cli_dirs.sh"
+    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
+    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
+    unset SCRIPT_DIRECTORY_ARGS
+fi
+
+# Direct CLI help must return before setup, downloads or analysis.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	case "${1:-}" in
+		-h | --help)
+			bash "${BASH_SOURCE[0]}" --help
+			exit 0
+			;;
+	esac
+fi
+
+
+# 01_create_conda_env
+set -euo pipefail
+
+ENV_NAME="${PFI_CONDA_ENV_NAME:-pfi}"
+if command -v mamba >/dev/null 2>&1; then
+	mamba env create -f env.yml || mamba env update -f env.yml
+elif command -v conda >/dev/null 2>&1; then
+	conda env create -f env.yml || conda env update -f env.yml
+else
+	echo "ERROR: conda or mamba is required." >&2
+	exit 1
+fi
+conda run -n "$ENV_NAME" python - <<'PY'
+import torch, transformers, duckdb, pyarrow, pandas, sklearn
+print('OK: pfi Python environment is ready')
+PY
