@@ -1,60 +1,95 @@
 #!/usr/bin/env bash
+case "${1:-}" in
+    ""|-h|--help|help)
+        cat <<'HELP'
+GU: whole-genome archaic matching, ARG-based inference and locus phylogeny.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./gu.sh MODULE  # 先选择方法；这些方法没有统一的全流程顺序
-./gu.sh MODULE  # ibdmix|trace|phyml|final|shiny|ukb|hpc
-./gu.sh ibdmix --ibdmix-run cpu  # 数据集及路径按配置/下文指定
-
-GU — whole-genome archaic matching and locus phylogeny
+Usage:
+  ./gu.sh run|ibdmix|trace|phyml|ukb|hpc [options]
 
 Modules:
-    ibdmix [check]             IBDmix CPU by default; --ibdmix-run gpu selects CUDA
-    trace [extract|infer|segments]  TRACE from certified ARG trees
-    phyml [check|match]        PhyML analysis of GWAS leads (--loci-format cojo)
-    final                     Rebuild saved summaries after workers finish
-    shiny                     View saved results
-    ukb                       UKB preparation helpers
-    hpc plan|submit|status|retry  Advanced LSF orchestration
+  run                             PhyML -> TRACE -> IBDmix, each with its own inputs.
+  ibdmix [check]                  IBDmix segment matching; CPU by default.
+  trace [extract|infer|segments]  TRACE from existing certified ARG trees/maps.
+  phyml [check|match]             GWAS lead-locus phylogeny; explicit build and COJO leads.
+  ukb                             UKB preparation utilities.
+  hpc plan|submit|status|retry    Explicit LSF orchestration; use hpc --help.
+  Publication                     ./gu.paper.sh produces the offline IBDmix segment report.
 
-Main options:
-    --ibdmix-run cpu|gpu|auto  IBDmix processor [cpu]
-    --trace-run cpu|gpu|auto   TRACE processor [cpu]
-    --phyml-run cpu|gpu|auto   PhyML processor [cpu]
-    --grch 37|38               Input coordinate build (built-in IBDmix masks: 37)
-    --target NAME [--dir-target PREFIX]
-                              Default: OS data root/gen/<target>/<grch>/pfile/chr
-    --dir-out DIR --postfix ID IBDmix root: DIR/<target><ID>; quoted range '[013-049]'
-    --chr '1 2 22 X'           Whole chromosomes, or --loci FILE (BED)
-    --keep FILE               PLINK sample list
-    --keep-psam FILE,SIZE,INDEX Deterministic 1-based chunks; INDEX also accepts [013-049]
-                              Bare FILE uses OS data root/gen/<target>/<grch>/pfile/
-                              Batch ranges must match --postfix; split BEFORE --keep-males
-    --keep-males              Keep males (male non-PAR X remains experimental)
-    --sample-panel FILE       Population/sex metadata
-    --archaic-path DIR --archaic-gen LIST  Default: Altai,Chagyr,Denisova3,Denisova25,Vindija
-    --dir-arg DIR             TRACE ARG trees and matching sample maps
-    --cores N --jobs N --memory-cap SIZE  Resource budget [local 32G / HPC 160G; 0f/0os.sh]
-    --resource-guard MODE     auto|systemd|scheduler|ulimit (see README)
-    --plan-only           On HPC login: generate cohort .cmd files without bsub
-    --submit hpc|local|auto --jobs-N N --wait TRUE|FALSE  Shared .cmd scheduling
-    --queue 33 --slots 40 --walltime 144:00  HPC submission resources
-    --foreground TRUE|FALSE   Default TRUE
-    --replace TRUE|FALSE      Rebuild outputs, or reuse complete outputs [TRUE]
-    --auto-final TRUE|FALSE   Default FALSE; aggregate after all workers finish
-    -h, --help                Show help
-
-On HPC, ibdmix submits one LSF job per postfix. Use --plan-only to preview.
-See 0.README.md for TRACE/PhyML setup and input requirements.
+Options:
+  --ibdmix | --trace | --phyml    run only: begin options for that method; common options
+                                  must appear before the first method selector.
+  --grch 37|38                    Coordinate build; mandatory for PhyML.
+                                  Built-in IBDmix masks use build 37.
+  --target NAME                   Modern target collection.
+  --dir-target PREFIX             Target genotype prefix [data/gen/<target>/<grch>/pfile/chr].
+  --dir-out DIR                   Analysis output root; IBDmix uses DIR/<target><postfix>.
+  --postfix ID                    Cohort identifier; quoted batch range '[001-049]'.
+  --chr LIST                      Whole chromosomes, e.g. '1-22,X'.
+  --loci FILE                     Interval BED; PhyML requires a COJO lead table.
+  --loci-format cojo              Required PhyML lead-table format.
+  --keep FILE                     PLINK sample list.
+  --keep-psam FILE,SIZE,INDEX     Deterministic 1-based sample chunk; INDEX may be a range.
+                                  Bare FILE resolves under target pfile directory.
+  --keep-males                    Male subset (male non-PAR X remains experimental).
+  --sample-panel FILE             Population/sex metadata.
+  --archaic-path DIR              Archaic reference root.
+  --archaic-gen LIST              Archaic references [Altai,Chagyr,Denisova3,Denisova25,Vindija].
+  --dir-arg DIR                   TRACE ARG trees and matching sample maps (required inputs).
+  --ibdmix-run cpu|gpu|auto       IBDmix processor [cpu].
+  --trace-run cpu|gpu|auto        TRACE processor [cpu].
+  --phyml-run cpu|gpu|auto        PhyML processor [cpu].
+  --cores N --jobs N              Scientific CPU/concurrency budgets.
+  --memory-cap SIZE               Memory budget [shared local 32G / HPC 160G].
+  --resource-guard MODE           auto|systemd|scheduler|ulimit.
+  --submit auto|local|hpc         Select environment; see method-specific HPC rules below.
+  --jobs-N N --wait TRUE|FALSE    Shared cohort scheduling controls.
+  --queue NAME --slots N          HPC queue/CPU slots [33 / 40].
+  --walltime HH:MM                HPC time limit [144:00].
+  --foreground TRUE|FALSE         Foreground execution [TRUE].
+  --replace TRUE|FALSE            Rebuild / reuse complete outputs [TRUE].
+  --auto-final TRUE|FALSE         Aggregate method outputs after workers [FALSE].
+  --plan-only                     IBDmix cohort command preview without bsub.
+  -h, --help                      Show this help.
 
 Examples:
-    ./gu.sh ibdmix --ibdmix-run cpu --grch 37 --target ukb --chr 1-22,X --dir-out /work/sph-huangj/analysis/gu/ibdmix --postfix '[001-002]' --keep-psam 'chr1.psam,10000,[001-002]' --keep-males --archaic-gen Altai,Chagyr,Denisova3,Denisova25,Vindija --queue 33 --jobs-N 8
-    ./gu.sh ibdmix --ibdmix-run cpu --grch 37 --target 1kg --dir-out /work/sph-huangj/analysis/gu/ibdmix --archaic-gen Altai.2013,Denisova.2013 --queue 33 --jobs-N 8
-    bash f/concat_ukb_ibdmix.sh --dir-in /work/sph-huangj/analysis/gu/ibdmix --dir-out /work/sph-huangj/data/gen/ukb/37/ibdmix/segments
-PUBLIC_ENTRY_HELP
-    exit 0
-fi
+  ./gu.sh ibdmix --ibdmix-run cpu --grch 37 --target 1kg --dir-out /work/sph-huangj/analysis/gu/ibdmix --archaic-gen Altai.2013,Denisova.2013 --queue 33 --jobs-N 8 --plan-only
+  ./gu.sh ibdmix --ibdmix-run cpu --grch 37 --target ukb --chr 1-22,X --dir-out /work/sph-huangj/analysis/gu/ibdmix --postfix '[001-049]' --keep-psam 'chr1.psam,10000,[001-049]' --keep-males --queue 33 --jobs-N 8 --plan-only
+  # Replace LEADS.cojo and ARG_DIR with prepared, build-matched inputs.
+  ./gu.sh phyml --grch 37 --target 1kg --loci LEADS.cojo --loci-format cojo --submit local
+  ./gu.sh trace --grch 37 --target 1kg --dir-arg ARG_DIR --submit local
+  # Combined run: local execution, or use an already allocated HPC job.
+  ./gu.sh run --grch 37 --target 1kg --phyml --loci LEADS.cojo --loci-format cojo --trace --dir-arg ARG_DIR --ibdmix --ibdmix-run cpu
+  bash f/concat_ukb_ibdmix.sh --dir-in /work/sph-huangj/analysis/gu/ibdmix --dir-out /work/sph-huangj/data/gen/ukb/37/ibdmix/segments
+  ./gu.paper.sh ibdmix --target 1kg --dir-ibdmix /work/sph-huangj/data/gen/1kg/37/ibdmix/segments
+HELP
+        exit 0 ;;
+    run)
+        set -euo pipefail
+        shift
+        common=()
+        ibdmix=()
+        trace=()
+        phyml=()
+        group=common
+        for arg in "$@"; do
+            case "$arg" in
+                --ibdmix|--trace|--phyml) group=${arg#--} ;;
+                *) case "$group" in
+                    common) common+=("$arg") ;;
+                    ibdmix) ibdmix+=("$arg") ;;
+                    trace) trace+=("$arg") ;;
+                    phyml) phyml+=("$arg") ;;
+                esac ;;
+            esac
+        done
+        # PhyML validates its required lead table before the other methods start.
+        bash "${BASH_SOURCE[0]}" phyml "${common[@]}" "${phyml[@]}"
+        bash "${BASH_SOURCE[0]}" trace "${common[@]}" "${trace[@]}"
+        exec bash "${BASH_SOURCE[0]}" ibdmix "${common[@]}" "${ibdmix[@]}" ;;
+    ibdmix|trace|phyml|ukb|hpc) ;;
+    *) echo "Unknown GU method: $1. See ./gu.sh -h." >&2; exit 2 ;;
+esac
 
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
@@ -72,7 +107,6 @@ export TMPDIR=${TMPDIR:-$DIR_RUNTIME_TMP} TMP=${TMPDIR:-$DIR_RUNTIME_TMP} TEMP=$
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$ROOT/f/scratch.sh"
 F=$ROOT/f
-SHINY=$ROOT/shiny
 GU_ORIGINAL_ARGS=("$@")
 # shellcheck source=f/0.common.sh
 source "$F/0.common.sh"
@@ -179,7 +213,7 @@ gu_ukb_prepared_context() {
 	local target=${TARGET_INPUT:-${GU_TARGET:-}} panel=${SAMPLE_PANEL_INPUT:-${GU_SAMPLE_PANEL:-}} root value result_var protected
 	if [[ ${GU_UKB_PGEN_PREPARED:-0} != 1 ]]; then
 		if [[ $target == ukb-* && ${METHOD:-} != ukb ]]; then
-			echo "ERROR: target=$target is reserved for the prepared UKB workflow; source its gu-target.env before inference or final/Shiny" >&2
+			echo "ERROR: target=$target is reserved for the prepared UKB workflow; source its gu-target.env before inference" >&2
 			return 2
 		fi
 		return 0
@@ -222,9 +256,6 @@ gu_ukb_prepared_context() {
 	GU_PUBLISHED_ROOT=$root
 	GU_SAMPLE_PANEL=$panel
 	export GU_ANALYSIS_ROOT GU_PUBLISHED_ROOT GU_UKB_RESULTS_ROOT GU_SAMPLE_PANEL
-	# Published results contain their cohort metadata; final/Shiny must remain
-	# usable after temporary genotype exchange files have been removed.
-	case "${METHOD:-}" in final | shiny) return 0 ;; esac
 	[[ -n ${GU_TARGET_NATIVE_VCF_PREFIX:-} && -n ${GU_TARGET_ROOT:-} && -s $panel ]] || {
 		echo "ERROR: prepared UKB VCF prefix, preparation directory, or sample panel is missing; rerun pgen-vcf" >&2
 		return 2
@@ -265,7 +296,7 @@ gu_ukb_prepared_context() {
 
 
 # 🚩 Shared functions
-# 馃毄 Driver and CLI
+# Driver and CLI
 # Parse the complete driver before starting any long-running child process.
 # Keeping both the invocation and the final exit in one parsed command group
 # prevents a live process from reading newly appended/rearranged script bytes
@@ -296,11 +327,16 @@ gu_main() {
 	MEMORY_CAP_SET=0
 	export GU_RESULT_MODULE=""
 	export IBDMIX_BACKEND PHYML_BACKEND TRACE_BACKEND
-	case "$METHOD" in phyml | ibdmix | trace | final | shiny | ukb) ;; *)
-		echo "ERROR: unknown method: $METHOD" >&2
-		usage >&2
-		exit 2
-		;;
+	case "$METHOD" in
+		phyml | ibdmix | trace | ukb) ;;
+		final | shiny)
+			echo "IBDmix reports now use ./gu.paper.sh ibdmix --help" >&2
+			return 2 ;;
+		*)
+			echo "ERROR: unknown method: $METHOD" >&2
+			usage >&2
+			exit 2
+			;;
 	esac
 
 	ACTION=""
@@ -308,8 +344,6 @@ gu_main() {
 		phyml) valid_actions=' check match ' ;;
 		ibdmix) valid_actions=' check ' ;;
 		trace) valid_actions=' extract infer segments ' ;;
-		final) valid_actions=' ' ;;
-		shiny) valid_actions=' ' ;;
 		ukb) valid_actions=' inspect-hap make-panel batches hap-vcf hap-arg-vcf inspect-typed ' ;;
 	esac
 	if [[ $# -gt 0 && $1 != --* ]]; then
@@ -359,7 +393,6 @@ gu_main() {
 	REPLACE_IBDMIX_SET=0
 	REPLACE_TRACE_INPUT=TRUE
 	REPLACE_TRACE_SET=0
-	AUTO_FINAL_INPUT=FALSE
 	TRACE_LOCI_MODE_INPUT=posthoc
 	TRACE_LOCI_MODE_SET=0
 	PHYML_WINDOW_BP_INPUT=500000
@@ -526,11 +559,11 @@ gu_main() {
 				esac
 				shift 2 ;;
 			--auto-final)
-				[[ $# -ge 2 && -n ${2:-} && $2 != --* ]] || {
-					echo "ERROR: --auto-final requires TRUE or FALSE" >&2
-					exit 2
-				}
-				AUTO_FINAL_INPUT=$2
+				# Older generated worker commands include this no-op flag.
+				if [[ ${2:-} != FALSE ]]; then
+					echo "ERROR: generate the report after all workers with ./gu.paper.sh ibdmix" >&2
+					return 2
+				fi
 				shift 2
 				;;
 			--trace-loci-mode)
@@ -894,10 +927,6 @@ gu_main() {
 		echo "ERROR: --replace must be TRUE or FALSE" >&2
 		exit 2
 	}
-	AUTO_FINAL_INPUT=$(gu_bool "$AUTO_FINAL_INPUT") || {
-		echo "ERROR: --auto-final must be TRUE or FALSE" >&2
-		exit 2
-	}
 	RUN_CMD_INPUT=$(gu_bool "$RUN_CMD_INPUT") || {
 		echo "ERROR: invalid internal command execution state" >&2
 		exit 2
@@ -943,11 +972,8 @@ gu_main() {
 		exit 2
 	}
 
-	if ((RUN_SET)) && [[ $RUN_METHOD != "$METHOD" && $METHOD != final && $METHOD != shiny ]]; then
+	if ((RUN_SET)) && [[ $RUN_METHOD != "$METHOD" ]]; then
 		echo "ERROR: --$RUN_METHOD-run is not valid for $METHOD" >&2; return 2
-	fi
-	if ((RUN_SET)) && [[ $METHOD == final || $METHOD == shiny ]] && [[ $RUN_METHOD == ibdmix ]]; then
-		echo 'ERROR: IBDmix summaries use the common output; no processor flag is needed' >&2; return 2
 	fi
 	if [[ $RUN_INPUT == gpu ]]; then
 		GPU_METHOD=${RUN_METHOD:-$METHOD}
@@ -959,15 +985,13 @@ gu_main() {
 	fi
 	export IBDMIX_BACKEND TRACE_BACKEND PHYML_BACKEND GU_RESULT_MODULE
 	OUTPUT_DIR_MODULE=$(gu_method_directory "$METHOD")
-	if [[ $RUN_INPUT == cpu || $METHOD == final || $METHOD == shiny ]] ||
+	if [[ $RUN_INPUT == cpu ]] ||
 	   { [[ $METHOD == trace ]] && ! gu_trace_needs_gpu "$TRACE_BACKEND" "${ACTION:-run}"; }; then
 		export CUDA_VISIBLE_DEVICES='' WORKFLOW_DEVICE=cpu
 	else
 		export WORKFLOW_DEVICE=gpu
 	fi
 	export GU_RESOURCE_GUARD=$RESOURCE_GUARD_INPUT
-	GU_AUTO_FINAL=0
-	[[ $AUTO_FINAL_INPUT == FALSE ]] || GU_AUTO_FINAL=1
 	IBDMIX_REPLACE=0
 	[[ $REPLACE_IBDMIX_INPUT == FALSE ]] || IBDMIX_REPLACE=1
 	TRACE_REPLACE=0
@@ -1004,7 +1028,7 @@ gu_main() {
 		[[ -x $PHYML_GPU_BIN ]] || { echo "ERROR: build with bash $ROOT/phyml_gpu/build.sh" >&2; return 2; }
 		"$PHYML_GPU_BIN" --gpu-check || return $?
 	fi
-	export GU_AUTO_FINAL IBDMIX_REPLACE TRACE_REPLACE
+	export IBDMIX_REPLACE TRACE_REPLACE
 	export TRACE_LOCI_MODE PHYML_CHR_WINDOW_BP PHYML_JOBS PHYML_LD_R2 PHYML_REGION_MODE GU_RUN_CMD GU_FOREGROUND GU_UNIT_JOBS
 	if [[ $METHOD == phyml ]]; then
 		PHYML_PLOT_PHY=$PLOT_PHY_INPUT
@@ -1021,7 +1045,7 @@ gu_main() {
 	source "$F/resource_guard.sh"
 	gu_resource_guard "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 
-	# 馃毄 Runtime environment
+	# Runtime environment
 	# Re-enter the general GU environment before creating request-scoped temporary
 	# files.  Re-exec does not run EXIT traps, so doing this later would strand the
 	# first process's region workspace.
@@ -1043,14 +1067,14 @@ gu_main() {
 		exec "$conda_owner" run --no-capture-output -p "$GU_ENV_PREFIX" bash "$ROOT/gu.sh" "${GU_ORIGINAL_ARGS[@]}"
 	fi
 
-	if [[ $METHOD == ibdmix || $METHOD == phyml || $METHOD == trace || $METHOD == final ]]; then gu_check_publication || return $?; fi
+	if [[ $METHOD == ibdmix || $METHOD == phyml || $METHOD == trace ]]; then gu_check_publication || return $?; fi
 	GU_DATA_ROOT=${GU_DATA_ROOT:?runtime configuration required}
 	GU_REF_ROOT=${GU_REF_ROOT:?runtime configuration required}
 	if [[ $METHOD == trace && $TRACE_BACKEND == cuda && $WORKFLOW_DEVICE == gpu && $GU_RUN_CMD == TRUE ]]; then
 		TRACE_BACKEND=cuda python3 "$F/trace.py" infer --gpu-check || return $?
 	fi
 	# Resolve the public directory before selection replaces TARGET_INPUT with
-	# a cohort identity. Workers and saved final/Shiny contexts inherit a resolved
+	# a cohort identity. Workers inherit a resolved
 	# root; fresh analysis requests use the CLI, not a stale GU_ANALYSIS_ROOT.
 	if [[ $METHOD != ukb ]]; then
 		local output_base=$DIR_OUT_INPUT output_root
@@ -1063,8 +1087,6 @@ gu_main() {
 		if [[ -z $output_base && -z $POSTFIX_INPUT ]]; then
 			if [[ ${GU_CMD_WORKER:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
 				output_base=${GU_UKB_RESULTS_ROOT:-${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-}}}
-			elif [[ $METHOD == final || $METHOD == shiny ]]; then
-				output_base=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}}
 			fi
 		fi
 		if [[ -z $output_base ]]; then
@@ -1075,9 +1097,6 @@ gu_main() {
 			esac
 		fi
 		output_root=$(gu_result_root "${TARGET_INPUT:-${GU_TARGET:-1kg}}" "$output_base" "$POSTFIX_INPUT") || return $?
-		if [[ ($METHOD == final || $METHOD == shiny) && -s $output_root/gu-target.env ]]; then
-			source "$output_root/gu-target.env"
-		fi
 		GU_ANALYSIS_ROOT=$output_root
 		GU_PUBLISHED_ROOT=$output_root
 		# Preparation must receive exactly the same root as the caller.
@@ -1143,9 +1162,7 @@ PYROOT
 	fi
 	GU_PUBLISHED_ROOT=${GU_PUBLISHED_ROOT:-${GU_ANALYSIS_ROOT:-$GU_ANALYSIS_BASE/1kg}}
 	export GU_PUBLISHED_ROOT
-	if [[ $METHOD == shiny && ${GU_SUMMARY_ONLY:-0} == 1 ]]; then
-		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results work-root --published "$GU_PUBLISHED_ROOT")
-	elif [[ $METHOD == ibdmix && ${GU_UKB_DIRECT:-0} == 1 && ${GU_CMD_WORKER:-0} == 1 && $REPLACE_IBDMIX_INPUT == FALSE ]]; then
+	if [[ $METHOD == ibdmix && ${GU_UKB_DIRECT:-0} == 1 && ${GU_CMD_WORKER:-0} == 1 && $REPLACE_IBDMIX_INPUT == FALSE ]]; then
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results work-root --published "$GU_PUBLISHED_ROOT")
 	elif [[ ${GU_CMD_WORKER:-0} == 1 ]]; then
 		local -a restore_run_args=()
@@ -1156,9 +1173,7 @@ PYROOT
 		GU_ANALYSIS_ROOT=$(python3 "$F/0.common.py" results restore --published "$GU_PUBLISHED_ROOT" --method "$METHOD")
 	fi
 	GU_PUBLISHED_ROOT=$GU_ANALYSIS_ROOT
-	GU_FINAL_DIR=$GU_ANALYSIS_ROOT/final
-	if [[ -n $GPU_METHOD && $GPU_METHOD != ibdmix ]]; then GU_FINAL_DIR=$GU_FINAL_DIR/$GPU_METHOD/gpu; fi
-	export GU_ANALYSIS_ROOT GU_FINAL_DIR GU_PUBLISHED_ROOT
+	export GU_ANALYSIS_ROOT GU_PUBLISHED_ROOT
 	GU_RUN_TMP_ROOT=${GU_RUN_TMP_ROOT:-${TMPDIR:-$DIR_RUNTIME_TMP}/gu-runs}
 	# Explicit overrides must not silently send primary outputs back to /tmp.
 	for result_var in PHYML_OUT IBDMIX_OUT TRACE_OUT GU_SQLITE GU_NORMALIZE_DIR GU_SHINY_DATA_DIR GU_RSHINY_DIR GU_PHYML_REPORT_DIR GU_DENSITY_DIR UKB_WORK UKB_VCF_OUT UKB_ARG_VCF_OUT; do
@@ -1199,7 +1214,7 @@ PYROOT
 		fi
 		result_env_part=$(mktemp "$GU_ANALYSIS_ROOT/.gu-target.XXXXXX")
 		{
-			printf '# Saved cohort context for final/Shiny after temporary inputs are cleaned.\n'
+			printf '# Saved cohort context after temporary inputs are cleaned.\n'
 			printf 'export GU_TARGET=%q\nexport GU_BUILD=%q\n' "$GU_TARGET" "$([[ $METHOD == phyml ]] && printf 37 || printf '%s' "$GU_BUILD")"
 			printf 'export GU_ANALYSIS_ROOT=%q\nexport GU_PUBLISHED_ROOT=%q\n' "$GU_ANALYSIS_ROOT" "$GU_PUBLISHED_ROOT"
 			if [[ ${GU_UKB_DIRECT:-0} == 1 || ${GU_UKB_PGEN_PREPARED:-0} == 1 ]]; then
@@ -1235,7 +1250,7 @@ PYKEY
 		GU_TARGET_GEN_PREFIX=${GU_TARGET_DIR:-${GU_TARGET_GEN_PREFIX:-$GU_TARGET_ROOT/pfile/chr}}
 	fi
 
-	# 馃毄 Target inputs
+	# Target inputs
 	# PFILE is the primary target format. Methods which require VCF receive a
 	# single-run VCF under the analysis temporary directory. Indexed VCFs are reused
 	# directly where supported.  The explicit chrX.male.vcf.gz sibling remains available as a
@@ -1432,7 +1447,7 @@ PYKEY
 	fi
 	GU_TARGET_NAMESPACE=$GU_TARGET
 
-	# 馃毄 Command orchestration
+	# Command orchestration
 	# Command orchestration deliberately sits outside every method implementation.
 	# Each worker re-enters gu.sh with exactly one native analysis unit, so the
 	# method scripts and their scientific/output contracts remain unchanged.
@@ -1533,7 +1548,6 @@ PYKEY
 		# A unit command is already the leaf worker. Keep it attached to the local
 		# scheduler (or an HPC scheduler) instead of recursively launching itself.
 		cmd_args+=(--foreground TRUE)
-		cmd_args+=(--auto-final FALSE)
 		[[ -z ${GU_SAMPLE_PANEL:-} ]] || cmd_args+=(--sample-panel "$GU_SAMPLE_PANEL")
 
 		cmd=$out/$unit_label.cmd
@@ -1785,7 +1799,6 @@ PYKEY
 			rmdir -- "$cmd_root"
 		fi
 		((result == 0)) || return "$result"
-		if ((GU_AUTO_FINAL)); then bash "$ROOT/gu.sh" final; fi
 	}
 
 	gu_launch_analysis_request_background() {
@@ -1898,7 +1911,7 @@ exit "$rc"'
 	GU_TARGET_BUILD_FORMAT=""
 	GU_CHECK_LOG=""
 
-	# 馃毄 Target validation
+	# Target validation
 	gu_check_log() { printf '[GU CHECK] %s\n' "$*" | tee -a "$GU_CHECK_LOG"; }
 	gu_check_fail() {
 		gu_check_log "ERROR: $*" >&2
@@ -2208,7 +2221,7 @@ exit "$rc"'
 	# shellcheck source=f/phenotype.sh
 	source "$PHE_F"
 
-	# 馃毄 Genome-build validation
+	# Genome-build validation
 	# Use coordinate sentinels when pvars do not contain rsIDs.
 	gu_check_grch_pvar_positions() {
 		local src=$1 expected=$2 gold=${CHECK_GRCH_SNP_LIST:?runtime configuration required}
@@ -2446,37 +2459,6 @@ PYCONTRACT
 	IBDMIX_OUT_OVERRIDE=${IBDMIX_OUT:-}
 	TRACE_OUT_OVERRIDE=${TRACE_OUT:-}
 
-	run_final() {
-		local normalize_dir=${GU_NORMALIZE_DIR:-${GU_SHINY_DATA_DIR:-${GU_RSHINY_DIR:-$GU_FINAL_DIR/normalize}}}
-		mkdir -p "$normalize_dir"
-		local -a norm_args=(--analysis-root "$GU_ANALYSIS_ROOT" --output-dir "$normalize_dir" --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --build "GRCh$GU_BUILD" --reciprocal-overlap "${GU_CATALOG_RECIP_OVERLAP:-0.5}")
-		local pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}}
-		[[ ${GU_UKB_PGEN_PREPARED:-0} != 1 ]] || pop_panel=${GU_NORMALIZE_SAMPLE_PANEL:-${GU_SAMPLE_PANEL:-}}
-		[[ ! -s $pop_panel ]] || norm_args+=(--sample-panel "$pop_panel")
-		if [[ ${GU_UKB_PGEN_PREPARED:-0} == 1 || ${GU_UKB_DIRECT:-0} == 1 || ${GU_FILTERED_TARGET:-0} == 1 ]]; then
-			norm_args+=(--sample-panel-dataset "$GU_TARGET")
-		fi
-		python3 "$F/results_normalize.py" "${norm_args[@]}"
-		local report_dir=${GU_PHYML_REPORT_DIR:-$(dirname "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}")/review}
-		local -a report_args=(--normalize "$normalize_dir" --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --output "$report_dir")
-		[[ -z ${LOCI_INPUT:-} ]] || report_args+=(--loci "$LOCI_INPUT")
-		python3 "$F/phyml.py" report "${report_args[@]}"
-		python3 "$F/results_normalize.py" density --database "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}" --output "${GU_DENSITY_DIR:-$(dirname "${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}")/normalize/density}" --sample-panel "$pop_panel"
-		python3 "$F/0.common.py" results publish --published "$GU_PUBLISHED_ROOT" --work "$GU_ANALYSIS_ROOT" --method final
-		python3 "$F/0.common.py" results compact --published "$GU_PUBLISHED_ROOT" --method all
-	}
-
-	maybe_run_final() {
-		case "${GU_AUTO_FINAL:-0}" in
-			1) run_final ;;
-			0) echo "[GU FINAL] deferred; run ./gu.sh final after all chromosome/batch jobs (use --auto-final TRUE to rebuild after each run)" ;;
-			*)
-				echo "ERROR: internal auto-final state must be 0 or 1" >&2
-				return 2
-				;;
-		esac
-	}
-
 	stage_loci_metadata() {
 		local out=$1 tmp
 		if [[ ${GU_FILTERED_TARGET:-0} == 1 ]]; then
@@ -2556,7 +2538,7 @@ PYCONTRACT
 		export GU_CHRS GU_SCOPE_KEY GU_SCOPE_ID GU_UNIT_LABEL GU_OUTPUT_LAYOUT GU_LOCUS_ID GU_LOCI_FILE GU_LOCI_CORE_FILE GU_LOCI_MAP_FILE
 	}
 
-	# 馃毄 Analysis units
+	# Analysis units
 	# Group loci into one task per chromosome where requested.
 	gu_activate_loci_chr() {
 		local chr=$1 base tmp label
@@ -2779,32 +2761,16 @@ PYUKBSCORING
 		bash "$F/trace.sh" "${ACTION:-run}"
 	}
 
-	# 馃毄 Method dispatch
+	# Method dispatch
 	case "$METHOD" in
 		phyml)
 			run_per_analysis_unit run_phyml_one
-			[[ ${ACTION:-run} == check ]] || maybe_run_final
 			;;
 		ibdmix)
 			run_per_analysis_unit run_ibdmix_one
-			[[ ${ACTION:-run} == check ]] || maybe_run_final
 			;;
 		trace)
 			run_trace_request
-			if [[ ${ACTION:-run} == run || ${ACTION:-run} == infer || ${ACTION:-run} == segments ]]; then maybe_run_final; fi
-			;;
-		final) run_final ;;
-		shiny)
-			export GU_REF_ROOT
-			export GU_SQLITE=${GU_SQLITE:-$GU_FINAL_DIR/gu.sqlite}
-			if [[ ${GU_SUMMARY_ONLY:-0} != 1 && -s $GU_SQLITE ]]; then
-				export GU_DENSITY_DIR=${GU_DENSITY_DIR:-$(dirname "$GU_SQLITE")/normalize/density}
-				python3 "$F/results_normalize.py" density --database "$GU_SQLITE" --output "$GU_DENSITY_DIR" --sample-panel "${GU_NORMALIZE_SAMPLE_PANEL:-$GU_REF_ROOT/1kg/38/samples.txt}"
-			elif [[ ! -s $GU_FINAL_DIR/gu.ibdmix.summary.xlsx ]]; then
-				echo "ERROR: neither database nor saved gu.ibdmix.summary.xlsx is available" >&2
-				exit 1
-			fi
-			exec "${WORKFLOW_RSCRIPT:-Rscript}" --vanilla "$SHINY/app.R"
 			;;
 		ukb) exec bash "$F/ukb_prepare.sh" ukb "$ACTION" ;;
 	esac

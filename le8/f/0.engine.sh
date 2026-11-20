@@ -20,31 +20,31 @@ Main options:
 
 Example:
     # Public default: C1-C5 with reference ABM; final/shiny are separate.
-    ./le8.sh --Y cvd_cad,ra --biom prot,met
+    ./le8.sh run --Y cvd_cad,ra --biom prot,met
     # Selected modules for multiple diseases and both omic layers.
     ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met
     ./le8.sh c1_correlate --Y cvd_cad --biom prot
     ./le8.sh c4_connect --Y cvd_cad --biom prot
     # Disease PRS is read automatically from all.rds cvd_cad.pgs (or [Y].pgs).
-    ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
+    ./le8.paper.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
     # Default budgets c(5,10,50) are editable in f/0.common.R.
     C4_FOCUS_BUDGETS=5,10,50 ./le8.sh c4_connect --Y cvd_cad --biom prot
     # Reassemble existing results without fitting models.
-    ./le8.sh final --Y cvd_cad --biom prot,met
+    ./le8.paper.sh final --Y cvd_cad --biom prot,met
     # Recover Final after every joint fold is saved; also retry per-layer reference.
-    FINAL_JOINT_SUMMARY_ONLY=TRUE ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --cores 1
-    # Inspect planned commands or check available inputs/dependencies.
-    ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met --dry-run
-    ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --preflight
-    # Explicitly recompute selected modules (existing outputs are otherwise reused).
+    FINAL_JOINT_SUMMARY_ONLY=TRUE ./le8.paper.sh final --fit-joint --Y cvd_cad --biom prot,met --cores 1
+    # Preview public workflow commands without submitting analysis.
+    ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met --plan-only
+    ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --plan-only
+    # Explicitly recompute selected modules; use --replace FALSE to reuse outputs.
     ./le8.sh c4_connect --Y cvd_cad --biom prot --replace TRUE
     # Optional methods: Top / All / None. MAGMA is a labelled sensitivity only.
     ./le8.sh c2_cause --Y cvd_cad --biom prot --run-mrlink2 Top --run-dandelion Top
     ./le8.sh c2_cause --Y cvd_cad --biom prot --run-dandelion None
     # Cellular analyses are available through the public c5_cellulation module.
 
-    ./le8.sh --Y cvd_cad --cores 4
-    ./le8.sh  # Default workflow
+    ./le8.sh run --Y cvd_cad --cores 4
+    ./le8.sh run  # Default analysis workflow
 QUICKSTART_HELP
     exit 0
 fi
@@ -103,31 +103,31 @@ Main options:
 
 Example:
     # Public default: C1-C5 with reference ABM; final/shiny are separate.
-    ./le8.sh --Y cvd_cad,ra --biom prot,met
+    ./le8.sh run --Y cvd_cad,ra --biom prot,met
     # Selected modules for multiple diseases and both omic layers.
     ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met
     ./le8.sh c1_correlate --Y cvd_cad --biom prot
     ./le8.sh c4_connect --Y cvd_cad --biom prot
     # Disease PRS is read automatically from all.rds cvd_cad.pgs (or [Y].pgs).
-    ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
+    ./le8.paper.sh final --fit-joint --Y cvd_cad --biom prot,met --replace TRUE
     # Default budgets c(5,10,50) are editable in f/0.common.R.
     C4_FOCUS_BUDGETS=5,10,50 ./le8.sh c4_connect --Y cvd_cad --biom prot
     # Reassemble existing results without fitting models.
-    ./le8.sh final --Y cvd_cad --biom prot,met
+    ./le8.paper.sh final --Y cvd_cad --biom prot,met
     # Recover Final after every joint fold is saved; also retry per-layer reference.
-    FINAL_JOINT_SUMMARY_ONLY=TRUE ./le8.sh final --fit-joint --Y cvd_cad --biom prot,met --cores 1
-    # Inspect planned commands or check available inputs/dependencies.
-    ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met --dry-run
-    ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --preflight
-    # Explicitly recompute selected modules (existing outputs are otherwise reused).
+    FINAL_JOINT_SUMMARY_ONLY=TRUE ./le8.paper.sh final --fit-joint --Y cvd_cad --biom prot,met --cores 1
+    # Preview public workflow commands without submitting analysis.
+    ./le8.sh c2_cause,c3_coloc --Y cvd_cad,ra --biom prot,met --plan-only
+    ./le8.sh c2_cause,c3_coloc --Y cvd_cad --biom prot --plan-only
+    # Explicitly recompute selected modules; use --replace FALSE to reuse outputs.
     ./le8.sh c4_connect --Y cvd_cad --biom prot --replace TRUE
     # Optional methods: Top / All / None. MAGMA is a labelled sensitivity only.
     ./le8.sh c2_cause --Y cvd_cad --biom prot --run-mrlink2 Top --run-dandelion Top
     ./le8.sh c2_cause --Y cvd_cad --biom prot --run-dandelion None
     # Cellular analyses are available through the public c5_cellulation module.
 
-    ./le8.sh --Y cvd_cad --cores 4
-    ./le8.sh  # Default workflow
+    ./le8.sh run --Y cvd_cad --cores 4
+    ./le8.sh run  # Default analysis workflow
 HELP
 }
 

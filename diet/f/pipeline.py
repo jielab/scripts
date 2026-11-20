@@ -40,46 +40,8 @@ def default_jobs():
 def parser():
     p=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples (run from scripts/diet):
-  ./install.sh --check
-  ./1.disco.sh all --dry-run
-  ./diet.sh all --core --dry-run
-
-  # UKB: score first, then phenotype, association and Bayes, in order.
-  ./1.disco.sh ukb --score dose,dose11,dose9,dose9half
-  ./diet.sh ukb --study dose
-  ./diet.sh assoc --cohort ukb --study dose
-  ./diet.sh bayes --cohort ukb --study dose
-  ./diet.sh final --study dose
-  ./diet.sh web
-
-  # HPC: inspect a job plan, then submit (LSF; do not run analysis on login nodes).
-  ./1.disco.sh ukb --score dose,dose11,dose9,dose9half --submit hpc --cores 8 --queue 33 --plan-only
-  ./1.disco.sh ukb --score dose,dose11,dose9,dose9half --submit hpc --cores 8 --queue 33
-  # Wait for scoring to succeed before submitting downstream work:
-  ./diet.sh all --cohort ukb --study dose --core --submit hpc --cores 8 --queue 33
-
-  # Once MAHA dictionaries and all cohort inputs are available:
-  ./1.disco.sh all
-  ./diet.sh all --core
-  ./diet.sh all
-  ./diet.sh status
-
-Paths default to /work/sph-huangj/{files,analysis}/diet on HPC and
-/mnt/d/{files,analysis}/diet locally through ../0f/0os.sh.
-Override with --dir-files, --dir-output, --dir-ukb, --foods or --config.
-MAHA NHANES (--dir-nhanes) requires raw/<cycle>/; DOSE NHANES
-(--dir-nhanes-dose) requires cdc/ and FPED/MPED inputs.
-R/Python selection follows le8/f/runtime_env.sh and ../0f/0os.sh.
-HPC defaults: LE8_RSCRIPT / LE8_PYTHON; local: system R and discovered le8 Python.
-Override with DIET_RSCRIPT / DIET_PYTHON, R_BIN / PYTHON_BIN, or
---rscript (--r-bin) / --python (--python-bin).
-Job names: 1.disco.sh -> diet.disco; diet.sh -> diet.
-With no arguments, either entry shows help. Score first, then explicitly select all/modules.
-Common scheduler options: --submit auto|local|hpc, --plan-only,
---job-cores N, --job-memory-gb N, --job-hours N, --queue NAME.
-`--dry-run` prints scientific stages; `--plan-only` writes a scheduler plan.
-`all` never computes scores. `all --core` omits DOSE FoodWAS/ML/mechanisms/
-signatures; full `all` requires their extra inputs. CHARLS needs a declared mapping.
+  ./diet.sh run --cohort ukb --study dose --core --dry-run
+  ./diet.paper.sh run --study dose
 """)
     p.add_argument("--entry",choices=["disco","diet"],default="diet",help=argparse.SUPPRESS)
     p.add_argument("action",nargs="?",default="help")
@@ -110,7 +72,7 @@ signatures; full `all` requires their extra inputs. CHARLS needs a declared mapp
     p.add_argument("--steps",help="Comma-separated original DOSE steps, in registered execution order")
     p.add_argument("--list-steps",action="store_true")
     p.add_argument("--dry-run",action="store_true")
-    p.add_argument("--core",action="store_true",help="Omit DOSE derivation and molecular follow-up from all")
+    p.add_argument("--core",action="store_true",help="Omit DOSE derivation and molecular follow-up from run")
     p.add_argument("--collect-only",action="store_true",help="Collect existing paper figures without rerendering composites")
     p.add_argument("--extension",action="append",default=[],help="Run a named configured extension after Bayes")
     return p
@@ -206,7 +168,7 @@ class Workflow:
         if a.action == "mechanism":
             offline_steps = set(a.steps.split(",")) if a.steps else {
                 row["step"] for row in csv_steps() if row["module"] == "mechanism" and row["mode"] == "default"}
-        elif a.action == "all" and not a.core and "ukb" in cohorts and a.study in {"all", "dose"}:
+        elif a.action == "run" and not a.core and "ukb" in cohorts and a.study in {"all", "dose"}:
             offline_steps = {row["step"] for row in csv_steps()
                              if row["module"] == "mechanism" and row["mode"] == "default"}
         if "mri_prepare" in offline_steps:
@@ -435,7 +397,7 @@ def main(argv=None):
     p=parser();a=p.parse_args(argv)
     validate_args(p,a)
     if a.action=="help":p.print_help();return 0
-    allowed=set(COHORTS)|{"all","assoc","bayes","foodwas","ml","mechanism","signature","final","web","extensions","status"}
+    allowed=set(COHORTS)|{"run","final,web","assoc","bayes","foodwas","ml","mechanism","signature","final","web","extensions","status"}
     if a.entry!="disco" and a.action not in allowed:p.error(f"Unknown module: {a.action}")
     if a.jobs<1:p.error("--jobs must be positive")
     if a.action in {"foodwas","ml","mechanism","signature"}:
@@ -443,7 +405,7 @@ def main(argv=None):
             p.error(f"{a.action} is a UKB DOSE module; use --study dose --cohort ukb")
     if a.list_steps:
         for row in csv_steps():
-            if a.action in (row["module"],"all"):
+            if a.action in (row["module"],"all","run"):
                 print("\t".join(row.values()))
         return 0
     w=Workflow(a);cohorts=w.selected()
@@ -463,6 +425,7 @@ def main(argv=None):
         for cohort in cohorts:w.assoc(cohort)
     elif a.action=="bayes":w.bayes(cohorts);w.extensions()
     elif a.action in {"foodwas","ml","mechanism","signature"}:w.dose_steps(a.action,a.steps)
+    elif a.action=="final,web":w.final();w.web()
     elif a.action=="final":w.final()
     elif a.action=="web":w.web()
     elif a.action=="extensions":w.extensions()
@@ -474,7 +437,7 @@ def main(argv=None):
         for cohort in cohorts:w.assoc(cohort)
         if include_dose and not a.core:
             w.dose_steps("mechanism");w.dose_steps("signature")
-        w.bayes(cohorts);w.extensions();w.final();w.web()
+        w.bayes(cohorts);w.extensions()
     return 0
 if __name__=="__main__":
     try:sys.exit(main())

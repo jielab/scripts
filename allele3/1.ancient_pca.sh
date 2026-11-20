@@ -108,10 +108,10 @@ main() {
     local conda_root=${PCA3D_CONDA_ROOT:-$HOME/anaconda3}
     python=$(workflow_python "$python" "$conda_root/envs/pca3d/bin/python" \
         "$conda_root/envs/allele3-evolution/bin/python" ${DIR_HOME}/anaconda3/envs/allele3-evolution/bin/python3)
-    export WORKFLOW_LOG_DIR=${WORKFLOW_LOG_DIR:-${PCA3D_RUNTIME_ROOT:-$analysis_root/pca3d}/logs}
+    export WORKFLOW_LOG_DIR=${WORKFLOW_LOG_DIR:-${PCA3D_RUNTIME_ROOT:-$analysis_root/ancient_pca}/logs}
     case "$command" in
         study|study-plan|stability|drivers)
-            local study_runtime="${PCA3D_RUNTIME_ROOT:-$analysis_root/pca3d}/study" i
+            local study_runtime="${PCA3D_RUNTIME_ROOT:-$analysis_root/ancient_pca}/study" i
             for ((i=0; i<${#extra[@]}; i++)); do
                 [[ ${extra[i]} != --runtime-root ]] || study_runtime=${extra[i+1]}
             done
@@ -170,7 +170,7 @@ main() {
             else defaults+=(--supplement-xlsx "$ancient/files/Nature.xlsx"); fi
         fi
     fi
-    export WORKFLOW_LOG_DIR=${WORKFLOW_LOG_DIR:-${PCA3D_RUNTIME_ROOT:-$analysis_root/pca3d}/logs}
+    export WORKFLOW_LOG_DIR=${WORKFLOW_LOG_DIR:-${PCA3D_RUNTIME_ROOT:-$analysis_root/ancient_pca}/logs}
     for key in --pgen-prefix --hq-variants --target-variants --plink2; do
         case "$key" in
             --pgen-prefix) value=${PCA3D_PGEN_PREFIX:-} ;;

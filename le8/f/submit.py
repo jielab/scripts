@@ -163,7 +163,8 @@ def build_jobs(a, extra=()):
                          LE8_CACHE_ROOT=str(destination/trait/layer/"tmp/cache"),
                          SCRIPT_LOG_DIR=str(destination/trait/layer/"logs/runs"))
                 if part: e["LE8_C1_MODEL_PART"]=part
-                argv=["bash",str(ROOT/"le8.sh"),module,"--analysis-root",str(destination),
+                entry = "le8.paper.sh" if module in {"final", "share", "shiny"} else "le8.sh"
+                argv=["bash",str(ROOT/entry),module,"--analysis-root",str(destination),
                       "--Y",trait,"--biom",layer,"--cores",str(r["cores"]),
                       "--memory-limit-gb",f"{r['memory_gib']:g}","--r-bin",a.r_bin,
                       "--replace",a.replace,"--config",str(a.config.resolve()),*map(str,extra),*tail]

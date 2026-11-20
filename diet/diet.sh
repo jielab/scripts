@@ -1,91 +1,79 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- all
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- all "$@"
-    fi
-fi
+usage() {
+    cat <<'HELP'
+Diet: cohort phenotypes, associations and downstream analysis.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./diet.sh  # 完整下游分析；先完成对应队列评分
-./diet.sh MODULE  # all|ukb|nhanes|chns|charls|assoc|bayes|final|web|foodwas|ml|mechanism|signature
-./diet.sh --cohort ukb --study dose
-
-Diet analysis
+Usage:
+  ./diet.sh run|MODULE [options]
 
 Modules:
-    all                    Full analysis including FoodWAS, ML and molecular follow-up
-    all --core             Core only; omits inputs required by DOSE Fig2, Fig3a and Fig5
-    ukb|nhanes|chns|charls   Cohort phenotypes; scores come from 1.disco.sh
-    assoc|bayes|final|web    Individual downstream stages
-    foodwas|ml|mechanism|signature  UKB DOSE extensions
+  run                             Cohort phenotypes -> UKB DOSE foodwas/ml -> assoc ->
+                                  UKB DOSE mechanism/signature -> bayes -> extensions.
+  ukb | nhanes | chns | charls    Build selected cohort phenotypes; not diet scoring.
+  assoc                           Cohort association analysis.
+  bayes                           Bayesian analysis, then configured extensions.
+  foodwas | ml                    UKB DOSE derivation / machine-learning stages.
+  mechanism | signature           UKB DOSE molecular follow-up stages.
+  extensions                      Run named configured extensions.
+  status                          Display recorded stage status.
+  Publication                     Use ./diet.paper.sh for final and web.
 
-Main options:
-    --cohort ukb --study dose|maha|all  Cohort and study
-    --replace TRUE|FALSE               Recompute or reuse verified outputs [TRUE]
-    --cores N --queue NAME
-                            CPU default follows 0f/0os.sh (WORKFLOW_CORES)
-    --dir-output DIR --dir-files DIR   Results and dictionary directories
-    --plan-only                        Preview commands without submitting
-
-Local/HPC paths and R/Python follow shared 0f settings. No arguments run the default all workflow.
-Scoring job: diet.disco; downstream job: diet. --core excludes extensions.
-Complete DOSE Fig1 and Fig3f also require NHANES analysis.
-MAHA figures require --study maha or --study all and the corresponding cohorts.
+Options:
+  --cohort NAME                   ukb|nhanes|chns|charls|all [all].
+  --study dose|maha|all           Study selection [all]; this all remains supported.
+  --config FILE                   Pipeline configuration [config/diet.json].
+  --dir-output DIR                Results root [configured output directory].
+  --dir-files DIR                 Dictionary/resource directory.
+  --dir-ukb DIR                   UKB input directory.
+  --dir-nhanes DIR                NHANES input directory.
+  --dir-nhanes-dose DIR           DOSE NHANES root with cdc/ and FPED/MPED inputs.
+  --dir-chns DIR                  CHNS input directory.
+  --dir-charls DIR                CHARLS input directory.
+  --charls-input FILE             CHARLS input override.
+  --charls-phe FILE               CHARLS phenotype override.
+  --charls-config FILE            CHARLS configuration override.
+  --foods FILE                    Food input override.
+  --replace TRUE|FALSE            Recompute / reuse verified outputs [TRUE].
+  --rscript FILE                  R interpreter; alias --r-bin.
+  --python FILE                   Python interpreter; alias --python-bin.
+  --dry-run                       Print scientific commands without running them.
+  --submit auto|local|hpc         Select execution environment [auto].
+  --queue NAME                    CPU queue.
+  --cores N                       CPU budget from shared 0f/0os.sh.
+  --jobs-N N                      Shared workflow concurrency setting.
+  --wait TRUE|FALSE               Wait for submitted workflow [FALSE].
+  --plan-only                     Write commands/plan without executing/submitting.
+  --job-hours N                   Shared job duration limit.
+  --dir-jobs DIR                  Shared command/plan directory.
+  --core                          Omit the four UKB DOSE extensions from run.
+  --extension NAME                Select configured extension; repeatable.
+  --steps CSV                     Original DOSE steps in registered execution order.
+  --list-steps                    List registered steps for the selected module.
+  --jobs N                        Compatibility alias for scientific --cores.
+  -h, --help                      Show this help.
 
 Examples:
-    ./diet.sh all --cohort ukb --study dose --core --plan-only
-    # Generate scores first; wait for successful completion.
-    ./1.disco.sh ukb --study dose --replace FALSE
-    # Run after scoring is DONE; skip if an existing job already includes this step.
-    ./diet.sh all --cohort ukb --study dose --core --replace FALSE
-    # Refresh the viewer from existing results.
-    ./diet.sh web
-PUBLIC_ENTRY_HELP
-    exit 0
-fi
-# Cohorts -> association -> Bayes -> manuscript figures -> offline web report.
-set -euo pipefail
-usage() {
-    bash "${BASH_SOURCE[0]}" --help
+  ./diet.sh run --cohort ukb --study dose --core --plan-only
+  # Generate scores, then wait for successful completion.
+  ./1.disco.sh ukb --study dose --replace FALSE
+  ./diet.sh run --cohort ukb --study dose --core --replace FALSE
+  ./diet.sh run --cohort ukb --study dose --submit hpc --queue 33 --cores 40 --plan-only
+  ./diet.sh foodwas --cohort ukb --study dose --list-steps
+  ./diet.sh assoc --cohort nhanes --study dose --dry-run
+  # After the analyses finish:
+  ./diet.paper.sh run --cohort all --study all --plan-only
+HELP
 }
-# Help is pure text: no runtime activation, planning, or analysis.
-if (($# == 0)); then usage; exit 0; fi
-for arg in "$@"; do
-    case "$arg" in -h|--help|help) usage; exit 0 ;; esac
-done
+case "${1:-}" in
+    ""|-h|--help|help) usage; exit 0 ;;
+esac
+if [[ $1 == --plan-only ]]; then set -- run "$@"; fi
+case "$1" in
+    run|ukb|nhanes|chns|charls|assoc|bayes|foodwas|ml|mechanism|signature|extensions|status) ;;
+    *) printf 'Unknown module: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-export DIET_ROOT="$ROOT"
-HELPERS=${DIET_HELPERS:-$(dirname -- "$ROOT")/0f}
-[[ -f "$HELPERS/0os.sh" ]] || { echo "Place diet/ beside scripts/0f or set DIET_HELPERS." >&2; exit 2; }
-source "$HELPERS/0os.sh"
-workflow_args "$@"
-set -- "${WORKFLOW_ARGS[@]}"
-source "$ROOT/f/runtime_env.sh" "$@"
-# Preserve original scientific environment settings in reproducible diet job plans.
-if [[ -z ${DIET_ENGINE_ENV:-} ]]; then
-    DIET_ENGINE_ENV=$("${DIET_PYTHON:-python3}" - <<'PYENV'
-import json, os
-print(json.dumps({k:v for k,v in os.environ.items() if k.startswith(("DOSE_","MAHA_","CHNS_","NHANES_"))},separators=(",",":")))
-PYENV
-)
-    export DIET_ENGINE_ENV
-fi
-preview=0
-for arg in "$@"; do case "$arg" in -h|--help|help|--dry-run|--list-steps) preview=1;; esac; done
-if ((preview==0)) && (($#>0)); then
-    plan_only=0
-    for arg in "$@"; do case "$arg" in --plan-only|--write-cmd) plan_only=1;; esac; done
-    if ((plan_only)) || [[ ${WORKFLOW_WORKER:-0} != 1 && ${PROJECT_JOB_ACTIVE:-0} != 1 ]]; then
-        exec "${DIET_PYTHON:-python3}" "$HELPERS/project_job.py" --project diet --entry "$ROOT/diet.sh" -- "$@"
-    fi
-    [[ $submit != hpc || -n ${LSB_JOBID:-} ]] || {
-        echo 'HPC workers require an LSF allocation.' >&2; exit 2;
-    }
-fi
-exec "${DIET_PYTHON:-python3}" "$ROOT/f/pipeline.py" --entry diet "$@"
+diet_entry="$ROOT/diet.sh"
+source "$ROOT/f/entry.sh"

@@ -1,45 +1,71 @@
 #!/usr/bin/env bash
-
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- all
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- all "$@"
-    fi
-fi
-
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
---grch 38  Target build [38]; new analysis output: ANALYSIS_ROOT/allele3/38/
-./allele3.sh --grch 38 # 完整下游流程；先完成 PCA 和 gnomAD detailed
-./allele3.sh MODULE --grch 38 # all|enrich_test|allele_test|hotspots|density|herv_enrichment|base_simulation|base_occupancy
-./allele3.sh --replace FALSE --grch 38
-
-# 完整下游流程（复制运行）：
-bash allele3.sh --grch 38
-# 可选：--cores N；默认读取 0f/0os.sh（HPC 40 / local 16）
-
-Usage: ./allele3.sh [all|enrich_test|allele_test|hotspots|density|...] [OPTIONS]
-  all          Default downstream workflow; wait for PCA + gnomAD detailed scan
-  enrich_test  Region enrichment; needs target summary + reference
-  allele_test  Within-site tests; needs target summary + existing Atlas VCFs
-  --out DIR --replace FALSE|TRUE [FALSE]
-  --plan-only --queue NAME --cores N --job-hours N
-  --help-full  All options for the selected module
-HPC is detected automatically. Job name: allele3
-The all workflow does not require HERV cohort or AVI scan outputs.
-PUBLIC_ENTRY_HELP
-    exit 0
-fi
-# Genome-first discovery; the permanent completed scan is a read-only input.
 set -euo pipefail
 
 usage() {
-case "${1:-allele3}" in
-allele3) bash "${BASH_SOURCE[0]}" --help
-;;
+    cat <<'HELP'
+allele3: genome-first downstream analyses on prepared scan/PCA inputs.
+
+Usage:
+  ./allele3.sh run|MODULE [options]
+
+Modules:
+  run                             Ordered downstream steps from config/workflow.json:
+                                  environment check, hotspots, density, HERV enrichment,
+                                  allele_time, space and base_simulation.
+  hotspots                        Discover/characterize multi-allelic hotspots.
+  density                         Genome-window density analysis.
+  herv_enrichment                 HERV analysis; optional stage token after module.
+  base_simulation                 Base-occupancy simulation workflow.
+  base_occupancy SUBCOMMAND       Specialized occupancy/space/time analyses.
+  burden                          Burden workflow; use burden --help for its options.
+  batch                           Batch workflows; use batch --help for its options.
+  Publication                     Use ./allele3.paper.sh for enrich_test and allele_test.
+
+Options:
+  --grch 38                       Target build [38]; uses the shared build-specific root.
+  --out DIR                       Output root/directory for the selected workflow.
+  --replace TRUE|FALSE            Recompute / reuse completed results [FALSE].
+  --python FILE                   Scientific interpreter [ALLELE_PYTHON].
+  --job-memory-gb N               Allocation RAM [run: HPC 160 / local 32 GiB].
+  --memory-limit-gb N             Scientific module RAM (individual modules only).
+  --submit auto|local|hpc         Select execution environment [auto].
+  --queue NAME                    LSF queue.
+  --cores N                       CPU budget from shared 0f/0os.sh.
+  --job-hours N                   Job duration limit.
+  --job-dir DIR                   Generated command/job directory.
+  --write-cmd                     Write a reviewable command file.
+  --wait TRUE|FALSE               Wait for submitted work.
+  --plan-only                     Write plan without executing/submitting.
+  --help-full                     Native full help for the selected scientific module.
+  --config FILE                   run only: ordered steps [config/workflow.json].
+  --scan-dir DIR                  Module input: completed detailed scan.
+  --metadata TSV                  HERV/module sample metadata.
+  --coordinates FILE              HERV/module shared PCA coordinates.
+  --basis-dir DIR                 HERV/module PCA basis directory.
+  --stages CSV                    HERV stage selection.
+  --ibdmix TRUE|FALSE             HERV IBDmix branch [FALSE].
+  --screen-log-interval N         Scientific progress interval.
+  --verbose-screen                Detailed scientific progress.
+  -h, --help                      Show this help.
+
+Examples:
+  ./allele3.sh run --grch 38 --replace FALSE --plan-only
+  ./allele3.sh run --grch 38 --submit hpc --queue 33 --cores 40
+  ./allele3.sh hotspots --grch 38 --scan-dir /work/sph-huangj/analysis/allele3/gnomad_scan --plan-only
+  ./allele3.sh herv_enrichment --help
+  ./allele3.sh base_occupancy --help
+  ./allele3.paper.sh run --target gnomad --grch 38 --plan-only
+HELP
+}
+case "${1:-}" in
+    ""|-h|--help|help) usage; exit 0 ;;
+esac
+if [[ $1 == --plan-only ]]; then set -- run "$@"; fi
+# Genome-first discovery; the permanent completed scan is a read-only input.
+set -euo pipefail
+
+module_usage() {
+case "${1:-}" in
 herv_enrichment) cat <<'HELP'
 Usage: ./allele3.sh herv_enrichment [STAGE] [OPTIONS]
 
@@ -55,8 +81,7 @@ Options:
     --submit hpc|local|auto --queue NAME --cores N --job-hours N
     --job-dir DIR --write-cmd --wait TRUE|FALSE --plan-only --help-full
 
-Run scan, PCA and census separately with their numbered entry scripts.
-Use allele3.sh all for downstream analyses using the completed inputs.
+Use allele3.sh run for downstream analyses using the completed inputs.
 Use this entry after its inputs exist to run only the HERV analysis.
 HELP
 ;;
@@ -67,17 +92,16 @@ esac
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Summary help needs only Bash, even without the scientific environment.
 case "${1:-}" in
-    -h|--help|help) usage allele3; exit 0 ;;
-    all)
+    run)
         case "${2:-}" in -h|--help|help)
             source "$ROOT/../0f/0os.sh"
             exec "$ALLELE_PLANNER_PYTHON" "$ROOT/f/all_workflow.py" --help ;; esac ;;
     herv_enrichment)
-        case "${2:-}" in -h|--help|help) usage herv_enrichment; exit 0 ;; esac ;;
+        case "${2:-}" in -h|--help|help) module_usage herv_enrichment; exit 0 ;; esac ;;
 esac
 # Three primary workflows plus explicit base_occupancy modules; other worker routes are internal.
 case "${1:-}" in
-    enrich_test|allele_test|all|hotspots|density|herv_enrichment|base_occupancy|base_simulation|burden|batch|""|-*|help) ;;
+    run|hotspots|density|herv_enrichment|base_occupancy|base_simulation|burden|batch|--version|help) ;;
     pipeline|primary|archaic|summary|spatial|alleles|candidates|genotypes|windows|time|selection|ld|report)
         [[ ${ALLELE_BATCH_WORKER:-0} == 1 ]] || { printf 'Use hotspots, density or herv_enrichment; see --help.\n' >&2; exit 2; } ;;
     *) printf 'Unknown module: %s. Use hotspots, density, herv_enrichment or base_occupancy; GWAS uses ../gwas/gwas.sh.\n' "$1" >&2; exit 2 ;;
@@ -96,7 +120,7 @@ WORKFLOW_NAME=allele3
 # shellcheck source=f/0.run.sh
 source "$ROOT/f/0.run.sh"
 
-usage_herv() { usage herv_enrichment; }
+usage_herv() { module_usage herv_enrichment; }
 
 
 base_occupancy_main() {
@@ -137,33 +161,6 @@ base_occupancy_main() {
     # launch_workflow separates module logs from atomic stage outputs.
     launch_workflow "$module" "$python" "$ROOT/f/base_occupancy.py" "$out" "$memory" "$interval" \
         "$verbose" "$dry_run" "$((1-native))" "$native" "${args[@]}"
-}
-
-research_main() {
-    local module=$1; shift
-    local target=gnomad reference=alphagenome out= python=${ALLELE_PYTHON:-}
-    local memory=${ALLELE_MEMORY_LIMIT_GB:-16} interval=${ALLELE_SCREEN_LOG_INTERVAL:-300}
-    local -a args=()
-    while (($#)); do
-        case "$1" in
-            --target) need_value "$@";target=$2;args+=("$1" "$2");shift 2;;
-            --ref) need_value "$@";reference=$2;args+=("$1" "$2");shift 2;;
-            --out) need_value "$@";out=$2;shift 2;;
-            --python) need_value "$@";python=$2;shift 2;;
-            --memory-limit-gb) need_value "$@";memory=$2;shift 2;;
-            --screen-log-interval) need_value "$@";interval=$2;shift 2;;
-            --help-full|-h|--help) exec "${python:-python3}" "$ROOT/f/research_tests.py" --help;;
-            *) args+=("$1");shift;;
-        esac
-    done
-    if [[ -z $out ]]; then
-        out="$ALLELE_ANALYSIS_ROOT/$module/$target"
-        [[ $module != enrich_test ]] || out="$ALLELE_ANALYSIS_ROOT/$module/${reference}_${target}"
-    fi
-    python=$(workflow_python "$python" "$HOME/anaconda3/envs/allele3-evolution/bin/python")
-    export WORKFLOW_LOG_DIR="$out/logs"
-    workflow_launch "$module" "$python" "$ROOT/f/research_tests.py" "$out" "$memory" "$interval" 0 0 1 \
-        "$module" --out "$out" --replace "${ALLELE_REPLACE:-FALSE}" "${args[@]}"
 }
 
 herv_main() {
@@ -217,8 +214,7 @@ main() {
     case "${1:-}" in
         -h|--help|help) usage ;;
         --version) printf '2026.11.15.3\n' ;;
-        enrich_test|allele_test) local module=$1;shift;research_main "$module" "$@" ;;
-        all) fail "The all workflow must be launched through its generated all.cmd" ;;
+        run) fail "The workflow must be launched through its generated command file" ;;
         base_occupancy) shift; base_occupancy_main "$@" ;;
         hotspots) shift; base_occupancy_main hotspots "$@" ;;
         density) shift; base_occupancy_main density "$@" ;;
@@ -226,8 +222,7 @@ main() {
         herv_enrichment) shift; herv_main "$@" ;;
         pipeline|primary|archaic|summary|spatial|alleles|candidates|genotypes|windows|time|selection|ld|report)
             herv_main "$@" ;;
-        ""|-*) research_main enrich_test "$@" ;;
-        *) fail "Unknown module: $1 (use --help; the default is enrich_test)" ;;
+        *) fail "Unknown module: $1 (use --help)" ;;
     esac
 }
 

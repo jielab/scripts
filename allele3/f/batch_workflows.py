@@ -578,7 +578,7 @@ def base_plan(name, mode):
 
 def add_job(plan,name,argv,python,deps=(),resource=None,outputs=()):
     argv = list(argv)
-    public = {"allele3.sh", "1.ancient_pca.sh", "2.herv_scan.sh", "3.allele3_scan.sh", "4.avi_scan.sh"}
+    public = {"allele3.sh", "allele3.paper.sh", "1.ancient_pca.sh", "2.herv_scan.sh", "3.allele3_scan.sh", "4.avi_scan.sh"}
     if any(Path(str(x)).name in public for x in argv) and "--grch" not in argv:
         argv.extend(["--grch", "38"])
     resource=resource or resources()
@@ -856,7 +856,7 @@ def research_entry(entry,argv):
     return (name=='4.avi_scan.sh' or name=='2.herv_scan.sh' or
             (name=='3.allele3_scan.sh' and option(argv,'--mode',default='summary')=='summary') or
             (name=='1.ancient_pca.sh' and action in {'study','study-plan','stability','drivers'}) or
-            (name=='allele3.sh' and action in {'','enrich_test','allele_test'}))
+            (name=='allele3.paper.sh' and action in {'enrich_test','allele_test'}))
 
 
 def research_plan(entry,argv,mode,python):
@@ -898,9 +898,9 @@ def research_plan(entry,argv,mode,python):
         argv=remove_options(argv,('--cores','--jobs'))+['--jobs',str(workers)]
         cores=workers
     out=Path(absolute(option(argv,'--out',default=str(default))))
-    if name=='allele3.sh' and (not argv or argv[0].startswith('-')):argv=['enrich_test',*argv]
     argv=remove_options(argv,('--out','--python','--memory-limit-gb'))+['--out',str(out)]
-    label=name.replace('.sh','').replace('.','_')+'_'+(action or 'run')
+    stem = 'allele3' if name == 'allele3.paper.sh' else name.removesuffix('.sh').replace('.', '_')
+    label = stem + '_' + (action or 'run')
     plan=base_plan(label,mode)
     plan['provenance'].update(direct_output=True,job_root=str((runtime if runtime else out)/'jobs'),
         layout='Module-owned shallow outputs; no publication/tmp relocation',genome_build='GRCh38')
@@ -1368,7 +1368,7 @@ def main(argv=None):
     outer=parser.parse_args(argv)
     args=outer.payload[1:] if outer.payload[:1]==['--'] else outer.payload
     is_batch=args[:1]==['batch']
-    is_all=Path(outer.entry).name=='allele3.sh' and args[:1]==['all']
+    is_all=Path(outer.entry).name=='allele3.sh' and args[:1]==['run']
     py=worker_python(args,outer.mode)
     if is_all:
         from all_workflow import build_plan
@@ -1411,6 +1411,7 @@ def main(argv=None):
         '3.allele3_scan.sh':'allele3.alle3_scan',
         '4.avi_scan.sh':'allele3.avi_scan',
         'allele3.sh':'allele3',
+        'allele3.paper.sh':'allele3',
     }.get(Path(outer.entry).name, 'allele3.'+plan['name'])
     if dry:
         print(json.dumps(dict(status='plan_only',mode=outer.mode,job_directory=str(jobdir),

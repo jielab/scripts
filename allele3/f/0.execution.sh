@@ -2,15 +2,7 @@
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     case ${1:-} in
         -h|--help|help)
-            cat <<'ALLELE_HELP'
-source ./0.execution.sh  # 内部函数库，由所属入口加载
-# 无独立分析模块；请通过所属项目的主 .sh 选择模块
-# 参数和环境变量沿用调用方；不要作为全流程提交
-
-内部调度/路径函数库，不是独立分析命令。
-由 f/0.run.sh source；请使用顶层入口的 --submit、--queue 参数。
-运行分析：bash /work/sph-huangj/scripts/allele3/3.allele3_scan.sh -h
-ALLELE_HELP
+            echo 'Internal runtime setup for the allele3 workflows.'
             exit 0 ;;
     esac
 fi
@@ -54,7 +46,7 @@ allele_execution_init() {
         case "$1" in
             --cores)
                 case "${0##*/}" in
-                    allele3.sh|3.allele3_scan.sh) shift 2 ;;
+                    allele3.sh|allele3.paper.sh|3.allele3_scan.sh) shift 2 ;;
                     *) ALLELE_EXECUTION_ARGS+=("$1" "$2"); shift 2 ;;
                 esac ;;
             --grch)

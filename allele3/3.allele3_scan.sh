@@ -98,12 +98,14 @@ main() {
     local entry=$ROOT/f/summary_scan.py label=summary-scan
     if [[ $action == highlights ]]; then
         ((explicit_store)) || store=${HERV_OUT:-${ALLELE_HERV_SCAN_STORE:-${ALLELE_ANALYSIS_ROOT}/herv_scan}}
+        export WORKFLOW_LOG_DIR=$store/logs
         entry=$ROOT/f/herv_cohort.py; label=herv-highlights
         args=(highlights --target "$target" --out "$store" --replace "$replace" "${args[@]}")
     elif [[ $scan_mode == detailed ]]; then
         [[ $target == gnomad ]] || fail '--mode detailed supports --target gnomad only'
         [[ $action != merge ]] || fail '--mode detailed supports scan and verify; scan performs its own completion checks'
         ((explicit_store)) || store=${ALLELE_SCAN_STORE:-${ALLELE_ANALYSIS_ROOT}/gnomad_scan}
+        export WORKFLOW_LOG_DIR=$store/logs
         entry=$ROOT/f/scan_store.py; label=scan-${action//,/-}
         args=("$action" --out "$store" --replace "$replace" "${args[@]}")
         if ((full_help)); then entry=$ROOT/f/scan.py; args=(--help); fi

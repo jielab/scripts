@@ -9,17 +9,15 @@ for(i in seq.int(1L,length(argv),by=2L)) {
 }
 script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1L])
 fdir<-dirname(normalizePath(script));root<-dirname(fdir)
-for(f in c("shared.R","common.R","risk.R","phenotype.R","clock.R","associations.R","markers.R","demo.R"))source(file.path(fdir,f))
+for(f in c("shared.R","common.R","risk.R","phenotype.R","clock.R","associations.R","markers.R"))source(file.path(fdir,f))
 ckm_require()
 ckm_load_shared(file.path(root,"..","0f","phenotype.R"))
 if(!is.null(arg$phenotype_dir))arg$ukb_dir<-arg$phenotype_dir
 cfg<-ckm_config(arg$config %||% file.path(root,"config","ckm.json"),arg)
-module<-arg$module %||% "all"
-demo<-module=="demo"
-if(demo) {cfg<-ckm_make_demo(cfg,as.integer(arg$demo_n %||% 6000L));module<-"all"}
+module<-arg$module
 data.table::setDTthreads(cfg$threads)
 ph_file<-file.path(cfg$out_dir,"ckm.rds")
-if(module=="phe"||demo) {
+if(module=="phe") {
   message("Building CKM phenotype from ",cfg$paths$phe)
   d<-ckm_build_phenotype(cfg)
   attr(d,"ckm_build_id")<-paste(format(Sys.time(),"%Y%m%dT%H%M%OS6"),Sys.getpid(),sep="-")
@@ -59,7 +57,7 @@ load_cache<-function(name) {
      !identical(x$domains,cfg$domains)||!identical(x$code_hash,code_hash))return(NULL)
   x
 }
-modules<-if(module=="all")c("clock","assoc","marker","enrich") else module
+modules<-if(module=="run")c("clock","assoc","marker","enrich") else module
 domains<-list()
 if(any(modules %in% c("clock","assoc","marker"))) {
   for(nm in cfg$domains) {
@@ -130,39 +128,6 @@ if("enrich" %in% modules) {
   a<-load_cache("assoc");result<-ckm_run_enrichment(if(is.null(a))list() else a$data,cfg)
   save_cache(result,"enrichment");ckm_write(result,file.path(cfg$out_dir,"enrichment.tsv"))
 }
-# Refresh report after every successful module, showing only matching cached phases.
-clk<-load_cache("clock");asc<-load_cache("assoc");mark<-load_cache("marker");enr<-load_cache("enrichment")
-clock_summary<-if(is.null(clk))list(notes="Clock has not been run for this phenotype/configuration.") else clk$data[setdiff(names(clk$data),c("predictions","folds"))]
-if(!is.null(mark))clock_summary$markers<-mark$data$marker
-assoc_summary<-if(is.null(asc))list() else asc$data[setdiff(names(asc$data),"settings")]
-if(!is.null(asc)) {
-  assoc_summary$global<-asc$data$assoc
-  assoc_summary$pooled<-asc$data$pooled
-}
-payload<-list(title=if(cfg$demo)"CKM · SYNTHETIC DEMO / 合成数据演示" else "CKM · 连续分期与阶段特异因素",
-  version=cfg$version,generated=format(Sys.time(),"%Y-%m-%d %H:%M UTC",tz="UTC"),
-  phase=if(is.null(clk)&&is.null(asc))"phenotype_only" else "analysis",
-  input_notes=c(if(cfg$demo)"SYNTHETIC TEST DATA. All numbers and gene sets are simulated, not UK Biobank findings." else "UK Biobank observational research outputs.",
-    paste("Phenotype:",ph_meta$definition,"/",ph_meta$stage3_method),
-    paste("Follow-up end:",ph_meta$date_follow_end,"from 0f/phenotype.R::date_follow_end; verified earlier coverage/loss/death may shorten individual follow-up."),
-    "Stage comparison reference model includes age spline, sex and categorical stage.",
-    "Clinical CVD includes CHD, heart failure, stroke, peripheral arterial disease and atrial fibrillation.",
-    "Clock accuracy must be judged from held-out metrics and calibration; no accuracy gain is guaranteed.",
-    ph_meta$score2_scope),
-  phenotype=ckm_phenotype_summary(d),clock=clock_summary,associations=assoc_summary,
-  enrichment=if(is.null(enr))data.frame(status="not_run") else enr$data,
-  validation=list(phenotype_schema=ph_meta$schema,staging_definition=ph_meta$definition,
-    date_follow_end=ph_meta$date_follow_end,followup_end_source="0f/phenotype.R::date_follow_end",shared_helpers=cfg$shared,
-    clinical_assay_source=ph_meta$clinical_assay_source,statin_source=ph_meta$statin_source,
-    R=R.version.string,packages=as.list(stats::setNames(vapply(c("data.table","survival","jsonlite"),function(p)as.character(utils::packageVersion(p)),character(1)),c("data.table","survival","jsonlite"))),
-    source_reference_commit="971a61b44b84500ab46e2f5592478505a0eae50e",
-    missing_incident_domains=ph_meta$missing_incident_domains,
-    temporal_scope=ph_meta$temporal_scope,stage_uncertainty=ph_meta$stage_uncertainty,
-    clock_status=if(is.null(clk))"not_run_or_changed_inputs" else "out_of_fold_results_available"))
-report_json<-file.path(cfg$out_dir,"tmp","report.json")
-jsonlite::write_json(payload,report_json,auto_unbox=TRUE,dataframe="rows",null="null",na="null",digits=10)
-python<-Sys.getenv("CKM_PYTHON","python3")
-exit<-system2(python,c(shQuote(file.path(fdir,"report.py")),"--input",shQuote(report_json),"--output",shQuote(file.path(cfg$out_dir,"ckm.html"))))
-if(exit!=0L)stop("HTML report generation failed")
+if(module %in% c("report","phe"))source(file.path(fdir,"paper_report.R"),local=TRUE)
 jsonlite::write_json(list(version=cfg$version,definition=ph_meta,settings=cfg),file.path(cfg$out_dir,"tmp","settings.json"),auto_unbox=TRUE,pretty=TRUE,null="null",na="null")
-message("Completed: ",module,"; ",file.path(cfg$out_dir,"ckm.html"))
+message("Completed: ",module)

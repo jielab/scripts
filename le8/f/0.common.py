@@ -1193,13 +1193,13 @@ def parser():
 		description=__doc__,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 		epilog="""Examples:
-  ./le8.sh final,shiny --Y cvd_cad,ra --biom prot,met
-  ./le8.sh shiny --Y cvd_cad,ra --port 3839
-  ./le8.sh final --index-only --Y cvd_cad,ra
+  ./le8.paper.sh final,shiny --Y cvd_cad,ra --biom prot,met
+  ./le8.paper.sh shiny --Y cvd_cad,ra --port 3839
+  ./le8.paper.sh final --index-only --Y cvd_cad,ra
   ./le8.sh c3_coloc,c4_connect,c5_cellulation --Y cvd_cad --biom prot
   C4_EXPLAIN_BOOT=200 ./le8.sh c4_connect --Y cvd_cad --biom prot
   ./le8.sh c1_correlate --methods abm --Y cvd_cad --biom prot
-  ./le8.sh final --fit-joint --Y cvd_cad,ra --biom prot,met --replace TRUE
+  ./le8.paper.sh final --fit-joint --Y cvd_cad,ra --biom prot,met --replace TRUE
 
 Modules: C1 correlation, C2 cause, C3 coloc,
 C4 connect (including interactions, nonlinearity, panel validation and reconstruction bootstrap), C5 cellulation, final, shiny.

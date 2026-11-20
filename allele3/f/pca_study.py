@@ -1015,7 +1015,7 @@ def parser():
     p.add_argument("command",choices=["study","study-plan","stability","drivers"])
     p.add_argument("--out",type=Path,default=Path(configured_path("DIR_GEN","ancient/38/pca3d/study")))
     p.add_argument("--study-dir",type=Path,help="Existing study for stability/drivers (also selects its output)")
-    p.add_argument("--runtime-root",type=Path,default=Path(configured_path("ANALYSIS_ROOT","allele3/38/pca3d/study")))
+    p.add_argument("--runtime-root",type=Path,default=Path(configured_path("ANALYSIS_ROOT","allele3/ancient_pca/study")))
     p.add_argument("--ancient-dir",type=Path,default=Path(configured_path("DIR_GEN","ancient")))
     p.add_argument("--pgen-prefix",type=Path);p.add_argument("--metadata",type=Path);p.add_argument("--hq-variants",type=Path)
     p.add_argument("--supplement-xlsx",type=Path);p.add_argument("--exclude-bed","--pca-exclude-bed",dest="exclude_bed",type=Path)

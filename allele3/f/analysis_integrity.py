@@ -33,8 +33,10 @@ class ModuleLayout:
         if self.key.parts[0] == 'pca3d':
             from workflow_paths import configured_path
             base = Path(os.environ.get('PCA3D_RUNTIME_ROOT') or
-                        configured_path('ANALYSIS_ROOT', 'allele3/pca3d'))
+                        configured_path('ANALYSIS_ROOT', 'allele3/ancient_pca'))
             return base / kind / Path(*self.key.parts[1:])
+        if self.key.parts[0] == 'gnomad_scan' and kind in {'jobs', 'logs', 'qc'}:
+            return self.root / self.key.parts[0] / kind / Path(*self.key.parts[1:])
         return self.root / kind / self.key
 
     @property

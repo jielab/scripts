@@ -22,7 +22,7 @@ def boolean(value):
     raise argparse.ArgumentTypeError("Use TRUE or FALSE")
 
 ENTRY_MODULES = {
-    "grid": ["all","regions","block_models","abm","twins","abm_deep","evaluate","architecture","robustness","final","check"],
+    "grid": ["run","paper-run","regions","block_models","abm","twins","abm_deep","evaluate","architecture","robustness","final","check"],
     "pca": ["all","projection","pca"],
     "csx": ["all","prepare","inputs","infer","score","fit","infer_prepare","infer_chr"],
     "disco": ["all","disco"],
@@ -31,7 +31,7 @@ ENTRY_MODULES = {
 
 def parser(entry="grid"):
     p=argparse.ArgumentParser(description=f"{entry}: independent analysis workflow",formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("module",nargs="?",default="all",choices=ENTRY_MODULES[entry])
+    p.add_argument("module",nargs="?",default="run" if entry=="grid" else "all",choices=ENTRY_MODULES[entry])
     p.set_defaults(entry=entry,with_prsformer=False,prsformer_stage="all")
     p.add_argument("--grch", type=int, choices=[38], default=38, help="Target genome build; example: --grch 38")
     p.add_argument("--config",default=str(GRID/"config/grid.yml"))
@@ -52,7 +52,7 @@ def parser(entry="grid"):
         p.add_argument("--bootstrap",type=int)
         deep=p.add_mutually_exclusive_group()
         deep.add_argument("--with-deep",action="store_true",help="include deep (enabled in default config)")
-        deep.add_argument("--without-deep",action="store_true",help="omit deep from all")
+        deep.add_argument("--without-deep",action="store_true",help="omit deep from run")
         p.add_argument("--gpu-queue",help="deep GPU queue; overrides config/environment")
         p.add_argument("--gpu-cores",type=int,default=8,help="CPU slots per deep GPU job")
         p.add_argument("--gpu-memory-limit-gb",type=float,default=float(os.environ.get("HPC_GPU_MEMORY_GIB","160")),help="deep GPU host RAM cap; also bounded by --job-memory-gb")

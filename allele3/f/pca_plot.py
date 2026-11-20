@@ -1082,7 +1082,7 @@ def trajectory_parser():
     p.add_argument('command',choices=['trajectory-plan','trajectory'])
     p.add_argument('--coordinates','--eigenvec',dest='coordinates',required=True)
     p.add_argument('--metadata',required=True)
-    p.add_argument('--out',default=configured_path('ANALYSIS_ROOT', 'allele3/38/pca3d/temporal'))
+    p.add_argument('--out',default=configured_path('ANALYSIS_ROOT', 'allele3/ancient_pca/temporal'))
     for name in ('basis-dir','coordinate-receipt','provenance-manifest','training-ids','supplement-metadata','date-distributions'):p.add_argument('--'+name)
     p.add_argument('--pcs',type=int,default=None,help='Default PC1/2 primary plus available 5/10 supplements; explicit K requires every PC')
     for name,value in [('bin-years',1000),('max-age-bp',10000),('min-samples',20),('bootstrap',500),('seed',20261028),('display-limit',20000),('date-draws',100)]:p.add_argument('--'+name,type=int,default=value)

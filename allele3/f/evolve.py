@@ -3457,7 +3457,7 @@ def prepare_pca_plan(pgen_prefix, metadata_path, hq_variants_path, out_dir, *,
     original_hq_path = hq_path
     if build == 'GRCh38':
         hq_path = hq_in_panel_coordinates(str(prefix) + '.pvar', hq_path,
-            Path(configured_path('ANALYSIS_ROOT', 'allele3/38/pca3d/qc')))
+            Path(configured_path('ANALYSIS_ROOT', 'allele3/ancient_pca/qc')))
     files = {"metadata": meta_path, "high_quality": hq_path,
              **{ext: Path(str(prefix) + "." + ext) for ext in ("pgen", "pvar", "psam")}}
     if exclude_bed:

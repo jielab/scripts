@@ -1,53 +1,67 @@
 #!/usr/bin/env bash
-# One frozen job per batch: finish all selected splits, then evaluate the batch.
 set -euo pipefail
-HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-case "${1:-}" in
-    -h|--help|--help-full)
-        cat <<'HELP'
-Usage: ./metag.sh [all|split|split-group|split-species|evaluate|report] [OPTIONS]
 
-  all           Split every sample in a batch, then evaluate/report [default]
-  split         Group and selected-species split, then report; no evaluation
-  split-group   Group split only
-  split-species Refine selected coarse groups only
-  evaluate      Evaluate existing splits
-  report        Refresh completion/count reports
+usage() {
+    cat <<'HELP'
+METAG: group screening and selected-species splitting.
 
-  --index-use optimized|legacy|full  Index selection [optimized]
-      optimized  New group screening configuration: lib/group/optimized
-      legacy     Preserved old group index: lib/group/legacy
-      full       Existing complete category union; expensive random I/O
-  --dat-list CSV          Dataset names
-  --sample DATASET/SAMPLE One sample (repeatable)
-  --batch 1-2|1,3|all     Per-dataset batch selection [all]
-  --batch-size N          Samples per job [10]
-  --groups human,plant   Detailed species groups [human,plant]; 'all' supported
-  --evaluation basic|full [basic]: QC and reference controls; full also runs
-                          full-library agreement and competitive alignment
-  --include-uncertain    Refine uncertain bins with the full union (costly)
-  --submit hpc|local|auto --plan-only --config FILE
-  --queue NAME --cores N --mem-gib N --hours N --threads N
-  Compact group indexes preload into RAM (default reservation: 448 GiB).
-  The index plus worker/system reserve must fit --mem-gib; insufficient RAM
-  fails before submission. Config group_memory_mapping=true opts into mmap.
-  --cores defaults to 40 on HPC, 16 locally; classifier threads default to
-  cores minus two for streaming helpers (minimum one). --threads overrides.
+Usage:
+  ./metag.sh run|split|MODULE[,MODULE...] [options]
 
-One job per batch: all splits before evaluation. Required external inputs must
-be complete before submission; missing inputs log an error and exit.
-Independent submissions never wait for other jobs. No extra split/evaluate jobs.
-Results: data/metag/species/<index-use>/DATASET/SAMPLE
-State/logs: analysis/metag/indices/<index-use>/
-Repeated runs reuse compatible stages; --replace TRUE recomputes owned outputs.
+Modules:
+  run | split                     split-group -> split-species; no evaluation/report.
+  split-group                     Coarse group split only.
+  split-species                   Refine selected coarse groups; requires group outputs.
+  Publication                     Use ./metag.paper.sh for evaluate and report.
+
+Options:
+  --index-use optimized|legacy|fullIndex profile [optimized].
+                                  optimized: compact lib/group/optimized screening;
+                                  legacy: preserved old group index;
+                                  full: complete union, expensive random I/O.
+  --dat-list CSV                  Dataset names.
+  --sample DATASET/SAMPLE         Select one sample; repeatable; excludes --batch/--batch-size.
+  --batch SELECTION               Per-dataset batches: 1-2, 1,3-5, 3-, all [all].
+  --batch-size N                  Samples per job [configured; default 10].
+  --config FILE                   Project configuration override.
+  --root DIR                      Project data root override.
+  --replace TRUE|FALSE            Recompute / reuse compatible owned outputs [FALSE].
+  --submit auto|local|hpc         Select execution environment [auto].
+  --queue NAME                    LSF queue [38].
+  --cores N                       CPU budget [HPC 40 / local 16].
+  --threads N                     Classifier threads [max(1, cores-2)], <= cores.
+  --mem-gib N                     Host RAM reservation [448 GiB].
+  --hours N                       Job duration [120 hours].
+  --plan-only                     Generate commands without executing/submitting.
+  --allow-local                   Allow local execution where guarded by configuration.
+  --groups CSV                    Detailed groups [human,plant]; all supported.
+                                  Requires a workflow containing split-species.
+  --include-uncertain             Refine uncertain bins with full union (costly);
+                                  requires split-species.
+  -h, --help                      Show this help.
 
 Examples:
-  ./metag.sh all --dat-list Ndesert,Weurope,Wglobal,Wxiamen,changj,emp,neon,ocean,scotland,sub --batch 1 --batch-size 10 --index-use optimized
-  ./metag.sh all --dat-list Ndesert --batch 1 --index-use legacy
-  ./metag.sh evaluate --sample Ndesert/SRR23862437 --index-use optimized --evaluation full
+  ./metag.sh run --dat-list Ndesert,Weurope,Wglobal,Wxiamen,changj,emp,neon,ocean,scotland,sub --batch 1 --batch-size 10 --index-use optimized --plan-only
+  ./metag.sh run --dat-list Ndesert --batch 1 --index-use legacy
+  ./metag.sh split-group --dat-list Ndesert --batch 1 --plan-only
+  ./metag.sh split-species --sample Ndesert/SRR23862437 --groups human,plant --index-use optimized --plan-only
+  # Wait for splitting to finish before evaluation/report.
+  ./metag.paper.sh run --dat-list Ndesert --batch 1 --index-use optimized --plan-only
 HELP
-        exit 0 ;;
+}
+case "${1:-}" in
+    ""|-h|--help|--help-full|help) usage; exit 0 ;;
 esac
-if (($# == 0)) || [[ $1 == --* ]]; then set -- all "$@"; fi
-source "$HERE/f/env.sh"
-exec "$METAG_PYTHON" "$HERE/f/metag_submit.py" "$@"
+if [[ $1 == --plan-only ]]; then set -- run "$@"; fi
+if [[ $1 == run || $1 == split ]]; then shift; set -- split-group,split-species "$@"; fi
+if [[ $1 == *, ]]; then usage >&2; exit 2; fi
+IFS=, read -ra selected_modules <<< "$1"
+for module in "${selected_modules[@]}"; do
+    case "$module" in
+        split-group|split-species) ;;
+        *) printf 'Unknown module: %s\n' "$module" >&2; usage >&2; exit 2 ;;
+    esac
+done
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source "$ROOT/f/env.sh"
+exec "$METAG_PYTHON" "$ROOT/f/metag_submit.py" "$@"

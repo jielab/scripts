@@ -63,7 +63,7 @@ def load_steps(config, out, python, cores, memory_gib, *, pca=None, scan=None):
             raise ValueError("Empty step argv: " + item["name"])
         args = [expand(value) for value in item["argv"]]
         if any(a in {"--submit", "--write-cmd", "--wait", "--job-dir", "--replace"} for a in args):
-            raise ValueError("Set execution and replacement options on allele3.sh all, not individual config steps")
+            raise ValueError("Set execution and replacement options on allele3.sh run, not individual config steps")
         result.append(dict(name=item["name"], argv=args))
     if len({s["name"] for s in result}) != len(result):
         raise ValueError("Duplicate workflow step name")
@@ -101,7 +101,7 @@ def check_prerequisites(out, *, pca=None, scan=None):
                   file=sys.stderr, flush=True)
             command = (script + " scan --target gnomad --mode detailed"
                        if script == "3.allele3_scan.sh" else script)
-            print("Run the independent " + command + " first, then rerun allele3.sh all.",
+            print("Run the independent " + command + " first, then rerun allele3.sh run.",
                   file=sys.stderr, flush=True)
     if failures:
         raise ValueError("Required inputs missing; no downstream analysis started.")
@@ -194,7 +194,7 @@ def main(argv=None):
         a = p.parse_args(argv[1:])
         return run_steps(json.loads(a.steps_json), a.out)
     parser().parse_args(argv)
-    raise ValueError("Use bash allele3.sh all to create or submit the one-job workflow")
+    raise ValueError("Use bash allele3.sh run to create or submit the one-job workflow")
 
 
 if __name__ == "__main__":

@@ -253,7 +253,7 @@ def common_gu(plan: dict, output: str, selection: str | None = None) -> list[str
     args = ["bash", str(ROOT / "gu.sh"), plan["method"], "--grch", plan["grch"],
             "--target", plan["target"], "--dir-target", plan["dir_target"],
             "--dir-out", output, "--foreground", "TRUE",
-            "--jobs", "1", "--auto-final", "FALSE", "--memory-cap", f"{plan['memory_gb']}G"]
+            "--jobs", "1", "--memory-cap", f"{plan['memory_gb']}G"]
     if plan["method"] in {"ibdmix", "trace", "phyml"}:
         args += ["--" + plan["method"] + "-run", plan["processors"][plan["method"]], "--replace", plan["replace"]]
     if selection:
@@ -506,7 +506,7 @@ def runtime_environment(plan: dict) -> dict[str, str]:
                 "TRACE_BACKEND": "cuda" if plan["processors"]["trace"] == "gpu" else "cpu",
                 "PHYML_BACKEND": "cuda" if plan["processors"]["phyml"] == "gpu" else "cpu",
                 "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-                "NUMEXPR_NUM_THREADS": "1", "GU_AUTO_FINAL": "0", "GU_KEEP_SCRATCH": "1"})
+                "NUMEXPR_NUM_THREADS": "1", "GU_KEEP_SCRATCH": "1"})
     if plan.get("archaic_path"):
         env["GU_ARCHAIC_ROOT"] = plan["archaic_path"]
     if plan["method"] == "phyml":
