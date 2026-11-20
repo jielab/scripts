@@ -1,0 +1,9 @@
+{
+  "audit": "Scientific helper AST equality and legacy classification source byte equality verified; native minimap2 equivalence and regression tests passed.",
+  "backup": "/work/sph-huangj/analysis/metag/deployment/cache-optimization-20261116-093536",
+  "compatible_codes": [
+    "c2517f9409a1ccb22329d92cfc80079544f8120266bdd2313025f2455d4bced3",
+    "a3080fa5e0568d2606ea2cf5848c74b0dfa80ce6a1f8b98883982e1496f038d0"
+  ],
+  "current_code": "1c883f174462309de347493bff1e6a860653fc13759e7e3e4873ae2e1eca1337"
+}

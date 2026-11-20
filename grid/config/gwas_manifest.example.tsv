@@ -1,0 +1,13 @@
+trait	population	path	n_gwas	n_case	n_control	sample_overlap	build
+height	EUR	/absolute/gwas/height.EUR.gz				unknown	GRCh37
+height	AFR	/absolute/gwas/height.AFR.gz				unknown	GRCh37
+height	EAS	/absolute/gwas/height.EAS.gz				unknown	GRCh37
+height	SAS	/absolute/gwas/height.SAS.gz				unknown	GRCh37
+ldl	EUR	/absolute/gwas/ldl.EUR.gz				unknown	GRCh37
+ldl	AFR	/absolute/gwas/ldl.AFR.gz				unknown	GRCh37
+ldl	EAS	/absolute/gwas/ldl.EAS.gz				unknown	GRCh37
+ldl	SAS	/absolute/gwas/ldl.SAS.gz				unknown	GRCh37
+t2dm	EUR	/absolute/gwas/t2dm.EUR.gz				unknown	GRCh37
+t2dm	AFR	/absolute/gwas/t2dm.AFR.gz				unknown	GRCh37
+t2dm	EAS	/absolute/gwas/t2dm.EAS.gz				unknown	GRCh37
+t2dm	SAS	/absolute/gwas/t2dm.SAS.gz				unknown	GRCh37

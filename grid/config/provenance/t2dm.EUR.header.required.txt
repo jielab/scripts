@@ -1,0 +1,1 @@
+dat /mnt/d/Downloads/4grid/t2dm.EUR.gz, snp SNP 12, chr Chromsome 1, pos Position 2, ea EffectAllele 3, nea NonEffectAllele 4, eaf EAF 7, n Neff 11, beta Beta 5, se SE 6, p Pval 8, log10p  

@@ -1,0 +1,25 @@
+{
+  "architecture": "feature_token_latent_transformer",
+  "d_model": 32,
+  "heads": 4,
+  "latent_tokens": 16,
+  "layers": 2,
+  "dropout": 0.1,
+  "batch_size": 64,
+  "epochs": 30,
+  "patience": 5,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.01,
+  "min_delta": 0.0001,
+  "gradient_clip": 1.0,
+  "neighbors": 64,
+  "transformer_matching_space": "molecular",
+  "coverages": [
+    0.2,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ]
+}

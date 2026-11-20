@@ -1,0 +1,40 @@
+{
+  "description": "Measured-component adapter. No raw CHARLS wave coding is assumed. All columns are declared here; unmeasured scores remain NA.",
+  "scores": {
+    "DOSE": {
+      "enabled": true,
+      "definition": "DOSE9half frozen manuscript recipe; 11 foods, nine domains, 0-9",
+      "unit": "servings/day",
+      "columns": {
+        "Apples_Pears": "Apples_Pears", "Dried_fruit": "Dried_fruit", "Legumes": "Legumes",
+        "Olive_oil": "Olive_oil", "Tomatoes": "Tomatoes", "Eggs": "Eggs",
+        "Green_leafy_vegetables": "Green_leafy_vegetables", "Whole_grains": "Whole_grains",
+        "Wine": "Wine", "Processed_meats": "Processed_meats", "Sweetened_beverages": "Sweetened_beverages"
+      }
+    },
+    "MAHA": {
+      "enabled": true,
+      "definition": "Nine-domain MAHA, raw 0-90; requires measured UKB-equivalent domain inputs",
+      "unit": "declared_domain_units",
+      "columns": {
+        "protein_gkg": "protein_gkg", "dairy_srv": "dairy_srv", "veg_srv": "veg_srv", "fruit_srv": "fruit_srv",
+        "wholegrain_srv": "wholegrain_srv", "fat_srv": "fat_srv", "upf_srv": "upf_srv",
+        "alcohol_srv": "alcohol_srv", "sodium_mg": "sodium_mg"
+      }
+    },
+    "DASH": {
+      "enabled": true, "definition": "Declared eight-domain DASH component points (1-5 each)",
+      "unit": "component_points", "bounds": [1, 5],
+      "components": ["fruit", "vegetables", "whole_grain", "low_fat_dairy", "nuts_legumes", "red_processed", "sweet_drinks", "sodium"],
+      "columns": {"fruit":"DASH_fruit", "vegetables":"DASH_vegetables", "whole_grain":"DASH_whole_grain", "low_fat_dairy":"DASH_low_fat_dairy", "nuts_legumes":"DASH_nuts_legumes", "red_processed":"DASH_red_processed", "sweet_drinks":"DASH_sweet_drinks", "sodium":"DASH_sodium"}
+    },
+    "MEDI": {
+      "enabled": true, "definition": "Declared nine-domain Mediterranean component points; not UKB MEDI24",
+      "unit": "component_points", "bounds": [0, 1],
+      "components": ["vegetables", "fruit", "legumes", "nuts", "whole_grains", "fish", "meat", "fat_ratio", "alcohol"],
+      "columns": {"vegetables":"MEDI_vegetables", "fruit":"MEDI_fruit", "legumes":"MEDI_legumes", "nuts":"MEDI_nuts", "whole_grains":"MEDI_whole_grains", "fish":"MEDI_fish", "meat":"MEDI_meat", "fat_ratio":"MEDI_fat_ratio", "alcohol":"MEDI_alcohol"}
+    }
+  },
+  "outcomes": ["cad", "t2dm", "stroke", "death"],
+  "covariates": ["age", "sex"]
+}

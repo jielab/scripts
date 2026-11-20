@@ -1,0 +1,134 @@
+version: grid-final-20261116
+traits: [height, ldl, t2dm]
+chromosomes: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22]
+# Roots are supplied by the existing ../0f/0os.sh; explicit CLI paths override.
+analysis_root: ${ANALYSIS_ROOT}/grid/38
+inputs:
+  genotype_dir: ${DIR_GEN}/ukb/38/imp
+  phenotype_file: ${DIR_UKB}/Rdata/all.rds
+  cohort_file: null
+  pca_file: ${DIR_GEN}/ukb/38/pca_proj/ukb.discodivas.pca.tsv.gz
+  ancestry_file: ${DIR_GEN}/ukb/38/pca_proj/ukb.ancestry.auto.tsv.gz
+  pca_weight: ${DIR_FILES}/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+  pca_centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
+  group_file: null
+  # This is a relationship graph, not a genotype scoring source. Its location
+  # may remain beside the original array data without using array genotypes.
+  relationship_file: ${DIR_UKB}/rap/raw/ukb_rel.dat
+  # Fresh rerun requested on 2026-11-17: rebuild the outcome-blind split with
+  # cohort.seed. Set an explicit path to reuse a separately preserved roster.
+  split_file: null
+  legacy_split_file: ${ANALYSIS_ROOT}/grid/tmp/cache/abm/split.rds
+  legacy_split_fallbacks: ["${ANALYSIS_ROOT}/grid-OLD/tmp/cache/abm/split.rds"]
+  rsid_map: null
+  gwas_manifest: auto
+  gwas_dir: ${DIR_GWAS}/4grid/common
+  ld_ref: ${DIR_LD}/csx
+  consensus_dir: ${DIR_LD}/38/consensus
+  consensus_build: GRCh38
+  # Frozen existing D80000 boundaries. No LD construction is run by grid.sh.
+cohort:
+  seed: 20261115
+  test_fraction: 0.5
+  development_fractions: [0.70, 0.15, 0.15]
+  train_n: 0                     #0=all TRAIN; whole-family budget for every method
+  label_budget: 0                #0=all; otherwise combined TRAIN+TUNE budget
+  phenotype_columns: {height: height, ldl: ldl, t2dm: auto}
+  covariate_columns: {}
+  validation_status: exploratory_previously_inspected_test
+pca:
+  n_pcs: 20
+  id_column: 2
+  allele_column: 6
+  first_pc_column: 7
+  min_variant_fraction: 0.9
+  ethnicity_column: auto
+  ancestry_probability: 0.90
+  anchor_max_n: 10000
+inference:
+  phi_grid: [0.01]               #systematic: [0.000001,0.0001,0.01,1.0]
+  n_iter: 4000
+  n_burnin: 2000
+  thin: 5
+  seed: 20261115
+  backend: cpu
+  jobs: 4                      # model chains per chromosome; all chromosomes are separate LSF jobs
+  blas_threads: 1              # small LD-block solves; do not assign all job cores to one chain
+  prscs_fixed: true              #independent PRS-CS uses the same fixed-phi grid + auto
+  n_gwas: {}                    #overrides e.g. height: {EUR: 100000,AFR: 20000,...}
+  # Archived formatter mappings in config/provenance confirm Neff (column 11) -> N.
+  effective_n_columns: {t2dm: N}
+  discovery_target_overlap: unknown
+scoring:
+  common_variants: false        #true: exact intersection of all supplied weight sets
+  batch_size: 32
+benchmark:
+  input_phi: 0.01              # fixed discovery-only input for blocks and Disco
+  covariates: [age,sex,PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10,PC11,PC12,PC13,PC14,PC15,PC16,PC17,PC18,PC19,PC20]
+  penalties: [0.01,1.0,100.0]
+  oof_folds: 5
+disco:
+  distance_pcs: 10
+  min_anchor_n: 100
+  min_cases: 20
+  penalty: 0.000001
+  raw_interpolation_ablation: true
+regions:
+  representation: meta          #meta: one score per common block; ancestry_channels: four channels
+block_models:
+  enabled: true
+  glmnet: true
+  lightgbm: true
+  alpha_grid: [0.0,0.5,1.0]
+  nlambda: 40
+  maxit: 100000
+  lightgbm_rounds: 400
+  lightgbm_patience: 30
+  lightgbm_leaves: [7,15]
+abm:
+  geometry: consensus           #full block space; regional=PCA sensitivity; global_prs=4 scores
+  dimensions: 32                #only used by regional / legacy_unit_block sensitivity
+  k_values: [32,64,128]
+  radius_k: 64
+  radius_quantile: 0.90
+  min_count: 20
+  min_group_ess: 15
+  shrinkage: 20.0
+  batch_size: 64
+  donor_batch: 4096
+  evidence_queries: 200
+  evidence_neighbors: 16
+block_deep:
+  enabled: true                 #included in grid.sh all; --without-deep opts out
+  device: cuda                  #GPU by default; --abm-deep-run cpu opts into CPU
+  epochs: 30
+  patience: 5
+  batch_size: 64
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  d_model: 32
+  latent_tokens: 8
+  heads: 4
+  layers: 2
+  dropout: 0.1
+evaluation:
+  bootstrap: 200                #use1000-2000forfinalmanuscriptCIs
+prsformer:
+  enabled: false                #opt-in full genotype model; requires GPU/runtime/disk
+  upstream_dir: ${DIR_SOFTWARE}/PRSformer
+  device: cuda
+  attention: neighborhood
+  epochs: 30
+  patience: 3
+  batch_size: 1
+  accumulation_steps: 64
+  chunk_variants: 32
+  max_ram_gib: 8.0
+  max_disk_gib: null
+  disk_reserve_gib: 2.0
+runtime:
+  gpu_queue: 2v100-32-e5       #deep GPU queue; override with --gpu-queue
+  plink: plink2
+  rscript: Rscript
+  threads: 8
+  plink_memory_mb: 8192

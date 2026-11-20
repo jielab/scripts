@@ -1,0 +1,17 @@
+PRS-CSx upstream: https://github.com/getian107/PRScsx
+Upstream documentation/license commit bdf5f30e5e5e9aa9f357ec31b4d0eca7d155e9a8.
+Computational implementation reused from jielab/scripts commit
+22f2537a72ed83ac960e110bd9a8dae04991e942, retrieved 2026-11-15.
+Recompared for the Nov16 release with current jielab/scripts commit
+4f83b6f25c058d841a40726eb3ac658888fe0203. Scientific computation matches;
+the local lock/path adaptation and reference-order assertions below are retained.
+MIT license is included. Retains the existing optimized set membership, blocked
+LD loading, float64 CPU/CUDA linear algebra, synchronized posterior writer,
+shared psi/phi updates and posterior inverse-variance meta combination.
+This revision removes the dependency on project-wide 0f path/lock modules from
+the vendor adapter; standard fcntl locks and GRID_RUNTIME_TMP are used instead.
+The new infer.py defaults to CPU and asks only for posterior mean weights.
+No posterior mean is called a raw GWAS beta; reference BP37 remains separate
+from actual target PVAR BP38 in the exported files.
+
+The reference parser additionally verifies LD block order and total retained SNP coverage before sampling; it does not reorder or alter the matrices.

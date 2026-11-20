@@ -1,0 +1,137 @@
+{
+  "steps": [
+    {
+      "name": "environment",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/install.sh",
+        "--check",
+        "--stage",
+        "all"
+      ]
+    },
+    {
+      "name": "hotspots",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "hotspots",
+        "--scan-dir",
+        "${ALLELE_SCAN_STORE}",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/hotspots",
+        "--with-atlas",
+        "TRUE",
+        "--atlas-resources",
+        "${ALLELE_ROOT}/config/alphagenome_resources.vcf.tsv",
+        "--grch",
+        "38"
+      ]
+    },
+    {
+      "name": "density",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "density",
+        "--scan-dir",
+        "${ALLELE_SCAN_STORE}",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/density",
+        "--grch",
+        "38"
+      ]
+    },
+    {
+      "name": "herv_enrichment",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "herv_enrichment",
+        "--ibdmix",
+        "FALSE",
+        "--scan-dir",
+        "${ALLELE_SCAN_STORE}",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/herv_enrichment",
+        "--metadata",
+        "${PCA3D_OUT}/tables/sample_metadata.tsv",
+        "--coordinates",
+        "${PCA3D_OUT}/coordinates/all.sscore",
+        "--basis-dir",
+        "${PCA3D_OUT}/basis",
+        "--grch",
+        "38"
+      ]
+    },
+    {
+      "name": "allele_time",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "base_occupancy",
+        "allele-time",
+        "--catalog",
+        "${ALLELE_ANALYSIS_ROOT}/hotspots/runtime/characterize/selection_catalog.tsv",
+        "--pgen-prefix",
+        "${DIR_GEN}/ancient/38/ancient",
+        "--metadata",
+        "${PCA3D_OUT}/tables/sample_metadata.tsv",
+        "--coordinates",
+        "${PCA3D_OUT}/coordinates/all.sscore",
+        "--basis-dir",
+        "${PCA3D_OUT}/basis",
+        "--hq-variants",
+        "${DIR_GEN}/ancient/files/HighQualityVariants.tsv",
+        "--fasta38",
+        "${DIR_GEN}/1hgp/38/GRCH38.fasta.gz",
+        "--fasta37",
+        "${DIR_GEN}/1hgp/37/GRCH37.fasta.gz",
+        "--chain38to37",
+        "${DIR_FILES}/liftOver/hg38ToHg19.over.chain.gz",
+        "--chain37to38",
+        "${DIR_FILES}/liftOver/hg19ToHg38.over.chain.gz",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/base_occupancy/allele_time",
+        "--grch",
+        "38"
+      ]
+    },
+    {
+      "name": "space",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "base_occupancy",
+        "space",
+        "--time-dir",
+        "${ALLELE_ANALYSIS_ROOT}/base_occupancy/allele_time",
+        "--pgen-prefix",
+        "${DIR_GEN}/ancient/38/ancient",
+        "--metadata",
+        "${PCA3D_OUT}/tables/sample_metadata.tsv",
+        "--coordinates",
+        "${PCA3D_OUT}/coordinates/all.sscore",
+        "--basis-dir",
+        "${PCA3D_OUT}/basis",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/base_occupancy/space",
+        "--grch",
+        "38"
+      ]
+    },
+    {
+      "name": "base_simulation",
+      "argv": [
+        "bash",
+        "${ALLELE_ROOT}/allele3.sh",
+        "base_simulation",
+        "--out",
+        "${ALLELE_ANALYSIS_ROOT}/base_simulation",
+        "--plot",
+        "--grch",
+        "38"
+      ]
+    }
+  ]
+}

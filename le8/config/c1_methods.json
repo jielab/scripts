@@ -1,0 +1,13 @@
+{
+  "version": "LE8-C1-CVD-2026-11-16",
+  "description": "Five CPU models plus exploratory abm_deep on GPU; one frozen glmnet-anchored selector across methods",
+  "methods": [
+    "clinical",
+    "glmnet",
+    "lightgbm",
+    "abm",
+    "abm_clinical",
+    "abm_deep"
+  ],
+  "overrides": {}
+}

@@ -1,0 +1,59 @@
+Diet offline runtime
+
+Runtime code does not download data or install packages. install.sh is check-only.
+./diet.sh all checks required offline pathway/STRING/surface files before analysis.
+The scoring entry and all existing scoring data remain separate.
+
+CPU budget
+  Defaults come only from 0f/0os.sh / WORKFLOW_CORES; bounded by LSF allocation.
+  --cores overrides the budget (--jobs is a compatibility alias).
+  ./diet.sh all
+  ./diet.sh all --submit hpc --cores 40
+  R model workers use one BLAS/OpenMP thread each. Independent protein screening
+  and mediation models run in parallel on Linux/WSL/HPC. Windows R uses serial fallback.
+  ML uses the budget for model training/SHAP; LASSO parallelizes inner CV folds.
+  Sequential stages and I/O cannot occupy every core continuously.
+
+Local reference root: DOSE_FILES_DIR (normally /mnt/d/files/diet locally).
+
+1. GMT libraries: DOSE_GMT_DIR, default <reference root>/pathways
+   GO_Biological_Process_YYYY.gmt
+   Reactome_YYYY.gmt
+   KEGG_YYYY_Human.gmt
+   WikiPathway_YYYY_Human.gmt or WikiPathways_YYYY_Human.gmt
+   Each tab-delimited GMT row: term, description, gene symbols (one per field).
+   Gene symbols are normalized to uppercase; duplicates within a term are removed.
+   Duplicate term names and empty terms are rejected.
+   Analysis: upper-tail hypergeometric test; background = all annotated genes in
+   each library; query restricted to that background. BH correction includes all
+   terms per library and per query. This is NOT Enrichr's online default background.
+   Output records the background size, unmapped query count, local path and MD5.
+   Existing preferences for library years are retained; otherwise latest filename.
+
+2. STRING v12.0: DOSE_STRING_DIR, default <reference root>/STRING_network
+   9606.protein.info.v12.0.txt.gz
+   9606.protein.aliases.v12.0.txt.gz
+   9606.protein.links.v12.0.txt.gz
+   Complete human reference files, prepared separately from the analysis runtime.
+   Preferred gene names are matched first; unique aliases are fallback matches.
+   Ambiguous matches fail explicitly. All candidates remain in the displayed graph,
+   including unmapped/isolated nodes. Edges use combined score >0.4 by default.
+   Offline connectivity test: 1,000 uniformly sampled protein sets of the same
+   mapped size from the local reference, seed 12345, p=(1+exceedances)/1001.
+   This permutation test is distinct from the online STRING API enrichment test;
+   it is not a test using the measured protein-panel background.
+   Input reference paths/hashes and the test method are recorded with outputs.
+   Source URLs, retrieval timestamps and SHA256 are stored beside downloaded files.
+
+3. MRI surfaces: DOSE_FSAVERAGE_DIR, otherwise <reference root>/fsaverage5,
+   otherwise the fsaverage5 data bundled with preinstalled nilearn.
+   Required: pial_left/right.gii.gz, infl_left/right.gii.gz, white_left/right.gii.gz.
+   MRI volume/tract atlases retain DOSE_MRI_ATLAS_DIR and existing local defaults.
+   No fetch/download fallback exists.
+
+4. MAHA geography uses countries50 from preinstalled rnaturalearthdata, with local
+   participant spatial cells. Online street tiles/administrative-layer requests
+   have been removed; the figure no longer contains OSM street-map backgrounds.
+
+Reference files are prepared separately with explicit authorization. The analysis
+entry never invokes a downloader.

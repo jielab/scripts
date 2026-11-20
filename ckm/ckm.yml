@@ -1,0 +1,9 @@
+name: ckm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - r-base=4.5
+  - r-data.table>=1.16
+  - r-survival>=3.7
+  - r-jsonlite>=1.8

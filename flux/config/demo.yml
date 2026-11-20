@@ -1,0 +1,43 @@
+# Small synthetic end-to-end run; results are not scientific validation.
+data:
+  min_token_count: 2
+  min_feature_count: 2
+  max_nodes: 24
+  min_clinical_days: 3
+model:
+  deterministic_dim: 24
+  stochastic_dim: 8
+  embedding_dim: 24
+  context_hidden_dim: 16
+  age_dim: 8
+  hidden_dim: 32
+  dropout: 0.0
+  max_ode_step_years: 3.0
+train:
+  batch_size: 16
+  accumulation_steps: 1
+  epochs: 3
+  max_steps: 12
+  validate_every: 4
+  validation_batches: 3
+  workers: 0
+readout:
+  hidden_dims: [32, 16]
+  batch_size: 64
+  state_batch_size: 16
+  epochs: 4
+  min_cases: 2
+  patience: 3
+baseline:
+  methods: [logistic, histgb, cox]
+  max_numeric_features: 10
+  min_cases: 2
+  max_iter: 40
+rollout:
+  particles: 2
+  batch_size: 16
+  horizons: [1, 5, 10]
+  max_events: 32
+  calibration_batches: 3
+resources:
+  cores: 2

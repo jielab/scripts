@@ -1,0 +1,50 @@
+{
+  "version": "LE8-C1-common-selector-2026-11-16-v1",
+  "study_status": "CVD_exploratory_rerun",
+  "traits": [
+    "cvd_cad",
+    "stroke"
+  ],
+  "layers": [
+    "prot",
+    "met"
+  ],
+  "primary_risk_model": "glmnet",
+  "primary_selector": "P1_incident_support",
+  "selector_target": "risk-residual Brier error of frozen glmnet",
+  "selector_fit_role": "tune_gate",
+  "selection_threshold_role": "calibration_fit features only",
+  "same_selector_across_all_models": true,
+  "primary_contrast": "P1_incident_support_minus_P0_risk_only",
+  "control_selectors": [
+    "P0_risk_only",
+    "raw_count_support",
+    "low_risk",
+    "confidence",
+    "random"
+  ],
+  "primary_coverage": 0.5,
+  "coverage_grid": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "risk_bins": 10,
+  "sensitivity_risk_bins": 50,
+  "primary_metrics": [
+    "risk_standardized_Brier_at_50pct",
+    "risk_standardized_LogLoss_at_50pct",
+    "IPCW_Brier_AURC",
+    "IPCW_LogLoss_AURC"
+  ],
+  "bootstrap_unit": "family",
+  "bootstrap": 1000,
+  "no_test_tuning": true,
+  "test_provenance": "previously_inspected_or_unverified_exploratory",
+  "interpretation": "Conditional prediction-error heterogeneity of a fixed model; not intrinsic certainty about an individual future outcome"
+}
