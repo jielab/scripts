@@ -25,6 +25,7 @@ p = argparse.ArgumentParser()
 p.add_argument("entry", choices=["flt.sh","flt.paper.sh"])
 p.add_argument("stage")
 p.add_argument("--dry-run", action="store_true")
+p.add_argument("--check-inputs", action="store_true", help="Validate external inputs only; do not run or submit")
 p.add_argument("--dir-output")
 p.add_argument("--cores", type=int)
 p.add_argument("--plan-only", "--write-cmd", action="store_true")
@@ -38,6 +39,16 @@ names = list(stages) if a.stage == "run" else [a.stage]
 if not all(s in stages for s in names):
     p.error(f"Unknown module {a.stage}")
 code = Path(os.environ["FLT_CODE"])
+if a.check_inputs or not (a.dry_run or a.plan_only):
+    from external_inputs import check_inputs
+    errors, notes = check_inputs(names)
+    for note in notes:
+        print(note, flush=True)
+    if errors:
+        sys.exit("External input check failed:\n  " + "\n  ".join(errors))
+    if a.check_inputs:
+        print("External input check passed (analysis outputs and runtime packages are not checked).")
+        sys.exit(0)
 if not a.dry_run and (a.plan_only or os.getenv("WORKFLOW_WORKER") != "1"):
     sys.path.insert(0,os.environ["FLT_SHARED"])
     from workflow_jobs import Job, resolve_mode, run_plan, write_plan

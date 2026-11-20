@@ -18,7 +18,7 @@ library(data.table)
 project <- Sys.getenv("FLT_OUT")
 infile <- file.path(Sys.getenv("FLT_FUMA_DIR"), "leadSNPs.txt")
 outdir <- file.path(project, "03phewas")
-atlas_dir <- file.path(outdir, "GWAS_Atlas")
+atlas_dir <- Sys.getenv("FLT_ATLAS_DIR", file.path(outdir, "GWAS_Atlas"))
 query_online <- tolower(Sys.getenv("FLT_PHEWAS_ONLINE", "true")) == "true"    # 默认直接查询；FALSE 只读取已有缓存和 Atlas 文件
 refresh <- FALSE        # TRUE 重新查询 SNP；Catalog 仍使用本地已有下载文件
 run_opengwas <- TRUE

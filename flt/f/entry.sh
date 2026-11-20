@@ -40,5 +40,8 @@ for ((i=0;i<${#args[@]};i++)); do
 done
 FLT_OUT=$("$FLT_PYTHON" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$FLT_OUT")
 export FLT_PREP="$FLT_OUT/00data/prepared" FLT_SMR_INPUT="$FLT_OUT/04smr/input"
-export FLT_FUMA_DIR="${FLT_FUMA_DIR:-$FLT_OUT/03placo/FUMA_job787285}"
+export FLT_EXTERNAL_ROOT="${FLT_EXTERNAL_ROOT:-$DIR_FILES/flt}"
+export FLT_FUMA_DIR="${FLT_FUMA_DIR:-$FLT_EXTERNAL_ROOT/FUMA_job787285}"
+export FLT_ATLAS_DIR="${FLT_ATLAS_DIR:-$FLT_EXTERNAL_ROOT/GWAS_Atlas}"
+export FLT_METASCAPE_RESULTS="${FLT_METASCAPE_RESULTS:-$FLT_EXTERNAL_ROOT/metascape/Enrichment_GO/_FINAL_GO.csv}"
 exec "$FLT_PYTHON" "$FLT_CODE/workflow.py" "$(basename -- "$entry")" "$@"

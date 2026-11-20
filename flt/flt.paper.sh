@@ -24,9 +24,13 @@ Options:
   --dir-jobs DIR                  Directory for generated commands and plans.
   --plan-only                     Write a plan without executing or submitting.
   --dry-run                       Print scientific commands without executing.
+  --check-inputs                  Check external files only; do not run or submit.
   -h, --help                      Show this help.
 
 Environment:
+  FLT_EXTERNAL_ROOT              External resources [DIR_FILES/flt].
+  FLT_ATLAS_DIR                  GWAS Atlas rsID.csv directory.
+  FLT_METASCAPE_RESULTS           Native Metascape Enrichment_GO/_FINAL_GO.csv.
   FLT_RSCRIPT, FLT_PYTHON         Override scientific interpreters.
   FLT_FUMA_DIR                    FUMA return directory for genetic figures.
   Shared scripts/0f selects local/HPC paths; keep diet/ beside flt/ and 0f/.
@@ -34,6 +38,7 @@ Environment:
 
 Examples:
   ./flt.paper.sh run
+  ./flt.paper.sh run --check-inputs
   ./flt.paper.sh run --plan-only
   ./flt.paper.sh fig1 --submit local --dry-run
   ./flt.paper.sh run --submit hpc --queue 33 --cores 40 --wait TRUE
