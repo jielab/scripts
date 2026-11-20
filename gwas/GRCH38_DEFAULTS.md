@@ -12,10 +12,10 @@ Consensus: `${DIR_LD}/38/consensus/`，已复制验证过的 GRCh38 BED 目录�
 ./2.csx.sh --grch 38
 ./3.disco.sh --grch 38
 ./4.prsformer.sh --grch 38
-./grid.sh --grch 38
+./grid.sh run --grch 38
 ```
 
-依次等待上一个独立入口的任务成功后再提交下一个。`grid.sh all --grch 38` 与最后一条等价；GRID 不自动运行前四个入口。
+依次等待上一个独立入口的任务成功后再提交下一个。GRID 不自动运行前四个入口。
 
 allele3 新任务默认输出 `${ANALYSIS_ROOT}/allele3/38/`。
 古代 PCA 数据产品仍在 `${DIR_GEN}/ancient/38/pca3d/`，UKB 投影在 `ukb/38/allele3/`。
@@ -25,7 +25,7 @@ allele3 新任务默认输出 `${ANALYSIS_ROOT}/allele3/38/`。
 ./2.herv_scan.sh --grch 38
 ./3.allele3_scan.sh --grch 38
 ./4.avi_scan.sh --grch 38
-./allele3.sh --grch 38
+./allele3.sh run --grch 38
 ```
 
 现有扫描作业继续写入原路径，没有停止或重新提交。新版本不会把未完成的旧结果认作已完成的新版输入。

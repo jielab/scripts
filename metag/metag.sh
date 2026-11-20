@@ -15,7 +15,7 @@ Modules:
   Publication                     Use ./metag.paper.sh for evaluate and report.
 
 Options:
-  --index-use optimized|legacy|fullIndex profile [optimized].
+  --index-use optimized|legacy|full  Index profile [optimized].
                                   optimized: compact lib/group/optimized screening;
                                   legacy: preserved old group index;
                                   full: complete union, expensive random I/O.

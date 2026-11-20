@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./flux.sh  # 默认完整分析流程
-./flux.sh MODULE  # all|prepare|train|readout|evaluate|baseline|report|demo|rollout|ablate
-./flux.sh --config config/flux.yml --device gpu
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+FLUX: HealthFlux model training and evaluation.
 
-Usage: ./flux.sh [prepare|train|readout|evaluate|baseline|report|all|demo|rollout|ablate] [OPTIONS]
-  --config FILE                 YAML overrides [config/flux.yml]
-  --machine auto|local|hpc       Execution machine [hpc]
-  --device auto|cpu|gpu          Processor [gpu]
-  --dir-ukb DIR --dir-out DIR    Input and output roots
-  --cores N --gpus N             Worker resources
-  --from-stage STAGE            all: use completed upstream outputs and start here
-  --resume --replace            Resume training / rebuild selected outputs
-  --plan-only                   Write commands without analysis/submission
+Usage:
+  ./flux.sh run|MODULE [options]
+
+Modules:
+  run                              Run the configured analysis stages in order.
+  prepare | train | readout        Prepare inputs, train or extract model readouts.
+  evaluate | baseline | report     Evaluate models, baselines or reports.
+  demo | rollout | ablate          Run the selected experiment.
+
+Options:
+  -h, --help                       Show this help.
 
 Examples:
-    ./flux.sh
-    ./flux.sh demo --machine local --device cpu
+  ./flux.sh run --plan-only
+  ./flux.sh demo --machine local --device cpu
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- all "$@"; fi
 # HealthFlux independent reproduction. All analysis code lives in f/.
 set -euo pipefail
 usage() {

@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
---grch 38  Target build [38]; new analysis output: ANALYSIS_ROOT/allele3/38/
-./1.ancient_pca.sh --grch 38 # 计算默认 PCA
-./1.ancient_pca.sh MODULE --grch 38 # pca|study|render|stability|drivers
-./1.ancient_pca.sh --replace FALSE --pca-threads 4 --grch 38
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: ancient PCA and sensitivity analyses.
 
-Usage: ./1.ancient_pca.sh [pca|study|render|stability|drivers] [OPTIONS]
-No action: compute PCA from the prepared ancient/38/ancient.p* panel.
-  study                 PCA sensitivity experiments after input preparation
-  --pca-threads N --pca-memory-mb N --out DIR
-  --replace FALSE|TRUE   Reuse completed matching work [FALSE]
-  --plan-only           Inspect without submitting
-  --queue NAME --job-hours N
-  --help-full           All engine options
-HPC is detected automatically. Job name: allele3.ancient_pca
+Usage:
+  ./1.ancient_pca.sh run|MODULE [options]
+
+Modules:
+  run | pca                        Compute PCA from the prepared ancient panel.
+  study | stability | drivers      Run PCA sensitivity analyses.
+  render                           Render completed PCA results.
+
+Options:
+  --out DIR                        Required PCA output directory.
+  --pca-threads N                  PCA worker threads.
+  --pca-memory-mb N                PCA memory budget.
+  --grch 37|38                     Genome build [38].
+  --submit auto|local|hpc          Execution mode [auto].
+  --queue NAME --cores N           Queue and CPU budget from shared 0f settings.
+  --job-hours N                    Maximum job duration.
+  --replace TRUE|FALSE             Recompute or reuse completed outputs [FALSE].
+  --plan-only                      Write commands without running or submitting.
+  --help-full                      Show all engine options.
+  -h, --help                       Show this help.
+
+Examples:
+  ./1.ancient_pca.sh run --grch 38 --out PCA_DIR --plan-only
+  ./1.ancient_pca.sh study --grch 38 --help-full
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Standalone fixed-basis PCA and PC1/PC2/age visualization.
 set -euo pipefail

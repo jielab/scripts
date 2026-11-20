@@ -1,32 +1,36 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：按当前配置安装/更新依赖
-./install.sh OPTION  # 可选：--check；其他安装选项见下文
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GU: install or check software and references.
+
+Usage:
+  ./install.sh run [options]
 
 Modules:
-    Default  Install GU software and environment
-    --arg  Install Threads and SINGER environments
+  run                              Install the configured GU software environment.
 
-Main options:
-    --ibdmix-run cpu|gpu|auto  Build the optional CUDA caller when gpu is selected [cpu]
-    --check  Check GU software
-    --check-ibdmix  Check only the CPU IBDmix runtime (no installation)
-    --check-references  Check reference inputs
-    --dir-software DIR  Software installation root (see f/runtime.env)
-    -h, --help  Show options and examples below
+Options:
+  --arg                            Install independent ARG environments.
+  --ibdmix-run cpu|gpu|auto        Build the optional CUDA caller when gpu is selected [cpu]
+  --check                          Check GU software
+  --check-ibdmix                   Check only the CPU IBDmix runtime (no installation)
+  --check-references               Check reference inputs
+  --dir-software DIR               Software installation root (see f/runtime.env)
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --check
-    ./install.sh
-    # Optional independent ARG environments.
-    ./install.sh --arg
+  ./install.sh run
+  ./install.sh --check
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Conda activate/deactivate hooks in common geospatial packages are not nounset-safe.
 set -eo pipefail

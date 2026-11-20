@@ -1,0 +1,7 @@
+Specification	Domains	Construction	Native range	Completeness
+UK Biobank primary	9	Absolute 0-10 component functions, summed	0-90 nominal	At least 5 of 9. Sum available components without rescaling.
+NHANES / CHNS primary	9	Tie-safe cohort quintiles scored 0, 2.5, 5, 7.5 or 10, averaged across components	0-10	At least 6 of 9.
+UK Biobank balanced / strict	9	Alternative bounded or tighter continuous targets, retaining alcohol	0-90 nominal	At least 5 of 9.
+NHANES / CHNS balanced / strict	8	Balanced omits alcohol. Strict omits protein and dairy and adds low red/processed meat.	0-10	At least 5 of 8.
+No dairy	8	Primary score without dairy. UK Biobank sum multiplied by 9/8.	Cohort specific	UK Biobank at least 4. NHANES / CHNS at least 5.
+No protein	8	Primary score without protein. UK Biobank sum multiplied by 9/8.	Cohort specific	UK Biobank at least 4. NHANES / CHNS at least 5.

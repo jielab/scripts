@@ -48,7 +48,6 @@ Options:
   --walltime HH:MM                HPC time limit [144:00].
   --foreground TRUE|FALSE         Foreground execution [TRUE].
   --replace TRUE|FALSE            Rebuild / reuse complete outputs [TRUE].
-  --auto-final TRUE|FALSE         Aggregate method outputs after workers [FALSE].
   --plan-only                     IBDmix cohort command preview without bsub.
   -h, --help                      Show this help.
 
@@ -1390,7 +1389,7 @@ PYKEY
 	if [[ $METHOD == trace ]]; then
 		trace_precheck_chrs=${GU_CHRS:-"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X"}
 		[[ -d $GU_ARG_DIR ]] || {
-			echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; build it with arg.sh build" >&2
+			echo "ERROR: TRACE ARG directory is missing: $GU_ARG_DIR; build it with 1.arg.sh build" >&2
 			exit 2
 		}
 		if [[ " $trace_precheck_chrs " == *" X "* && -s ${GU_TARGET_GEN_PREFIX}X.male.psam && -s $GU_ARG_DIR/chrX.sample_map.tsv ]]; then
@@ -1415,7 +1414,7 @@ PYKEY
 		for c in $trace_precheck_chrs; do
 			if ! find -L "$GU_ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print 2>/dev/null |
 				awk -v c="$c" 'BEGIN{IGNORECASE=1;found=0}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)")||b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))found=1}END{exit !found}'; then
-				echo "ERROR: TRACE requires a TRACE-format full-chromosome ARG for chr$c under $GU_ARG_DIR; build it with arg.sh build (add --format trace for needle)" >&2
+				echo "ERROR: TRACE requires a TRACE-format full-chromosome ARG for chr$c under $GU_ARG_DIR; build it with 1.arg.sh build (add --format trace for needle)" >&2
 				exit 2
 			fi
 		done

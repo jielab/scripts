@@ -5,11 +5,10 @@ usage() {
 CKM: independent clinical phenotype and phenotype-only HTML.
 
 Usage:
-  ./1.phe.sh [options]
+  ./1.phe.sh run [options]
 
 Modules:
-  phenotype                       Build ckm.rds and the phenotype-only report.
-                                  This entry accepts options directly, with no module token.
+  run                             Build ckm.rds and the phenotype-only report.
 
 Options:
   --config FILE                   Model/staging configuration [config/ckm.json].
@@ -35,11 +34,16 @@ Options:
   -h, --help                      Show this help.
 
 Examples:
-  ./1.phe.sh --config config/ckm.json --plan-only
-  ./1.phe.sh --phenotype-dir /work/sph-huangj/phe/ukb --out-dir /work/sph-huangj/analysis/ckm --submit hpc --queue 33 --cores 40
-  ./1.phe.sh --stage3-method PREVENT --definition aha2026 --submit local
+  ./1.phe.sh run --config config/ckm.json --plan-only
+  ./1.phe.sh run --phenotype-dir /work/sph-huangj/phe/ukb --out-dir /work/sph-huangj/analysis/ckm --submit hpc --queue 33 --cores 40
+  ./1.phe.sh run --stage3-method PREVENT --definition aha2026 --submit local
 HELP
 }
+case "${1:-}" in
+    ""|-h|--help|help) usage; exit 0 ;;
+    all) echo "Use run; see -h." >&2; exit 2 ;;
+    run) ;;
+esac
 for arg in "$@"; do
     case "$arg" in -h|--help|help) usage; exit 0 ;; esac
 done
@@ -61,6 +65,7 @@ while (($#)); do
 done
 project_workflow_init "${ckm_args[@]}"
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 
 set -- phe "$@"

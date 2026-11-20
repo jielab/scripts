@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./00_run_pfi_after08_auto.sh  # 执行本阶段的默认流程，所需上游数据须已准备
-./pfi.sh MODULE  # 通过主入口选择阶段，完整模块见 ./pfi.sh -h
-./00_run_pfi_after08_auto.sh --plan-only  # 查看当前阶段的调度命令
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: Run the post-feature workflow.
+
+Usage:
+  ./00_run_pfi_after08_auto.sh run [options]
 
 Modules:
-    Default  Run the post-feature workflow
+  run                              Run the post-feature workflow.
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    ANALYSIS_ROOT / RAW_ROOT  Results/raw data roots
-    PFI_PYTHON_BIN / PFI_RSCRIPT_BIN  Interpreters
-    Defaults: conf/pfi_paths.sh; workflow order: ./pfi.sh -h
-    -h, --help  Show help
+Options:
+  --submit auto|local|hpc          Execution mode [auto].
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  -h, --help                       Show this help.
 
 Examples:
-    ./00_run_pfi_after08_auto.sh
+  ./00_run_pfi_after08_auto.sh run --plan-only
+  ./00_run_pfi_after08_auto.sh run
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -39,6 +42,7 @@ unset _paths_directory
 source "$SCRIPTS_ROOT/0f/project_entry.sh"
 project_workflow_init "$@" || exit $?
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -90,18 +94,18 @@ fi
 # Features are needed for review sampling and pseudo labels.
 if [[ ! -e "$PFI_ARTICLE_FEATURES" ]]; then
 	echo "INFO: article features are missing; running 08_extract_basic_features.sh"
-	bash "$PFI_ROOT/08_extract_basic_features.sh"
+	bash "$PFI_ROOT/08_extract_basic_features.sh" run
 fi
 
-bash "$PFI_ROOT/08b_normalize_journal_rank.sh" "${1:-}"
-bash "$PFI_ROOT/09a_make_pfi_review_inputs.sh"
-bash "$PFI_ROOT/09a_auto_score_pfi_review_dataset.sh"
-bash "$PFI_ROOT/09a_prepare_pfi_training_dataset.sh" "$PFI_JOURNAL_RANK_NORMALIZED" "$PFI_PAPER_SCORE_REVIEW_PSEUDO"
-bash "$PFI_ROOT/09b_train_pubmedbert_pfi_model.sh"
-bash "$PFI_ROOT/09c_predict_pubmedbert_pfi.sh"
-bash "$PFI_ROOT/09d_compute_pfi_index.sh" "$PFI_JOURNAL_RANK_NORMALIZED"
-bash "$PFI_ROOT/10_run_pfi_analysis_R.sh"
-bash "$PFI_ROOT/12_audit_strong_outliers.sh"
+bash "$PFI_ROOT/08b_normalize_journal_rank.sh" run "${1:-}"
+bash "$PFI_ROOT/09a_make_pfi_review_inputs.sh" run
+bash "$PFI_ROOT/09a_auto_score_pfi_review_dataset.sh" run
+bash "$PFI_ROOT/09a_prepare_pfi_training_dataset.sh" run "$PFI_JOURNAL_RANK_NORMALIZED" "$PFI_PAPER_SCORE_REVIEW_PSEUDO"
+bash "$PFI_ROOT/09b_train_pubmedbert_pfi_model.sh" run
+bash "$PFI_ROOT/09c_predict_pubmedbert_pfi.sh" run
+bash "$PFI_ROOT/09d_compute_pfi_index.sh" run "$PFI_JOURNAL_RANK_NORMALIZED"
+bash "$PFI_ROOT/10_run_pfi_analysis_R.sh" run
+bash "$PFI_ROOT/12_audit_strong_outliers.sh" run
 
 echo "===== 00_run_pfi_after08_auto.sh finished at $(date -Is) ====="
 echo "Main outputs:"

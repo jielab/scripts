@@ -90,6 +90,40 @@ def phenotype_values(raw, traits, cfg):
         result[trait] = y
     return result, definitions
 
+def extend_traits(cfg, root, traits):
+    """Add outcomes only after the driver verifies the frozen cohort receipt."""
+    out=Path(root)/"tmp/cohort"
+    d=identified(read_table(out/"participants.tsv.gz"),"frozen cohort")
+    check_roles(d)
+    inputs=cfg["inputs"];opts=cfg["cohort"]
+    source=inputs.get("cohort_file") or inputs["phenotype_file"]
+    selected={"id","eid","IID","#IID","ID_2","height","bb_Ht","ldl","bb_LDL",
+              "t2dm.Yr2e","t2dm.Yt2e","date_attend","date_lost","date_death","birth_date",
+              "fod_icd10_t2dm","cnt_icd10_t2dm",*opts.get("phenotype_columns",{}).values()}
+    raw=identified(read_table(source,sorted(selected)),"phenotype/cohort")
+    outcomes,definitions=phenotype_values(raw,traits,opts)
+    dev=~d.role.eq("test")
+    pending=[]
+    for trait in traits:
+        y=aligned(outcomes[["id",trait]].rename(columns={trait:"y"}),d.id,"outcome")
+        for table,path in ((y.loc[dev],out/f"{trait}.development.tsv.gz"),
+                           (y.loc[~dev],out/"_private"/f"{trait}.test.tsv.gz")):
+            if path.exists():
+                existing=read_table(path)
+                existing["y"]=pd.to_numeric(existing["y"],errors="raise")
+                try:
+                    pd.testing.assert_frame_equal(existing.reset_index(drop=True),table.reset_index(drop=True),check_dtype=False)
+                except AssertionError as exc:
+                    raise ValueError(f"Existing phenotype labels differ: {path}") from exc
+            else:pending.append((table,path))
+    # Validate every existing label before publishing any missing output.
+    for table,path in pending:atomic_table(table,path)
+    import json
+    metadata=json.loads((out/"cohort.json").read_text())
+    metadata.setdefault("phenotype_definitions",{}).update(definitions)
+    atomic_json(metadata,out/"cohort.json")
+
+
 def prepare(cfg, root, traits):
     root = Path(root); out = root / "tmp/cohort"; inputs = cfg["inputs"]; opts = cfg["cohort"]
     cov = cfg["benchmark"]["covariates"]

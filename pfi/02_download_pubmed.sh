@@ -1,27 +1,33 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./02_download_pubmed.sh  # 执行本阶段的默认流程，所需上游数据须已准备
-./pfi.sh MODULE  # 通过主入口选择阶段，完整模块见 ./pfi.sh -h
-./02_download_pubmed.sh --plan-only  # 查看当前阶段的调度命令
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: Download PubMed baseline and update files.
+
+Usage:
+  ./02_download_pubmed.sh run [options]
 
 Modules:
-    Default  Download PubMed baseline and update files
+  run                              Download PubMed baseline and update files.
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    --download-tool NAME  Download backend
-    --concurrent-downloads N --connections-per-server N  Download limits
-    -h, --help  Show options and examples below
+Options:
+  --submit auto|local|hpc          Execution mode [auto].
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  --download-tool NAME             Download backend
+  --concurrent-downloads N --connections-per-server N Download limits
+  -h, --help                       Show this help.
 
 Examples:
-    ./02_download_pubmed.sh --download-tool aria2 --concurrent-downloads 2 --connections-per-server 1
+  ./02_download_pubmed.sh run --plan-only
+  ./02_download_pubmed.sh run
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -38,6 +44,7 @@ unset _paths_directory
 source "$SCRIPTS_ROOT/0f/project_entry.sh"
 project_workflow_init "$@" || exit $?
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

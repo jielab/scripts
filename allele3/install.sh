@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：按当前配置安装/更新依赖
-./install.sh OPTION  # 可选：--check；其他安装选项见下文
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: prepare or check the analysis environment.
 
-Usage: ./install.sh [--check [--stage render|trajectory|project|baseline|time|scan|herv|all] [--python FILE]]
+Usage:
+  ./install.sh run [options]
 
---check validates dependencies; on HPC login it submits a check job. Verify its final status.
-Without --check, this command creates or updates the Conda environment.
-    --submit hpc selects server paths; installation itself is not automatically submitted.
-    Analysis entries detect HPC automatically. Confirm the checks pass before analysis.
+Modules:
+  run                              Create or update the Conda environment.
+
+Options:
+  --check                          Validate dependencies; submits a check job on HPC.
+  --stage NAME                     Check render, trajectory, project, baseline, time, scan, herv or all.
+  --python FILE                    Interpreter for dependency checks.
+  --submit auto|local|hpc          Execution environment [auto].
+  -h, --help                       Show this help.
 
 Examples:
-    # Check the existing environment on Qiming.
-    ./install.sh --submit hpc --check --stage all
-
-    # Install or update the environment when needed.
-    ./install.sh --submit hpc
+  ./install.sh run
+  ./install.sh --check
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$ROOT/../0f/0os.sh"

@@ -1,52 +1,44 @@
 #!/usr/bin/env bash
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
+# Public help returns before runtime setup, input access or job submission.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- all
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- all "$@"
-    fi
-fi
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: publication data preparation, scoring and index analysis.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./pfi.sh  # 默认 all：准备数据和审阅输入；训练仍需完成审阅
-./pfi.sh MODULE  # all|after08|download-pubmed|parse-pubmed|download-pmc|parse-pmc|build-master|make-blinded|features|normalize-rank|review-inputs|auto-score|prepare-training|train|predict|compute|analysis|sample-llm|audit
-./pfi.sh --pred-sample-rows 1000000  # 0 表示全部；journal rank 仍需真实数据
+Usage:
+  ./pfi.sh run|MODULE [options]
 
 Modules:
-    all  Prepare data and review inputs
-    prepare-training / train / predict  Model workflow; requires completed review scores
-    compute / analysis / audit  Index, analysis and validation
+  run                              Prepare data and review inputs; training requires completed review scores.
+  after08                          Continue from prepared master data and blinded text.
+  download-pubmed | parse-pubmed   Download or parse PubMed records.
+  download-pmc | parse-pmc         Download or parse PMC records.
+  build-master | make-blinded | features Prepare the article dataset and features.
+  normalize-rank | review-inputs | auto-score Prepare ranks and review scores.
+  prepare-training | train | predict Prepare training data, train or predict.
+  compute | analysis | sample-llm | audit Compute the index, analyze, sample or audit.
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    --job-gpus N  Explicit GPU allocation for train/predict only [0]
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    --dir-analysis-root DIR  Results [${ANALYSIS_ROOT}/pfi]
-    --dir-raw-root DIR       Raw data [${DIR_BIG}/pfi]
-    --journal-rank FILE  Real journal rank data
-    --pred-sample-rows N Prediction sample size [1000000]; 0 for all
-    --python FILE --rscript FILE  Interpreters
-    -h, --help           Show options and examples below
+Options:
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  --job-gpus N                     Explicit GPU allocation for train/predict only [0]
+  --dir-analysis-root DIR          Results [${ANALYSIS_ROOT}/pfi]
+  --dir-raw-root DIR               Raw data [${DIR_BIG}/pfi]
+  --journal-rank FILE              Real journal rank data
+  --pred-sample-rows N Prediction sample size [1000000]; 0 for all 
+  --python FILE --rscript FILE     Interpreters
+  -h, --help                       Show this help.
 
 Examples:
-    ./pfi.sh all --journal-rank journal_rank_real.csv --plan-only
-    ./pfi.sh all --journal-rank journal_rank_real.csv
-    # After review scores are complete, run stages in order and wait for each.
-    ./pfi.sh prepare-training
-    ./pfi.sh train
-    # Optional HPC GPU (verified available queue):
-    bash pfi.sh train --job-gpus 1 --queue 2v100-32-sc
-    ./pfi.sh predict --pred-sample-rows 0
-    ./pfi.sh compute
-    ./pfi.sh analysis
-    ./pfi.sh audit
+  ./pfi.sh run --journal-rank journal_rank_real.csv --plan-only
+  ./pfi.sh prepare-training
+  ./pfi.sh train --job-gpus 1 --queue 2v100-32-sc
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -204,24 +196,24 @@ export PFI_PRED_LIMIT=$pred_limit PFI_PRED_FRESH_SAMPLE=$pred_fresh_sample
 
 cd "$SCRIPT_DIR"
 case "$command_name" in
-	all) bash ./00_run_pfi_all.sh "$journal_rank" ;;
-	after08) bash ./00_run_pfi_after08_auto.sh "$journal_rank" ;;
-	download-pubmed) bash ./02_download_pubmed.sh --analysis-root "$analysis_root" --raw-root "$raw_root" --python "$python_bin" --test-mode "$([[ $test_mode == 1 ]] && echo TRUE || echo FALSE)" ;;
-	parse-pubmed) bash ./03_parse_pubmed.sh ;;
-	download-pmc) bash ./04_download_pmc_oa_bulk_xml.sh ;;
-	parse-pmc) bash ./05_parse_pmc_oa_bulk_xml.sh ;;
-	build-master) bash ./06_build_master_dataset.sh ;;
-	make-blinded) bash ./07_make_blinded_text.sh ;;
-	features) bash ./08_extract_basic_features.sh ;;
-	normalize-rank) bash ./08b_normalize_journal_rank.sh "$journal_rank" ;;
-	review-inputs) bash ./09a_make_pfi_review_inputs.sh ;;
-	auto-score) bash ./09a_auto_score_pfi_review_dataset.sh ;;
-	prepare-training) bash ./09a_prepare_pfi_training_dataset.sh ;;
-	train) bash ./09b_train_pubmedbert_pfi_model.sh ;;
-	predict) bash ./09c_predict_pubmedbert_pfi.sh ;;
-	compute) bash ./09d_compute_pfi_index.sh ;;
-	analysis) bash ./10_run_pfi_analysis_R.sh ;;
-	sample-llm) bash ./11_sample_llm_review_batch.sh "$sample_rows" ;;
-	audit) bash ./12_audit_strong_outliers.sh ;;
+	run) bash ./00_run_pfi_all.sh run "$journal_rank" ;;
+	after08) bash ./00_run_pfi_after08_auto.sh run "$journal_rank" ;;
+	download-pubmed) bash ./02_download_pubmed.sh run --analysis-root "$analysis_root" --raw-root "$raw_root" --python "$python_bin" --test-mode "$([[ $test_mode == 1 ]] && echo TRUE || echo FALSE)" ;;
+	parse-pubmed) bash ./03_parse_pubmed.sh run ;;
+	download-pmc) bash ./04_download_pmc_oa_bulk_xml.sh run ;;
+	parse-pmc) bash ./05_parse_pmc_oa_bulk_xml.sh run ;;
+	build-master) bash ./06_build_master_dataset.sh run ;;
+	make-blinded) bash ./07_make_blinded_text.sh run ;;
+	features) bash ./08_extract_basic_features.sh run ;;
+	normalize-rank) bash ./08b_normalize_journal_rank.sh run "$journal_rank" ;;
+	review-inputs) bash ./09a_make_pfi_review_inputs.sh run ;;
+	auto-score) bash ./09a_auto_score_pfi_review_dataset.sh run ;;
+	prepare-training) bash ./09a_prepare_pfi_training_dataset.sh run ;;
+	train) bash ./09b_train_pubmedbert_pfi_model.sh run ;;
+	predict) bash ./09c_predict_pubmedbert_pfi.sh run ;;
+	compute) bash ./09d_compute_pfi_index.sh run ;;
+	analysis) bash ./10_run_pfi_analysis_R.sh run ;;
+	sample-llm) bash ./11_sample_llm_review_batch.sh run "$sample_rows" ;;
+	audit) bash ./12_audit_strong_outliers.sh run ;;
 	*) die "unknown command: $command_name" ;;
 esac

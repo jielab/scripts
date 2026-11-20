@@ -1,46 +1,38 @@
 #!/usr/bin/env bash
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
+# Public help returns before runtime setup, input access or job submission.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- cross-check,manifest,specificity-check,fingerprint-check,prepare,edge-check,fit,discover,validate,plot
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- cross-check,manifest,specificity-check,fingerprint-check,prepare,edge-check,fit,discover,validate,plot "$@"
-    fi
-fi
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PHOLE: protein interaction input checks, analysis and validation.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./phole.sh  # 输入检查 -> 分析 -> 验证 -> 绘图
-./phole.sh cross-check,manifest,specificity-check,fingerprint-check,prepare,edge-check,fit,discover,validate,plot  # 可选部分
-./phole.sh --replace FALSE
-
-PHOLE analysis
+Usage:
+  ./phole.sh run|MODULE [options]
 
 Modules:
-    cross-check|manifest|specificity-check|fingerprint-check  Input checks
-    prepare|edge-check|fit|discover|validate|plot             Analysis and figures
-    fingerprint-plan|rebuild-plan                           Review plans
+  run                              Input checks -> prepare -> edge-check -> fit -> discover -> validate -> plot.
+  MODULE[,MODULE...]               Select cross-check, manifest, specificity-check, fingerprint-check,
+                                   prepare, edge-check, fit, discover, validate or plot.
+  fingerprint-plan | rebuild-plan  Write reviewable plans.
 
-Main options:
-    --queue NAME --cores N --memory-gb N  Resources [33 / 40 / 32]
-    --dir-out DIR --protein-map FILE     Results and protein mapping
-    --replace TRUE|FALSE                 Recompute or reuse outputs [FALSE]
-    --plan-only                          Preview commands without submitting
-
-Local/HPC is detected automatically. Comma-separated modules run in one job.
-Choose either the full workflow or the resume command; do not submit both.
+Options:
+  --queue NAME --cores N --memory-gb N Resources [33 / 40 / 32]
+  --dir-out DIR --protein-map FILE Results and protein mapping
+  --replace TRUE|FALSE             Recompute or reuse outputs [FALSE]
+  --plan-only                      Preview commands without submitting
+  -h, --help                       Show this help.
 
 Examples:
-    ./phole.sh cross-check --plan-only
-    # Full workflow using existing summary data.
-    ./phole.sh cross-check,manifest,specificity-check,fingerprint-check,prepare,edge-check,fit,discover,validate,plot
-    # Alternative: resume after the input checks have succeeded.
-    ./phole.sh prepare,edge-check,fit,discover,validate,plot
+  ./phole.sh run --plan-only
+  ./phole.sh cross-check --plan-only
+  ./phole.sh prepare,edge-check,fit,discover,validate,plot
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- cross-check,manifest,specificity-check,fingerprint-check,prepare,edge-check,fit,discover,validate,plot "$@"; fi
 # Public PHOLE workflow and submission interface.
 usage() {
     bash "${BASH_SOURCE[0]}" --help

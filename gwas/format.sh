@@ -1,42 +1,46 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./format.sh  # 默认全流程；需配置输入，原命令生成策略保持不变
-./format.sh format,thin,magma,liftover,cis,lead,mplot,h2,pgs  # 可选择部分模块
-./format.sh --jobs 4 --foreground TRUE
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GWAS: format and annotate summary statistics.
+
+Usage:
+  ./format.sh run|MODULE [options]
 
 Modules:
-    format / thin / magma / liftover / cis / lead / mplot / h2 / pgs / all
-    Combine modules with commas, e.g. thin,mplot.
+  run                              format -> thin -> magma -> liftover -> cis -> lead -> mplot -> h2 -> pgs.
+  MODULE[,MODULE...]               Select format, thin, magma, liftover, cis, lead, mplot, h2 or pgs.
 
-Main options:
-    --submit auto|local|hpc       Execution mode [auto]
-    --dir-raw DIR --raw-file FILE  Raw input
-    --dir-out DIR --label NAME    Project output/name
-    --gwas CSV --category NAME   Traits and category [common]
-    --grch auto|37|38            Genome build
-    --chr-prefix TEXT           Strip this literal CHR prefix [empty]
-    --col-map SOURCE:TARGET,...  Override column aliases; repeatable
-    --jobs N --foreground TRUE|FALSE  Execution resources [4 / TRUE]
-    --local-io AUTO|TRUE|FALSE --local-cache DIR  Local reference caches
-    --run-cmd TRUE|FALSE         Execute generated commands [FALSE]
-    --replace TRUE|FALSE         Recompute selected results [TRUE]
-    --prot-names FILE            GRCh38 prot/CHR/POS table for cis coloring
-                                Default: <data-root>/gwas/prot.names.tsv for protein projects
-    --hm3 TRUE|FALSE --thin TRUE|FALSE  SNP selection
-    --thin-chr-max N             Thinned SNP cap [10000]
-    -h, --help                   Show options and examples below
+Options:
+  --submit auto|local|hpc          Execution mode [auto]
+  --dir-raw DIR --raw-file FILE    Raw input
+  --dir-out DIR --label NAME       Project output/name
+  --gwas CSV --category NAME       Traits and category [common]
+  --grch auto|37|38                Genome build
+  --chr-prefix TEXT                Strip this literal CHR prefix [empty]
+  --col-map SOURCE:TARGET,...      Override column aliases; repeatable
+  --jobs N --foreground TRUE|FALSE Execution resources [4 / TRUE]
+  --local-io AUTO|TRUE|FALSE --local-cache DIR Local reference caches
+  --run-cmd TRUE|FALSE             Execute generated commands [FALSE]
+  --replace TRUE|FALSE             Recompute selected results [TRUE]
+  --prot-names FILE                GRCh38 prot/CHR/POS table for cis coloring
+  --hm3 TRUE|FALSE --thin TRUE|FALSE SNP selection
+  --thin-chr-max N                 Thinned SNP cap [10000]
+  -h, --help                       Show this help.
 
 Examples:
-    source ../0f/0os.sh
-    ./format.sh format --dir-raw "$DIR_DAT/Downloads" --dir-out "$DIR_GWAS/main" --grch auto --hm3 FALSE --run-cmd TRUE
-    ./format.sh thin,mplot --label main --jobs 2 --run-cmd TRUE
-    ./format.sh magma --label main --grch auto --run-cmd TRUE
+  ./format.sh run --label main --plan-only
+  ./format.sh format --dir-raw INPUT_DIR --dir-out OUTPUT_DIR --grch auto --run-cmd TRUE
+  ./format.sh thin,mplot --label main --jobs 2 --run-cmd TRUE
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) [[ ${GWAS_WORKER:-0} == 1 ]] || { printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2; } ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- all "$@"; fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do

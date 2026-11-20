@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：按当前配置安装/更新依赖
-./install.sh OPTION  # 可选：--check；其他安装选项见下文
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+FLUX: install or check the configured runtime.
 
-FLUX runtime installation
+Usage:
+  ./install.sh run [options]
 
-Main options:
-    --machine auto|local|hpc  Machine selection
-    --device auto|cpu|gpu    PyTorch processor selection
-    --check                  Check without installing
+Modules:
+  run                              Install the pinned runtime and selected PyTorch wheel.
 
-Installs into FLUX_ENV (default DIR_WORK/software/flux). Requires Python 3.10-3.12.
-On HPC login, select --device gpu explicitly for the GPU wheel.
+Options:
+  --machine auto|local|hpc         Machine selection
+  --device auto|cpu|gpu            PyTorch processor selection
+  --check                          Check without installing
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --machine hpc --device gpu --check
-    ./install.sh --machine hpc --device gpu
+  ./install.sh run --machine hpc --device gpu
+  ./install.sh --machine hpc --device gpu --check
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 # Explicit installer; flux.sh never downloads dependencies.
 set -euo pipefail
 FLUX_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

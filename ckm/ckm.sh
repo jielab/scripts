@@ -40,8 +40,6 @@ Options:
   -h, --help                      Show this help.
 
 Examples:
-  ./1.phe.sh --config config/ckm.json --submit local
-  # Wait for phenotype completion before analysis.
   ./ckm.sh run --submit hpc --queue 33 --cores 40 --threads 8 --plan-only
   ./ckm.sh run --submit hpc --queue 33 --cores 40 --threads 8
   ./ckm.sh clock --domains prot,met --submit local

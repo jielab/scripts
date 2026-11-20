@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./01_install_system_tools.sh  # 执行本阶段的默认流程，所需上游数据须已准备
-./pfi.sh MODULE  # 通过主入口选择阶段，完整模块见 ./pfi.sh -h
-./01_install_system_tools.sh --plan-only  # 查看当前阶段的调度命令
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: Install system tools with apt (sudo required).
+
+Usage:
+  ./01_install_system_tools.sh run [options]
 
 Modules:
-    Default  Install system tools with apt (sudo required)
+  run                              Install system tools with apt (sudo required).
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    No analysis options; installs the packages listed below in this script.
-    -h, --help  Show help
-
-This optional system setup requires a local Debian/Ubuntu machine with sudo.
+Options:
+  --submit auto|local|hpc          Execution mode [auto].
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  -h, --help                       Show this help.
 
 Examples:
-    ./01_install_system_tools.sh --submit local
+  ./01_install_system_tools.sh run --plan-only
+  ./01_install_system_tools.sh run
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -39,6 +42,7 @@ unset _paths_directory
 source "$SCRIPTS_ROOT/0f/project_entry.sh"
 project_workflow_init "$@" || exit $?
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

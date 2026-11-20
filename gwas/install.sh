@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：检查现有依赖
-./install.sh OPTION  # 可选：--check|--install
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GWAS: check or install the analysis environment.
 
-GWAS dependencies
+Usage:
+  ./install.sh run [options]
 
-Main options:
-    --check    Check installed tools and dependencies
-    --install  Install the configured environment
+Modules:
+  run                              Check configured tools and dependencies.
 
-Default: --check. --install updates the configured SAIGE environment.
+Options:
+  --check                          Check installed tools and dependencies
+  --install                        Install the configured environment
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --check
-    ./install.sh --install
+  ./install.sh run
+  ./install.sh --install
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- --check "$@"; fi
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$ROOT/../0f/0os.sh"

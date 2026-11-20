@@ -64,7 +64,7 @@ def validate_x_map(sample_map, psam):
 	):
 		raise ValueError(
 			"chrX ARG must contain only chrX.male samples, each with haplotype=1; "
-			"rebuild chrX with arg.sh build --chr X --format trace"
+			"rebuild chrX with 1.arg.sh build --chr X --format trace"
 		)
 	return len(names)
 
@@ -3140,7 +3140,7 @@ def threads_entry():
 		return threads_threads_worker_main()
 	if sys.argv[1:2] in (["--help"], ["-h"]):
 		print(
-			"Threads driver: use ./arg.sh build|check --method threads; worker: arg.py threads worker --help"
+			"Threads driver: use ./1.arg.sh build|check --method threads; worker: arg.py threads worker --help"
 		)
 		return
 	global np, pgenlib, tskit, tszip

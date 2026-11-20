@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：按当前配置安装/更新依赖
-./install.sh OPTION  # 可选：--check；其他安装选项见下文
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+LE8: install or check a dependency profile.
+
+Usage:
+  ./install.sh run [options]
 
 Modules:
-    --profile report|analysis|deep|validation  Dependency profile [analysis]
-    --env le8|cigma  Create/update a complete Conda environment
+  run                              Install the analysis dependency profile.
 
-Main options:
-    --submit auto|local|hpc --jobs-N N --wait TRUE|FALSE  Scheduled installation
-    --plan-only --plan-dir DIR --queue NAME --hours N  Reviewable .cmd plan
-    --python FILE --r-bin FILE  Interpreters
-    --no-r  Skip R packages
-    --print-environment le8|cigma  Print environment recipe
-    --check  Check installed Python/R dependencies without data or downloads
-    -h, --help  Show options and examples below
+Options:
+  --profile NAME                   report, analysis, deep or validation [analysis].
+  --env le8|cigma                  Create or update the selected Conda environment.
+  --submit auto|local|hpc --jobs-N N --wait TRUE|FALSE Scheduled installation
+  --plan-only --plan-dir DIR --queue NAME --hours N Reviewable .cmd plan
+  --python FILE --r-bin FILE       Interpreters
+  --no-r                           Skip R packages
+  --print-environment le8|cigma    Print environment recipe
+  --check                          Check installed Python/R dependencies without data or downloads
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --profile analysis --check
-    ./install.sh --profile analysis
-    # Alternative: create/update the full Conda environment.
-    ./install.sh --env le8
+  ./install.sh run
+  ./install.sh --check
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- --profile analysis "$@"; fi
 
 # Dependency entry point for LE8; install is a separate scheduled module.
 # CIGMA uses a separate environment because its pandas/scipy requirements differ.

@@ -1149,7 +1149,7 @@ PY
 			check_file "$GRID_ARG_TREES_DIR/chr$c.variants.tsv.gz" "ARG_Needle_features_chr$c"
 		done
 		if ((fail)); then
-			record WARN ARG_build_command "bash ${SCRIPTS_ROOT}/gu/arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
+			record WARN ARG_build_command "bash ${SCRIPTS_ROOT}/gu/1.arg.sh build --method needle --dir-gen $(dirname -- "$GRID_ARG_HAP_DIR") --chr $GRID_CHRS"
 		fi
 	fi
 
@@ -1164,7 +1164,7 @@ PY
 		done
 		for c in $(grid_expand_chrs "$GRID_CHRS"); do
 			f="$GRID_ARG_TREES_DIR/chr$c.variants.tsv.gz"
-			[[ -s $f ]] && record PASS "ARG_features_chr$c" "$f" || record WARN "ARG_features_chr$c" 'created by arg.sh build --method needle'
+			[[ -s $f ]] && record PASS "ARG_features_chr$c" "$f" || record WARN "ARG_features_chr$c" 'created by 1.arg.sh build --method needle'
 		done
 	fi
 

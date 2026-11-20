@@ -1,60 +1,47 @@
 #!/usr/bin/env bash
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
+# Public help returns before runtime setup, input access or job submission.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- regenie
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- regenie "$@"
-    fi
-fi
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GWAS: genotype preparation and REGENIE association analysis.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./gwas.sh --grch 38 # 默认 REGENIE Step 1 + Step 2；使用现有输入
-./gwas.sh MODULE --grch 38 # sparseGRM|acount|regenie
-./gwas.sh regenie --grch 38 --threads 4
+Usage:
+  ./gwas.sh run|MODULE [options]
 
 Modules:
-    sparseGRM  Prepare the pruned typed panel (add --sparse-grm FALSE for REGENIE only)
-    acount     Prepare shared imputed allele counts and variant lists
-    regenie    REGENIE Step 1 + Step 2; Environment and submission mode are detected automatically
+  run | regenie                    Run REGENIE Step 1 and Step 2 on existing inputs.
+  sparseGRM                        Prepare the pruned typed panel.
+  acount                           Prepare shared allele counts and variant lists.
 
-Defaults from 0f/0os.sh:
-    phenotype: $GWAS_PHENOTYPE_FILE
-    continuous covariates: age,sex,PC1,PC2,PC3,PC4
-    typed/imputed: $DIR_GEN/ukb/38/typ and $DIR_GEN/ukb/38/imp
-    output: $GWAS_ANALYSIS_ROOT/<module> (final files at the module root)
-    HPC queue: 33; per phenotype: 6 workers x 4 threads, 160 GiB RAM (40 reserved slots)
-
-Main options:
-    --submit auto|local|hpc       Execution mode [auto]
-    --grch 37|38                  Build [38]; also sets REGENIE PAR boundaries
-    --pheno FILE --pheno-name CSV Phenotype table (FID IID plus named columns)
-    --type auto|qt|ordinal|bt|t2e  ordinal = linear trend on numeric ordered scores,
-                                 via --qt --force-qt; NOT ordinal logistic regression
-    --event-col NAME              Event indicator for t2e (0=censored, 1=event)
-    --sex all|male|female         Genotype-sex restriction in BOTH REGENIE steps
-    --keep FILE                  Additional FID IID restriction; REGENIE always
-                                 uses a per-trait complete-case keep in both steps
-    --covariates CSV              Continuous covariates; default listed above
-    --categorical-covariates CSV  Dummy-coded categorical covariates; default none
-    --covariate-file FILE         Shared covariate table; default phenotype table
-    --chr CSV                    Chromosomes [1-22,X]
-    --threads N --jobs N          Threads/process and concurrent chromosomes [4 / 6]
-    --dir-output DIR              Use separate output roots for different models
-    --replace TRUE               Recompute outputs after settings change
-    --plan-only                  Preview submission without running
+Options:
+  --submit auto|local|hpc          Execution mode [auto]
+  --grch 37|38                     Build [38]; also sets REGENIE PAR boundaries
+  --pheno FILE --pheno-name CSV Phenotype table (FID IID plus named columns) 
+  --type auto|qt|ordinal|bt|t2e    ordinal = linear trend on numeric ordered scores,
+  --event-col NAME                 Event indicator for t2e (0=censored, 1=event)
+  --sex all|male|female            Genotype-sex restriction in BOTH REGENIE steps
+  --keep FILE                      Additional FID IID restriction; REGENIE always
+  --covariates CSV                 Continuous covariates; default listed above
+  --categorical-covariates CSV     Dummy-coded categorical covariates; default none
+  --covariate-file FILE            Shared covariate table; default phenotype table
+  --chr CSV                        Chromosomes [1-22,X]
+  --threads N --jobs N             Threads/process and concurrent chromosomes [4 / 6]
+  --dir-output DIR                 Use separate output roots for different models
+  --replace TRUE                   Recompute outputs after settings change
+  --plan-only                      Preview submission without running
+  -h, --help                       Show this help.
 
 Examples:
-    ./gwas.sh sparseGRM --grch 38 --chr 1-22 --sparse-grm FALSE --wait TRUE
-    ./gwas.sh regenie --grch 38 --pheno-name bmi,height,ldl --type qt
-    ./gwas.sh regenie --grch 38 --pheno-name bald --type ordinal --sex male
-    ./gwas.sh regenie --grch 38 --pheno-name cvd_cad.t2e --type t2e --event-col cvd_cad.Yt2e
+  ./gwas.sh run --grch 38 --pheno-name bmi,height,ldl --type qt --plan-only
+  ./gwas.sh sparseGRM --grch 38 --chr 1-22 --sparse-grm FALSE
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- regenie "$@"; fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do

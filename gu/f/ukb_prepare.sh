@@ -304,7 +304,7 @@ PY
 				rm -f -- "$RAW/chr$c.vcf.gz" "$RAW/chr$c.vcf.gz.tbi"
 			done
 			echo "AA-tagged phased VCFs are ready under: $AAOUT"
-			echo "Next: bash $GU_CODE_ROOT/gu/arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-$GU_REF_ROOT/ukb/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
+			echo "Next: bash $GU_CODE_ROOT/gu/1.arg.sh build --method tsinfer --dir-gen ${GU_TARGET_ROOT:-$GU_REF_ROOT/ukb/37} --dir-vcf $AAOUT --chr $CHRS --grch ${GU_BUILD:-37}"
 			;;
 
 		inspect-typed)

@@ -68,7 +68,7 @@ per-job wall time and the retry scope if input classification fails. Default: CP
 HELP
 ;;
 report|split_summary) cat <<'HELP'
-Usage: ./metag.sh report [--sample DATASET/SAMPLE] [OPTIONS]
+Usage: bash f/analysis_entry.sh report [--sample DATASET/SAMPLE] [OPTIONS]
   --config FILE --input-root ROOT --manifest jobs.json --out DIR
   --sample may repeat; --manifest includes missing/failed requested samples.
   --compare-root ROOT compares completed results for the same input/database.
@@ -187,7 +187,7 @@ Prepare this optional library once with: ./1.lib.sh sylph --buckets prok
 HELP
 ;;
 group_summary) cat <<'HELP'
-Usage: ./metag.sh report --corrected-groups --sample DATASET/SAMPLE --out DIR
+Usage: bash f/analysis_entry.sh report --corrected-groups --sample DATASET/SAMPLE --out DIR
 Repeat --sample as needed. Recomputes display groups using the configured taxonomy;
 original exact taxids/FASTQs are retained. --replace TRUE|FALSE [TRUE]
 --submit hpc|local|auto [auto] --plan-only

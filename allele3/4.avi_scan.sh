@@ -1,22 +1,41 @@
 #!/usr/bin/env bash
-# One-pass chromosome-sharded summary of the existing merged GRCh38 Atlas VCFs.
-if [[ ${1:-} == -h || ${1:-} == --help ]]; then
-    cat <<'HELP'
-./4.avi_scan.sh --grch 38  # 完整 AVI 扫描
-./4.avi_scan.sh --grch 38 MODULE  # scan|merge|plan
-./4.avi_scan.sh --grch 38 --jobs 4 --replace FALSE
 
-Usage: ./4.avi_scan.sh --grch 38 [OPTIONS]
-No action: scan existing GRCh38 AlphaGenome VCFs into AVI windows/hotspots.
-  --jobs N [4] --vcf-dir DIR --out DIR
-  --replace FALSE|TRUE [FALSE]
-  --plan-only           Inspect without submitting
-  --queue NAME --job-hours N
-  --help-full           All engine options (including merge/plan)
-HPC is detected automatically. Job name: allele3.avi_scan
-HELP
-    exit 0
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: summarize existing AlphaGenome GRCh38 VCFs.
+
+Usage:
+  ./4.avi_scan.sh run|MODULE [options]
+
+Modules:
+  run | scan                       Scan VCFs into AVI windows and hotspots.
+  merge | plan                     Merge completed shards or inspect the plan.
+
+Options:
+  --vcf-dir DIR                    Existing Atlas VCF directory.
+  --out DIR                        Output directory.
+  --jobs N                         Concurrent workers [4].
+  --grch 37|38                     Genome build [38].
+  --submit auto|local|hpc          Execution mode [auto].
+  --queue NAME --cores N           Queue and CPU budget from shared 0f settings.
+  --job-hours N                    Maximum job duration.
+  --replace TRUE|FALSE             Recompute or reuse completed outputs [FALSE].
+  --plan-only                      Write commands without running or submitting.
+  --help-full                      Show all engine options.
+  -h, --help                       Show this help.
+
+Examples:
+  ./4.avi_scan.sh run --grch 38 --plan-only
+  ./4.avi_scan.sh run --grch 38 --jobs 4
+PUBLIC_ENTRY_HELP
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- scan "$@"; fi
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WORKFLOW_NAME=avi-scan

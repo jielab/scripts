@@ -1,0 +1,209 @@
+Category	Food Group	Food Item	FieldID	Portion
+Fruit	Berries	Berry intake	104470	40
+Fruit	Berries	Cherry intake	104480	34
+Fruit	Citrus fruits	Grapefruit intake	104490	148
+Fruit	Citrus fruits	Orange intake	104530	120
+Fruit	Citrus fruits	Satsuma intake	104540	70
+Fruit	Apples and pears	Apple intake	104450	112
+Fruit	Apples and pears	Pear intake	104560	160
+Fruit	Dried fruits	Prune intake	104420	60
+Fruit	Dried fruits	Dried fruit intake	104430	60
+Fruit	Other fruits	Stewed fruit intake	104410	140
+Fruit	Other fruits	Mixed fruit intake	104440	105
+Fruit	Other fruits	Banana intake	104460	100
+Fruit	Other fruits	Grape intake	104500	100
+Fruit	Other fruits	Mango intake	104510	113
+Fruit	Other fruits	Melon intake	104520	180
+Fruit	Other fruits	Peach/nectarine intake	104550	130
+Fruit	Other fruits	Pineapple intake	104570	80
+Fruit	Other fruits	Plum intake	104580	55
+Fruit	Other fruits	Other fruit intake	104590	60
+Vegetable	Green leafy vegetables	Broccoli intake	104140	80
+Vegetable	Green leafy vegetables	Cabbage/kale intake	104160	90
+Vegetable	Green leafy vegetables	Lettuce intake	104240	35
+Vegetable	Green leafy vegetables	Spinach intake	104300	90
+Vegetable	Green leafy vegetables	Sprouts intake	104310	90
+Vegetable	Green leafy vegetables	Watercress intake	104370	20
+Vegetable	Root vegetables	Beetroot intake	104130	48
+Vegetable	Root vegetables	Carrot intake	104170	60
+Vegetable	Root vegetables	Celery intake	104190	30
+Vegetable	Root vegetables	Parsnip intake	104270	65
+Vegetable	Root vegetables	Turnip/swede intake	104360	60
+Vegetable	Tomatoes	Fresh tomato intake	104340	85
+Vegetable	Tomatoes	Tinned tomato intake	104350	135
+Vegetable	Allium vegetables	Garlic intake	104220	5
+Vegetable	Allium vegetables	Leek intake	104230	80
+Vegetable	Allium vegetables	Onion intake	104260	60
+Vegetable	Other vegetables	Butternut squash intake	104150	130
+Vegetable	Other vegetables	Sweet pepper intake	104290	133
+Vegetable	Other vegetables	Sweet potato intake	104330	130
+Vegetable	Other vegetables	Mixed vegetable intake	104060	90
+Vegetable	Other vegetables	Vegetable pieces intake	104070	90
+Vegetable	Other vegetables	Coleslaw intake	104080	90
+Vegetable	Other vegetables	Avocado intake	104100	136
+Vegetable	Other vegetables	Courgette intake	104200	90
+Vegetable	Other vegetables	Cucumber intake	104210	60
+Vegetable	Other vegetables	Other vegetables intake	104380	60
+Vegetable	Other vegetables	Cauliflower intake	104180	90
+Vegetable	Other vegetables	Side salad intake	104090	66
+Vegetable	Other vegetables	Mushroom intake	104250	44
+Vegetable	Potatoes	Boiled/baked potatoes intake	104030	175
+Vegetable	Potatoes	Mashed potato intake	104050	180
+Cereal & Bread	Refined grains	Naan bread intake	101230	160
+Cereal & Bread	Refined grains	Garlic bread intake	101240	20
+Cereal & Bread	Refined grains	Crispbread intake	101250	10
+Cereal & Bread	Refined grains	Oatcakes intake	101260	13
+Cereal & Bread	Refined grains	Other bread intake	101270	45
+Cereal & Bread	Refined grains	White pasta intake	102710	230
+Cereal & Bread	Refined grains	White rice intake	102730	150
+Cereal & Bread	Refined grains	Sushi intake	102750	278
+Cereal & Bread	Refined grains	Snackpot intake	102760	280
+Cereal & Bread	Refined grains	Couscous intake	102770	150
+Cereal & Bread	Refined grains	Sliced bread intake (white)	100950	36
+Cereal & Bread	Refined grains	Baguette intake (white)	101020	95
+Cereal & Bread	Refined grains	Bap intake (white)	101090	90
+Cereal & Bread	Refined grains	Bread roll intake (white)	101160	60
+Cereal & Bread	Whole grains	Porridge intake	100770	203.5
+Cereal & Bread	Whole grains	Muesli intake	100800	100
+Cereal & Bread	Whole grains	Oat crunch intake	100810	100
+Cereal & Bread	Whole grains	Sweetened cereal intake	100820	38
+Cereal & Bread	Whole grains	Plain cereal intake	100830	30
+Cereal & Bread	Whole grains	Bran cereal intake	100840	50
+Cereal & Bread	Whole grains	Whole-wheat cereal intake	100850	44
+Cereal & Bread	Whole grains	Other cereal intake	100860	44
+Cereal & Bread	Whole grains	Wholemeal pasta intake	102720	230
+Cereal & Bread	Whole grains	Brown rice intake	102740	150
+Cereal & Bread	Whole grains	Other grain intake	102780	157
+Cereal & Bread	Whole grains	Sweetcorn intake	104320	43
+Cereal & Bread	Whole grains	Sliced bread intake	20091	36
+Cereal & Bread	Whole grains	Baguette intake	20092	95
+Cereal & Bread	Whole grains	Bap intake	20093	90
+Cereal & Bread	Whole grains	Bread roll intake	20094	60
+Legume & Nut	Legumes	Tofu intake	103270	90
+Legume & Nut	Legumes	Baked bean intake	104000	135
+Legume & Nut	Legumes	Pulses intake	104010	70
+Legume & Nut	Legumes	Broad bean intake	104110	70
+Legume & Nut	Legumes	Green bean intake	104120	70
+Legume & Nut	Legumes	Pea intake	104280	65
+Legume & Nut	Nuts	Nut-based spreads	26106	10
+Legume & Nut	Nuts	Salted peanuts intake	102410	40
+Legume & Nut	Nuts	Unsalted peanuts intake	102420	40
+Legume & Nut	Nuts	Salted nuts intake	102430	40
+Legume & Nut	Nuts	Unsalted nuts intake	102440	40
+Legume & Nut	Nuts	Seeds intake	102450	14
+Dairy & Egg	Eggs	Whole egg intake	102940	50
+Dairy & Egg	Eggs	Omelette intake	102950	120
+Dairy & Egg	Eggs	Eggs in sandwiches intake	102960	120
+Dairy & Egg	Eggs	Scotch egg intake	102970	120
+Dairy & Egg	Eggs	Other egg intake	102980	75
+Dairy & Egg	High-fat dairy products	Full fat yogurt	26096	125
+Dairy & Egg	High-fat dairy products	Whole milk	26150	259
+Dairy & Egg	High-fat dairy products	Cream	26154	30
+Dairy & Egg	High-fat dairy products	Hard cheese intake	102820	40
+Dairy & Egg	High-fat dairy products	Soft cheese intake	102830	40
+Dairy & Egg	High-fat dairy products	Blue cheese intake	102840	35
+Dairy & Egg	High-fat dairy products	Cheese spread intake	102860	15
+Dairy & Egg	High-fat dairy products	Feta intake	102880	40
+Dairy & Egg	High-fat dairy products	Mozzarella intake	102890	40
+Dairy & Egg	High-fat dairy products	Goat's cheese intake	102900	40
+Dairy & Egg	High-fat dairy products	Other cheese intake	102910	40
+Dairy & Egg	Low-fat dairy products	Low fat yogurt	26102	125
+Dairy & Egg	Low-fat dairy products	Semi skimmed milk	26131	259
+Dairy & Egg	Low-fat dairy products	Skimmed milk and cholesterol-lowering milk	26133	259
+Dairy & Egg	Low-fat dairy products	Low fat hard cheese intake	102810	40
+Dairy & Egg	Low-fat dairy products	Low fat cheese spread intake	102850	15
+Dairy & Egg	Low-fat dairy products	Cottage cheese intake	102870	60
+Meat & Fish	Red meats	Beef intake	103020	120
+Meat & Fish	Red meats	Pork intake	103030	120
+Meat & Fish	Red meats	Lamb intake	103040	120
+Meat & Fish	Processed meats	Sausage intake	103010	30
+Meat & Fish	Processed meats	Bacon intake	103070	46
+Meat & Fish	Processed meats	Ham intake	103080	23
+Meat & Fish	Poultry	Poultry intake	103060	130
+Meat & Fish	Fish and other seafood	Tinned tuna intake	103150	92
+Meat & Fish	Fish and other seafood	Oily fish intake	103160	100
+Meat & Fish	Fish and other seafood	White fish intake	103190	120
+Meat & Fish	Fish and other seafood	Other fish intake	103230	100
+Meat & Fish	Fish and other seafood	Prawns intake	103200	60
+Meat & Fish	Fish and other seafood	Lobster/crab intake	103210	85
+Meat & Fish	Fish and other seafood	Shellfish intake	103220	40
+Meat & Fish	Organ meats	Liver intake	103090	70
+Meat & Fish	Organ meats	Other meat intake	103100	100
+Fat & Oil	Butter	Animal fat spread lower fat	26062	10
+Fat & Oil	Butter	Animal fat spread normal	26063	10
+Fat & Oil	Margarine	Plant-based spread lower fat	26111	10
+Fat & Oil	Margarine	Plant-based spread normal	26112	10
+Fat & Oil	Olive oil	Olive oil (drizzling/dunking)	26110	10
+Fat & Oil	Other oil	Other oil in cooking	s-20090	10
+Water & beverage	Beer	Beer/cider intake	26067	574
+Water & beverage	Coffee	Instant coffee intake	100250	190
+Water & beverage	Coffee	Filtered coffee intake	100270	190
+Water & beverage	Coffee	Cappuccino intake	100290	30
+Water & beverage	Coffee	Latte intake	100300	30
+Water & beverage	Coffee	Espresso intake	100310	30
+Water & beverage	Coffee	Other coffee type	100330	190
+Water & beverage	Fruit juices	Orange juice intake	100190	250
+Water & beverage	Fruit juices	Grapefruit juice intake	100200	250
+Water & beverage	Fruit juices	Pure fruit/vegetable juice intake	100210	250
+Water & beverage	Liquor	Spirits intake	26138	23
+Water & beverage	Sweetened beverages	Fizzy drink intake	100170	330
+Water & beverage	Sweetened beverages	Squash intake	100180	250
+Water & beverage	Sweetened beverages	Fruit smoothie intake	100220	260
+Water & beverage	Sweetened beverages	Dairy smoothie intake	100230	260
+Water & beverage	Sweetened beverages	Hot chocolate intake	100550	143
+Water & beverage	Sweetened beverages	Low calorie drink intake	100160	330
+Water & beverage	Sweetened beverages	Flavoured milk intake	100530	250
+Water & beverage	Sweetened beverages	Low calorie hot chocolate intake	100540	143
+Water & beverage	Tea	Standard tea intake	100400	190
+Water & beverage	Tea	Rooibos tea intake	100410	190
+Water & beverage	Tea	Green tea intake	100420	190
+Water & beverage	Tea	Herbal tea intake	100430	190
+Water & beverage	Tea	Other tea intake	100440	190
+Water & beverage	Water	Drinking water intake	100150	250
+Water & beverage	Wine	Fortified wine intake	26151	50
+Water & beverage	Wine	Red wine intake	26152	175
+Water & beverage	Wine	White wine intake	26153	175
+Snack & Pastry	Pizza	Pizza intake	102000	150
+Snack & Pastry	Snacks and pastries	Added sugars and preserves	26064	6
+Snack & Pastry	Snacks and pastries	Double crust pastry intake	101970	60
+Snack & Pastry	Snacks and pastries	Single crust pastry intake	101980	30
+Snack & Pastry	Snacks and pastries	Crumble intake	101990	70
+Snack & Pastry	Snacks and pastries	Pancake intake	102010	110
+Snack & Pastry	Snacks and pastries	Scotch pancake intake	102020	41
+Snack & Pastry	Snacks and pastries	Yorkshire pudding intake	102030	80
+Snack & Pastry	Snacks and pastries	Indian snacks intake	102040	40
+Snack & Pastry	Snacks and pastries	Croissant intake	102050	60
+Snack & Pastry	Snacks and pastries	Danish pastry intake	102060	110
+Snack & Pastry	Snacks and pastries	Scone intake	102070	48
+Snack & Pastry	Snacks and pastries	Ice-cream intake	102120	120
+Snack & Pastry	Snacks and pastries	Milk-based pudding intake	102140	200
+Snack & Pastry	Snacks and pastries	Other milk-based pudding intake	102150	200
+Snack & Pastry	Snacks and pastries	Soya dessert intake	102170	125
+Snack & Pastry	Snacks and pastries	Fruitcake intake	102180	70
+Snack & Pastry	Snacks and pastries	Cake intake	102190	60
+Snack & Pastry	Snacks and pastries	Doughnut intake	102200	60
+Snack & Pastry	Snacks and pastries	Sponge pudding intake	102210	120
+Snack & Pastry	Snacks and pastries	Cheesecake intake	102220	110
+Snack & Pastry	Snacks and pastries	Other dessert intake	102230	60
+Snack & Pastry	Snacks and pastries	Chocolate bar intake	102260	50
+Snack & Pastry	Snacks and pastries	White chocolate intake	102270	50
+Snack & Pastry	Snacks and pastries	Milk chocolate intake	102280	50
+Snack & Pastry	Snacks and pastries	Dark chocolate intake	102290	50
+Snack & Pastry	Snacks and pastries	Chocolate-covered raisin intake	102300	25
+Snack & Pastry	Snacks and pastries	Chocolate sweet intake	102310	36
+Snack & Pastry	Snacks and pastries	Diet sweets intake	102320	18
+Snack & Pastry	Snacks and pastries	Sweets intake	102330	36
+Snack & Pastry	Snacks and pastries	Chocolate-covered biscuits intake	102340	24
+Snack & Pastry	Snacks and pastries	Chocolate biscuits intake	102350	17
+Snack & Pastry	Snacks and pastries	Sweet biscuits intake	102360	17
+Snack & Pastry	Snacks and pastries	Cereal bar intake	102370	28
+Snack & Pastry	Snacks and pastries	Other sweets intake	102380	40
+Snack & Pastry	Snacks and pastries	Savoury biscuits intake	102470	40
+Snack & Pastry	Snacks and pastries	Cheesy biscuits intake	102480	40
+Snack & Pastry	Snacks and pastries	Olives intake	102490	50
+Snack & Pastry	Snacks and pastries	Other savoury snack intake	102500	40
+Fried & Fast food	Fried and fast foods	Fried potatoes intake	104020	180
+Fried & Fast food	Fried and fast foods	Crumbed or deep-fried poultry intake	103050	100
+Fried & Fast food	Fried and fast foods	Breaded fish intake	103170	100
+Fried & Fast food	Fried and fast foods	Battered fish intake	103180	150
+Fried & Fast food	Fried and fast foods	Crisp intake	102460	40

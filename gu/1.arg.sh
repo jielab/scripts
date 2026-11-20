@@ -1,76 +1,46 @@
 #!/usr/bin/env bash
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
+# Public help returns before runtime setup, input access or job submission.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- build
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- build "$@"
-    fi
-fi
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GU: build and validate ancestral recombination graphs.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./arg.sh  # 默认 build；构建配置的方法及染色体
-./arg.sh MODULE  # build|prep_gen|check|submit|status|retry
-./arg.sh --method tsinfer --target 1kg --grch 37
+Usage:
+  ./1.arg.sh run|MODULE [options]
 
 Modules:
-    build / check  Build and validate ARG outputs
-    submit RUN_DIR  Submit unsubmitted jobs from a saved plan
-    status RUN_DIR  Show each method/chromosome job, state and elapsed seconds
-    retry RUN_DIR   Resubmit only confirmed failed jobs; reuse checkpoints
+  run | build                      Build configured methods and chromosomes.
+  prep_gen | check                 Prepare genotype inputs or validate ARG outputs.
+  submit | status | retry RUN_DIR  Manage an existing immutable job plan.
 
-Main options:
-    --target NAME --grch 37|38  Dataset/build [1kg / 37]
-    --dir-target DIR  Default: OS data root/gen/<target>/<grch>
-                     --dir-gen remains a compatibility alias
-    --method LIST --format NAME  Methods: tsinfer,singer [tsinfer / native]
-                                HPC login: one independent LSF job per method x chromosome
-    --cores N            Shared budget: 0f/0os.sh [HPC 40 / local 16]
-    --threads N --jobs N  Default to the shared budget; SINGER also caps workers by memory
-                         tsinfer: threads per chromosome
-                         SINGER: jobs windows, threads total CPU budget
-    --chr 1-22,X  Chromosome selection [1-22,X]
-    --replace TRUE|FALSE  Reuse verified outputs/checkpoints [FALSE]
-    --dir-arg DIR --dir-gen4arg DIR  Isolated ARG and preparation outputs
-    --resource-guard auto|systemd|scheduler|ulimit  Resource control [auto]
-    --memory-limit-gb N --memory-swap-gb N  Local limits [32 / 4]
-    --queue NAME --slots N --walltime HHH:MM  LSF resources (slots >= threads)
-    --run-dir DIR  Optional explicit plan directory; normally managed automatically
-    --plan-only    Write job files without submitting; also accepted by submit/retry
-    -h, --help  Show options and examples below
-
-Current HPC 1kg GRCh37 restart (copy; reuse completed outputs and checkpoints):
-    cd /work/sph-huangj/scripts/gu
-    bash arg.sh build --target 1kg --grch 37 --method tsinfer,singer --chr 1,20,X --format trace --queue 2t50c --memory-limit-gb 256
-    # 256 GiB retains this analysis's original memory budget; CPU defaults are shared.
-
-HPC build/prep_gen on a login node submits method x chromosome jobs automatically.
-Each task has isolated output/preparation directories, logs and attempt timings.
-Default results: analysis/gu/arg/<target>/<build>/<method>/chr<chromosome>/.
-Prepared data and job metadata use .prepared/ and .jobs/ inside the target/build directory.
-Repeat build to verify/reuse completed outputs and retry failed tasks; active jobs are skipped.
-Use --replace TRUE to recompute outputs. No manual submit/retry command is normally needed.
-tsinfer checkpoints live under each output directory's .work/ and survive failures.
---dir-arg/--dir-gen4arg are batch bases; tasks use BASE/<method>/chr<chromosome>.
---jobs controls work INSIDE each job (SINGER windows), not the number submitted.
-Local/allocated runs retain direct execution. --plan-only always creates an LSF plan.
-Saved job plans record exact output paths, commands and resources.
-For TRACE, each task's exported ARG is OUTPUT/trace/<method>; pass that directory
-with the matching --chr to gu.sh trace. No multi-chromosome merge job is submitted.
+Options:
+  --target NAME --grch 37|38       Dataset/build [1kg / 37]
+  --dir-target DIR                 Default: OS data root/gen/<target>/<grch>
+  --method LIST --format NAME      Methods: tsinfer,singer [tsinfer / native]
+  --cores N                        Shared budget: 0f/0os.sh [HPC 40 / local 16]
+  --threads N --jobs N             Default to the shared budget; SINGER also caps workers by memory
+  --chr 1-22,X                     Chromosome selection [1-22,X]
+  --replace TRUE|FALSE             Reuse verified outputs/checkpoints [FALSE]
+  --dir-arg DIR --dir-gen4arg DIR  Isolated ARG and preparation outputs
+  --resource-guard auto|systemd|scheduler|ulimit Resource control [auto]
+  --memory-limit-gb N --memory-swap-gb N Local limits [32 / 4]
+  --queue NAME --slots N --walltime HHH:MM LSF resources (slots >= threads)
+  --run-dir DIR                    Optional explicit plan directory; normally managed automatically
+  --plan-only                      Write job files without submitting; also accepted by submit/retry
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --arg
-    ./arg.sh build --grch 37 --target 1kg --chr 1,20,X --method tsinfer,singer --format trace --threads 8 --jobs 8 --memory-limit-gb 256 --queue 2t50c
-    # SINGER: up to 8 windows/job; 256 GiB covers 8 x 24 GiB plus headroom.
-    ./arg.sh status RUN_DIR
-    ./arg.sh retry RUN_DIR
-    # Preview the build above by appending --plan-only; then ./arg.sh submit RUN_DIR
+  ./1.arg.sh run --method tsinfer --target 1kg --grch 37 --chr 20 --plan-only
+  ./1.arg.sh run --method tsinfer,singer --chr 1,20,X --format trace --queue 2t50c --memory-limit-gb 256
+  ./1.arg.sh status RUN_DIR
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- build "$@"; fi
 
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -119,7 +89,7 @@ esac
 case "$command" in
 	prep_gen | build | check) shift ;;
 	*)
-		echo "ERROR: unknown command: $command (use ./arg.sh -h)" >&2
+		echo "ERROR: unknown command: $command (use ./1.arg.sh -h)" >&2
 		exit 2
 		;;
 esac

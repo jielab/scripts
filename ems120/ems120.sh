@@ -1,49 +1,52 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./ems120.sh  # prepare -> phone -> geo -> dx -> report
-./ems120.sh --start-step fig1 --end-step fig3  # 选择范围；无位置模块
-./ems120.sh --phone-run cpu --geo-run cpu --dx-run cpu
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+EMS120: prepare data, fit phone/geo/disease models and report.
 
-Usage: ./ems120.sh [OPTIONS]
-    Prepare -> phone -> geo -> dx -> report. Every stage defaults to CPU.
+Usage:
+  ./ems120.sh run [options]
 
-Main options:
-    --submit hpc|local|auto         Execution environment [auto]
-    --phone-run cpu|gpu|auto        Phone XGBoost processor [cpu]
-    --geo-run cpu|gpu|auto          Address Transformer processor [cpu]
-    --dx-run cpu|gpu|auto           Disease Transformer/CV processor [cpu]
-    --replace TRUE|FALSE           Overwrite requested outputs [TRUE]
-    --report-only                  CPU report using complete data, no fitting
-    --preflight                    Input/runtime checks with synthetic training
-    --cores N  Shared CPU budget from 0f/0os.sh [HPC 40 / local 16]
-    --cpu-queue NAME --cpu-threads N
-    --cpu-memory-gb N --cpu-hours N
-    --gpu-queue NAME --gpu-cores N --gpu-memory-gb N --gpu-hours N
-    --gpu-model NAME               Optional LSF model constraint
-    --dir-dat DIR --dir-big DIR    Shared roots
-    --dir-data DIR --dir-analysis DIR --dir-base-model DIR
-    --dir-model DIR --dir-files DIR --dir-jobs DIR
-    --conda-env NAME --conda-exe FILE --rscript FILE --python-lib DIR
-    --start-step all|fig1|fig2|fig3|fig4|fig5|fig6|figs
-    --end-step fig1|fig2|fig3|fig4|fig5|fig6|figs
-    --run-cv TRUE|FALSE             Five-fold disease validation [TRUE]
-    --wait TRUE|FALSE               Wait for submitted work [FALSE]
-    --plan-only                     Write commands without executing
-    --help                          Show this help
+Modules:
+  run                              Prepare -> phone -> geo -> dx -> report.
 
-'auto' resolves to CPU for all three methods. GPU selection allocates one GPU
-only to that method. Phone selection still compares its original CPU models.
+Options:
+  --submit hpc|local|auto          Execution environment [auto]
+  --phone-run cpu|gpu|auto         Phone XGBoost processor [cpu]
+  --geo-run cpu|gpu|auto           Address Transformer processor [cpu]
+  --dx-run cpu|gpu|auto            Disease Transformer/CV processor [cpu]
+  --replace TRUE|FALSE             Overwrite requested outputs [TRUE]
+  --report-only                    CPU report using complete data, no fitting
+  --preflight                      Input/runtime checks with synthetic training
+  --cores N                        Shared CPU budget from 0f/0os.sh [HPC 40 / local 16]
+  --cpu-queue NAME --cpu-threads N 
+  --cpu-memory-gb N --cpu-hours N  
+  --gpu-queue NAME --gpu-cores N --gpu-memory-gb N --gpu-hours N 
+  --gpu-model NAME                 Optional LSF model constraint
+  --dir-dat DIR --dir-big DIR      Shared roots
+  --dir-data DIR --dir-analysis DIR --dir-base-model DIR 
+  --dir-model DIR --dir-files DIR --dir-jobs DIR 
+  --conda-env NAME --conda-exe FILE --rscript FILE --python-lib DIR 
+  --start-step all|fig1|fig2|fig3|fig4|fig5|fig6|figs 
+  --end-step fig1|fig2|fig3|fig4|fig5|fig6|figs 
+  --run-cv TRUE|FALSE              Five-fold disease validation [TRUE]
+  --wait TRUE|FALSE                Wait for submitted work [FALSE]
+  --plan-only                      Write commands without executing
+  -h, --help                       Show this help.
 
 Examples:
-    ./ems120.sh --plan-only
-    ./ems120.sh --geo-run gpu --dx-run gpu
-    ./ems120.sh --report-only --start-step fig2 --end-step fig2
+  ./ems120.sh run --plan-only
+  ./ems120.sh run --geo-run gpu --dx-run gpu
+  ./ems120.sh run --report-only --start-step fig2 --end-step fig2
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 # EMS120: sequential prepare -> phone -> geo -> dx -> report, CPU by default.
 # This entry point performs only lightweight planning on the login node.
 set -euo pipefail

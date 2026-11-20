@@ -1,30 +1,44 @@
 #!/usr/bin/env bash
-set -euo pipefail
-ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-if [[ ${1:-} == -h || ${1:-} == --help ]]; then
-    cat <<'HELP'
-./0.ancient_split.sh --grch 38  # pfile 拆分和 GRCh37 -> GRCh38
-./0.ancient_split.sh --grch 38 --chromosomes 1,2  # 默认 auto，选择部分染色体
-./0.ancient_split.sh --grch 38 --jobs 4 --threads 4 --replace FALSE
 
-Usage: ./0.ancient_split.sh --grch 38 [--submit hpc] [--plan-only] [OPTIONS]
-Split ancient/37/ancient.p* into 37/chr*.pgen/.pvar/.psam,
-then lift to 38/chr*.p* using the UKB row-preserving policy.
-Only POS changes; rejected rows keep POS=-1. PGEN/PSAM use relative links.
-Also provides 38/ancient.p* in original global row order for existing PCA.
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: split ancient pfiles and lift coordinates to GRCh38.
 
---input-prefix PREFIX  --out37 DIR  --out38 DIR
---runtime DIR   logs/jobs only [ANALYSIS_ROOT/allele3/ancient_split]
---scratch-root DIR [/tmp on compute node]; intermediates are cleaned on success
---chain FILE --fasta FILE --chromosomes auto|1,2,...
---jobs N [4] --threads N [4] --memory-mb N [8192 per PLINK process]
---queue NAME [33] --job-hours N [120]
---replace TRUE|FALSE [FALSE] --plan-only
-Receipts and rejection tables: ancient/{37,38}/.ancient_split/.
-One LSF job runs up to --jobs chromosomes in parallel. Requires LSF allocation.
-HELP
-    exit 0
+Usage:
+  ./0.ancient_split.sh run [options]
+
+Modules:
+  run                              Split GRCh37 chromosomes and produce GRCh38 pfiles.
+
+Options:
+  --grch 38                        Target genome build.
+  --input-prefix PREFIX            Source ancient pfile prefix.
+  --out37 DIR --out38 DIR          Output directories.
+  --runtime DIR                    Job and log directory.
+  --scratch-root DIR               Temporary workspace [/tmp on the worker].
+  --chain FILE --fasta FILE        LiftOver chain and reference FASTA.
+  --chromosomes auto|CSV           Chromosomes to process [auto].
+  --jobs N --threads N             Concurrent chromosomes / PLINK threads [4 / 4].
+  --memory-mb N                    Memory per PLINK process [8192].
+  --submit auto|local|hpc          Execution mode [auto].
+  --queue NAME --cores N           Queue and CPU budget from shared 0f settings.
+  --job-hours N                    Maximum job duration.
+  --replace TRUE|FALSE             Recompute or reuse completed outputs [FALSE].
+  --plan-only                      Write commands without running or submitting.
+  -h, --help                       Show this help.
+
+Examples:
+  ./0.ancient_split.sh run --grch 38 --plan-only
+  ./0.ancient_split.sh run --grch 38 --chromosomes 1,2
+PUBLIC_ENTRY_HELP
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 export submit=hpc SUBMIT=hpc
 source "${ALLELE_OS_CONFIG:-$ROOT/../0f/0os.sh}"
 export PATH="${DIR_WORK}/.conda/envs/allele3-evolution/bin:${DIR_SOFTWARE}/bin:$PATH"

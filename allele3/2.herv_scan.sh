@@ -1,24 +1,38 @@
 #!/usr/bin/env bash
-# Stratified sequence reconstruction + RepeatMasker; completed work is reused.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
---grch 38  Target build [38]; new analysis output: ANALYSIS_ROOT/allele3/38/
-./2.herv_scan.sh --grch 38 # 52 人 HERV 分析及汇总
-./2.herv_scan.sh MODULE --grch 38 # cohort|plan|sample|summarize
-./2.herv_scan.sh --max-running 4 --sample-cores 16 --grch 38
 
-Usage: ./2.herv_scan.sh [cohort|plan|summarize] [OPTIONS]
-No action: 52-person HERV sequence study (26 populations x 2).
-  --max-running N       Concurrent sample jobs [4]
-  --sample-cores N      Cores per sample [16]
-  --replace FALSE|TRUE  Reuse completed matching work [FALSE]
-  --plan-only           Inspect without submitting
-  --queue NAME --job-hours N
-  --help-full           All engine options
-HPC: 52 sample jobs + dependent summary. Job name: allele3.herv_scan
-Enrichment is handled by 3.allele3_scan.sh.
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: HERV sequence reconstruction and summary.
+
+Usage:
+  ./2.herv_scan.sh run|MODULE [options]
+
+Modules:
+  run | cohort                     Run the configured HERV cohort study.
+  plan | sample | summarize        Plan, process one sample, or summarize.
+
+Options:
+  --max-running N                  Concurrent sample jobs [4].
+  --sample-cores N                 Cores per sample [16].
+  --grch 37|38                     Genome build [38].
+  --submit auto|local|hpc          Execution mode [auto].
+  --queue NAME --cores N           Queue and CPU budget from shared 0f settings.
+  --job-hours N                    Maximum job duration.
+  --replace TRUE|FALSE             Recompute or reuse completed outputs [FALSE].
+  --plan-only                      Write commands without running or submitting.
+  --help-full                      Show all engine options.
+  -h, --help                       Show this help.
+
+Examples:
+  ./2.herv_scan.sh run --grch 38 --plan-only
+  ./2.herv_scan.sh summarize --grch 38
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 set -euo pipefail
 if [[ ${1:-} == highlights ]]; then

@@ -1,50 +1,45 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./0.ld_uniq.sh --grch 38 # 全部常染色体、AFR/EAS/EUR/SAS 的 LD 边界
-./0.ld_uniq.sh --chr 1,2 --grch 38 # 选择染色体；单一流程
-./0.ld_uniq.sh --chr 1-22 --grch 38 --replace FALSE
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GRID: cross-ancestry unique LD boundaries.
 
-Cross-ancestry unique LD boundaries (AFR/EAS/EUR/SAS), with independent CPU workers.
+Usage:
+  ./0.ld_uniq.sh run [options]
 
-Usage: ./0.ld_uniq.sh [--chr 1|1-22|1,3,5] [options]
-  --submit hpc|local|auto       Execution machine [auto]
-  --chr LIST                    Requested autosomes [1-22]
-  --grch 37|38                  Genome build [38]
-  --dir-out DIR                 Result directory [analysis/grid/38/ld; GRCh37: grid/37/ld]
-  --dir-gen DIR                 chrN.pgen/pvar[.zst]/psam inputs
-  --sample-panel FILE           Sample and super_pop columns
-  --replace TRUE|FALSE          Rebuild requested results [FALSE]
-                                 FALSE reuses complete partitions, repairs missing ones
-  --plan-only                   Write commands and plan without starting work
-  --jobs-N N                    Local concurrent workers [1]; ignored on HPC
-  --wait TRUE|FALSE             Wait for HPC completion [FALSE]; local always waits
-  --queue NAME                  CPU queue
-  --job-hours N                 Maximum worker duration [120 h]
-  --threads N                   PLINK threads and maximum DP state threads [8]
-  --max-d-kb N                  Largest tested common D [80000]
-  --d-grid-kb CSV               Initial increasing D grid [250,500,1000,2000,5000,10000]
-  --help                       Show this help
+Modules:
+  run                              Build requested chromosome boundaries and validate the merge.
 
-Jobs are named ld38.AFR.chr1, ld38.EAS.chr1, ld38.EUR.chr1, etc. (ld37 for GRCh37). CPU only; no GPU flag.
-HPC workers have no artificial concurrency dependencies; LSF schedules resources.
-All four ancestries use the same explicit D grid. HPC merge validates outputs
-after all workers terminate; publication requires every successful receipt and
-joint boundary stability. An unstable
-grid writes NEEDS_LARGER_GRID.json; increase --max-d-kb and rerun --replace FALSE.
-There is no hidden LD calculation or cross-population autoextension in merge.
-Full 1-22 runs publish ALL/AFR/EAS/EUR/SAS.<build>.bed; subsets use .SUBSET.bed.
-Tool defaults are in 0.ld_uniq.sh; environment variables can override them. No sibling 0f directory is needed.
+Options:
+  --submit hpc|local|auto          Execution machine [auto]
+  --chr LIST                       Requested autosomes [1-22]
+  --grch 37|38                     Genome build [38]
+  --dir-out DIR                    Result directory [analysis/grid/38/ld; GRCh37: grid/37/ld]
+  --dir-gen DIR                    chrN.pgen/pvar[.zst]/psam inputs
+  --sample-panel FILE              Sample and super_pop columns
+  --replace TRUE|FALSE             Rebuild requested results [FALSE]
+  --plan-only                      Write commands and plan without starting work
+  --jobs-N N                       Local concurrent workers [1]; ignored on HPC
+  --wait TRUE|FALSE                Wait for HPC completion [FALSE]; local always waits
+  --queue NAME                     CPU queue
+  --job-hours N                    Maximum worker duration [120 h]
+  --threads N                      PLINK threads and maximum DP state threads [8]
+  --max-d-kb N                     Largest tested common D [80000]
+  --d-grid-kb CSV                  Initial increasing D grid [250,500,1000,2000,5000,10000]
+  -h, --help                       Show this help.
 
 Examples:
-  ./0.ld_uniq.sh --chr 1 --plan-only --grch 38
-  mkdir -p "${ANALYSIS_ROOT:-$HOME/analysis}/grid/38/ld/logs"
-  nohup ./0.ld_uniq.sh --grch 38 --chr 1-22 --queue 33 > "${ANALYSIS_ROOT:-$HOME/analysis}/grid/38/ld/logs/submit.log" 2>&1 &
+  ./0.ld_uniq.sh run --grch 38 --chr 1 --plan-only
+  ./0.ld_uniq.sh run --grch 38 --chr 1-22 --queue 33
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; fi
 # CPU ancestry × chromosome LD partitions, followed by one guarded merge.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

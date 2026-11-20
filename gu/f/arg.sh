@@ -3,7 +3,7 @@
 # Standalone help must return before runtime setup or dispatch.
 if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
     cat <<'QUICKSTART_HELP'
-bash ./arg.sh -h  # 内部工具/单独阶段；调用要求见下文
+bash f/arg.sh -h  # Internal helper and individual stages
 # 从所属项目主入口选择模块；本文件不代表整个项目
 # 必填输入沿用现有接口，不自动补造数据或调度参数
 
@@ -25,7 +25,7 @@ QUICKSTART_HELP
     exit 0
 fi
 
-# Internal ARG workflow; public options live in ../arg.sh.
+# Internal ARG workflow; public options live in ../1.arg.sh.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 arg_source_prefix() {
@@ -167,7 +167,7 @@ arg_cli() (
 	fi
 	HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 
-	usage() { exec bash "$HERE/../arg.sh" --help; }
+	usage() { exec bash "$HERE/../1.arg.sh" --help; }
 
 	die() {
 		echo "ERROR: $*" >&2
@@ -954,7 +954,7 @@ PY
 			fi
 		done
 		prefix=$WORK/input/chr$c
-		[[ -s $prefix.haps.gz && -s $prefix.sample && -s $prefix.map ]] || _grid_die "Run arg.sh prep_gen first for chr$c"
+		[[ -s $prefix.haps.gz && -s $prefix.sample && -s $prefix.map ]] || _grid_die "Run 1.arg.sh prep_gen first for chr$c"
 		nind=$(($(wc -l <"$prefix.sample") - 2))
 		seed=$GRID_ARG_SEED_HAPLOTYPES
 		((seed <= 2 * nind)) || seed=$((2 * nind))
@@ -1072,7 +1072,7 @@ PY
 	fi
 	cat >"$GRID_ARG_OUT/ARG_NEEDLE_BUILD.txt" <<META
 created=$(date -Is)
-producer=$HERE/../arg.sh build
+producer=$HERE/../1.arg.sh build
 method=tsinfer
 build=GRCh${REFGEN_GRCH:-37}
 genotype_dir=$GRID_ARG_HAP_DIR
@@ -1253,7 +1253,7 @@ PY
 			run_parallel build_chr "${CHR_ARRAY[@]}"
 			cat >"$OUT_DIR/ARG_TSINFER_BUILD.txt" <<META
 created=$(date -Is)
-producer=$HERE/../arg.sh build
+producer=$HERE/../1.arg.sh build
 method=tsinfer
 build=GRCh${REFGEN_GRCH:-37}
 vcf_dir=$IN_DIR
@@ -1535,14 +1535,14 @@ arg_trace_check() (
 	# ARG construction belongs to reference-data preparation. This private helper
 	# lets TRACE validate ARG outputs before starting its analysis scheduler.
 	ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-	ARG_SH=${GU_ARG_SH:-$ROOT/arg.sh}
+	ARG_SH=${GU_ARG_SH:-$ROOT/1.arg.sh}
 	ACTION=${1:-check}
 	[[ $ACTION == check ]] || {
-		echo "ERROR: internal ARG validation is check-only; build ARG data with gu/arg.sh build" >&2
+		echo "ERROR: internal ARG validation is check-only; build ARG data with gu/1.arg.sh build" >&2
 		exit 2
 	}
 	[[ -s $ARG_SH ]] || {
-		echo "ERROR: arg.sh is missing: $ARG_SH" >&2
+		echo "ERROR: 1.arg.sh is missing: $ARG_SH" >&2
 		exit 2
 	}
 
@@ -1640,7 +1640,7 @@ arg_logged() (
 	trap 'exit 143' TERM
 	{
 		printf '[ARG RUN START] time=%s pid=%s cwd=%q\n' "$(date -Is)" "$$" "$PWD"
-		printf '[ARG COMMAND] ./arg.sh %q' "$action"
+		printf '[ARG COMMAND] ./1.arg.sh %q' "$action"
 		printf ' %q' "$@"
 		printf '\n'
 	} >>"$log"
@@ -1821,7 +1821,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 	shift || true
 	case "$command" in
 		cli | needle | tsinfer | threads | prep_vcf | trace_check | logged) "arg_$command" "$@" ;;
-		-h | --help) exec bash "$HERE/../arg.sh" --help ;;
+		-h | --help) exec bash "$HERE/../1.arg.sh" --help ;;
 		*)
 			echo "ERROR: unknown internal ARG stage: $command" >&2
 			exit 2

@@ -169,7 +169,9 @@ def inference_resources(cfg):
 
 def manifest_path(cfg,root):
     value=cfg["inputs"].get("gwas_manifest")
-    return Path(root)/"tmp/gwas_manifest.tsv" if value in (None,"auto") else Path(value)
+    if value not in (None,"auto"):return Path(value)
+    scope=cfg.get("gwas_manifest_scope")
+    return Path(root)/f"tmp/gwas_inputs/{scope}/manifest.tsv" if scope else Path(root)/"tmp/gwas_manifest.tsv"
 
 def dependencies(cfg,root,stage,trait=None):
     """Readable stat records. No whole-genome hashing and no test truth in fit inputs."""
@@ -465,6 +467,7 @@ def run_stage(cfg,root,stage,trait,args):
     from core2 import atomic_json,stamp
     root=Path(root);name=f"{trait}.{stage}" if trait else stage
     if stage=="infer_chr":name=f"{trait}.chr{cfg['chromosomes'][0]}.infer"
+    if stage=="inputs" and cfg.get("gwas_manifest_scope"):name+="."+cfg["gwas_manifest_scope"]
     state=root/"tmp/state";state.mkdir(parents=True,exist_ok=True)
     with (state/f"{name}.lock").open("a+") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -474,6 +477,34 @@ def run_stage(cfg,root,stage,trait,args):
         # themselves, including raw posteriors and code identities.
         if marker.is_file() and not args.replace and stage not in {"infer","infer_prepare","infer_chr"}:
             previous=json.loads(marker.read_text())
+            if stage in {"prepare","inputs"} and previous.get("inputs")!=signature:
+                from copy import deepcopy
+                old_signature=deepcopy(previous.get("inputs",{}))
+                new_signature=deepcopy(signature)
+                old_traits=old_signature.get("settings",{}).pop("traits",[])
+                new_traits=new_signature["settings"].pop("traits",[])
+                # A subset can reuse the original shared manifest. New traits
+                # get a separate manifest in plan_jobs, never overwrite it.
+                if stage=="inputs" and set(new_traits)<=set(old_traits):
+                    expanded=deepcopy(cfg);expanded["traits"]=old_traits
+                    new_signature=dependencies(expanded,root,stage)
+                    new_signature["settings"].pop("traits",None)
+                intact=all(Path(p).is_file() and stamp(Path(p))==record
+                           for p,record in previous.get("outputs",{}).items())
+                if old_signature==new_signature and intact:
+                    missing=[t for t in new_traits if t not in old_traits]
+                    if stage=="prepare" and missing:
+                        from cohort2 import extend_traits
+                        extend_traits(cfg,root,missing)
+                        expanded=deepcopy(cfg);expanded["traits"]=old_traits+missing
+                        signature=dependencies(expanded,root,stage)
+                        outputs=stage_outputs(expanded,root,stage)
+                        if not all(p.is_file() for p in outputs):raise RuntimeError("prepare: expected output missing")
+                        atomic_json({"inputs":signature,"outputs":{str(p):stamp(p) for p in outputs}},marker)
+                        print(f"[extend] prepare: {','.join(missing)}; existing cohort and labels preserved",flush=True)
+                        return
+                    if not missing:
+                        print(f"[reuse] {name}: requested trait subset",flush=True);return
             same_outputs=all(p.is_file() and previous.get("outputs",{}).get(str(p))==stamp(p) for p in outputs)
             if previous.get("inputs")==signature and same_outputs:
                 print(f"[reuse] {name}",flush=True);return
@@ -490,6 +521,14 @@ def plan_jobs(cfg,args):
     from core2 import atomic_json
     from workflow_jobs import Job,write_plan,run_plan
     root=Path(cfg["analysis_root"]).resolve();root.mkdir(parents=True,exist_ok=True)
+    if args.entry=="csx" and cfg["inputs"].get("gwas_manifest") in (None,"auto"):
+        marker=root/"tmp/state/inputs.json"
+        if marker.is_file() and not cfg.get("gwas_manifest_scope"):
+            previous=json.loads(marker.read_text()).get("inputs",{}).get("settings",{})
+            if not set(cfg["traits"])<=set(previous.get("traits",[])):
+                # Freeze the selection in the plan: per-trait workers must use
+                # this same path even after --traits narrows their selection.
+                cfg["gwas_manifest_scope"]="-".join(sorted(set(cfg["traits"])))
     # Every plan has a separate immutable config snapshot, shared by its workers.
     from tempfile import mkstemp
     folder=root/"tmp/config";folder.mkdir(parents=True,exist_ok=True)

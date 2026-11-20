@@ -1,35 +1,36 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./install.sh  # 默认：按当前配置安装/更新依赖
-./install.sh OPTION  # 可选：--check；其他安装选项见下文
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+METAG: install pinned tools and reference metadata.
 
-Metagenomics installation
-Install the pinned CPU tools through the local / LSF setup workflow.
+Usage:
+  ./install.sh run [options]
 
-Main options:
-  --software-only     Install/verify tools without reference or cohort data (put first)
-  --bootstrap-python  Create a local .venv and install Python dependencies from env.yml (put first)
-  --qc-tools          Install pinned minimap2 for optional species refinement (put first)
-  --config FILE       Runtime JSON paths/resources (auto local/HPC profile by default)
-  --submit hpc|local|auto  Execution machine [auto]
-  --plan-only         Generate commands without running or submitting them
-  submit=auto|local|hpc  Optional environment override; automatic by default
-  jobs_N=N            Environment variable controlling local concurrency
+Modules:
+  run | setup                      Prepare software and frozen metadata.
+
+Options:
+  --software-only                  Install/verify tools without reference or cohort data (put first)
+  --bootstrap-python               Create a local .venv and install Python dependencies from env.yml (put first)
+  --qc-tools                       Install pinned minimap2 for optional species refinement (put first)
+  --config FILE                    Runtime JSON paths/resources (auto local/HPC profile by default)
+  --submit hpc|local|auto          Execution machine [auto]
+  --plan-only                      Generate commands without running or submitting them
+  -h, --help                       Show this help.
 
 Examples:
-    ./install.sh --plan-only
-    ./install.sh
-    # Check library commands after installation.
-    ./1.lib.sh -h
-    # Optional local Python bootstrap.
-    ./install.sh --bootstrap-python
+  ./install.sh run --plan-only
+  ./install.sh --software-only
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- setup "$@"; fi
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 if [[ ${1:-} == --qc-tools ]]; then

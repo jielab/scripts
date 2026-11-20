@@ -215,7 +215,7 @@ def _plan(raw):
                      f'export SCRIPT_LOG_DIR={q(str(task / "console"))}',
                      f'source {q(str(frozen / "f/hpc.runtime.env"))}',
                      f'cd {q(str(frozen))}',
-                     shlex.join(['bash', str(frozen / 'arg.sh')] + cmd), '']
+                     shlex.join(['bash', str(frozen / '1.arg.sh')] + cmd), '']
             script.write_text('\n'.join(lines))
             script.chmod(0o755)
             tasks.append(dict(key=key, method=method, chromosome=chrom, cmd=str(script),
@@ -226,7 +226,7 @@ def _plan(raw):
     print(f'RUN_DIR={run}\nGenerated {len(tasks)} independent LSF jobs ({len(methods)} methods x {len(chrs)} chromosomes).', flush=True)
     print(f'Each job: queue={queue}, slots={slots}, threads={threads}, RAM={memory} GiB', flush=True)
     if opts.plan_only:
-        print('Plan only: no jobs submitted. Use: ./arg.sh submit ' + shlex.quote(str(run)))
+        print('Plan only: no jobs submitted. Use: ./1.arg.sh submit ' + shlex.quote(str(run)))
     else:
         manage('submit', run)
     return run

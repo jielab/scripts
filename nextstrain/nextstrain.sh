@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./nextstrain.sh  # 序列准备和 Nextstrain 分析
-./nextstrain.sh --view TRUE  # 单一流程，可选择结束后打开查看器
-./nextstrain.sh --min-length 11000 --view FALSE
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+NEXTSTRAIN: sequence preparation and phylogenetic analysis.
+
+Usage:
+  ./nextstrain.sh run [options]
 
 Modules:
-    Default  Prepare sequences, run Nextstrain and optionally view results
+  run                              Prepare sequences, run Nextstrain and optionally open the viewer.
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    --dir-input DIR   Input [${DIR_DAT}/viome/raw]
-    --dir-output DIR  Results [${ANALYSIS_ROOT}/nextstrain]
-    --conda-env NAME  Environment [nextstrain]
-    --min-length N  Minimum sequence length [11000]
-    --view TRUE|FALSE  Open results viewer [FALSE]
-    -h, --help  Show options and examples below
+Options:
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  --dir-input DIR                  Input [${DIR_DAT}/viome/raw]
+  --dir-output DIR                 Results [${ANALYSIS_ROOT}/nextstrain]
+  --conda-env NAME                 Environment [nextstrain]
+  --min-length N                   Minimum sequence length [11000]
+  --view TRUE|FALSE                Open results viewer [FALSE]
+  -h, --help                       Show this help.
 
 Examples:
-    ./nextstrain.sh --plan-only
-    ./nextstrain.sh
-    # Optional viewer after analysis.
-    ./nextstrain.sh --view TRUE
+  ./nextstrain.sh run --plan-only
+  ./nextstrain.sh run --min-length 11000 --view FALSE
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -44,6 +46,7 @@ unset _paths_directory
 source "$SCRIPTS_ROOT/0f/project_entry.sh"
 project_workflow_init "$@" || exit $?
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

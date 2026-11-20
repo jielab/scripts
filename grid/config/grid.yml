@@ -99,7 +99,7 @@ abm:
   evidence_queries: 200
   evidence_neighbors: 16
 block_deep:
-  enabled: true                 #included in grid.sh all; --without-deep opts out
+  enabled: true                 #included in grid.sh run; --without-deep opts out
   device: cuda                  #GPU by default; --abm-deep-run cpu opts into CPU
   epochs: 30
   patience: 5

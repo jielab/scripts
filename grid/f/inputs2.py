@@ -45,7 +45,8 @@ def sample_size(path,trait,snps,effective_n_column=None):
 def ensure_manifest(cfg,root,traits):
     declared=cfg["inputs"].get("gwas_manifest","auto")
     if declared and declared!="auto":return str(Path(declared).resolve())
-    root=Path(root);destination=root/"tmp/gwas_manifest.tsv"
+    from driver2 import manifest_path
+    root=Path(root);destination=manifest_path(cfg,root)
     snpinfo=Path(cfg["inputs"]["ld_ref"])/"snpinfo_mult_1kg_hm3"
     reference=read_table(snpinfo,columns=["SNP"])
     if "SNP" not in reference:raise ValueError("LD snpinfo must declare SNP rsIDs")
@@ -64,5 +65,6 @@ def ensure_manifest(cfg,root,traits):
             provenance.append({"trait":trait,"population":pop,"path":str(path),"n_gwas":n,**detail})
     atomic_table(pd.DataFrame(records),destination)
     atomic_json({"sample_size_resolution":provenance,"overlap_status":cfg["inference"].get("discovery_target_overlap","unknown"),
-        "note":"GWAS-target and cross-GWAS sample overlap cannot be inferred from summary files; retain source-study documentation"},root/"qc/gwas_inputs.json")
+        "note":"GWAS-target and cross-GWAS sample overlap cannot be inferred from summary files; retain source-study documentation"},
+        root/(f"qc/gwas_inputs.{cfg['gwas_manifest_scope']}.json" if cfg.get("gwas_manifest_scope") else "qc/gwas_inputs.json"))
     return str(destination)

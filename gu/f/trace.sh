@@ -183,7 +183,7 @@ fi
 
 # GU TRACE consumes mutation-bearing, TRACE-formatted trees stored directly in
 # ARG_DIR. Native method artifacts stay in their method directories and are
-# exported explicitly with `arg.sh build --format trace`.
+# exported explicitly with `1.arg.sh build --format trace`.
 find_trees() {
 	local c=$1
 	find -L "$ARG_DIR" -maxdepth 1 -type f \( -name '*.trees' -o -name '*.tsz' \) -print | awk -v c="$c" 'BEGIN{IGNORECASE=1}{b=$0;gsub(/.*\//,"",b);if(b~("(^|[^A-Za-z0-9])chr"c"([^A-Za-z0-9]|$)"))print;else if(b~("(^|[^A-Za-z0-9])"c"([^A-Za-z0-9]|$)"))print}' | sort
@@ -222,7 +222,7 @@ write_manifest() {
 	for c in $CHRS; do
 		mapfile -t fs < <(find_trees "$c")
 		((${#fs[@]})) || {
-			echo "ERROR: no GU TRACE-format ARG tree for chr$c under $ARG_DIR. Build it with arg.sh build (add --format trace for needle), then run gu.sh trace." >&2
+			echo "ERROR: no GU TRACE-format ARG tree for chr$c under $ARG_DIR. Build it with 1.arg.sh build (add --format trace for needle), then run gu.sh trace." >&2
 			exit 1
 		}
 		if printf '%s\n' "${fs[@]}" | grep -Eqi '(_part[0-9]+|chunk[._-]?[0-9]+)'; then

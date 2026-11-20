@@ -3,50 +3,45 @@ set -euo pipefail
 
 usage() {
     cat <<'HELP'
-Diet: final figures, collected results and offline report.
+Diet publication: render figures, assemble tables and build the offline report.
 
 Usage:
   ./diet.paper.sh run|final|web [options]
 
 Modules:
-  run                             final -> web (also accepted as final,web).
-  final                           Render/collect publication figures from existing results.
-  web                             Collect existing results and refresh offline viewer.
+  run                             Run final, then web.
+  final                           Render publication figures and numbered .xlsx tables.
+  web                             Refresh the viewer from existing analysis output.
 
 Options:
-  --cohort NAME                   ukb|nhanes|chns|charls|all [all].
-  --study dose|maha|all           Study selection [all]; this all remains supported.
+  --study dose|maha|all            Study selection [all].
+  --cohort ukb|nhanes|chns|charls|all
+                                  Cohort selection [all].
   --config FILE                   Pipeline configuration [config/diet.json].
-  --dir-output DIR                Results root [configured output directory].
+  --dir-output DIR                Results root containing completed analyses.
   --dir-files DIR                 Dictionary/resource directory.
-  --dir-ukb DIR                   UKB input directory.
-  --dir-nhanes DIR                NHANES input directory.
-  --dir-nhanes-dose DIR           DOSE NHANES root with cdc/ and FPED/MPED inputs.
-  --dir-chns DIR                  CHNS input directory.
-  --dir-charls DIR                CHARLS input directory.
-  --charls-input FILE             CHARLS input override.
-  --charls-phe FILE               CHARLS phenotype override.
-  --charls-config FILE            CHARLS configuration override.
-  --foods FILE                    Food input override.
+  --collect-only                  Collect existing figures without rerendering composites.
   --replace TRUE|FALSE            Recompute / reuse verified outputs [TRUE].
   --rscript FILE                  R interpreter; alias --r-bin.
   --python FILE                   Python interpreter; alias --python-bin.
-  --dry-run                       Print scientific commands without running them.
-  --submit auto|local|hpc         Select execution environment [auto].
-  --queue NAME                    CPU queue.
-  --cores N                       CPU budget from shared 0f/0os.sh.
-  --jobs-N N                      Shared workflow concurrency setting.
-  --wait TRUE|FALSE               Wait for submitted workflow [FALSE].
-  --plan-only                     Write commands/plan without executing/submitting.
-  --job-hours N                   Shared job duration limit.
-  --dir-jobs DIR                  Shared command/plan directory.
-  --collect-only                  Collect existing final figures without rerendering composites.
+  --submit auto|local|hpc         Execution environment [auto: detect local/LSF].
+  --cores N                       CPU budget [local: 16; HPC: 40].
+  --queue NAME                    HPC CPU queue [33].
+  --wait TRUE|FALSE               Wait for workflow completion [FALSE].
+  --job-memory-gb N               Job memory limit in GiB.
+  --job-hours N                   Job duration limit in hours.
+  --dir-jobs DIR                  Directory for generated commands and plans.
+  --plan-only                     Write a plan without executing or submitting.
+  --dry-run                       Print scientific commands without executing.
   -h, --help                      Show this help.
 
 Examples:
-  ./diet.paper.sh run --cohort all --study all --plan-only
-  ./diet.paper.sh final --cohort ukb --study dose --collect-only --dry-run
-  ./diet.paper.sh web --cohort ukb --study dose --dir-output /work/sph-huangj/analysis/diet --plan-only
+  # Finish diet.sh analyses before building the paper.
+  ./diet.paper.sh run --study all --cohort all
+  ./diet.paper.sh run --study all --cohort all --plan-only
+  ./diet.paper.sh final --study dose --cohort ukb --submit local --dry-run
+  ./diet.paper.sh run --study all --cohort all --submit hpc --wait TRUE
+  ./diet.paper.sh web --study all --cohort all
 HELP
 }
 case "${1:-}" in

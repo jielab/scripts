@@ -1,0 +1,65 @@
+Category	Disease	ICD-10
+Diseases of Infections	Diseases of Infections	A01-B89
+Diseases of Infections	Bacterial infections	A01-A79
+Diseases of Infections	Viral infections	A80-B34
+Cancer	Cancer	C00-C97
+Cancer	Colorectal cancer	C18-C20
+Cancer	Esophagus cancer	C15
+Cancer	Stomach cancer	C16
+Cancer	Lung cancer	C34
+Cancer	Melanoma	C43-C44
+Cancer	Breast cancer	C50
+Cancer	Prostate cancer	C61
+Cancer	Leukemia	C81-C96
+Blood and immune disorders	Blood and immune disorders	D50-D89
+Blood and immune disorders	Anemia	D50-D64
+Endocrine disorders	Endocrine disorders	E00-E90
+Endocrine disorders	Diabetes	E10-E14
+Endocrine disorders	Obesity	E66
+Mental and behavioural disorders	Mental and behavioural disorders	F00-F99
+Mental and behavioural disorders	Dementia	F00-F03, G30, G31
+Mental and behavioural disorders	Substance abuse	F10-F19
+Mental and behavioural disorders	Psychotic disorders	F20-F29
+Mental and behavioural disorders	Mood disorders	F30-F39
+Mental and behavioural disorders	Neurotic disorders	F40-F48
+Nervous system disorders	Nervous system disorders	G00-G99
+Nervous system disorders	Parkinson disease	G20-G22
+Nervous system disorders	Epilepsy	G40-G42
+Nervous system disorders	Transient ischemic attack	G45-G46
+Nervous system disorders	Sleep disorders	G47
+Eye disorders	Eye disorders	H00-H59
+Eye disorders	Cataracts	H25-H26
+Eye disorders	Glaucoma	H40
+Ear disorders	Ear disorders	H60-H99
+Circulatory system disorders	Circulatory system disorders	I00-I99
+Circulatory system disorders	Hypertension	I10-I15
+Circulatory system disorders	Ischemic heart diseases	I20-I25
+Circulatory system disorders	Arrhythmias	I46-I49
+Circulatory system disorders	Atrial fibrillation and flutter	I48
+Circulatory system disorders	Heart failure	I50
+Circulatory system disorders	Venous thromboembolism	I26, I802
+Circulatory system disorders	Overall stroke	I60-64
+Circulatory system disorders	Subarachnoid hemorrhage	I60
+Circulatory system disorders	Intracerebral hemorrhage	I61
+Circulatory system disorders	Ischemic stroke	I63
+Circulatory system disorders	Cerebrovascular diseases	I60-I69
+Circulatory system disorders	Peripheral artery diseases	I70-I79
+Respiratory system disorders	Respiratory system disorders	J00-J99
+Respiratory system disorders	Influenza and Pneumonia	J09-J18
+Respiratory system disorders	Chronic obstructive pulmonary disease	J40-J44, J47
+Respiratory system disorders	Asthma	J45-J46
+Digestive system disorders	Digestive system disorders	K00-K93
+Digestive system disorders	Inflammatory bowel disease	K50-K52
+Digestive system disorders	Liver diseases	K70-K77
+Digestive system disorders	Pancreatitis	K85
+Skin disorders	Skin disorders	L00-L99
+Skin disorders	Infections and eczema	L00-L08, L20-L30
+Musculoskeletal system disorders	Musculoskeletal system disorders	M00-M99
+Musculoskeletal system disorders	Rheumatoid arthritis disorders	M05-M06, M08, M13, M30-35, M45
+Musculoskeletal system disorders	Osteoarthritis	M15-M19
+Musculoskeletal system disorders	Sciatica	M50-M51
+Musculoskeletal system disorders	Soft tissue disorders	M60-M79
+Musculoskeletal system disorders	Osteoporosis	M80-M82
+Genitourinary system disorders	Genitourinary system disorders	N00-N99
+Genitourinary system disorders	Renal failure	N17-N19
+Genitourinary system disorders	Chronic renal failure	N18

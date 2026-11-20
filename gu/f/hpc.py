@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Portable, receipt-checked LSF orchestration for GU; no third-party imports.
 
-Scientific code remains in gu.sh/arg.sh. Plans are immutable, each analysis
+Scientific code remains in gu.sh/1.arg.sh. Plans are immutable, each analysis
 task owns its entire output root, and retries re-enter the scientific cache
 validator. Sample batches are separate frequency-estimation cohorts.
 """
@@ -378,7 +378,7 @@ def plan_run(args) -> None:
         for c in chromosomes:
             task_id += 1
             output = run / "tasks" / f"chr{c}"
-            command = ["bash", str(ROOT / "arg.sh"), "build", "--method", args.arg_method,
+            command = ["bash", str(ROOT / "1.arg.sh"), "build", "--method", args.arg_method,
                        "--format", "trace", "--dir-gen", plan["dir_gen"],
                        "--dir-pfile", str(Path(plan["dir_target"]).parent), "--dir-map", plan["dir_map"],
                        "--dir-arg", str(output / "arg"), "--dir-gen4arg", str(output / "prepared"),
@@ -1029,7 +1029,7 @@ def parser():
     q.add_argument("--dir-gen")
     q.add_argument("--dir-map", help="ARG recombination map directory; default /work/sph-huangj/data/gen/hm3/GRCH/gmap")
     q.add_argument("--arg-method", choices=["tsinfer"], default="tsinfer",
-                   help="ARG backend supported by this planner; use arg.sh directly for SINGER")
+                   help="ARG backend supported by this planner; use 1.arg.sh directly for SINGER")
     for name in ("submit", "status"):
         q = sub.add_parser(name)
         q.add_argument("run_dir")

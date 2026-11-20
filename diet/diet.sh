@@ -57,7 +57,6 @@ Options:
 Examples:
   ./diet.sh run --cohort ukb --study dose --core --plan-only
   # Generate scores, then wait for successful completion.
-  ./1.disco.sh ukb --study dose --replace FALSE
   ./diet.sh run --cohort ukb --study dose --core --replace FALSE
   ./diet.sh run --cohort ukb --study dose --submit hpc --queue 33 --cores 40 --plan-only
   ./diet.sh foodwas --cohort ukb --study dose --list-steps

@@ -244,6 +244,8 @@ class Workflow:
         cohort=self.a.cohort_arg or self.a.cohort
         if self.a.action in COHORTS: cohort=self.a.action
         candidates=list(COHORTS) if cohort=="all" else [cohort]
+        if cohort=="all" and self.a.action in ("run","final","web","final,web"):
+            return [c for c in ("ukb","nhanes","chns") if self.profiles(c)]
         if cohort=="all":
             charls=Path(self.env.get("DIET_CHARLS_INPUT",str(Path(self.env["DIET_CHARLS"])/"food_components.tsv")))
             if not charls.exists():
@@ -380,6 +382,10 @@ class Workflow:
         if not self.a.collect_only and "dose" in studies:
             self.py("final/dose","dose/final.py","--output",self.out)
         self.py("final/collect","results.py","final","--output",self.out,"--studies",",".join(studies))
+        if "dose" in studies and scope in ("all","nhanes") and (self.a.dry_run or (self.out/"dose/nhanes/NHANES_analysis.rds").is_file()):
+            self.r("final/nhanes-baseline","nhanes_baseline.R",str(self.out))
+        self.py("final/supplement","paper_tables.py","--output",self.out,"--study",self.a.study,"--scope",scope)
+
 
     def web(self):
         self.py("web/collect","results.py","collect","--output",self.out)

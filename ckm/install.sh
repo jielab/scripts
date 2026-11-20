@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 
-# Standalone help must return before runtime setup or dispatch.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'QUICKSTART_HELP'
-./install.sh  # 默认：检查现有依赖
-./install.sh OPTION  # 可选：--check|--r|--conda PREFIX
-./install.sh --check  # 检查环境，不运行科学分析
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+CKM: check or install analysis dependencies.
 
+Usage:
+  ./install.sh run [options]
 
-QUICKSTART_HELP
-    exit 0
+Modules:
+  run                              Check the configured dependencies.
+
+Options:
+  --check                          Check installed R/Python dependencies.
+  --r                              Install missing R dependencies.
+  --conda PREFIX                   Create or update a Conda environment.
+  -h, --help                       Show this help.
+
+Examples:
+  ./install.sh run
+  ./install.sh --check
+PUBLIC_ENTRY_HELP
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- --check "$@"; fi
 # Install separately. Analysis entries never install or update dependencies.
 set -euo pipefail
 ckm_install_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

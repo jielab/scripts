@@ -1,46 +1,41 @@
 #!/usr/bin/env bash
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
+# Public help returns before runtime setup, input access or job submission.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- compare
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- compare "$@"
-    fi
-fi
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+GWAS: compare effect sizes, allele frequencies and genetic correlations.
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./compare.sh  # 默认 compare；仍须指定项目或 GWAS 输入
-./compare.sh MODULE  # compare|ldsc|shiny
-./compare.sh compare --p-threshold 5e-8 --significant first
+Usage:
+  ./compare.sh run|MODULE [options]
 
 Modules:
-    compare  Effect-size and allele-frequency comparisons
-             Mixed or unknown builds match by SNP ID and alleles
-    ldsc     Heritability and genetic correlations
-    shiny    Manhattan tracks and LD viewer
+  run | compare                    Compare effect sizes and allele frequencies.
+  ldsc                             Estimate heritability and genetic correlations.
+  shiny                            Open Manhattan tracks and the LD viewer.
 
-Main options:
-    --submit auto|local|hpc       Execution mode [auto]
-    --dir-project DIR / --gwas-files CSV  Project or explicit GWAS files
-    --category NAME --anchor NAME  Project category and reference trait
-    --grch 37|38 --require-grch 37|38  Build alignment/requirement
-    --dir-output DIR  Result directory
-    --p-threshold N --significant first|either|both  Selection
-    --run-munge TRUE|FALSE  Prepare LDSC caches [TRUE]
-    --ref-ld-chr PREFIX --w-ld-chr PREFIX  LD references
-    --port N --host IP  Shiny address [3841 / 127.0.0.1]
-    -h, --help  Show options and examples below
+Options:
+  --submit auto|local|hpc          Execution mode [auto]
+  --dir-project DIR / --gwas-files CSV Project or explicit GWAS files
+  --category NAME --anchor NAME    Project category and reference trait
+  --grch 37|38 --require-grch 37|38 Build alignment/requirement
+  --dir-output DIR                 Result directory
+  --p-threshold N --significant first|either|both Selection
+  --run-munge TRUE|FALSE           Prepare LDSC caches [TRUE]
+  --ref-ld-chr PREFIX --w-ld-chr PREFIX LD references
+  --port N --host IP               Shiny address [3841 / 127.0.0.1]
+  -h, --help                       Show this help.
 
 Examples:
-    source ../0f/0os.sh
-    ./compare.sh compare --dir-project "$DIR_GWAS/4grid" --anchor height.EUR --p-threshold 1e-6
-    ./compare.sh ldsc --project-dir "$DIR_GWAS/4grid" --category common --run-munge FALSE --run-h2 TRUE --run-rg TRUE --run TRUE --output-dir "$ANALYSIS_ROOT/gwas/4grid/ldsc"
+  ./compare.sh run --dir-project PROJECT_DIR --anchor height.EUR --plan-only
+  ./compare.sh ldsc --project-dir PROJECT_DIR --category common
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- compare "$@"; fi
 # BEGIN QIMING RESOURCE EXAMPLES (Admin, 2026-11-05)
 # Queue 33: 40 cores / 192 GiB per node. Reserve 10/20/30/40 cores by
 # rounding max(required_cores/40, required_memory_GiB/192) UP to 25% steps.

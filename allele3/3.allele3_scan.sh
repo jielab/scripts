@@ -1,30 +1,44 @@
 #!/usr/bin/env bash
 
-# Help is available before runtime discovery, data checks or job submission.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
---grch 38  Target build [38]; new analysis output: ANALYSIS_ROOT/allele3/38/
-./3.allele3_scan.sh --grch 38 # 三个扫描，summary 成功后自动执行 HERV highlights
-./3.allele3_scan.sh MODULE --grch 38 # all|scan|merge|verify|highlights
-./3.allele3_scan.sh --target gnomad --mode summary --replace FALSE --grch 38
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+ALLELE3: summary/detailed scans and HERV highlights.
 
-# 已完成扫描后，只重跑 highlights（复制运行）：
-bash 3.allele3_scan.sh highlights --grch 38
-# 可选：--cores N；默认读取 0f/0os.sh（HPC 40 / local 16）
+Usage:
+  ./3.allele3_scan.sh run|MODULE [options]
 
-Usage: ./3.allele3_scan.sh [all|scan|merge|verify|highlights] [OPTIONS]
-No action / all: 3 scans + 1 dependent HERV highlights job (requires completed HERV cohort).
-  --target gnomad|allofus|custom   Select one summary scan instead
-  highlights --target gnomad,allofus  Enrichment after summary scans
-  --mode detailed                One gnomAD detailed scan for allele3.sh all
-  --jobs N --replace FALSE|TRUE [FALSE]
-  --plan-only                    Inspect without submitting
-  --queue NAME --cores N --job-hours N
-  --help-full                    All scanner options
-HPC is detected automatically. Job name: allele3.alle3_scan
+Modules:
+  run                              Three scans, then HERV highlights; requires completed HERV cohort.
+  scan | merge | verify            Process or validate one selected source.
+  highlights                       Run HERV enrichment from completed scans.
+
+Options:
+  --target gnomad|allofus|custom   Source for a single scan.
+  --mode summary|detailed          Scan mode; detailed supports gnomad.
+  --out DIR                        Scan output directory.
+  --jobs N                         Worker count.
+  --grch 37|38                     Genome build [38].
+  --submit auto|local|hpc          Execution mode [auto].
+  --queue NAME --cores N           Queue and CPU budget from shared 0f settings.
+  --job-hours N                    Maximum job duration.
+  --replace TRUE|FALSE             Recompute or reuse completed outputs [FALSE].
+  --plan-only                      Write commands without running or submitting.
+  --help-full                      Show all engine options.
+  -h, --help                       Show this help.
+
+Examples:
+  ./3.allele3_scan.sh run --grch 38 --plan-only
+  ./3.allele3_scan.sh scan --target gnomad --mode detailed --grch 38
+  ./3.allele3_scan.sh highlights --grch 38
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
+if [[ ${1:-} == run ]]; then shift; set -- all "$@"; fi
 set -euo pipefail
 # Unqualified invocation selects all prepared stores; explicit source/mode selects one.
 if (($# == 0)) || [[ $1 == -* ]]; then

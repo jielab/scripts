@@ -1,55 +1,58 @@
 #!/usr/bin/env bash
+case "${1:-}" in
+    ""|-h|--help|help)
+        cat <<'HELP'
+Diet scoring: generate outcome-free diet scores before diet.sh analyses.
 
-# Omitted action uses this entry's configured workflow; explicit actions are unchanged.
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    if (($# == 0)); then
-        set -- all
-    elif [[ $1 == --* && $1 != --help && $1 != --help-full && $1 != --help-all && $1 != --execute && $1 != --worker ]]; then
-        set -- all "$@"
-    fi
-fi
-
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./1.disco.sh  # 默认评分流程，全部队列和评分
-./1.disco.sh ukb,nhanes,chns,charls  # 可删除不需要的队列
-./1.disco.sh --score all  # 也可 --score medito,dash,mind；完整名称见下文
-
-Diet scoring
-UKB MAHA diet*.rds are published to ${DIR_UKB}/Rdata after successful scoring.
-DOSE keeps its separate analysis cache.
+Usage:
+  ./1.disco.sh run|COHORT[,COHORT...] [options]
 
 Modules:
-    all or comma-separated ukb,nhanes,chns,charls
+  run                             Score all configured cohorts.
+  ukb | nhanes | chns | charls    Score one cohort or a comma-separated list.
 
-Main options:
-    --score all|NAME,NAME    Select diet.XXX.sum totals by XXX (default: all)
-    --replace TRUE|FALSE     Recompute or reuse verified outputs
-    --cores N --queue NAME
-                            CPU default follows 0f/0os.sh (WORKFLOW_CORES)
-    --plan-only              Preview commands without submitting
-
-Local/HPC paths and runtimes follow shared 0f settings. Job name: diet.disco.
-CHNS provenance: DIET_CHNS/chns.manifest.tsv beside cohort data.
-A missing provenance file is logged; scoring does not regenerate it.
-Scoring diagnostics stay in .cache; no maha/COHORT directory is created.
-Each scoring engine requires its own configured inputs. Wait for successful scoring
-before running ./diet.sh all --cohort ukb --study dose --core.
+Options:
+  --score all|NAME,NAME            Score totals: diet.XXX.sum names or XXX [all].
+  --study dose|maha|all            Study selection [all].
+  --config FILE                   Pipeline configuration [config/diet.json].
+  --dir-output DIR                Results root [configured output directory].
+  --dir-files DIR                 Dictionary/resource directory.
+  --dir-ukb DIR                   UKB input directory.
+  --dir-nhanes DIR                NHANES input directory.
+  --dir-nhanes-dose DIR           NHANES DOSE root containing cdc/ and FPED/MPED.
+  --dir-chns DIR                  CHNS input directory.
+  --dir-charls DIR                CHARLS input directory.
+  --charls-input FILE             CHARLS input override.
+  --charls-phe FILE               CHARLS phenotype override.
+  --charls-config FILE            CHARLS configuration override.
+  --foods FILE                    Food input override.
+  --replace TRUE|FALSE            Recompute / reuse verified outputs [TRUE].
+  --rscript FILE                  R interpreter; alias --r-bin.
+  --python FILE                   Python interpreter; alias --python-bin.
+  --submit auto|local|hpc         Execution environment [auto: detect local/LSF].
+  --cores N                       CPU budget [local: 16; HPC: 40].
+  --queue NAME                    HPC CPU queue [33].
+  --wait TRUE|FALSE               Wait for workflow completion [FALSE].
+  --job-memory-gb N               Job memory limit in GiB.
+  --job-hours N                   Job duration limit in hours.
+  --dir-jobs DIR                  Directory for generated commands and plans.
+  --plan-only                     Write a plan without executing or submitting.
+  --dry-run                       Print scientific commands without executing.
+  -h, --help                      Show this help.
 
 Examples:
-    ./1.disco.sh all
-    ./1.disco.sh ukb,nhanes,chns,charls # same as "all"
-    ./1.disco.sh all --score medito,medi24,dash,mind,hpdi,ahei,phdi,modern,digm,maha,hlcd,hlfd,redii,fds,maha_bal,maha_strict,maha_nodairy,maha_noprotein,upf,dose,dose11,dose9,dose9half,maha_processed,maha_nomeat,medi,amed,chdi,maha_density,maha_residual,dash_fung,dash_density --replace FALSE
-
-The example lists all 32 supported score names across cohorts.
-Unsupported scores are skipped and logged. Shared engines may compute additional
-scores internally. *.disco.rds contains IDs and selected totals; *.raw.rds keeps
-full scoring data for downstream analyses. Same-name totals from different
-profiles remain separate (for example, diet.dash.sum and dose.diet.dash.sum).
-PUBLIC_ENTRY_HELP
-    exit 0
-fi
+  ./1.disco.sh ukb,nhanes,chns
+  ./1.disco.sh run --plan-only
+  ./1.disco.sh ukb --submit local --cores 16 --dry-run
+  ./1.disco.sh ukb,nhanes,chns --submit hpc --queue 33 --cores 40 --wait TRUE
+  # After scoring finishes successfully:
+  ./diet.sh run --study all --cohort all
+HELP
+        exit 0 ;;
+    run) shift; set -- all "$@" ;;
+    --plan-only) set -- all "$@" ;;
+    all) if [[ ${PROJECT_JOB_ACTIVE:-0} != 1 && ${WORKFLOW_WORKER:-0} != 1 ]]; then echo 'Use run for all cohorts.' >&2; exit 2; fi ;;
+esac
 # Outcome-free diet scoring. Local/HPC roots and submission use scripts/0f.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

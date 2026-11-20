@@ -7,10 +7,10 @@ bash ./usage.sh -h  # 内部工具/单独阶段；调用要求见下文
 # 从所属项目主入口选择模块；本文件不代表整个项目
 # 必填输入沿用现有接口，不自动补造数据或调度参数
 
-Usage: ./allele3.sh [all|hotspots|density|herv_enrichment|base_simulation|base_occupancy MODULE] [OPTIONS]
+Usage: ./allele3.sh [run|hotspots|density|herv_enrichment|base_simulation|base_occupancy MODULE] [OPTIONS]
 
 Modules:
-    all              Default downstream job; requires completed PCA and gnomAD detailed scan
+    run              Ordered downstream job; requires completed PCA and gnomAD detailed scan
     hotspots         Genome-wide hotspot discovery and matched comparisons
     density          Continuous multi-ALT density from a completed scan
     herv_enrichment  HERV enrichment after scan and PCA
@@ -22,18 +22,18 @@ Main options:
     --out DIR --replace TRUE|FALSE [FALSE]
     --queue NAME --job-hours N
     --job-dir DIR --write-cmd --wait TRUE|FALSE --plan-only
-    all: --config JSON [config/workflow.json]
+    run: --config JSON [config/workflow.json]
     hotspots: --scan-dir DIR --with-atlas auto|TRUE|FALSE --atlas-resources TSV
     -h, --help; --help-full for scientific options
 
 Examples:
-    ./allele3.sh all --submit hpc --plan-only --grch 38
-    ./allele3.sh all --submit hpc --job-hours 120 --grch 38
-    ./allele3.sh all --submit hpc --replace FALSE --grch 38
+    ./allele3.sh run --submit hpc --plan-only --grch 38
+    ./allele3.sh run --submit hpc --job-hours 120 --grch 38
+    ./allele3.sh run --submit hpc --replace FALSE --grch 38
     ./allele3.sh base_occupancy allele-time --help --grch 38
 
 Each entry creates its own command file. Do not wrap it in a second bsub call.
-Use all for one sequential allocation; individual entries run only their modules.
+Use run for one sequential allocation; individual entries run only their modules.
 Default FALSE reuses complete modules and rebuilds incomplete modules.
 Retained annotation/reference data are inputs. Ordinary GWAS uses ../gwas/gwas.sh.
 See 0.README.md for the ordered configuration, outputs and scientific limits.
@@ -43,10 +43,10 @@ fi
 set -euo pipefail
 case "${1:-allele3}" in
 allele3) cat <<'HELP'
-Usage: ./allele3.sh [all|hotspots|density|herv_enrichment|base_simulation|base_occupancy MODULE] [OPTIONS]
+Usage: ./allele3.sh [run|hotspots|density|herv_enrichment|base_simulation|base_occupancy MODULE] [OPTIONS]
 
 Modules:
-    all              Default downstream job; requires completed PCA and gnomAD detailed scan
+    run              Ordered downstream job; requires completed PCA and gnomAD detailed scan
     hotspots         Genome-wide hotspot discovery and matched comparisons
     density          Continuous multi-ALT density from a completed scan
     herv_enrichment  HERV enrichment after scan and PCA
@@ -58,18 +58,18 @@ Main options:
     --out DIR --replace TRUE|FALSE [FALSE]
     --queue NAME --job-hours N
     --job-dir DIR --write-cmd --wait TRUE|FALSE --plan-only
-    all: --config JSON [config/workflow.json]
+    run: --config JSON [config/workflow.json]
     hotspots: --scan-dir DIR --with-atlas auto|TRUE|FALSE --atlas-resources TSV
     -h, --help; --help-full for scientific options
 
 Examples:
-    ./allele3.sh all --submit hpc --plan-only --grch 38
-    ./allele3.sh all --submit hpc --job-hours 120 --grch 38
-    ./allele3.sh all --submit hpc --replace FALSE --grch 38
+    ./allele3.sh run --submit hpc --plan-only --grch 38
+    ./allele3.sh run --submit hpc --job-hours 120 --grch 38
+    ./allele3.sh run --submit hpc --replace FALSE --grch 38
     ./allele3.sh base_occupancy allele-time --help --grch 38
 
 Each entry creates its own command file. Do not wrap it in a second bsub call.
-Use all for one sequential allocation; individual entries run only their modules.
+Use run for one sequential allocation; individual entries run only their modules.
 Default FALSE reuses complete modules and rebuilds incomplete modules.
 Retained annotation/reference data are inputs. Ordinary GWAS uses ../gwas/gwas.sh.
 See 0.README.md for the ordered configuration, outputs and scientific limits.
@@ -90,7 +90,7 @@ Options:
     --submit hpc|local|auto --queue NAME --job-hours N
     --job-dir DIR --write-cmd --wait TRUE|FALSE --plan-only --help-full
 
-Use allele3.sh all to run scan, PCA, census and analyses in one allocation.
+Use allele3.sh run for downstream analyses using the completed inputs.
 Use this entry after its inputs exist to run only the HERV analysis.
 HELP
 ;;

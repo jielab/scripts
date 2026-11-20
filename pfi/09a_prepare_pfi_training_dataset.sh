@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
 
-# Display standalone help before loading runtimes or scheduling work.
-if [[ ${BASH_SOURCE[0]} == "$0" && ( ${1:-} == -h || ${1:-} == --help ) ]]; then
-    cat <<'PUBLIC_ENTRY_HELP'
-./09a_prepare_pfi_training_dataset.sh  # 执行本阶段的默认流程，所需上游数据须已准备
-./pfi.sh MODULE  # 通过主入口选择阶段，完整模块见 ./pfi.sh -h
-./09a_prepare_pfi_training_dataset.sh --plan-only  # 查看当前阶段的调度命令
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: Prepare model training data.
+
+Usage:
+  ./09a_prepare_pfi_training_dataset.sh run [options]
 
 Modules:
-    Default  Prepare model training data
+  run                              Prepare model training data.
 
-Main options:
-    --plan-only  Write a local/LSF .cmd without running
-    --job-hours N --queue NAME
-    Environment is detected automatically; --submit auto|local|hpc is optional.
-    RANK_FILE SCORED_FILE  Optional positional input files
-    ANALYSIS_ROOT / RAW_ROOT  Results/raw data roots
-    PFI_PYTHON_BIN / PFI_RSCRIPT_BIN  Interpreters
-    Defaults: conf/pfi_paths.sh; workflow order: ./pfi.sh -h
-    -h, --help  Show help
+Options:
+  --submit auto|local|hpc          Execution mode [auto].
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  RANK_FILE SCORED_FILE            Optional positional input files
+  -h, --help                       Show this help.
 
 Examples:
-    ./09a_prepare_pfi_training_dataset.sh
+  ./09a_prepare_pfi_training_dataset.sh run --plan-only
+  ./09a_prepare_pfi_training_dataset.sh run
 PUBLIC_ENTRY_HELP
-    exit 0
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
 fi
 # Resolve shared roots from this checkout, independent of the current directory.
 _paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -40,6 +43,7 @@ unset _paths_directory
 source "$SCRIPTS_ROOT/0f/project_entry.sh"
 project_workflow_init "$@" || exit $?
 set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
 
 # Public directory options use --dir-XXX; legacy spellings remain compatible.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -75,14 +79,14 @@ paper_score_file="${2:-$PFI_PAPER_SCORE_REVIEW_SCORED}"
 # Ensure journal rank exists. If no real rank was provided, 08b can create a temporary proxy rank.
 if [[ ! -s "$rank_file" ]]; then
 	echo "INFO: normalized journal-rank file is missing; running 08b_normalize_journal_rank.sh" >&2
-	bash "$PFI_ROOT/08b_normalize_journal_rank.sh"
+	bash "$PFI_ROOT/08b_normalize_journal_rank.sh" run
 	rank_file="$PFI_JOURNAL_RANK_NORMALIZED"
 fi
 
 # Ensure review input exists.
 if [[ ! -s "$PFI_PAPER_SCORE_REVIEW_CSV" || ! -s "$PFI_PAPER_SCORE_REVIEW_KEY" ]]; then
 	echo "INFO: blinded review inputs are missing; running 09a_make_pfi_review_inputs.sh" >&2
-	bash "$PFI_ROOT/09a_make_pfi_review_inputs.sh"
+	bash "$PFI_ROOT/09a_make_pfi_review_inputs.sh" run
 fi
 
 # Prefer human/expert labels if present. If missing, automatically create weak-supervision labels.
@@ -90,7 +94,7 @@ if [[ ! -s "$paper_score_file" ]]; then
 	pseudo_file="$PFI_PAPER_SCORE_REVIEW_PSEUDO"
 	if [[ ! -s "$pseudo_file" ]]; then
 		echo "INFO: scored review CSV is missing; creating weak-supervision pseudo labels automatically." >&2
-		bash "$PFI_ROOT/09a_auto_score_pfi_review_dataset.sh" "$PFI_PAPER_SCORE_REVIEW_CSV" "$pseudo_file"
+		bash "$PFI_ROOT/09a_auto_score_pfi_review_dataset.sh" run "$PFI_PAPER_SCORE_REVIEW_CSV" "$pseudo_file"
 	fi
 	paper_score_file="$pseudo_file"
 	echo "INFO: using weak-supervision pseudo labels for training: $paper_score_file" >&2

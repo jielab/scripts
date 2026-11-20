@@ -1,6 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+case "${1:-}" in
+    ""|-h|--help|help)
+        cat <<'HELP'
+GRID: create or update the analysis environment.
+
+Usage:
+  ./install.sh run|create|update [options]
+
+Modules:
+  run | create                    Create the grid Conda environment from env.yml.
+  update                          Update the existing grid environment.
+
+Options:
+  -h, --help                      Show this help.
+
+Examples:
+  ./install.sh run
+  ./install.sh update
+HELP
+        exit 0 ;;
+    all) echo 'Use run; see -h.' >&2; exit 2 ;;
+    run) shift; set -- create "$@" ;;
+esac
 case ${1:-create} in
     -h|--help) echo 'Usage: bash install.sh [create|update]. Creates/updates conda env grid; Optional deep/PRSformer GPU dependencies are separate.';exit 0 ;;
     create|update) action=${1:-create} ;;
