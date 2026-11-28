@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRID · Held-out prediction</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;color:#19343b;max-width:1120px;margin:32px auto;padding:0 20px}nav,form{display:flex;gap:18px;flex-wrap:wrap}select{font:inherit;padding:5px}th,td{padding:6px 10px;border-bottom:1px solid #cad6da;text-align:right}th:first-child,td:first-child{text-align:left}table{border-collapse:collapse}section{overflow:auto}a{color:#145869}</style>
+<nav><a href="manuscript.html">Manuscript</a><a href="figures/fig5_method_comparison.png">Download figure</a><a href="tables/table_method_comparison.tsv">Download table</a></nav>
+<h1>Held-out prediction</h1><form><label>Trait <select id="trait"></select></label><label>Ancestry <select id="ancestry"></select></label><label>Population <select id="selection"></select></label></form>
+<p id="status"></p><section><table id="scores"></table></section><h2>Paired loss difference</h2><label>Reference model <select id="reference"></select></label>
+<p>Negative values indicate lower mean squared error or Brier score. Intervals use the same resampled families for both methods.</p>
+<section><table id="pairs"></table></section><noscript>Enable JavaScript to filter the results, or download the table above.</noscript>
+<script type="application/json" id="data"><!--DATA--></script><script>
+const {results,paired,status:states}=JSON.parse(document.querySelector('#data').textContent);
+const by=id=>document.getElementById(id), unique=x=>Array.from(new Set(x));
+function choices(id,values,labels={}){const el=by(id),before=el.value;el.replaceChildren(...values.map(v=>new Option(labels[v]||v,v)));if(values.includes(before))el.value=before;}
+function table(id,headers,rows){const el=by(id);el.replaceChildren();const head=el.createTHead().insertRow();
+headers.forEach(s=>{const h=document.createElement('th');h.scope='col';h.textContent=s;head.append(h);});
+const body=el.createTBody();for(const row of rows){const tr=body.insertRow();for(const value of row){tr.insertCell().textContent=value??'—';}}}
+const number=v=>v==null?'—':Number(v).toLocaleString('en-US',{maximumFractionDigits:6});
+function update(){const trait=by('trait').value,src=results.filter(r=>r.trait===trait);
+ choices('ancestry',unique(src.map(r=>r.ancestry)).sort((a,b)=>a==='ALL'?-1:b==='ALL'?1:a.localeCompare(b)));
+ const anc=by('ancestry').value,group=src.filter(r=>r.ancestry===anc);
+ choices('selection',unique(group.map(r=>r.selection)).sort(),{all:'All TEST',selected_support_0p20:'High support (CAL top 20%)'});
+ const sel=by('selection').value,rows=group.filter(r=>r.selection===sel),binary=trait==='t2dm';
+ const state=states.find(r=>r.trait===trait);by('status').textContent='PRSformer · '+(state?.prsformer_status||'unavailable')+'   |   DiscoDivas · '+(state?.disco_status||'unavailable');
+ const fields=binary?['n_cases','primary_loss','auroc','auprc']:['primary_loss','r2','partial_r2_vs_covariate'];
+ table('scores',['Model','TEST N',...(binary?['Cases','Brier','AUROC','Average precision']:['MSE','Predictive R²','Partial R²'])],rows.map(r=>[r.model,number(r.n_evaluable),...fields.map(k=>number(r[k]))]));
+ const names=Object.fromEntries(rows.map(r=>[r.method,r.model]));
+ const available=paired.filter(r=>r.trait===trait&&r.ancestry===anc&&r.selection===sel);
+ const models=unique(available.flatMap(r=>[r.method,r.reference])).filter(m=>names[m]);
+ choices('reference',models.sort((a,b)=>a==='csx.population'?-1:b==='csx.population'?1:names[a].localeCompare(names[b])),names);
+ const ref=by('reference').value,reverse=v=>v==null?null:-v;
+ const diffs=available.filter(r=>r.reference===ref||r.method===ref).map(r=>r.reference===ref?r:
+   {...r,method:r.reference,difference:reverse(r.difference),ci_low:reverse(r.ci_high),ci_high:reverse(r.ci_low)});
+ table('pairs',['Model','Paired N','Difference','95% CI lower','95% CI upper'],diffs.map(r=>[names[r.method]||r.method,number(r.n),number(r.difference),number(r.ci_low),number(r.ci_high)]));}
+choices('trait',unique(results.map(r=>r.trait)));document.querySelector('form').addEventListener('change',update);by('reference').addEventListener('change',update);update();
+</script></html>

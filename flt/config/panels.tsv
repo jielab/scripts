@@ -1,0 +1,29 @@
+id	label	family	type	panel
+dementia_r13	All-cause dementia	dementia	binary	primary
+anystroke_eur	Stroke	stroke	binary	primary
+sleep_disorder_r13	Sleep disorders	sleep	binary	primary
+mdd_2025	Depression	depression	binary	primary
+anxiety_2026	Anxiety disorders	anxiety	binary	primary
+edu	Educational attainment	education	continuous	control
+ad	Alzheimer disease	dementia	binary	extended
+anxiety	Anxiety disorders (alternate)	anxiety	binary	extended
+bd	Bipolar disorder	bipolar	binary	extended
+ces	Cardioembolic stroke	cardioembolic	binary	extended
+ces_eur	Cardioembolic stroke (EUR)	cardioembolic	binary	extended
+dementia	All-cause dementia (alternate)	dementia	binary	extended
+dystonia	Dystonia	dystonia	binary	extended
+encephalitis	Encephalitis	encephalitis	binary	extended
+epilepsy	Epilepsy	epilepsy	binary	extended
+is	Ischemic stroke	ischemic	binary	extended
+is_eur	Ischemic stroke (EUR)	ischemic	binary	extended
+las	Large-artery stroke	large-artery	binary	extended
+las_eur	Large-artery stroke (EUR)	large-artery	binary	extended
+mdd	Depression (alternate)	depression	binary	extended
+ms	Multiple sclerosis	multiple-sclerosis	binary	extended
+pd	Parkinson disease	parkinson	binary	extended
+scz	Schizophrenia	schizophrenia	binary	extended
+sleep	Sleep disorders (alternate)	sleep	binary	extended
+stroke	Stroke (alternate)	stroke	binary	extended
+stroke_eur	Stroke (EUR)	stroke	binary	extended
+svs	Small-vessel stroke	small-vessel	binary	extended
+svs_eur	Small-vessel stroke (EUR)	small-vessel	binary	extended

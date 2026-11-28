@@ -1,0 +1,9 @@
+# Large-node preparation; scientific settings inherit config/flux.yml.
+preparation:
+  sqlite_storage: memory
+  sqlite_cache_mib: 8192
+  workers: 4
+resources:
+  prepare_queue: v3-6t
+  prepare_cores: 8
+  prepare_memory_gib: 256

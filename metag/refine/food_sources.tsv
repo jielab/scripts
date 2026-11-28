@@ -1,0 +1,30 @@
+group	rank	name	food_source
+plant	genus	Oryza	rice genus
+plant	species	Oryza sativa	Asian rice
+plant	species	Oryza glaberrima	African rice
+plant	genus	Triticum	wheat genus
+plant	species	Triticum aestivum	bread wheat
+plant	species	Zea mays	maize
+plant	species	Hordeum vulgare	barley
+plant	species	Solanum tuberosum	potato
+plant	species	Solanum lycopersicum	tomato
+plant	species	Spinacia oleracea	spinach
+plant	species	Daucus carota	carrot or wild carrot
+plant	species	Brassica oleracea	cabbage species group, cultivar unresolved
+plant	species	Brassica rapa	turnip or leafy brassicas, cultivar unresolved
+plant	species	Lactuca sativa	lettuce
+plant	species	Cucumis sativus	cucumber
+plant	species	Glycine max	soybean
+plant	species	Pisum sativum	pea
+plant	species	Prunus persica	peach
+plant	species	Malus domestica	apple
+plant	species	Vitis vinifera	grape
+mammal	genus	Bos	cattle genus
+mammal	species	Bos taurus	cattle
+mammal	genus	Sus	pig genus
+mammal	species	Sus scrofa	pig or wild boar
+mammal	species	Ovis aries	sheep
+mammal	species	Capra hircus	goat
+other_vertebrate	species	Gallus gallus	chicken or red junglefowl
+other_vertebrate	species	Meleagris gallopavo	turkey
+other_vertebrate	species	Anas platyrhynchos	mallard or domestic duck

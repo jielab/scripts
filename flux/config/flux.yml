@@ -1,0 +1,100 @@
+# Independent HealthFlux v3 core, DOI 10.64898/2026.09.19.26363460.
+# Local/HPC roots come from ../0f/0os.sh; command-line paths override these.
+seed: 2026
+paths:
+  ygb: ${DIR_YGB}
+  out: ${ANALYSIS_ROOT}/flux
+data:
+  # Administrative limit is resolved from 0f/phenotype.R::date_follow_end; no YAML override.
+  split: [0.70, 0.15, 0.15]
+  modalities: [clinical, bbc, prot, met, img]
+  sources: {}  # Auto-detect raw rap/ exports; see f/INPUTS.md for overrides.
+  # Paired p41270/p41280 are FIRST occurrences, not repeat hospital encounters.
+  allow_first_occurrence: false
+  # Only applies to undated Olink NPX exports; change if your samples differ.
+  prot_date: baseline
+  min_token_count: 20
+  min_feature_count: 20
+  max_missing_fraction: 0.99
+  endpoints: all
+  landmark: midpoint
+  min_clinical_days: 2
+  max_nodes: 96
+model:
+  deterministic_dim: 256
+  stochastic_dim: 128
+  embedding_dim: 256
+  context_hidden_dim: 128
+  age_dim: 64
+  hidden_dim: 384
+  dropout: 0.1
+  max_ode_step_years: 1.0
+  max_ode_steps: 256
+  kl_weight: 0.01
+  kl_balance: 0.8
+  free_nats: 0.0
+  time_weight: 1.0
+  no_ode: false
+  no_update: false
+  age_scale: 100.0
+train:
+  workers: 0  # in-process loading; avoids replicating the cohort in worker processes
+  ehr_initialization: local_transition
+  batch_size: 32
+  global_batch_size: 3072
+  accumulation_steps: 96
+  epochs: 100
+  max_steps: 2000
+  learning_rate: 0.0006
+  weight_decay: 0.01
+  warmup_steps: 100
+  schedule_steps: 2000
+  final_lr_ratio: 0.1
+  gradient_clip: 1.0
+  validate_every: 50
+  validation_batches: 0
+  patience: 1000
+readout:
+  horizon_years: 5.0
+  hidden_dims: [1024, 512]
+  dropout: 0.08
+  batch_size: 4096
+  state_batch_size: 16
+  history_chunk_size: 96
+  epochs: 50
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  patience: 6
+  min_cases: 10
+  positive_weight_cap: 20.0
+baseline:
+  methods: [lightgbm, histgb, logistic]
+  max_numeric_features: 256
+  min_cases: 10
+  max_iter: 150
+  endpoint_workers: 2
+  options:
+    logistic: {max_iter: 500}
+  # Endpoint workers share resources.cores from 0f/0os.sh.
+evaluation:
+  horizons: [5.0, 10.0]
+  weight_cap: 20.0
+rollout:
+  particles: 8
+  horizons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  max_events: null  # Optional simulation cap. Default follows each particle to horizon or death.
+  batch_size: 16
+  min_interval_days: 1.0
+  calibration_batches: 100
+  max_calibration_events: 50000
+blackout:
+  lags: [1, 2, 3, 4, 5]
+  support_lag: 10
+  min_cases: 20
+  min_controls: 100
+resources:
+  # CPU budget is supplied by 0f/0os.sh (--cores / WORKFLOW_CORES).
+  gpu_cores: 8
+  gpus: 1
+  cpu_queue: auto
+  gpu_queue: ${FLUX_GPU_QUEUE}

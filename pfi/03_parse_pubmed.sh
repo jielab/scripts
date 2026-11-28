@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../0f" && pwd)/output_dirs.sh"
+script_output_directory_args "${BASH_SOURCE[0]}" "$@" || { return 2 2>/dev/null || exit 2; }
+set -- "${SCRIPT_OUTPUT_DIRECTORY_ARGS[@]}"
+
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+PFI: Parse downloaded PubMed XML.
+
+Usage:
+  ./03_parse_pubmed.sh run [options]
+
+Modules:
+  run                              Parse downloaded PubMed XML.
+
+Permanent output directories (legacy options remain accepted):
+  --dir-out-pfi_raw DIR
+                                  Raw XML and reusable parquet [${DIR_BIG}/pfi]; shared input/output root.
+
+Options:
+  --submit auto|local|hpc          Execution mode [auto].
+  --plan-only                      Write a local/LSF .cmd without running
+  --job-hours N --queue NAME       
+  -h, --help                       Show this help.
+
+Examples:
+  ./03_parse_pubmed.sh run --plan-only
+  ./03_parse_pubmed.sh run
+PUBLIC_ENTRY_HELP
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
+fi
+# Resolve shared roots from this checkout, independent of the current directory.
+_paths_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+while [[ ! -f "$_paths_directory/0f/0os.sh" ]]; do
+    [[ $_paths_directory != / ]] || { echo "Cannot locate 0f/0os.sh" >&2; return 2 2>/dev/null || exit 2; }
+    _paths_directory=$(dirname -- "$_paths_directory")
+done
+submit=${submit:-${SUBMIT:-auto}}
+source "$_paths_directory/0f/0os.sh"
+unset _paths_directory
+
+
+# Resolve --dir-dat/--dir-big/--dir-tmp through the shared path table.
+source "$SCRIPTS_ROOT/0f/project_entry.sh"
+project_workflow_init "$@" || exit $?
+set -- "${WORKFLOW_ARGS[@]}"
+if [[ ${1:-} == run ]]; then shift; fi
+
+# Public directory options use --dir-XXX; legacy spellings remain compatible.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    source "${SCRIPTS_ROOT}/0f/cli_dirs.sh"
+    script_directory_args "$(realpath -- "${BASH_SOURCE[0]}")" "$@"
+    set -- "${SCRIPT_DIRECTORY_ARGS[@]}"
+    unset SCRIPT_DIRECTORY_ARGS
+fi
+
+# Direct CLI help must return before setup, downloads or analysis.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	case "${1:-}" in
+		-h | --help)
+			bash "${BASH_SOURCE[0]}" --help
+			exit 0
+			;;
+	esac
+fi
+set -euo pipefail
+
+
+# Shell options, paths, and shared inputs
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PFI_ROOT="$SCRIPT_DIR"
+cd "$PFI_ROOT"
+source "$PFI_ROOT/conf/pfi_paths.sh"
+mkdir -p "$PARQUET_DIR/pubmed/baseline" "$PARQUET_DIR/pubmed/updatefiles" "$LOG_DIR"
+
+max_files=0
+if [[ "$PFI_TEST_MODE" == "1" ]]; then
+	max_files=3
+	echo "Test mode: parsing only the first 3 baseline/update files."
+fi
+
+"$PFI_PYTHON_BIN" f/parse_pubmed.py \
+	--in_dir "$PUBMED_BASELINE_DIR" \
+	--out_dir "$PARQUET_DIR/pubmed/baseline" \
+	--min_year "$MIN_YEAR" \
+	--workers "$N_JOBS" \
+	--max_files "$max_files" 2>&1 | tee "$LOG_DIR/03_parse_pubmed_baseline.log"
+
+"$PFI_PYTHON_BIN" f/parse_pubmed.py \
+	--in_dir "$PUBMED_UPDATE_DIR" \
+	--out_dir "$PARQUET_DIR/pubmed/updatefiles" \
+	--min_year "$MIN_YEAR" \
+	--workers "$N_JOBS" \
+	--max_files "$max_files" 2>&1 | tee "$LOG_DIR/03_parse_pubmed_updatefiles.log"

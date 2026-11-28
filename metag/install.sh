@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+# Public help returns before runtime setup, input access or job submission.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    case "${1:-}" in
+        ""|-h|--help|help)
+            cat <<'PUBLIC_ENTRY_HELP'
+METAG: install pinned tools and reference metadata.
+
+Usage:
+  ./install.sh run [options]
+
+Modules:
+  run | setup                      Prepare software and frozen metadata.
+
+Options:
+  --software-only                  Install/verify tools without reference or cohort data (put first)
+  --bootstrap-python               Create a local .venv and install Python dependencies from env.yml (put first)
+  --qc-tools                       Install pinned minimap2 for optional species refinement (put first)
+  --config FILE                    Runtime JSON paths/resources (auto local/HPC profile by default)
+  --submit hpc|local|auto          Execution machine [auto]
+  --plan-only                      Generate commands without running or submitting them
+  -h, --help                       Show this help.
+
+Examples:
+  ./install.sh run --plan-only
+  ./install.sh --software-only
+PUBLIC_ENTRY_HELP
+            exit 0 ;;
+        all) printf 'Use run for the complete workflow; see -h.\n' >&2; exit 2 ;;
+    esac
+fi
+if [[ ${1:-} == run ]]; then shift; set -- setup "$@"; fi
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if [[ ${1:-} == --qc-tools ]]; then
+    shift
+    source "$HERE/f/env.sh"
+    workflow_args "$@"
+    set -- "${WORKFLOW_ARGS[@]}"
+    exec "$METAG_PYTHON" "$HERE/f/software_install.py" --qc-only "$@"
+fi
+if [[ ${1:-} == --bootstrap-python ]]; then
+    python3 -m venv "$HERE/.venv"
+    mapfile -t python_packages < <(awk '/# pip:bootstrap/ {print $2}' "$HERE/env.yml")
+    "$HERE/.venv/bin/python" -m pip install "${python_packages[@]}"
+    echo "Python ready: $HERE/.venv/bin/python"
+    exit 0
+fi
+if [[ ${1:-} == --software-only ]]; then
+    shift
+    source "$HERE/f/env.sh"
+    workflow_args "$@"
+    set -- "${WORKFLOW_ARGS[@]}"
+    exec "$METAG_PYTHON" "$HERE/f/software_install.py" "$@"
+fi
+case "${1:-}" in
+    -h|--help|help)
+        bash "${BASH_SOURCE[0]}" --help
+        exit 0 ;;
+esac
+if [[ $# == 0 || ${1:0:1} == - ]]; then
+    set -- setup "$@"
+fi
+if [[ $1 != setup ]]; then
+    echo "install.sh prepares software/metadata only; builds use 1.lib.sh and analyses use metag.sh." >&2
+    exit 2
+fi
+exec bash "$HERE/f/entry.sh" "$@"
+

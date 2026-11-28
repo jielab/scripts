@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GRID · Held-out prediction</title><style>
+body{font:15px/1.5 system-ui,sans-serif;color:#172c3a;background:#f5f7f8;margin:0}main{max-width:1160px;margin:auto;padding:30px}h1{font-size:32px;margin:0}h2{font-size:20px}section{background:white;border:1px solid #d6e0e2;padding:20px;margin:16px 0}label{display:inline-block;margin:4px 15px 4px 0}select{font:inherit;padding:4px}table{border-collapse:collapse;width:100%}th,td{padding:5px 9px;text-align:right;border-bottom:1px solid #e3e8ea}td:first-child,th:first-child{text-align:left}svg{width:100%;height:auto}svg text{font:12px sans-serif;fill:#283e49}a{color:#176d71}pre{white-space:pre-wrap}#msg{color:#8b4027}
+</style><main><h1>GRID · Held-out prediction</h1><p>Family-held-out UK Biobank evaluation. LDL and height are continuous. High LDL denotes observed LDL at the configured threshold (__THRESHOLD__ mmol/L). T2DM denotes baseline case status.</p>
+<p id="msg">Loading aggregate results…</p><section><label>Endpoint <select id="ep"></select></label><label>Ancestry <select id="anc"></select></label><label>Method <select id="method"></select></label><label>Comparator <select id="ref"></select></label><label>Display <select id="mode"></select></label>
+<svg viewBox="0 0 840 345" id="plot" role="img" aria-label="Interactive score comparison"></svg><div id="legend"></div></section>
+<section><h2>Performance on the same participants</h2><div id="perf"></div></section><section><h2>Paired differences</h2><p>Method minus comparator. Intervals use resampled family groups and are pointwise, conditional on the fitted models.</p><div id="delta"></div></section>
+<section id="twsec" hidden><h2>LDL precision screening</h2><p>Frozen selection rules; MSE differences below zero indicate a lower mean error.</p><div id="tw"></div></section>
+<p><a href="../results/performance.tsv">Performance TSV</a> · <a href="../results/contrasts.tsv">Paired contrasts TSV</a> · <a href="../results/curves.tsv">Curve points TSV</a> · <a href="../results/availability.tsv">Method availability</a></p></main>
+<script>const el=k=>document.getElementById(k),opts=(k,items,sel)=>{let s=el(k);s.replaceChildren(...items.map(v=>new Option(v,v)));if(items.includes(sel))s.value=sel},uniq=a=>[...new Set(a)],fmt=n=>n==null?'—':typeof n==='number'?(Number.isInteger(n)?String(n):n.toFixed(5)):n;
+function table(k,cols,data){let t=document.createElement('table');for(const row of [cols,...data.map(r=>cols.map(c=>r[c]))]){let tr=t.insertRow();for(const v of row){let cell=tr.insertCell();cell.textContent=fmt(v)}}el(k).replaceChildren(t)}
+function graph(lines,label,xlab,ylab){let svg=el('plot');svg.replaceChildren();svg.setAttribute('viewBox','0 0 840 345');const draw=(tag,attrs,text)=>{let n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(let [k,v] of Object.entries(attrs))n.setAttribute(k,v);if(text!=null)n.textContent=text;svg.append(n);return n},colors=['#027d78','#bd5c29'];let all=lines.flatMap(x=>x[1]);if(!all.length)return;
+let ext=k=>[Math.min(...all.map(r=>r[k])),Math.max(...all.map(r=>r[k]))], [xl,xh]=ext('x'),[yl,yh]=ext('y');if(yl===yh)yh=yl+1;if(xl===xh)xh=xl+1;const X=v=>72+700*(v-xl)/(xh-xl),Y=v=>275-231*(v-yl)/(yh-yl);
+for(let i=0;i<6;i++){let y=yl+(yh-yl)*i/5,x=xl+(xh-xl)*i/5;draw('line',{x1:72,y1:Y(y),x2:772,y2:Y(y),stroke:'#e5e9eb'});draw('text',{x:64,y:Y(y)+4,'text-anchor':'end'},y.toPrecision(3));draw('text',{x:X(x),y:294,'text-anchor':'middle'},x.toPrecision(3))}
+if(label==='calibration'){let l=Math.max(xl,yl),h=Math.min(xh,yh);if(h>l)draw('line',{x1:X(l),y1:Y(l),x2:X(h),y2:Y(h),stroke:'#888','stroke-dasharray':'4 4'})}
+lines.forEach(([name,rows],j)=>{if(!rows.length)return;draw('polyline',{points:rows.map(r=>X(r.x)+','+Y(r.y)).join(' '),fill:'none',stroke:colors[j],'stroke-width':2.6});rows.forEach(r=>{let c=draw('circle',{cx:X(r.x),cy:Y(r.y),r:4,opacity:0});let h=document.createElementNS(c.namespaceURI,'title');h.textContent=name+' | '+fmt(r.x)+' / '+fmt(r.y)+(r.n!=null?' | n='+r.n:'');c.append(h)})});
+draw('text',{x:422,y:326,'text-anchor':'middle'},xlab);draw('text',{transform:'translate(16 156) rotate(-90)','text-anchor':'middle'},ylab);el('legend').textContent=lines.map(([n],i)=>(i?'Orange · ':'Teal · ')+n).join('     ')}
+function intervals(rows,axis,zero) {
+ const svg=el('plot');svg.replaceChildren();
+ if(!rows.length){el('legend').textContent='No paired intervals for this comparator.';return}
+ const height=66+Math.max(rows.length,3)*27;svg.setAttribute('viewBox','0 0 840 '+height);
+ const draw=(t,attrs,label)=>{let n=document.createElementNS(svg.namespaceURI,t);for(const [key,val] of Object.entries(attrs))n.setAttribute(key,val);if(label!=null)n.textContent=label;svg.append(n);return n};
+ let vals=rows.flatMap(r=>[r.v,r.l,r.h]).filter(Number.isFinite);if(zero)vals.push(0);
+ let a=Math.min(...vals),b=Math.max(...vals);if(a===b){a-=.01;b+=.01}
+ let pad=.04*(b-a);a-=pad;b+=pad;const X=z=>250+555*(z-a)/(b-a);
+ for(let j=0;j<=5;j++){let val=a+(b-a)*j/5,x=X(val);draw('line',{x1:x,x2:x,y1:12,y2:height-37,stroke:'#e1e6e7'});draw('text',{x:x,y:height-22,'text-anchor':'middle'},val.toFixed(3))}
+ if(zero)draw('line',{x1:X(0),x2:X(0),y1:8,y2:height-37,stroke:'#666','stroke-dasharray':'4 4'});
+ rows.forEach((r,i)=>{let y=22+i*27;draw('text',{x:238,y:y+4,'text-anchor':'end'},r.name);
+   if(Number.isFinite(r.l)&&Number.isFinite(r.h))draw('line',{x1:X(r.l),x2:X(r.h),y1:y,y2:y,stroke:'#177b76','stroke-width':2});
+   if(Number.isFinite(r.v)){let dot=draw('circle',{cx:X(r.v),cy:y,r:4,fill:r.color||'#177b76'});let tt=document.createElementNS(svg.namespaceURI,'title');tt.textContent=r.name+'  '+fmt(r.v)+(r.l==null?'':'  ['+fmt(r.l)+', '+fmt(r.h)+']');dot.append(tt)}
+ });draw('text',{x:520,y:height-3,'text-anchor':'middle'},axis);el('legend').textContent=axis}
+async function init(){let raw=Uint8Array.from(atob('__DATA__'),x=>x.charCodeAt(0));let D=await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).json();el('msg').textContent='';opts('ep',uniq(D.performance.map(r=>r.endpoint)),'height');
+function update(reset){let e=el('ep').value,pts=D.performance.filter(r=>r.endpoint===e);
+if(reset==='ep')opts('anc',uniq(pts.map(r=>r.ancestry)),'ALL');let a=el('anc').value;
+pts=pts.filter(r=>r.ancestry===a);if(reset==='ep'||reset==='anc'){let ms=uniq(pts.map(r=>r.method));opts('method',ms,ms.includes('blocknet.disco')?'blocknet.disco':'csx.population');opts('ref',ms,ms.includes('disco')?'disco':'csx.population')}
+let m=el('method').value,ref=el('ref').value,cv=D.curves.filter(r=>r.endpoint===e&&r.ancestry===a),types=['Paired improvement','Across ancestries',...uniq(cv.filter(r=>r.method===m).map(r=>r.curve))];if(reset!=='mode')opts('mode',types,types.includes(el('mode').value)?el('mode').value:(types.includes('ROC')?'ROC':'calibration'));
+let mode=el('mode').value,axes=mode==='ROC'?['False-positive rate','Sensitivity']:mode==='precision–recall'?['Recall','Precision']:mode==='calibration'?['Mean prediction','Observed mean']:mode==='outcome by score bin'?['Calibration-set score bin','Observed outcome mean']:['Model score','Proportion'];
+let binary=e==='t2dm'||e==='ldl.high',metric=binary?'auroc':'r2',paired=binary?'AUROC':'predictive_R2';
+if(mode==='Paired improvement'){let differences=D.contrasts.filter(r=>r.endpoint===e&&r.ancestry===a&&r.metric===paired&&(r.method===ref||r.reference===ref));
+ let rows=new Map();for(let row of differences){let forward=row.reference===ref, name=forward?row.method:row.reference;
+ rows.set(name,{name,v:forward?row.difference:-row.difference,l:forward?row.ci_low:row.ci_high==null?null:-row.ci_high,h:forward?row.ci_high:row.ci_low==null?null:-row.ci_low})}
+ intervals([...rows.values()].filter(r=>Number.isFinite(r.v)).sort((a,b)=>b.v-a.v),'Δ '+paired+' vs '+ref,true)
+}else if(mode==='Across ancestries'){let rows=D.performance.filter(r=>r.endpoint===e&&r.ancestry!=='ALL'&&[m,ref].includes(r.method)&&Number.isFinite(r[metric])).sort((a,b)=>a.ancestry.localeCompare(b.ancestry)||a.method.localeCompare(b.method));
+ intervals(rows.map(r=>({name:r.ancestry+'  ·  '+r.method,v:r[metric],color:r.method===m?'#027d78':'#bd5c29'})),binary?'AUROC':'Predictive R²',false)
+}else graph(uniq([m,ref]).map(n=>[n,cv.filter(r=>r.method===n&&r.curve===mode)]),mode,...axes);
+let cols=e==='t2dm'?['method','n','n_cases','auroc','auprc','brier']:e==='ldl.high'?['method','n','n_cases','auroc','auprc']:['method','n','r2','partial_r2_vs_covariate','rmse','mae'];
+table('perf',cols,pts);let pair=D.contrasts.filter(r=>r.endpoint===e&&r.ancestry===a&&r.method===m&&r.reference===ref);
+table('delta',['method','reference','metric','difference','ci_low','ci_high'],pair);if(!pair.length){
+let rev=D.contrasts.filter(r=>r.endpoint===e&&r.ancestry===a&&r.method===ref&&r.reference===m);
+if(rev.length)table('delta',['method','reference','metric','difference','ci_low','ci_high'],rev.map(r=>({...r,method:m,reference:ref,difference:-r.difference,ci_low:r.ci_high==null?null:-r.ci_high,ci_high:r.ci_low==null?null:-r.ci_low})));
+else {let u=pts.find(r=>r.method===m),v=pts.find(r=>r.method===ref);let ms=e==='ldl.high'||e==='t2dm'?['auroc','auprc']:['r2','rmse'];table('delta',['method','reference','metric','difference'],ms.map(k=>({method:m,reference:ref,metric:k,difference:u[k]==null||v[k]==null?null:u[k]-v[k]})));el('delta').append('Descriptive differences. No bootstrap interval was calculated for this pair.')}}
+let tw=(D.twins||[]).filter(r=>r.ancestry===a);el('twsec').hidden=e!=='ldl'||!tw.length;if(tw.length)table('tw',['policy','n_evaluable','coverage','median_latent_twins','mse','selected_minus_all_mse','ci_low','ci_high','selected_minus_risk_only_mse'],tw)}
+for(let k of ['ep','anc','method','ref','mode'])el(k).onchange=()=>update(k);update('ep')}init().catch(err=>el('msg').textContent='Use a current Chrome, Firefox or Edge browser. '+err)
+</script></html>

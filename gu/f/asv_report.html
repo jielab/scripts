@@ -1,0 +1,88 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archaic segment atlas · 1KG × UK Biobank</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8f7f2;color:#162f32;font:15px/1.65 system-ui,"Microsoft YaHei",sans-serif}main,header>div{max-width:1220px;margin:auto;padding:0 30px}header{background:#12363d;color:white;padding:42px 0 34px;border-bottom:5px solid #d29256}h1{font:500 clamp(32px,5vw,59px)/1.1 Georgia,serif;margin:8px 0 16px}header p{color:#dbe9e4}nav{background:#fff;position:sticky;top:0;border-bottom:1px solid #cdd7d4;z-index:2;display:flex;gap:24px;padding:10px max(30px,calc((100% - 1160px)/2));overflow-x:auto}a{color:#08675f}nav a{white-space:nowrap;text-decoration:none;font-weight:650}section{scroll-margin-top:65px;padding:27px 0 22px;border-bottom:1px solid #ccd5cd}h2{font:600 29px/1.3 Georgia,serif;margin:5px 0 12px}h3{font-size:17px;margin:18px 0 6px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:14px}.stats div{border-top:3px solid #377e76;background:#fff;padding:12px 16px}.stats b{display:block;font:600 31px/1.35 Georgia,serif}.note{background:#e8efeb;padding:12px 18px;border-left:4px solid #629385}img{width:100%;display:block;background:#fff;border:1px solid #d7dfd9}figure{margin:17px 0}figcaption,.small{color:#4b6162;font-size:13px}.scroll{overflow:auto;max-height:530px;background:#fff}table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}th,td{text-align:right;white-space:nowrap;padding:5px 9px;border-bottom:1px solid #e0e7e3}th{background:#ebf2ee;color:#1c4a45;position:sticky;top:0}td:first-child,th:first-child{text-align:left}.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0}label{display:flex;flex-direction:column;font-size:12px;font-weight:bold}button,select,input{font:14px inherit;font-family:inherit;border:1px solid #9bb2a8;border-radius:4px;background:white;color:#183c39;padding:6px 8px}button{cursor:pointer}button:hover,button:focus{background:#dceae4}button:disabled{opacity:.45}.loc{border:0;background:transparent;color:#08675f;padding:0;text-decoration:underline;font:inherit}details{margin:16px 0}summary{cursor:pointer;font-weight:600}#region{width:100%;height:200px;background:white;border:1px solid #d7dfd9}code{background:#e6ebe7;padding:1px 4px}p{max-width:1020px}footer{padding:20px 0 40px;color:#4b6162}.refs a{margin-right:15px}
+</style>
+<header><div>人群基因组学　/　IBDmix<h1>Archaic segment atlas</h1><p>@@SUMMARY@@</p></div></header>
+<nav><a href="#overview">结果概览</a><a href="#compare">跨队列一致性</a><a href="#loci">ASV 目录</a><a href="#chrx">chrX</a><a href="#benchmark">文献复现</a><a href="#methods">方法与文件</a></nav>
+<main><section id="overview"><h2>从片段到人群位点</h2><div class="stats"><div><b>@@NRECORDS@@</b>导出片段行数（含参考间重复）</div><div><b>@@NLOCI@@</b>YGB 候选代表位点</div><div><b>@@RECOVERY@@</b>1KG EUR 常染色体 Altai 窗口在 YGB 再检出，双侧 ≥1%</div><div><b>@@NX@@</b>YGB chrX 有效男性样本</div></div>
+<p>下表从左至右给出候选代表位点、其覆盖窗口、1KG 全体至少 5 人支持、1KG EUR 至少 5 人支持，以及 YGB 提高到 LOD 6 后仍有至少 5 人支持的数量。最后一列同时要求 EUR ≥5 与 YGB LOD6 ≥5，供优先复核。每列均按哨兵窗口计数。N 和 D 分别表示偏向尼安德特人和丹尼索瓦人参考的匹配。</p><div class="scroll">@@COUNTS@@</div></section>
+<section id="compare"><h2>哪些位置在两个队列中重复出现？</h2><p>比较相应参考的版本（Altai.2013 ↔ Altai，Denisova.2013 ↔ Denisova3）。选择不同的人群、阈值和染色体，可查看双向检出率、Jaccard 和频率秩相关。YGB 的祖源标签未上传；EUR 仅限制 1KG 一侧。</p>
+<div class="controls" id="cmp"></div><div class="scroll" id="cmpt"></div><figure><img alt="双队列携带比例密度图" src="data:image/png;base64,@@FIG1@@"><figcaption>每个六边形表示落入该频率区间的窗口数。两轴采用 log10(1+百分比) 显示。对角线为等频线。</figcaption></figure>
+<details open><summary>控制样本量后，差异还有多大？</summary><p>从 YGB 均匀、不放回抽取与 1KG EUR 相同人数。利用超几何分布精确计算每个窗口被 ≥5 人检出的概率，累加得到期望交集、并集及两者之比。这个比较控制了样本量，仍保留祖源和流程差异。</p><div class="scroll">@@SIZE@@</div></details>
+<details><summary>染色体内循环移位的空间对照</summary><p>固定 1KG EUR 的 ≥1% 图谱，在每条染色体内沿合格窗口顺序循环移动 YGB 图谱，重复 499 次。报告空间背景下的 Jaccard 分布及经验 P 值。这个对照保留相邻窗口的顺序，未匹配局部重组率或位点密度。</p><div class="scroll">@@NULL@@</div></details></section>
+<section id="loci"><h2>可查询的 ASV 目录</h2><p>点选位点查看周边 ±10 个窗口。可按 GRCh37 坐标查找，例如 <code>X:95,450,001</code>。频率以该染色体实际纳入人数为分母。表中的 YGB 计数使用多参考判据，下方区域图使用单参考，便于和 1KG 对照。</p>
+<div class="controls"><label>位点 ID 或坐标<input id="q" placeholder="X:95450001 或 ASV37-N"></label><label>染色体<select id="chr"></select></label><label>参考<select id="lin"><option value="">全部</option><option>N</option><option>D</option></select></label><label>1KG 支持<select id="support"><option value="">全部</option><option value="p">优先复核：EUR ≥5 且 YGB LOD6 ≥5</option><option value="e">EUR ≥5</option><option value="a">ALL ≥5</option><option value="u">ALL &lt;5</option></select></label><label>排序<select id="sort"><option value="7">YGB 携带者</option><option value="12">1KG EUR 携带者</option><option value="10">YGB LOD6</option><option value="pos">基因组位置</option></select></label><button id="download">导出筛选表 TSV</button></div>
+<div class="small" id="count"></div><div class="scroll" id="grid"></div><div class="controls"><button id="prev">上一页</button><button id="next">下一页</button></div><h3 id="sel">区域频率</h3><svg id="region" role="img" aria-label="所选区域双队列的单参考窗口频率"></svg><div class="small">深绿色为 1KG EUR，橙色为 YGB。浅黄色为哨兵窗口，灰色为排除窗口。纵轴随区域频率调整。</div>
+<figure><img alt="各染色体内同人同窗口的参考支持及歧义" src="data:image/png;base64,@@FIG5@@"><figcaption>分母为有任一合格参考匹配的 person × tile；同人同窗 N 与 D 都阳性时计入 Both lineages 一次。</figcaption></figure>
+<figure><img alt="候选携带者分布和同男性 X 比 A 比值" src="data:image/png;base64,@@FIG4@@"></figure></section>
+<section id="chrx"><h2>男性非 PAR X 染色体</h2><p>用实际进入 X 分析的同一批男性计算两边的负担。各人、各参考先合并重叠片段，再除以常染色体总物理长度或 X 中央非 PAR 长度 152,231,523 bp。表中 A 和 X 是区间覆盖比例。export 为原条件，gap_free 排除了触及 ≥100 kb 组装缺口的整条片段，物理分母相同。</p><div class="scroll">@@X@@</div>
+<figure><img alt="男性 X 染色体位置与匹配频率" src="data:image/png;base64,@@FIG2@@"></figure><details><summary>按有效窗口重新估计 X/A</summary><p>每个参考汇总男性阳性的 person × tile，再除以男性有效 person × tile 总数。提供共同 callable BED 时仅使用至少 80% 碱基在其范围内的窗口。该比值描述相同片段判据的检出差异，受 X 倍性、实验性似然、可比位点和重组影响。</p><div class="scroll">@@XWIN@@</div></details></section>
+<section id="benchmark"><h2>两个独立尺度上的文献对照</h2><p>1KG 常染色体 Altai.2013 按原导出判据累加，以 2,504 人 Phase 3 面板作分母。比较 Chen 等的人群均值、逐人总量和跨人的坐标并集。第二个对照按发表的 3p21.31 核心区独立计算至少覆盖 80% 的人数；这个计数无法替代已定相的风险单倍型或标签 SNP 基因型。</p><div class="scroll">@@BENCH@@</div><figure><img alt="Cell 2020 负担对照和 chr3 阳性对照" src="data:image/png;base64,@@FIG3@@"></figure><div class="scroll">@@CONTROL@@</div></section>
+<section id="methods"><h2>如何定义并使用一个 ASV</h2><ol><li>以 GRCh37 BED0 半开坐标处理导出；保留长度 ≥50 kb、母片段 SLOD ≥4 的记录。剔除触及 UCSC hg19 ≥100 kb assembly gap 的整条片段与窗口。X 限定中央非 PAR。共同可检测区域配置为 <b>@@MASK@@</b></li>
+<li>从坐标 0 开始用固定 @@W@@ bp 完整窗口作为标记。一个参考的一条片段须覆盖窗口 ≥80%。同一人、同一区域、同一参考只计一次。YGB 中 N 需要三份 N 参考中至少两份支持且两份 D 参考均无匹配；D 需要两份 D 均支持且三份 N 参考均无匹配。它们量化参考偏好，尚不能给出真实供体、基因流方向或拷贝数。</li>
+<li>在所选 YGB 批次合计 ≥@@MIN@@ 个不同携带者可入目录。按从左到右的首个合格窗口为哨兵，连续同类窗口与该哨兵的携带者集合 Jaccard ≥0.80 才并入。块末端 <code>block_end0</code> 用于显示；暴露只取哨兵。相邻标签仍可能高度相关。同一个生物学单倍型可能贡献多个标签；合并批次重建目录会改变代表位点选择。</li>
+<li>矩阵按人编码：1＝满足谱系规则；0＝本谱系所有参考均无达到覆盖阈值的片段；NA＝单参考或跨谱系证据、或此人未参加该染色体检测。这个 0 描述流程的阴性。负数 ID 标记不参与计数或表型连接。GitHub 缺少个体级 callable mask；正式关联须在可检样本内并考虑缺失。性别、祖源、近亲和每批频率估计均影响解释。</li>
+<li>先看独立队列定位与 LOD6 的持续性，再核查相同祖源、相同过滤条件及基因型；针对少量候选用标签 SNP、分相单倍型或 TRACE 正交复核。PheWAS 建议先锁定 catalogue，再按祖源和批次处理关联，chrX 单列，对稀有结局核查病例携带人数。只有提供独立表型与协变量后才能计算效应值。</li></ol>
+<h3>输出和输入审计</h3><p><code>loci.tsv.gz</code> 提供代表位点与证据；<code>windows.tsv.gz</code> 保留全部窗口，须读取 eligible；<code>batch_windows.tsv.gz</code> 保留分批计数；<code>genotypes/</code> 的位压缩数组可经 <code>gu.paper.sh export --matrix</code> 导出 HDF5 的 ASV × IID 矩阵（1、0、−1）。<code>audit.tsv</code> 可按参考和染色体检查缺口、最长片段与输入规模。可发表图在 <code>figures/</code>，提供 PDF、SVG、PNG。</p><div class="scroll">@@AUDIT@@</div><div class="scroll">@@ROSTERS@@</div><p class="small">数据版本　@@PROV@@</p>
+<p class="refs"><a href="https://doi.org/10.1038/nature12961">Sankararaman 2014</a><a href="https://doi.org/10.1016/j.cell.2020.01.012">Chen 2020</a><a href="https://doi.org/10.1038/s41586-020-2818-3">Zeberg &amp; Pääbo 2020</a><a href="https://doi.org/10.1126/science.aea6774">Platt 2026</a><a href="https://doi.org/10.1126/science.aef8874">Zhang / TRACE 2026</a><a href="https://doi.org/10.1016/j.cell.2026.09.035">Atanur 2026</a><a href="https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/gap.txt.gz">UCSC hg19 gap</a></p></section><footer>GRCh37 · Aggregate results</footer></main><script type="application/json" id="payload">@@DATA@@</script>
+<script>
+"use strict";
+const data=JSON.parse(document.querySelector("#payload").textContent);
+const el=id=>document.getElementById(id);
+const make=(name,txt)=>{const node=document.createElement(name);if(txt!==undefined)node.textContent=txt;return node};
+const option=(value,txt)=>new Option(txt,value);
+function drawTable(box,headers,rows){
+  const table=make("table"), head=table.createTHead().insertRow(),body=table.createTBody();
+  headers.forEach(v=>head.append(make("th",v)));
+  for(const vals of rows){const r=body.insertRow();for(const x of vals){const td=r.insertCell();if(x instanceof Node)td.append(x);else td.textContent=x??"—"}}
+  box.replaceChildren(table)
+}
+const choices=[["范围","scope",["A","X"]],["参考","ref",["Altai","Denisova3"]],["1KG 人群","kg_group",["EUR","ALL","GBR","AFR5","EAS","SAS","AMR"]],["阈值","threshold",["1%","5%","5 carriers","20 carriers"]]];
+const cs=choices.map(([label,key,values])=>{const s=make("select"),l=make("label",label);values.forEach(v=>s.add(option(v,v)));l.append(s);el("cmp").append(l);s.addEventListener("change",compare);return s});
+function compare(){
+ const idx=n=>data.c.indexOf(n), r=data.comp.find(row=>choices.every((c,i)=>row[idx(c[1])]===cs[i].value));
+ const fmt=(k,n)=>r[idx(k)]==null?"—":n===0?r[idx(k)].toLocaleString():r[idx(k)].toFixed(n);
+ drawTable(el("cmpt"),["1KG","YGB","双侧阳性","1KG → YGB","YGB → 1KG","Jaccard","ρ 全部窗口","ρ 任一阳性窗口"],
+ [[fmt("kg",0),fmt("ygb",0),fmt("shared",0),fmt("kg_seen_in_ygb",3),fmt("ygb_seen_in_kg",3),fmt("Jaccard",3),fmt("rho_all",3),fmt("rho_any",3)]])
+}
+compare();
+const chrNames=[...Array.from({length:22},(_,i)=>String(i+1)),"X"];
+el("chr").add(option("","全部"));chrNames.forEach(c=>el("chr").add(option(c,c)));
+let filtered=[],page=0;
+function region(row){
+ el("sel").textContent=row[0]+"  ·  哨兵及邻近窗口";
+ const ch=row[2],tile=Math.floor(row[3]/data.w),all=data.tracks[ch],lo=Math.max(0,tile-10),hi=Math.min(all.length,tile+11);
+ const tracks=row[1]==="N"?[1,2]:[3,4];
+ const svg=el("region");svg.setAttribute("viewBox","0 0 940 200");svg.replaceChildren();
+ function node(k,attrs,text){const s=document.createElementNS("http://www.w3.org/2000/svg",k);for(const [a,b] of Object.entries(attrs))s.setAttribute(a,b);if(text)s.textContent=text;svg.append(s);return s}
+ const left=55,right=900,base=158,top=18,step=(right-left)/(hi-lo);
+ let max=.01;for(let t=lo;t<hi;t++)if(all[t][0])max=Math.max(max,...tracks.map(k=>all[t][k]));
+ const x=t=>left+(t-lo+.5)*step,y=v=>base-(base-top)*v/max;
+ for(let t=lo;t<hi;t++)if(t===tile||!all[t][0])node("rect",{x:x(t)-step/2,y:top,width:step,height:base-top,fill:t===tile?"#f8e5ae":"#dce1de"});
+ for(const f of [0,.5,1]){node("line",{x1:left,x2:right,y1:y(f*max),y2:y(f*max),stroke:"#cdd8d3"});node("text",{x:left-5,y:y(f*max)+4,"text-anchor":"end","font-size":12},(f*max*100).toFixed(1)+"%")}
+ for(let j=0;j<2;j++){let points="";for(let t=lo;t<hi;t++){if(!all[t][0]){if(points)node("polyline",{points,fill:"none",stroke:j?"#00796b":"#ac4831","stroke-width":2});points="";continue}points+=x(t)+","+y(all[t][tracks[j]])+" ";}
+ if(points)node("polyline",{points,fill:"none",stroke:j?"#00796b":"#ac4831","stroke-width":2})}
+ node("text",{x:left,y:184,"font-size":13},(lo*data.w/1e6).toFixed(2)+" Mb");
+ node("text",{x:right,y:184,"font-size":13,"text-anchor":"end"},(hi*data.w/1e6).toFixed(2)+" Mb")
+}
+function show(){
+ const max=Math.max(1,Math.ceil(filtered.length/15));page=Math.min(page,max-1);
+ el("count").textContent=filtered.length.toLocaleString()+" 个代表位点 · "+(page+1)+" / "+max+" 页";
+ el("prev").disabled=page===0;el("next").disabled=page+1>=max;
+ drawTable(el("grid"),["ASV（哨兵）","块内窗口","YGB 阳性 / 纳入","YGB 不确定","YGB LOD6","1KG ALL","1KG EUR","批次 ≥5"],
+ filtered.slice(page*15,(page+1)*15).map(r=>{const b=make("button",r[0]);b.className="loc";b.onclick=()=>region(r);return [b,r[6],r[7]+" / "+r[8],r[9],r[10],r[11],r[12]+" / "+r[13],r[14]]}));
+}
+function query(){
+ const q=el("q").value.trim().toUpperCase().replaceAll(",","").replace(/^CHR/,""),pos=q.match(/^(X|[0-9]+):([0-9]+)$/);
+ const c=el("chr").value,l=el("lin").value,s=el("support").value,o=el("sort").value;
+ filtered=data.l.filter(r=>(!c||r[2]===c)&&(!l||r[1]===l)&&(!s||(s==="p"?r[12]>=5&&r[10]>=5:s==="e"?r[12]>=5:s==="a"?r[11]>=5:r[11]<5))
+ &&(!q||(pos?r[2]===pos[1]&&r[3]<+pos[2]&&+pos[2]<=r[5]:r[0].includes(q))));
+ filtered.sort((a,b)=>(o==="pos"?0:b[Number(o)]-a[Number(o)])||chrNames.indexOf(a[2])-chrNames.indexOf(b[2])||a[3]-b[3]||a[1].localeCompare(b[1]));
+ page=0;show();if(filtered.length)region(filtered[0]);else{el("sel").textContent="没有匹配位点";el("region").replaceChildren()}
+}
+["chr","lin","support","sort"].forEach(id=>el(id).onchange=query);el("q").oninput=query;
+el("prev").onclick=()=>{page--;show()};el("next").onclick=()=>{page++;show()};
+el("download").onclick=()=>{const header=["ID","lineage","chrom","start0","end0","block_end0","n_tiles","YGB_carriers","YGB_n","YGB_uncertain","YGB_LOD6","kg_ALL","kg_EUR","kg_n_EUR","batches_ge5"];const blob=new Blob([[header.join("\t"),...filtered.map(r=>r.join("\t"))].join("\n")+"\n"],{type:"text/tab-separated-values"});const a=make("a");a.href=URL.createObjectURL(blob);a.download="ASV_selection.tsv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+query();
+</script></html>

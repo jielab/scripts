@@ -1,0 +1,163 @@
+version: grid-final-20261116
+traits: [height, ldl, t2dm]
+chromosomes: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22]
+# Roots are supplied by the existing ../0f/0os.sh; explicit CLI paths override.
+analysis_root: ${ANALYSIS_ROOT}/grid
+inputs:
+  genotype_dir: ${DIR_GEN}/ygb/38/imp
+  phenotype_file: ${DIR_YGB}/Rdata/all.rds
+  cohort_file: null
+  pca_file: ${DIR_GEN}/ygb/38/pca_proj/ygb.discodivas.pca.tsv.gz
+  ancestry_file: ${DIR_GEN}/ygb/38/pca_proj/ygb.ancestry.auto.tsv.gz
+  pca_weight: ${DIR_FILES}/DiscoDivas/g1k_hm3_maf5_woamb_wolr.pca.weight
+  pca_centers: ${DIR_FILES}/DiscoDivas/med.g1000.4pop.tsv
+  group_file: null
+  # This is a relationship graph, not a genotype scoring source. Its location
+  # may remain beside the original array data without using array genotypes.
+  relationship_file: ${DIR_YGB}/rap/raw/ygb_rel.dat
+  # Assign families outcome-blind with cohort.seed unless a split file is supplied.
+  split_file: null
+  rsid_map: null
+  gwas_manifest: auto
+  gwas_dir: ${DIR_GWAS}/4grid/common
+  ld_ref: ${DIR_LD}/csx
+  ld_block_dir: ${DIR_LD}/block
+  consensus_dir: ${DIR_LD}/38/consensus
+  consensus_build: GRCh38
+cohort:
+  seed: 20261115
+  test_fraction: 0.5
+  development_fractions: [0.70, 0.15, 0.15]
+  train_n: 0                     #0=all TRAIN; whole-family budget for every method
+  label_budget: 0                #0=all; otherwise combined TRAIN+TUNE budget
+  phenotype_columns: {height: height, ldl: ldl, t2dm: auto}
+  covariate_columns: {}
+  validation_status: exploratory_previously_inspected_test
+pca:
+  n_pcs: 20
+  id_column: 2
+  allele_column: 6
+  first_pc_column: 7
+  min_variant_fraction: 0.9
+  ethnicity_column: auto
+  ancestry_probability: 0.90
+  anchor_max_n: 10000
+inference:
+  phi_grid: [0.01]               #systematic: [0.000001,0.0001,0.01,1.0]
+  n_iter: 4000
+  n_burnin: 2000
+  thin: 5
+  seed: 20261115
+  backend: cpu
+  jobs: 4                      # model chains per chromosome; all chromosomes are separate LSF jobs
+  blas_threads: 1              # small LD-block solves; do not assign all job cores to one chain
+  cs_fixed: true              #independent PRS-CS uses the same fixed-phi grid + auto
+  n_gwas: {}                    #overrides e.g. height: {EUR: 100000,AFR: 20000,...}
+  # The harmonized T2DM GWAS stores source Neff (column 11) in N.
+  effective_n_columns: {t2dm: N}
+  discovery_target_overlap: unknown
+scoring:
+  common_variants: false        #true: exact intersection of all supplied weight sets
+  batch_size: 32
+benchmark:
+  input_phi: 0.01              # fixed discovery-only input for blocks and Disco
+  covariates: [age,sex,PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10,PC11,PC12,PC13,PC14,PC15,PC16,PC17,PC18,PC19,PC20]
+  penalties: [0.01,1.0,100.0]
+  oof_folds: 5
+disco:
+  distance_pcs: 10
+  min_anchor_n: 100
+  min_cases: 20
+  penalty: 0.000001
+  raw_interpolation_ablation: true
+regions:
+  bed_build: 38                 # Set 37 to assign posterior REF_BP37 to legacy BED files.
+  layout: consensus              # default: ${DIR_LD}/38/consensus/uni.bed, four CSx channels
+  representation: ancestry_channels  # four-channel comparator; universal.* always selects one csx_meta channel
+block_models:
+  enabled: true
+  glmnet: true
+  lightgbm: true
+  alpha_grid: [0.0,0.5,1.0]
+  nlambda: 40
+  maxit: 100000
+  lightgbm_rounds: 400
+  lightgbm_patience: 30
+  lightgbm_leaves: [7,15]
+abm:
+  geometry: legacy_unit_block    # per-block scaling followed by TRAIN-only projection
+  dimensions: 32                #only used by regional / legacy_unit_block sensitivity
+  k_values: [32,64,128]
+  radius_k: 64
+  radius_quantile: 0.90
+  min_count: 20
+  min_group_ess: 15
+  shrinkage: 20.0
+  batch_size: 64
+  donor_batch: 4096
+  evidence_queries: 200
+  evidence_neighbors: 16
+block_deep:
+  enabled: true                 #included in grid.sh run; --without-deep opts out
+  device: cpu                   # --blocknet-run gpu requests a GPU for both BlockNet models
+  epochs: 30
+  patience: 5
+  batch_size: 64
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  d_model: 32
+  latent_tokens: 8
+  heads: 4
+  layers: 2
+  dropout: 0.1
+evaluation:
+  ldl_threshold: 4.9              # supplementary high measured LDL endpoint, mmol/L
+  bootstrap: 200                #use1000-2000forfinalmanuscriptCIs
+prsformer:
+  gpu_queue: 8v100-32-sc       # public GPU queue; override with --gpu-queue
+  enabled: false                #opt-in full genotype model; requires GPU/runtime/disk
+  # Raw SNP metadata only; no CSx fitted outputs or LD matrices are used.
+  reference_snps: ${DIR_LD}/csx/snpinfo_mult_1kg_hm3
+  upstream_dir: ${DIR_SOFTWARE}/PRSformer
+  device: cuda
+  attention: neighborhood
+  epochs: 30
+  patience: 3
+  batch_size: 1
+  accumulation_steps: 64
+  autotune: true                 # time full-length batches 1/2/4 with and without recomputation
+  workers: 2                     # prefetch prepared dosage rows on allocated CPU slots
+  chunk_variants: 512             # fewer strided disk-write batches; bounded by max_ram_gib
+  write_buffer_variants: 32768    # coalesce decoded blocks before durable disk commit
+  max_ram_gib: 96.0               # preparation cap; checked before allocation
+  max_disk_gib: null
+  disk_reserve_gib: 2.0
+runtime:
+  gpu_queue: 2v100-32-e5       #deep GPU queue; override with --gpu-queue
+  plink: plink2
+  rscript: Rscript
+  threads: 8
+  plink_memory_mb: 8192
+direct_blocknet:
+  # Direct LDL target fit, paired with a ridge on the same side covariates.
+  d_model: 64
+  heads: 4
+  latent_tokens: 32
+  layers: 2
+  dropout: 0.1
+  batch_size: 32
+  epochs: 30
+  patience: 5
+  min_delta: 0.0001
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  seed: 20261020
+
+disco_blocks:
+  anchor_prior_n: 200             # CAL anchor blend shrinks toward the global blend
+
+ldl_twins:
+  dimensions: 8                  # TRAIN principal components of the frozen LDL BlockNet embedding
+  radius_k: 64                   # same-ancestry TRAIN donors; radius from independent calibration features
+  coverage: 0.20                 # prespecified target in each eligible ancestry

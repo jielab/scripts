@@ -1,0 +1,74 @@
+{
+  "maha": [
+    {
+      "id": "Fig1",
+      "title": "YGB MAHA and DASH phenome-wide associations",
+      "file": "Fig1.ygb.phewas.png",
+      "cohort": "ygb",
+      "stage": "assoc ygb --study maha"
+    },
+    {
+      "id": "Fig2",
+      "title": "YGB prospective associations, precision and near-null evidence",
+      "file": "Fig2.ygb.precision.png",
+      "cohort": "ygb",
+      "stage": "assoc ygb + bayes ygb + final"
+    },
+    {
+      "id": "Fig3",
+      "title": "NHANES mortality associations and evidence",
+      "file": "Fig3.nhanes.mortality.png",
+      "cohort": "nhanes",
+      "stage": "assoc nhanes + bayes nhanes + final"
+    },
+    {
+      "id": "Fig4",
+      "title": "CHNS fixed-wave and cumulative-average mortality",
+      "file": "Fig4.chns.mortality.png",
+      "cohort": "chns",
+      "stage": "assoc chns + bayes chns + final"
+    },
+    {
+      "id": "Fig5",
+      "title": "YGB geographical distributions and regional associations",
+      "file": "Fig5.ygb.geography.png",
+      "cohort": "ygb",
+      "stage": "assoc ygb --study maha + final",
+      "detail": "Requires source geography inputs and the original map/tile resources."
+    }
+  ],
+  "dose": [
+    {
+      "id": "Fig1",
+      "title": "DOSE study overview and computed cohort counts",
+      "file": "Fig1.DOSE.overview.png",
+      "stage": "ygb + nhanes + foodwas",
+      "detail": "Reconstructed overview from actual stage counts; no manuscript sample size is hardcoded."
+    },
+    {
+      "id": "Fig2",
+      "title": "Food group associations and dose-response patterns",
+      "file": "Fig2.DOSE.foodwas.png",
+      "stage": "foodwas"
+    },
+    {
+      "id": "Fig3",
+      "title": "DOSE construction, dietary patterns and stroke associations",
+      "file": "Fig3.DOSE.score.png",
+      "stage": "ml + assoc ygb + assoc nhanes + final",
+      "detail": "YGB incident-stroke HR and NHANES prevalent-stroke OR are shown separately."
+    },
+    {
+      "id": "Fig4",
+      "title": "DOSE outcome-wide disease associations",
+      "file": "Fig4.DOSE.outcomes.png",
+      "stage": "assoc ygb --study dose"
+    },
+    {
+      "id": "Fig5",
+      "title": "Metabolomic, inflammatory, proteomic and brain correlates",
+      "file": "Fig5.DOSE.mechanisms.png",
+      "stage": "mechanism + signature + final"
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__ · IBDmix segments</title>
+<style>
+:root{--ink:#142b36;--muted:#526b73;--paper:#f3f6f4;--white:#fff;--line:#d9e4df;--teal:#007f79;--gold:#a76118}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.58 system-ui,sans-serif}
+header{background:var(--ink);color:white;padding:38px max(22px,calc((100vw - 1140px)/2))}
+header p{color:#c6ddda;margin-bottom:0}header small{color:#aaddd2;letter-spacing:.13em;font-weight:700}h1{margin:4px 0;font-size:clamp(31px,5vw,51px);line-height:1.1;letter-spacing:-.035em}
+nav{position:sticky;top:0;z-index:1;display:flex;justify-content:center;gap:20px;overflow:auto;white-space:nowrap;background:white;padding:12px 18px;border-bottom:1px solid var(--line)}
+a{color:var(--teal)}nav a{text-decoration:none;font-weight:650}main{max-width:1180px;margin:auto;padding:20px}
+section{scroll-margin-top:70px;margin:0 0 26px}h2{font-size:23px;margin:0 0 5px}p{margin:6px 0 13px}
+.card{background:white;border:1px solid var(--line);border-radius:16px;padding:19px;margin:13px 0}
+.callout{background:#e7f2ee;border-left:4px solid var(--teal);padding:12px 15px;border-radius:7px}
+.muted{color:var(--muted);font-size:13px}.controls{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0;align-items:end}
+label{display:grid;gap:3px;font-weight:650;font-size:13px}select,button,input{padding:7px 10px;border:1px solid var(--line);background:white;border-radius:7px;color:var(--ink);font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--teal)}.wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:right;padding:8px 9px;border-bottom:1px solid #e5ede8;white-space:nowrap;font-variant-numeric:tabular-nums}
+th{color:var(--muted);background:#f7faf8}th:first-child,td:first-child{text-align:left}tbody tr:hover{background:#edf6f2}
+th button{padding:0;border:none;background:none;font-size:inherit;font-weight:700;color:inherit}details summary{cursor:pointer;font-weight:650}
+.chart{display:grid;grid-template-columns:55px 1fr 94px;gap:6px 10px;align-items:center;margin:15px 0;font-size:12px}
+.bar{height:18px;background:#edf3ef;position:relative;border-radius:3px}.bar i{display:block;height:100%;background:#168279;border-radius:3px}.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--gold)}
+@media(max-width:640px){nav{justify-content:flex-start}main{padding:14px}.card{padding:13px}}
+</style>
+</head>
+<body>
+<header><small>GU / IBDMIX</small><h1>__TITLE__ · Archaic sequence matches</h1><p id="cohort"></p></header>
+<nav aria-label="Navigation"><a href="#benchmark">Cell 2020</a><a href="#burden">Segment burden</a><a href="#peaks">Top loci</a><a href="#control">chr3 control</a><a href="#qc">Inputs and methods</a></nav>
+<main>
+<noscript><p class="callout">Enable JavaScript to filter the tables offline.</p></noscript>
+<section class="card" id="benchmark">
+<h2>Comparison with Cell 2020</h2>
+<p>Mean autosomal Altai Neanderthal sequence per 1KG participant. Green bars show observed values and brown lines show the published means. AFR5 comprises ESN, GWD, LWK, MSL and YRI.</p>
+<div id="benchmark-result"></div>
+<p id="benchmark-total" class="callout" hidden></p>
+<p class="muted">Chen et al. used LOD ≥4, a 50 kb minimum and additional filters. This report includes all exported intervals. Input variants, masks, references and calling parameters affect absolute values.<a href="https://doi.org/10.1016/j.cell.2020.01.012">Chen et al., Fig. 2A / Table S4</a></p>
+</section>
+<section class="card" id="burden">
+<h2>Segment burden per participant</h2>
+<div class="controls"><label>Chromosome scope<select id="scope"></select></label><label>Reference or lineage<select id="track"></select></label></div>
+<p id="coverage" class="callout"></p>
+<div class="wrap" id="burden-table"></div>
+</section>
+<section class="card" id="peaks">
+<h2>Top loci</h2>
+<p id="rank-method"></p>
+<div class="controls"><label>Population<select id="population"></select></label><label>Chromosome<select id="chrom-filter"></select></label><button id="export">Download filtered CSV</button></div>
+<p id="peak-note" class="muted"></p>
+<div class="wrap" id="peak-table"></div>
+</section>
+<section class="card" id="control">
+<h2>Severe COVID-19 locus on chr3</h2>
+<p>GRCh37 chr3:45,859,651–45,909,024 (1-based inclusive). Compare any overlap and ≥80% coverage of the core. In the published study Vindija matched the risk haplotype more closely than Altai.<a href="https://doi.org/10.1038/s41586-020-2818-3">Zeberg &amp; Pääbo, Nature 2020</a></p>
+<div class="controls" id="control-tools"><label>Reference or lineage<select id="control-track"></select></label></div>
+<div class="wrap" id="control-table"></div>
+<p class="muted">Counts measure physical overlap. Identifying risk-haplotype carriers requires allele or haplotype data.</p>
+</section>
+<section class="card" id="qc">
+<h2>Inputs and methods</h2>
+<p id="provenance"></p>
+<ul>
+<li>Input and ranked window coordinates are 0-based, half-open. Intervals are merged per person and chromosome, including overlaps across references of the same lineage. Lineages can match the same region.</li>
+<li>Coverage divides mean matched bases per person by the physical length of chromosomes with observed calls, including inaccessible sequence. Segment calls lack copy dosage.</li>
+<li>The tested roster includes people with zero calls. Positive rows identify represented references. A chromosome with zero rows for a reference is excluded from its span because its tested status is unknown. Incomplete reference coverage is flagged.</li>
+<li>Native calls are filtered by the recorded LOD and minimum-length thresholds, and start/end are converted to zero-based coordinates. No African Denisovan background subtraction is applied.</li>
+<li>Denisovan calls measure matching to the named reference and can include ancestral polymorphism ; African Denisovan background subtraction is disabled.</li>
+<li>Window scores divide total matched bases by window length and, when known, the tested sample count. The overlap count includes each person once per window. Adjacent windows can belong to the same locus.</li>
+<li>Without a roster the report gives observed carriers and total coverage. The report contains aggregate results only.</li>
+</ul>
+<details><summary>Chromosome exports and reference QC</summary><div class="wrap" id="audit"></div></details>
+</section>
+</main>
+<script id="payload" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const d = JSON.parse(document.getElementById("payload").textContent);
+const $ = id => document.getElementById(id);
+const fmt = (x, digits=0) => x == null ? "—" : x.toLocaleString("en-US", {maximumFractionDigits:digits, minimumFractionDigits:digits});
+const num = x => fmt(x,2);
+const pct = x => x == null ? "—" : num(x)+"%";
+function node(tag,text){const el=document.createElement(tag);if(text!==undefined) el.textContent=text;return el;}
+function options(id, values, preferred){
+  const el=$(id), old=preferred || el.value;
+  el.replaceChildren(...values.map(v=>node("option",v)));
+  if(values.includes(old)) el.value=old;
+}
+function table(id, labels, rows, formatters=[]){
+  const host=$(id);host.replaceChildren();
+  if(!rows.length){host.append(node("p","No matching rows."));return;}
+  const t=node("table"), head=t.createTHead().insertRow(), body=t.createTBody();
+  function render(data){
+    body.replaceChildren();
+    for(const row of data){
+      const tr=body.insertRow();
+      row.forEach((val,i)=>{tr.insertCell().textContent=(formatters[i] || (x=>x ?? "—"))(val);});
+    }
+  }
+  labels.forEach((label,i)=>{
+    const th=node("th"), b=node("button",label);th.scope="col";b.type="button";th.append(b);head.append(th);
+    let descending=typeof rows[0][i]==="number";
+    b.onclick=()=>{
+      head.querySelectorAll("th").forEach(cell=>cell.removeAttribute("aria-sort"));
+      th.setAttribute("aria-sort",descending?"descending":"ascending");
+      const sign=descending?-1:1;
+      render([...rows].sort((a,b)=>{
+        if(a[i]==null || b[i]==null) return Number(a[i]==null)-Number(b[i]==null);
+        return sign*(typeof a[i]==="number" ? a[i]-b[i] : String(a[i]).localeCompare(b[i],"en",{numeric:true}));
+      }));
+      descending=!descending;
+    };
+  });
+  render(rows);host.append(t);
+}
+$("cohort").textContent="GRCh"+d.build+" · "+d.chromosomes.length+" chromosomes · "+d.references.join(", ")+" · "+d.roster_source;
+$("provenance").textContent=(d.source ? d.source+" · " : "")+"Autosomal roster N="+fmt(d.na)+" · chrX roster N="+fmt(d.nx)+(d.x_males ? " (male)" : "")+".";
+table("audit",["Chr","File","Reference","Rows","Mean input length (kb)"],d.audit,[null,null,null,fmt,num]);
+if(d.benchmark.length){
+  const [sum,unique,share]=d.benchmark_total;
+  $("benchmark-total").hidden=false;
+  $("benchmark-total").textContent="Altai.2013 autosomes · Sum across people "+num(sum)+" Gb (Cell 110.98 Gb) · Union across people "+num(unique)
+    +" Gb (Cell 1.29 Gb) · AFR5 union shared with AMR, EAS, EUR or SAS "+pct(share)+" (Cell >94%).";
+  const chart=node("div");chart.className="chart";
+  const max=Math.max(...d.benchmark.flatMap(r=>r.slice(2,4)))*1.06;
+  for(const [group,,observed,published] of d.benchmark){
+    const bar=node("div"), fill=node("i"), tick=node("b");bar.className="bar";
+    fill.style.width=100*observed/max+"%";tick.style.left=100*published/max+"%";
+    bar.title=group+": "+num(observed)+" vs "+published+" Mb";bar.append(fill,tick);
+    chart.append(node("strong",group),bar,node("span",num(observed)+" / "+published));
+  }
+  $("benchmark-result").append(chart,node("div"));
+  $("benchmark-result").lastChild.id="benchmark-table";$("benchmark-table").className="wrap";
+  table("benchmark-table",["Population","Tested N","Observed Mb/person","Cell Mb/person","Difference (Mb/person)","Observed / Cell"],
+        d.benchmark,[null,fmt,num,fmt,num,num]);
+}else{
+  $("benchmark-result").append(node("p","This comparison requires all 22 GRCh37 1KG autosomes, Altai.2013 calls and a tested roster."));
+}
+const keys=Object.keys(d.summary);
+const scopes=[...new Set(keys.map(k=>k.split("|")[0]))];
+options("scope",scopes,"Autosomes");
+let currentRows=[];
+function renderPeaks(){
+  const key=$("scope").value+"|"+$("track").value;
+  const all=d.top[key]?.[$("population").value] || [];
+  currentRows=all.map(([chr,lo,hi,carriers,equiv,n],i)=>[i+1,chr,lo,hi,carriers,n || null,equiv,n ? 100*equiv/n : null])
+    .filter(row=>!$("chrom-filter").value || $("chrom-filter").value==="All" || row[1]===$("chrom-filter").value);
+  $("peak-note").textContent="Showing "+currentRows.length+" windows. Chromosome filtering retains ranks in the population and reference top 100.";
+  table("peak-table",["Rank","Chr","Start","End","People with overlap","Tested N","Full-window equivalents","Mean window coverage"],currentRows,
+        [fmt,null,fmt,fmt,fmt,fmt,num,pct]);
+}
+function renderTrack(){
+  const key=$("scope").value+"|"+$("track").value;
+  const coverage=d.coverage[key];
+  if(!coverage){
+    $("coverage").textContent="No positive calls in this scope.";renderPeaks();return;
+  }
+  const [chr,span,refs,missing]=coverage;
+  $("coverage").textContent=chr.length+" chromosomes with calls · "+num(span/1e6)+" Mb reference span · "+refs.join(", ")
+    +($("scope").value==="chrX" ? " · Denominator includes the full X chromosome" : "")
+    +(missing.length ? " · Chromosomes missing calls for some references: "+missing.join(", ") : "");
+  table("burden-table",["Population","Tested N","People with calls","Total Mb","Mean Mb/person","Median Mb/person","P10 Mb","P90 Mb","Physical coverage"],
+        d.summary[key],[null,fmt,fmt,num,num,num,num,num,pct]);
+  options("population",Object.keys(d.top[key]),$("population").value || "ALL");
+  options("chrom-filter",["All",...chr]);renderPeaks();
+}
+function renderScope(){
+  options("track",keys.filter(x=>x.startsWith($("scope").value+"|")).map(x=>x.split("|")[1]), $("track").value || "Neanderthal");
+  renderTrack();
+}
+$("rank-method").textContent=fmt(d.window/1000, d.window%1000 ? 3 : 0)+" kb windows ranked by mean coverage, or by full-window equivalents when the tested roster is unavailable.";
+$("scope").onchange=renderScope;
+$("track").onchange=renderTrack;
+$("population").onchange=$("chrom-filter").onchange=renderPeaks;
+$("export").onclick=()=>{
+  const cols=["rank","chr","start","end","carriers","n_tested","equivalent_full_window_people","mean_coverage_pct"];
+  const url=URL.createObjectURL(new Blob([[cols,...currentRows].map(r=>r.join(",")).join("\n")+"\n"],{type:"text/csv"}));
+  const link=node("a");link.href=url;link.download=d.target+".ibdmix.top.csv";link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+function renderControl(){
+  table("control-table",["Population","Tested N","Any overlap","People covering ≥80%","Fraction covering ≥80%","Best overlapping window rank"],
+    d.control.filter(r=>r[0]===$("control-track").value)
+      .map(([,g,n,any,cover,rank])=>[g,n,any,cover,n?100*cover/n:null,rank ?? (any ? ">100" : "No overlap")]),
+    [null,fmt,fmt,fmt,pct]);
+}
+if(d.control.length){
+  options("control-track",[...new Set(d.control.map(r=>r[0]))],"Neanderthal");
+  $("control-track").onchange=renderControl;renderControl();
+}else{
+  $("control-tools").hidden=true;
+  $("control-table").append(node("p","Requires GRCh37 chr3 Neanderthal calls."));
+}
+renderScope();
+</script>
+</body>
+</html>

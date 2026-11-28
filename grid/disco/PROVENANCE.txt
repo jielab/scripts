@@ -1,0 +1,8 @@
+DiscoDivas upstream: https://github.com/YunfengRuan/DiscoDivas
+Reference commit: ee8e5d996e6fc6ffaf04255e1cf0fa8ecce68524
+The upstream MIT license is retained for attribution.
+GRID v2 implements the published geometry in ../disco2.py, prepares actual
+fine-tuning cohort predictors and medians, and freezes outcome-free PC
+residualization/normalization on TRAIN for deployment. This differs from
+upstream target-batch-fitted preprocessing; see README section 8.
+No unavailable anchor is replaced by a global model.

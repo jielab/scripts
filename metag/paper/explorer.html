@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>METAG · 宏基因组分箱与证据</title>
+<style>
+:root{font:16px/1.55 system-ui,sans-serif;color:#1a3439;background:#f6f8f7;--teal:#087a70;--ink:#193f46;--line:#cedbd7}*{box-sizing:border-box}
+body{margin:0}header,main{max-width:1350px;margin:auto;padding:22px clamp(15px,4vw,58px)}header{background:var(--ink);color:white;max-width:none}header>div{max-width:1234px;margin:auto}h1{margin:.1em 0;font-size:clamp(23px,4vw,39px)}h2{margin:.15em 0;font-size:21px}h3{font-size:16px;margin:.85em 0 .3em}p{margin:.5em 0}header a{color:#a7e9d2}a{color:#03695c}section,.filters,.kpis>div{background:white;border:1px solid var(--line);border-radius:10px;padding:17px;margin:14px 0}.filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px}.filters label,label.control{display:grid;gap:3px;font-size:14px}
+select,input,button{font:inherit;padding:6px 10px;border:1px solid #a6b9b4;background:white;border-radius:5px;color:var(--ink)}button{cursor:pointer}button:hover,button:focus{border-color:var(--teal);background:#edf6f3}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}.kpis>div{margin:0}.kpis b{display:block;font-size:22px;color:var(--teal)}.muted,small{color:#49635f}.plots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:15px}.graph{max-height:480px;overflow:auto}.graph svg{width:100%;height:auto;min-width:365px;display:block}
+.actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.scroll{overflow:auto;max-height:450px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:7px 10px;text-align:left;border-bottom:1px solid #dce5e2;white-space:nowrap}th{position:sticky;top:0;background:#f0f5f3}td.num{font-variant-numeric:tabular-nums}details{margin:.6em 0}summary{cursor:pointer;font-weight:600}.legend{font-size:14px}footer{margin:18px 0}button:disabled{opacity:.45;cursor:auto}noscript{color:#812}.hidden{display:none}
+</style></head><body><header><div><h1>宏基因组分箱与证据</h1><p id="origin"></p><a id="static" href="report.html">查看完整 QC、论文图表与原始汇总表</a></div></header><main>
+<noscript>交互报告需要启用 JavaScript。完整静态报告见 report.html。</noscript>
+<div class="filters"><label>队列<select id="dataset"></select></label><label>样本<select id="sample"></select></label></div>
+<div class="kpis" id="kpis" aria-live="polite"></div>
+<section><h2>队列比较</h2><p>总比例按读对数加权。样本中位数给予每个非空样本相同权重，可以看出深测序样本是否主导队列结果。</p><div class="scroll" id="cohortTable"></div><p id="versions" class="muted"></p><button id="exportCohorts">下载队列比较 TSV</button></section>
+<div class="plots"><section><h2>样本分辨率</h2><p class="legend">绿色为种级，蓝灰为较高分类层级，浅灰为未分类。每行分母为该样本的全部输入读对。</p><div class="graph" id="resolution"></div><div class="actions"><button data-save="resolution">下载 SVG</button><button id="prev">上一页</button><button id="next">下一页</button><small id="page"></small></div></section>
+<section><h2>分类证据的构成</h2><p class="legend">每个最终读对只计一次。横轴为所选样本中各类证据占全部输入的比例。</p><div class="graph" id="reasons"></div><button data-save="reasons">下载 SVG</button></section></div>
+<section><h2>哪些物种反复出现，哪些主要来自一个样本？</h2><p>检出率的分母为选区内所有非空样本。最高样本占比为该分类单元中读对最多的单一样本所占比例。每百万读对按所选样本的总输入归一化。</p>
+<div class="filters"><label>类群<select id="group"></select></label><label>层级<select id="rank"></select></label><label>物种名或 taxid<input id="query" type="search" placeholder="例如 Homo sapiens 或 9606"></label><label>排序<select id="sort"><option value="pairs">总读对</option><option value="seen">检出样本数</option><option value="peak">最高样本占比</option></select></label><button id="exportTax">下载当前筛选 TSV</button></div>
+<div class="plots"><div><h3>读对数排名 / 所选排序的前 12 项</h3><div class="graph" id="leaders"></div><button data-save="leaders">下载 SVG</button></div><div><h3>跨样本复现与单一样本集中度</h3><div class="graph" id="scatter"></div><button data-save="scatter">下载 SVG</button></div></div>
+<p id="taxCount" class="muted"></p><div class="scroll" id="taxTable"></div></section>
+<section id="sealSection" hidden><h2>威德尔海豹的种级标签经过复核后还剩多少？</h2><p id="sealNote"></p><div id="sealChart" class="graph"></div><button data-save="sealChart">下载 SVG</button></section>
+<section><h2>证据明细与独立验证</h2><p id="coverage"></p><div class="filters"><label>证据表<select id="measure"></select></label><label>筛选明细<input id="find" type="search" placeholder="样本、物种、证据或状态"></label><button id="exportDetail">下载当前明细 TSV</button></div><p id="meaning" class="muted"></p><p id="detailCount"></p><div class="scroll" id="detailTable"></div></section>
+<footer>物种分配、来源复核和独立标签准确率分别报告。食源相容物种只能提供来源线索。含人源读对支持人源 DNA 的存在，不能由此推断个人身份或族群。</footer></main>
+<script type="application/json" id="data">__DATA__</script><script>/*__APP__*/</script></body></html>

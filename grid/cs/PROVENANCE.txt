@@ -1,0 +1,9 @@
+Official PRS-CS from https://github.com/getian107/PRScs
+Upstream commit fbc9ec017652f0b40a6ab47f63747d97fa7d033b, retrieved 2026-11-15.
+MIT license is included in LICENSE. Original authors and citations remain in source.
+Inference equations and continuous-shrinkage prior are unchanged.
+Local changes: parse_ldblk reads one reference block at a time and uses set lookup;
+this reduces peak memory/search time without changing retained matrices or SNP order.
+Single-ancestry reference SNP metadata is built by ../infer.py from the released
+multi-ancestry reference with explicit FLP orientation and unchanged HDF5 LD files.
+This is official PRS-CS, independently fitted within each GWAS ancestry.
